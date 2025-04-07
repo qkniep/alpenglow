@@ -1,0 +1,52 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+pub mod all2all;
+pub mod consensus;
+pub mod crypto;
+pub mod disseminator;
+pub mod network;
+pub mod orchestrator;
+pub mod repair;
+pub mod shredder;
+pub mod validator;
+
+use serde::{Deserialize, Serialize};
+
+pub use all2all::All2All;
+pub use consensus::Alpenglow;
+use crypto::{Hash, aggsig::PublicKey};
+pub use disseminator::Disseminator;
+pub use validator::Validator;
+
+/// Slot number type.
+pub type Slot = u64;
+///
+pub type ValidatorId = u64;
+///
+pub type Stake = u64;
+
+///
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Block {
+    slot: Slot,
+    block_hash: Hash,
+    parent: Slot,
+    parent_hash: Hash,
+    transactions: Vec<Transaction>,
+}
+
+///
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Transaction(Vec<u8>);
+
+///
+#[derive(Clone, Debug)]
+pub struct ValidatorInfo {
+    pub id: ValidatorId,
+    pub stake: Stake,
+    pub pubkey: PublicKey,
+    pub all2all_address: String,
+    pub disseminator_address: String,
+    pub repair_address: String,
+}

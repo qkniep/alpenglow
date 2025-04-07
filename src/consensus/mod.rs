@@ -1,0 +1,318 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+mod blockstore;
+mod cert;
+mod epoch_info;
+mod pool;
+mod vote;
+mod votor;
+
+use blockstore::Blockstore;
+pub use cert::Cert;
+pub use epoch_info::EpochInfo;
+use pool::{Pool, PoolError};
+use tokio_util::sync::CancellationToken;
+pub use vote::Vote;
+
+use std::marker::{Send, Sync};
+use std::time::Instant;
+use std::{sync::Arc, time::Duration};
+
+use color_eyre::Result;
+use rand::{RngCore, SeedableRng};
+use tokio::sync::{RwLock, mpsc};
+use tokio::time::sleep;
+use tracing::{info, trace, warn};
+use votor::Votor;
+
+use crate::crypto::Hash;
+use crate::crypto::aggsig::SecretKey;
+use crate::network::{NetworkError, NetworkMessage, UdpNetwork};
+use crate::repair::{Repair, RepairMessage};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
+use crate::{All2All, Disseminator, Slot, ValidatorId, ValidatorInfo};
+
+/// Number of slots in each leader window.
+pub const SLOTS_PER_WINDOW: u64 = 4;
+/// Time bound assumed on network transmission delays during periods of synchrony.
+const DELTA: Duration = Duration::from_millis(400);
+/// Time the leader has for producing and sending the block.
+const DELTA_BLOCK: Duration = Duration::from_millis(400);
+/// Timeout to use when we have seen at least one shred from the leader's block.
+const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
+/// Timeout to use when we haven't seen any shred from the leader's block.
+/// This is used to skip honest but crashed leaders faster.
+const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
+
+/// Alpenglow consensus protocol implementation.
+pub struct Alpenglow<A: All2All, D: Disseminator> {
+    /// Own validator info.
+    info: ValidatorInfo,
+    /// Own validator's secret key.
+    secret_key: SecretKey,
+    /// Other validators' info.
+    epoch_info: Arc<EpochInfo>,
+
+    /// Blockstore for storing raw block data.
+    blockstore: RwLock<Blockstore>,
+    /// Pool of votes and certificates.
+    pool: Arc<RwLock<Pool>>,
+
+    /// All-to-all broadcast network protocol for consensus messages.
+    all2all: Arc<A>,
+    /// Block dissemination network protocol for shreds.
+    disseminator: Arc<D>,
+    /// Block repair protocol.
+    repair: Repair<UdpNetwork>,
+
+    cancel_token: CancellationToken,
+    votor_handle: tokio::task::JoinHandle<()>,
+}
+
+impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static> Alpenglow<A, D> {
+    /// Creates a new Alpenglow consensus node.
+    #[must_use]
+    pub fn new(
+        own_id: ValidatorId,
+        secret_key: SecretKey,
+        validators: Vec<ValidatorInfo>,
+        all2all: A,
+        disseminator: D,
+        repair: Repair<UdpNetwork>,
+    ) -> Self {
+        let cancel_token = CancellationToken::new();
+        let epoch_info = Arc::new(EpochInfo::new(validators.clone()));
+        let (tx, rx) = mpsc::channel(1024);
+        let all2all = Arc::new(all2all);
+
+        // let cancel = cancel_token.clone();
+        let mut votor = Votor::new(own_id, secret_key.clone(), tx.clone(), rx, all2all.clone());
+        let votor_handle = tokio::spawn(async move { votor.voting_loop().await.unwrap() });
+
+        let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
+        let pool = Pool::new(validators.clone(), tx);
+
+        Self {
+            info: epoch_info.validator(own_id).clone(),
+            secret_key,
+            epoch_info,
+            blockstore: RwLock::new(blockstore),
+            pool: Arc::new(RwLock::new(pool)),
+            all2all,
+            disseminator: Arc::new(disseminator),
+            repair,
+            cancel_token,
+            votor_handle,
+        }
+    }
+
+    /// Starts the different tasks of the Alpenglow node.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if any of the tasks panics.
+    pub async fn run(self) -> Result<()> {
+        let n = Arc::new(self);
+        let nn = n.clone();
+        let msg_loop = tokio::spawn(async move { nn.message_loop().await });
+        let nn = n.clone();
+        let prod_loop = tokio::spawn(async move { nn.block_production_loop().await });
+
+        while !n.cancel_token.is_cancelled() {
+            sleep(Duration::from_millis(10)).await;
+        }
+        n.votor_handle.abort();
+        msg_loop.abort();
+        prod_loop.abort();
+
+        // let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
+        // msg_res??;
+        // prod_res??;
+        Ok(())
+    }
+
+    pub const fn get_info(&self) -> &ValidatorInfo {
+        &self.info
+    }
+
+    pub fn get_pool(&self) -> Arc<RwLock<Pool>> {
+        Arc::clone(&self.pool)
+    }
+
+    pub fn get_cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
+
+    /// Handles incoming messages on all the different network interfaces.
+    ///
+    /// [`All2All`]: Handles incoming votes and certificates. Adds them to the [`Pool`].
+    /// [`Disseminator`]: Handles incoming shreds. Adds them to the [`Blockstore`].
+    /// [`Repair`]: Answers incoming repair requests.
+    async fn message_loop(self: &Arc<Self>) -> Result<()> {
+        loop {
+            tokio::select! {
+                // handle incoming votes and certificates
+                // res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
+                res = self.all2all.receive() => {
+                    let alpenglow = self.clone();
+                    tokio::spawn(async move {
+                        alpenglow.handle_all2all_message(res.unwrap()).await.unwrap();
+                    });
+                }
+                // handle shreds received by block dissemination protocol
+                // res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
+                res = self.disseminator.receive() => {
+                    let alpenglow = self.clone();
+                    tokio::spawn(async move {
+                        alpenglow.handle_disseminator_shred(res.unwrap()).await.unwrap();
+                    });
+                }
+                // handle repair requests
+                res = self.repair.receive() => self.handle_repair_message(res?).await?,
+
+                _ = self.cancel_token.cancelled() => return Ok(()),
+            };
+        }
+    }
+
+    /// Handles the leader side of the the consensus protocol.
+    ///
+    /// Once all previous blocks have been notarized or skipped and the next
+    /// slot belongs to our leader window, we will produce a block.
+    async fn block_production_loop(&self) -> Result<()> {
+        let mut parent: Slot = 0;
+        let mut parent_hash = Hash::default();
+
+        for window in 0.. {
+            if self.cancel_token.is_cancelled() {
+                break;
+            }
+
+            let first_slot_in_window = window * SLOTS_PER_WINDOW;
+            let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
+            let leader = self.epoch_info.leader(first_slot_in_window);
+
+            // produce blocks if we are the leader
+            if leader.id == self.info.id {
+                let mut block = parent;
+                let mut block_hash = parent_hash;
+                for slot in first_slot_in_window..=last_slot_in_window {
+                    let mut rng = rand::rngs::SmallRng::seed_from_u64(slot);
+                    let hash = &hex::encode(block_hash)[..8];
+                    info!(
+                        self.info.id,
+                        "producing block in slot {slot} with parent {hash} in slot {block}"
+                    );
+                    // TODO: send actual data
+                    for slice_index in 0..40 {
+                        let start_time = Instant::now();
+                        let mut data = vec![0; MAX_DATA_PER_SLICE];
+                        rng.fill_bytes(&mut data);
+                        if slice_index == 0 {
+                            data[0..8].copy_from_slice(&block.to_be_bytes());
+                            data[8..40].copy_from_slice(&block_hash);
+                        }
+                        let slice = Slice {
+                            slot,
+                            slice_index,
+                            is_last: slice_index == 39,
+                            merkle_root: None,
+                            data,
+                        };
+                        let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
+                        for s in shreds {
+                            self.disseminator.send(&s).await?;
+                            let b = self.blockstore.write().await.add_shred(s).await;
+                            if let Some((slot, hash, parent_slot, parent_hash)) = b {
+                                let mut guard = self.pool.write().await;
+                                guard.add_block(slot, hash, parent_slot, parent_hash).await;
+                            }
+                        }
+                        sleep(Duration::from_millis(10) - start_time.elapsed()).await;
+                        // sleep(Duration::from_millis(10)).await;
+                    }
+
+                    // build off own block next
+                    block = slot;
+                    block_hash = self
+                        .blockstore
+                        .read()
+                        .await
+                        .canonical_block_hash(slot)
+                        .unwrap();
+                }
+            }
+
+            // wait to see notarization or skip certificates before proceeding to next window
+            for slot in first_slot_in_window..=last_slot_in_window {
+                // PERF: maybe replace busy loop
+                while !self.pool.read().await.is_branch_certified(slot)
+                    && !self.pool.read().await.is_skip_certified(slot)
+                {
+                    sleep(Duration::from_millis(1)).await;
+                }
+                if let Some(block_hash) = self.pool.read().await.branch_certified_hash(slot) {
+                    let hash = &hex::encode(block_hash)[..8];
+                    info!(
+                        self.info.id,
+                        "block production: notarized block {hash} in slot {slot}",
+                    );
+                    parent = slot;
+                    parent_hash = block_hash;
+                } else {
+                    warn!(self.info.id, "block production: skipped slot {slot}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_all2all_message(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
+        trace!("received all2all msg: {:?}", msg);
+        match msg {
+            NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
+                Ok(()) => {}
+                Err(PoolError::Slashable(offence)) => {
+                    warn!("slashable offence detected: {offence}")
+                }
+                Err(err) => trace!("ignoring invalid vote: {err}"),
+            },
+            NetworkMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
+                Ok(()) => {}
+                Err(err) => trace!("ignoring invalid cert: {err}"),
+            },
+            msg => warn!("unexpected message on all2all port: {:?}", msg),
+        }
+        Ok(())
+    }
+
+    async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
+        self.disseminator.forward(&shred).await?;
+        let b = self.blockstore.write().await.add_shred(shred).await;
+        if let Some((slot, hash, parent_slot, parent_hash)) = b {
+            let mut guard = self.pool.write().await;
+            guard.add_block(slot, hash, parent_slot, parent_hash).await;
+        }
+        Ok(())
+    }
+
+    async fn handle_repair_message(&self, msg: RepairMessage) -> Result<(), NetworkError> {
+        match msg {
+            RepairMessage::Request(request) => {
+                self.repair.answer_request(request).await?;
+            }
+            RepairMessage::Response(_) => unimplemented!(),
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {}
+}

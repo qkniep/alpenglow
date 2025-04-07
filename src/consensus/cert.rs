@@ -1,0 +1,795 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::crypto::aggsig::Signable;
+use crate::crypto::{AggregateSignature, Hash};
+use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
+
+use super::Vote;
+use super::vote::VoteKind;
+
+/// Errors that can occur during certificate aggregation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum CertError {
+    #[error("wrong vote type found during aggregation")]
+    WrongVoteType,
+    #[error("votes for different slots found during aggregation")]
+    SlotMismatch,
+    #[error("votes for different block hashes found during aggregation")]
+    BlockHashMismatch,
+}
+
+/// Certificate types used for the consensus protocol.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Cert {
+    Notar(NotarCert),
+    NotarFallback(NotarFallbackCert),
+    Skip(SkipCert),
+    FastFinal(FastFinalCert),
+    Final(FinalCert),
+}
+
+impl Cert {
+    /// Checks that the aggregated signatures are valid.
+    #[must_use]
+    pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
+        match self {
+            Self::Notar(n) => n.check_sig(validators),
+            Self::NotarFallback(n) => n.check_sig(validators),
+            Self::Skip(s) => s.check_sig(validators),
+            Self::FastFinal(f) => f.check_sig(validators),
+            Self::Final(f) => f.check_sig(validators),
+        }
+    }
+
+    /// Gives the slot number this certificate is for.
+    #[must_use]
+    pub const fn slot(&self) -> Slot {
+        match self {
+            Self::Notar(n) => n.slot,
+            Self::NotarFallback(n) => n.slot,
+            Self::Skip(s) => s.slot,
+            Self::FastFinal(s) => s.slot,
+            Self::Final(f) => f.slot,
+        }
+    }
+
+    /// Returns the block hash this certificate corresponds to, if any.
+    ///
+    /// Returns `None` if this is a skip or finalization certificates.
+    #[must_use]
+    pub const fn block_hash(&self) -> Option<Hash> {
+        match self {
+            Self::Notar(n) => Some(n.block_hash),
+            Self::NotarFallback(n) => Some(n.block_hash),
+            Self::FastFinal(f) => Some(f.block_hash),
+            Self::Skip(_) | Self::Final(_) => None,
+        }
+    }
+
+    /// Checks if the given validator is a signer of this certificate.
+    #[must_use]
+    pub fn is_signer(&self, v: ValidatorId) -> bool {
+        match self {
+            Self::Notar(n) => n.agg_sig.is_signer(v),
+            Self::NotarFallback(n) => {
+                let is_sig1_signer = n.agg_sig_notar.as_ref().is_some_and(|s| s.is_signer(v));
+                let is_sig2_signer = n
+                    .agg_sig_notar_fallback
+                    .as_ref()
+                    .is_some_and(|s| s.is_signer(v));
+                is_sig1_signer || is_sig2_signer
+            }
+            Self::Skip(s) => {
+                let is_sig1_signer = s.agg_sig_skip.as_ref().is_some_and(|s| s.is_signer(v));
+                let is_sig2_signer = s
+                    .agg_sig_skip_fallback
+                    .as_ref()
+                    .is_some_and(|s| s.is_signer(v));
+                is_sig1_signer || is_sig2_signer
+            }
+            Self::FastFinal(f) => f.agg_sig.is_signer(v),
+            Self::Final(f) => f.agg_sig.is_signer(v),
+        }
+    }
+
+    /// Iterates over the signers of this certificate, yielding their IDs.
+    #[must_use]
+    pub fn signers(&self) -> Box<dyn Iterator<Item = ValidatorId> + '_> {
+        match self {
+            Self::Notar(n) => Box::new(n.agg_sig.signers()),
+            Self::NotarFallback(n) => Box::new(
+                n.agg_sig_notar
+                    .as_ref()
+                    .map(|s| s.signers())
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        n.agg_sig_notar_fallback
+                            .as_ref()
+                            .map(|s| s.signers())
+                            .into_iter()
+                            .flatten(),
+                    ),
+            ),
+            Self::Skip(s) => Box::new(
+                s.agg_sig_skip
+                    .as_ref()
+                    .map(|s| s.signers())
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        s.agg_sig_skip_fallback
+                            .as_ref()
+                            .map(|s| s.signers())
+                            .into_iter()
+                            .flatten(),
+                    ),
+            ),
+            Self::FastFinal(f) => Box::new(f.agg_sig.signers()),
+            Self::Final(f) => Box::new(f.agg_sig.signers()),
+        }
+    }
+
+    /// Gives the combined stake of the validators who signed this certificate.
+    #[must_use]
+    pub const fn stake(&self) -> Stake {
+        match self {
+            Self::Notar(n) => n.stake,
+            Self::NotarFallback(n) => n.stake,
+            Self::Skip(s) => s.stake,
+            Self::FastFinal(s) => s.stake,
+            Self::Final(f) => f.stake,
+        }
+    }
+}
+
+/// A notarization certificate is an aggregate of a quorum of notar votes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotarCert {
+    slot: Slot,
+    block_hash: Hash,
+    agg_sig: AggregateSignature,
+    stake: Stake,
+}
+
+impl NotarCert {
+    /// Tries to create a new notarization certificate.
+    ///
+    /// # Errors
+    ///
+    /// - [`CertError::WrongVoteType`] if any of the votes is not a notarization vote.
+    /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
+    pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
+        if !votes[0].is_notar() {
+            return Err(CertError::WrongVoteType);
+        };
+        let slot = votes[0].slot();
+        let block_hash = votes[0].block_hash().unwrap();
+
+        for vote in votes {
+            if vote.slot() != slot {
+                return Err(CertError::SlotMismatch);
+            } else if !vote.is_notar() {
+                return Err(CertError::WrongVoteType);
+            } else if vote.block_hash() != Some(block_hash) {
+                return Err(CertError::BlockHashMismatch);
+            }
+        }
+
+        // PERF: remove memory allocations
+        let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
+        let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
+        let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let stake: Stake = votes
+            .iter()
+            .map(|v| validators[v.signer() as usize].stake)
+            .sum();
+
+        Ok(Self {
+            slot,
+            block_hash,
+            agg_sig,
+            stake,
+        })
+    }
+
+    /// Creates a new notarization certificate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `try_new` returns an error.
+    pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
+        Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the aggregated signature is valid.
+    #[must_use]
+    pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
+        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
+        self.agg_sig.verify(&vote_bytes, &pks)
+    }
+}
+
+/// A notar-fallback certificate is an aggregate of a quorum of notar(-fallback) votes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotarFallbackCert {
+    slot: Slot,
+    block_hash: Hash,
+    agg_sig_notar: Option<AggregateSignature>,
+    agg_sig_notar_fallback: Option<AggregateSignature>,
+    stake: Stake,
+}
+
+impl NotarFallbackCert {
+    /// Tries to create a new notar-fallback certificate.
+    ///
+    /// # Errors
+    ///
+    /// - [`CertError::WrongVoteType`] if any of the votes is not a notar(-fallback) vote.
+    /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
+    pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
+        if !votes[0].is_notar() && !votes[0].is_notar_fallback() {
+            return Err(CertError::WrongVoteType);
+        };
+        let slot = votes[0].slot();
+        let block_hash = votes[0].block_hash().unwrap();
+
+        for vote in votes {
+            if vote.slot() != slot {
+                return Err(CertError::SlotMismatch);
+            } else if !vote.is_notar() && !vote.is_notar_fallback() {
+                return Err(CertError::WrongVoteType);
+            } else if vote.block_hash() != Some(block_hash) {
+                return Err(CertError::BlockHashMismatch);
+            }
+        }
+
+        let stake: Stake = votes
+            .iter()
+            .map(|v| validators[v.signer() as usize].stake)
+            .sum();
+
+        let mut notar_votes = votes.iter().filter(|v| v.is_notar()).peekable();
+        let mut nf_votes = votes.iter().filter(|v| v.is_notar_fallback()).peekable();
+
+        let agg_sig_notar = if notar_votes.peek().is_none() {
+            None
+        } else {
+            let sigs: Vec<_> = notar_votes.clone().map(Vote::sig).collect();
+            let indices: Vec<_> = notar_votes.map(Vote::signer).collect();
+            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+        };
+
+        let agg_sig_notar_fallback = if nf_votes.peek().is_none() {
+            None
+        } else {
+            let sigs: Vec<_> = nf_votes.clone().map(Vote::sig).collect();
+            let indices: Vec<_> = nf_votes.map(Vote::signer).collect();
+            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+        };
+
+        Ok(Self {
+            slot,
+            block_hash,
+            agg_sig_notar,
+            agg_sig_notar_fallback,
+            stake,
+        })
+    }
+
+    /// Creates a new notar-fallback certificate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `try_new` returns an error.
+    pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
+        Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the aggregated signatures are valid.
+    #[must_use]
+    pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
+        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+
+        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
+        let sig1_valid = self
+            .agg_sig_notar
+            .as_ref()
+            .is_none_or(|s| s.verify(&vote_bytes, &pks));
+
+        let vote_bytes = VoteKind::NotarFallback(self.slot, self.block_hash).bytes_to_sign();
+        let sig2_valid = self
+            .agg_sig_notar_fallback
+            .as_ref()
+            .is_none_or(|s| s.verify(&vote_bytes, &pks));
+
+        sig1_valid && sig2_valid
+    }
+}
+
+/// A skip certificate is an aggregate of a quorum of skip(-fallback) votes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkipCert {
+    slot: Slot,
+    agg_sig_skip: Option<AggregateSignature>,
+    agg_sig_skip_fallback: Option<AggregateSignature>,
+    stake: Stake,
+}
+
+impl SkipCert {
+    /// Tries to create a new skip certificate.
+    ///
+    /// # Errors
+    ///
+    /// - [`CertError::WrongVoteType`] if any of the votes is not a skip(-fallback) vote.
+    /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
+        if !votes[0].is_skip() && !votes[0].is_skip_fallback() {
+            return Err(CertError::WrongVoteType);
+        };
+        let slot = votes[0].slot();
+
+        for vote in votes {
+            if vote.slot() != slot {
+                return Err(CertError::SlotMismatch);
+            } else if !vote.is_skip() && !vote.is_skip_fallback() {
+                return Err(CertError::WrongVoteType);
+            }
+        }
+
+        let stake: Stake = votes
+            .iter()
+            .map(|v| validators[v.signer() as usize].stake)
+            .sum();
+
+        // PERF: remove memory allocations
+        // let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
+        // let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
+        // let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let skip_votes: Vec<_> = votes.iter().filter(|v| v.is_skip()).cloned().collect();
+        let sf_votes: Vec<_> = votes
+            .iter()
+            .filter(|v| v.is_skip_fallback())
+            .cloned()
+            .collect();
+
+        let agg_sig_skip = if skip_votes.is_empty() {
+            None
+        } else {
+            let sigs: Vec<_> = skip_votes.iter().map(Vote::sig).collect();
+            let indices: Vec<_> = skip_votes.iter().map(Vote::signer).collect();
+            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+        };
+
+        let agg_sig_skip_fallback = if sf_votes.is_empty() {
+            None
+        } else {
+            let sigs: Vec<_> = sf_votes.iter().map(Vote::sig).collect();
+            let indices: Vec<_> = sf_votes.iter().map(Vote::signer).collect();
+            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+        };
+
+        Ok(Self {
+            slot,
+            agg_sig_skip,
+            agg_sig_skip_fallback,
+            stake,
+        })
+    }
+
+    /// Creates a new skip certificate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `try_new` returns an error.
+    pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
+        Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the aggregated signatures are valid.
+    #[must_use]
+    pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
+        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+
+        let vote_bytes = VoteKind::Skip(self.slot).bytes_to_sign();
+        let sig1_valid = self
+            .agg_sig_skip
+            .as_ref()
+            .is_none_or(|s| s.verify(&vote_bytes, &pks));
+
+        let vote_bytes = VoteKind::SkipFallback(self.slot).bytes_to_sign();
+        let sig2_valid = self
+            .agg_sig_skip_fallback
+            .as_ref()
+            .is_none_or(|s| s.verify(&vote_bytes, &pks));
+
+        sig1_valid && sig2_valid
+    }
+}
+
+/// A fast finalization certificate is an aggregate of a strong quorun of notar votes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FastFinalCert {
+    slot: Slot,
+    block_hash: Hash,
+    agg_sig: AggregateSignature,
+    stake: Stake,
+}
+
+impl FastFinalCert {
+    /// Tries to create a new fast finalization certificate.
+    ///
+    /// # Errors
+    ///
+    /// - [`CertError::WrongVoteType`] if any of the votes is not a notarization vote.
+    /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
+    pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
+        if !votes[0].is_notar() {
+            return Err(CertError::WrongVoteType);
+        };
+        let slot = votes[0].slot();
+        let block_hash = votes[0].block_hash().unwrap();
+
+        for vote in votes {
+            if vote.slot() != slot {
+                return Err(CertError::SlotMismatch);
+            } else if !vote.is_notar() {
+                return Err(CertError::WrongVoteType);
+            } else if vote.block_hash() != Some(block_hash) {
+                return Err(CertError::BlockHashMismatch);
+            }
+        }
+
+        // PERF: remove memory allocations
+        let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
+        let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
+        let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let stake: Stake = votes
+            .iter()
+            .map(|v| validators[v.signer() as usize].stake)
+            .sum();
+
+        Ok(Self {
+            slot,
+            block_hash,
+            agg_sig,
+            stake,
+        })
+    }
+
+    /// Creates a new fast finalization certificate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `try_new` returns an error.
+    pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
+        Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the aggregated signatures are valid.
+    #[must_use]
+    pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
+        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
+        self.agg_sig.verify(&vote_bytes, &pks)
+    }
+}
+
+/// A finalization certificate is an aggregate of a quorum of finalization votes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalCert {
+    slot: Slot,
+    agg_sig: AggregateSignature,
+    stake: Stake,
+}
+
+impl FinalCert {
+    /// Tries to create a new finalization certificate.
+    ///
+    /// # Errors
+    ///
+    /// - [`CertError::WrongVoteType`] if any of the votes is not a finalization vote.
+    /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
+        if !votes[0].is_final() {
+            return Err(CertError::WrongVoteType);
+        };
+        let slot = votes[0].slot();
+
+        for vote in votes {
+            if vote.slot() != slot {
+                return Err(CertError::SlotMismatch);
+            } else if !vote.is_final() {
+                return Err(CertError::WrongVoteType);
+            }
+        }
+
+        // PERF: remove memory allocations
+        let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
+        let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
+        let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let stake: Stake = votes
+            .iter()
+            .map(|v| validators[v.signer() as usize].stake)
+            .sum();
+
+        Ok(Self {
+            slot,
+            agg_sig,
+            stake,
+        })
+    }
+
+    /// Creates a new finalization certificate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `try_new` returns an error.
+    pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
+        Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the aggregated signatures are valid.
+    #[must_use]
+    pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
+        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let vote_bytes = VoteKind::Final(self.slot).bytes_to_sign();
+        self.agg_sig.verify(&vote_bytes, &pks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::crypto::aggsig::SecretKey;
+
+    fn create_signers(signers: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
+        let mut sks = Vec::new();
+        let mut info = Vec::new();
+
+        for i in 0..signers {
+            sks.push(SecretKey::new(&mut rand::rng()));
+            info.push(ValidatorInfo {
+                id: i,
+                stake: 1,
+                pubkey: sks.last().unwrap().to_pk(),
+                all2all_address: String::new(),
+                disseminator_address: String::new(),
+                repair_address: String::new(),
+            });
+        }
+
+        (sks, info)
+    }
+
+    fn create_votes(kind: VoteKind, sks: &[SecretKey]) -> Vec<Vote> {
+        sks.iter()
+            .enumerate()
+            .map(|(i, sk)| Vote::new(kind, sk, i as ValidatorId))
+            .collect()
+    }
+
+    #[test]
+    fn create() {
+        let (sks, info) = create_signers(100);
+
+        // notar cert
+        let votes: Vec<Vote> = create_votes(VoteKind::Notar(0, Hash::default()), &sks);
+        let res = NotarCert::try_new(&votes, &info);
+        assert!(res.is_ok());
+        let cert = Cert::Notar(res.unwrap());
+        assert!(cert.check_sig(&info));
+
+        // notar-fallback cert
+        let votes: Vec<Vote> = create_votes(VoteKind::NotarFallback(0, Hash::default()), &sks);
+        let res = NotarFallbackCert::try_new(&votes, &info);
+        assert!(res.is_ok());
+        let cert = Cert::NotarFallback(res.unwrap());
+        assert!(cert.check_sig(&info));
+
+        // skip cert
+        let votes: Vec<Vote> = create_votes(VoteKind::Skip(0), &sks);
+        let res = SkipCert::try_new(&votes, &info);
+        assert!(res.is_ok());
+        let cert = Cert::Skip(res.unwrap());
+        assert!(cert.check_sig(&info));
+
+        // fast finalization cert
+        let votes: Vec<Vote> = create_votes(VoteKind::Notar(0, Hash::default()), &sks);
+        let res = FastFinalCert::try_new(&votes, &info);
+        assert!(res.is_ok());
+        let cert = Cert::FastFinal(res.unwrap());
+        assert!(cert.check_sig(&info));
+
+        // finalization cert
+        let votes: Vec<Vote> = create_votes(VoteKind::Final(0), &sks);
+        let res = FinalCert::try_new(&votes, &info);
+        assert!(res.is_ok());
+        let cert = Cert::Final(res.unwrap());
+        assert!(cert.check_sig(&info));
+    }
+
+    #[test]
+    fn mixed_notar_fallback() {
+        let (sks, info) = create_signers(2);
+
+        // notar + notar-fallback
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(0, Hash::default(), &sks[1], 1);
+        let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
+        assert!(res.is_ok());
+        let cert = Cert::NotarFallback(res.unwrap());
+        assert!(cert.check_sig(&info));
+
+        // notar-fallback + notar
+        let vote1 = Vote::new_notar_fallback(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar(0, Hash::default(), &sks[1], 1);
+        let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
+        assert!(res.is_ok());
+        let cert = Cert::NotarFallback(res.unwrap());
+        assert!(cert.check_sig(&info));
+    }
+
+    #[test]
+    fn mixed_skip() {
+        let (sks, info) = create_signers(2);
+
+        // skip + skip-fallback
+        let vote1 = Vote::new_skip(0, &sks[0], 0);
+        let vote2 = Vote::new_skip_fallback(0, &sks[1], 1);
+        let res = SkipCert::try_new(&[vote1, vote2], &info);
+        assert!(res.is_ok());
+        let cert = Cert::Skip(res.unwrap());
+        assert!(cert.check_sig(&info));
+
+        // skip-fallback + skip
+        let vote1 = Vote::new_skip_fallback(0, &sks[0], 0);
+        let vote2 = Vote::new_skip(0, &sks[1], 1);
+        let res = SkipCert::try_new(&[vote1, vote2], &info);
+        assert!(res.is_ok());
+        let cert = Cert::Skip(res.unwrap());
+        assert!(cert.check_sig(&info));
+    }
+
+    #[test]
+    fn notar_failure_cases() {
+        let (sks, info) = create_signers(2);
+
+        // slot mismatch
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar(1, Hash::default(), &sks[1], 1);
+        let res = NotarCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::SlotMismatch));
+
+        // block hash mismatch
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar(0, [42; 32], &sks[1], 1);
+        let res = NotarCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::BlockHashMismatch));
+
+        // different vote types
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(0, Hash::default(), &sks[1], 1);
+        let res = NotarCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_notar_fallback(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(0, Hash::default(), &sks[1], 1);
+        let res = NotarCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+    }
+
+    #[test]
+    fn notar_fallback_failure_cases() {
+        let (sks, info) = create_signers(2);
+
+        // slot mismatch
+        let vote1 = Vote::new_notar_fallback(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(1, Hash::default(), &sks[1], 1);
+        let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::SlotMismatch));
+
+        // block hash mismatch
+        let vote1 = Vote::new_notar_fallback(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(0, [42; 32], &sks[1], 1);
+        let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::BlockHashMismatch));
+
+        // wrong vote types for cert
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_final(0, &sks[1], 1);
+        let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_final(0, &sks[0], 0);
+        let vote2 = Vote::new_final(0, &sks[1], 1);
+        let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+    }
+
+    #[test]
+    fn skip_failure_cases() {
+        let (sks, info) = create_signers(2);
+
+        // slot mismatch
+        let vote1 = Vote::new_skip(0, &sks[0], 0);
+        let vote2 = Vote::new_skip(1, &sks[1], 1);
+        let res = SkipCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::SlotMismatch));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_skip(0, &sks[0], 0);
+        let vote2 = Vote::new_final(0, &sks[1], 1);
+        let res = SkipCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_final(0, &sks[0], 0);
+        let vote2 = Vote::new_final(0, &sks[1], 1);
+        let res = SkipCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+    }
+
+    #[test]
+    fn fast_final_failure_cases() {
+        let (sks, info) = create_signers(2);
+
+        // slot mismatch
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar(1, Hash::default(), &sks[1], 1);
+        let res = FastFinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::SlotMismatch));
+
+        // block hash mismatch
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar(0, [42; 32], &sks[1], 1);
+        let res = FastFinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::BlockHashMismatch));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(0, Hash::default(), &sks[1], 1);
+        let res = FastFinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_notar_fallback(0, Hash::default(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(0, Hash::default(), &sks[1], 1);
+        let res = FastFinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+    }
+
+    #[test]
+    fn final_failure_cases() {
+        let (sks, info) = create_signers(2);
+
+        // slot mismatch
+        let vote1 = Vote::new_final(0, &sks[0], 0);
+        let vote2 = Vote::new_final(1, &sks[1], 1);
+        let res = FinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::SlotMismatch));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_final(0, &sks[0], 0);
+        let vote2 = Vote::new_skip(0, &sks[1], 1);
+        let res = FinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+
+        // wrong vote type for cert
+        let vote1 = Vote::new_skip(0, &sks[0], 0);
+        let vote2 = Vote::new_skip(0, &sks[1], 1);
+        let res = FinalCert::try_new(&[vote1, vote2], &info);
+        assert_eq!(res.err(), Some(CertError::WrongVoteType));
+    }
+}

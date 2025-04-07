@@ -1,0 +1,72 @@
+[package]
+name = "alpenglow"
+version = "0.1.0"
+edition = "2024"
+authors = ["Quentin Kniep <quentin@anza.xyz>"]
+description = "Reference research implementation of the Alpenglow consensus protocol."
+license = "Apache-2.0"
+repository = "https://github.com/qkniep/alpenglow"
+readme = "README.md"
+keywords = ["alpenglow", "solana", "consensus", "distributed-systems"]
+categories = ["algorithms", "network-programming", "data-structures"]
+publish = false
+
+[dependencies]
+aes = { version = "0.9.0-pre.2", features = ["hazmat", "zeroize"] }
+aws-config = "1"
+aws-runtime = "1"
+aws-sdk-ec2 = "1"
+bincode = { version = "2", features = ["serde"] }
+bitvec = { version = "1", features = ["serde"] }
+blst = { version = "0.3", features = ["serde", "serde-secret"] }
+cipher = "=0.5.0-pre.7"
+clap = { version = "4", features = ["derive"] }
+color-eyre = "0.6"
+console-subscriber = "0.4"
+csv = "1"
+ctr = "0.10.0-pre.2"
+dashmap = "6"
+fastrace = { version = "0.7", features = ["enable"] }
+futures = "0.3"
+geo = "0.30"
+hex = "0.4"
+moka = { version = "0.12", features = ["future"] }
+rand = "0.9"
+reed-solomon-erasure = { version = "6", features = ["simd-accel"] }
+reed-solomon-simd = "3"
+reqwest = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", features = ["asm-aarch64", "asm"] }
+smallvec = "1"
+solana-bn254 = "2"
+solana-curve25519 = "2"
+thiserror = "2"
+time = { version = "0.3", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+criterion = "0.5"
+divan = "0.1"
+
+[profile.release]
+debug = true
+
+[[bench]]
+name = "crypto"
+harness = false
+
+[[bench]]
+name = "disseminator"
+harness = false
+
+[[bench]]
+name = "network"
+harness = false
+
+[[bench]]
+name = "shredder"
+harness = false

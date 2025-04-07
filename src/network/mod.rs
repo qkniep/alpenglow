@@ -1,0 +1,159 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+pub mod simulated;
+mod tcp;
+mod udp;
+
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::consensus::{Cert, Vote};
+use crate::repair::RepairMessage;
+use crate::shredder::Shred;
+
+pub use simulated::SimulatedNetwork;
+pub use tcp::TcpNetwork;
+pub use udp::UdpNetwork;
+
+const MTU_BYTES: usize = 1500;
+
+/// Network message type.
+///
+/// Everything that the Alpenglow validator will send over the network is a `NetworkMessage`.
+// TODO: zero-copy deserialization
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum NetworkMessage {
+    Ping,
+    Pong,
+    // Ack(usize),
+    Shred(Shred),
+    Vote(Vote),
+    Cert(Cert),
+    Repair(RepairMessage),
+}
+
+impl NetworkMessage {
+    /// Tries to deserialize a `NetworkMessage` from bytes using [`bincode`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
+    /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
+        let (msg, _num_bytes) = bincode::serde::decode_from_slice(
+            bytes,
+            bincode::config::standard().with_limit::<MTU_BYTES>(),
+        )?;
+        Ok(msg)
+    }
+
+    /// Serializes this `NetworkMessage` into owned bytes using [`bincode`].
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+            .expect("serialization should not panic");
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+        bytes
+    }
+
+    /// Serializes this `NetworkMessage` into an existing buffer using [`bincode`].
+    #[must_use]
+    pub fn write_bytes(&self, buf: &mut [u8]) -> usize {
+        let written = bincode::serde::encode_into_slice(self, buf, bincode::config::standard())
+            .expect("serialization should not panic");
+        assert!(written <= MTU_BYTES, "each message should fit in MTU");
+        written
+    }
+}
+
+impl From<Shred> for NetworkMessage {
+    fn from(shred: Shred) -> Self {
+        Self::Shred(shred)
+    }
+}
+
+impl From<Vote> for NetworkMessage {
+    fn from(vote: Vote) -> Self {
+        Self::Vote(vote)
+    }
+}
+
+impl From<Cert> for NetworkMessage {
+    fn from(cert: Cert) -> Self {
+        Self::Cert(cert)
+    }
+}
+
+impl From<RepairMessage> for NetworkMessage {
+    fn from(repair: RepairMessage) -> Self {
+        Self::Repair(repair)
+    }
+}
+
+/// Error type for network operations.
+#[derive(Debug, Error)]
+pub enum NetworkError {
+    #[error("unexpected message type for this socket")]
+    UnexpectedMessageType,
+    #[error("malformed address")]
+    MalformedAddress,
+    #[error("serialization error")]
+    Serialization(#[from] bincode::error::EncodeError),
+    #[error("deserialization error")]
+    Deserialization(#[from] bincode::error::DecodeError),
+    #[error("bad socket state")]
+    BadSocket(#[from] std::io::Error),
+    #[error("unknown network error")]
+    Unknown,
+}
+
+/// Abstraction of a network interface for sending and receiving messages.
+pub trait Network: Send + Sync {
+    type Address: Send;
+
+    fn send(
+        &self,
+        message: &NetworkMessage,
+        to: impl AsRef<str> + Send,
+    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+
+    fn send_serialized(
+        &self,
+        bytes: &[u8],
+        to: impl AsRef<str> + Send,
+    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+
+    // TODO: implement brodcast at `Network` level?
+
+    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkError>> + Send;
+
+    fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
+    where
+        Self::Address: FromStr,
+    {
+        str.as_ref()
+            .parse()
+            .map_err(|_| NetworkError::MalformedAddress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn serialization() {
+        let msg = NetworkMessage::Ping;
+        let bytes = msg.to_bytes();
+        let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert!(matches!(deserialized, NetworkMessage::Ping));
+
+        let msg = NetworkMessage::Pong;
+        let bytes = msg.to_bytes();
+        let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
+        assert!(matches!(deserialized, NetworkMessage::Pong));
+    }
+}
