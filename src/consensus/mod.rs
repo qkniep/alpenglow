@@ -205,7 +205,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                         "producing block in slot {slot} with parent {hash} in slot {block}"
                     );
                     // TODO: send actual data
-                    for slice_index in 0..40 {
+                    for slice_index in 0..10 {
                         let start_time = Instant::now();
                         let mut data = vec![0; MAX_DATA_PER_SLICE];
                         rng.fill_bytes(&mut data);
@@ -216,7 +216,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                         let slice = Slice {
                             slot,
                             slice_index,
-                            is_last: slice_index == 39,
+                            is_last: slice_index == 9,
                             merkle_root: None,
                             data,
                         };
@@ -229,7 +229,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                                 guard.add_block(slot, hash, parent_slot, parent_hash).await;
                             }
                         }
-                        sleep(Duration::from_millis(10) - start_time.elapsed()).await;
+                        sleep(Duration::from_millis(40) - start_time.elapsed()).await;
                         // sleep(Duration::from_millis(10)).await;
                     }
 
