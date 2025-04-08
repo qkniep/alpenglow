@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::crypto::aggsig::SecretKey;
+use alpenglow::crypto::aggsig;
+use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
@@ -25,12 +26,12 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
 
     // enable `tracing` and `tokio-console`
-    let console_layer = console_subscriber::spawn();
+    // let console_layer = console_subscriber::spawn();
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env_lossy();
     tracing_subscriber::registry()
-        .with(console_layer)
+        // .with(console_layer)
         .with(filter)
         .with(
             tracing_subscriber::fmt::layer()
@@ -49,10 +50,12 @@ async fn main() -> Result<()> {
         let stake = v.active_stake.unwrap_or(0);
         if stake > 0 {
             let sk = SecretKey::new(&mut rand::rng());
+            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
                 id: validators.len() as ValidatorId,
                 stake,
                 pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),
@@ -75,11 +78,13 @@ async fn main() -> Result<()> {
         let ping_server = find_closest_ping_server(lat.parse().unwrap(), lon.parse().unwrap());
         stake_with_ping_server += stake;
         let sk = SecretKey::new(&mut rand::rng());
+        let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         validators_with_ping_data.push((
             ValidatorInfo {
                 id: validators_with_ping_data.len() as ValidatorId,
                 stake,
                 pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),
@@ -172,9 +177,11 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // prepare validator info for all nodes
     let mut rng = rand::rng();
     let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
     let mut validators = Vec::new();
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
+        voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let a2a_port = 3 * id;
         let dis_port = 3 * id + 1;
         // let rep_port = 3 * id + 2;
@@ -183,6 +190,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             id,
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
+            voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: format!("{a2a_port}"),
             disseminator_address: format!("{dis_port}"),
             repair_address: format!("127.0.0.1:{rep_port}"),
@@ -199,6 +207,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             Alpenglow::new(
                 v.id,
                 sks[v.id as usize].clone(),
+                voting_sks[v.id as usize].clone(),
                 validators.clone(),
                 all2all,
                 disseminator,

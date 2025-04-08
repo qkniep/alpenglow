@@ -262,7 +262,8 @@ impl SamplingStrategy for FaitAccompli2Sampler {
 mod tests {
     use super::*;
 
-    use crate::crypto::aggsig::SecretKey;
+    use crate::crypto::aggsig;
+    use crate::crypto::signature::SecretKey;
 
     use core::f64;
     use std::collections::HashSet;
@@ -271,10 +272,12 @@ mod tests {
         let mut validators = Vec::new();
         for i in 0..count {
             let sk = SecretKey::new(&mut rand::rng());
+            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),

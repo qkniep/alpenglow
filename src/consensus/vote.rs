@@ -3,8 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::aggsig::{PublicKey, SecretKey, Signable};
-use crate::crypto::{Hash, Signature};
+use crate::crypto::aggsig::{PublicKey, SecretKey};
+use crate::crypto::{Hash, IndividualSignature, Signable};
 use crate::{Slot, ValidatorId};
 
 /// A signed vote used in consensus.
@@ -16,7 +16,7 @@ use crate::{Slot, ValidatorId};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
     kind: VoteKind,
-    sig: Signature,
+    sig: IndividualSignature,
     signer: ValidatorId,
 }
 
@@ -147,7 +147,7 @@ impl Vote {
 
     /// Returns the signature of this vote.
     #[must_use]
-    pub const fn sig(&self) -> Signature {
+    pub const fn sig(&self) -> IndividualSignature {
         self.sig
     }
 

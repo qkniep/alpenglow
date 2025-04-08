@@ -30,8 +30,7 @@ use tokio::time::sleep;
 use tracing::{info, trace, warn};
 use votor::Votor;
 
-use crate::crypto::Hash;
-use crate::crypto::aggsig::SecretKey;
+use crate::crypto::{Hash, aggsig, signature};
 use crate::network::{NetworkError, NetworkMessage, UdpNetwork};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
@@ -53,8 +52,10 @@ const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
 pub struct Alpenglow<A: All2All, D: Disseminator> {
     /// Own validator info.
     info: ValidatorInfo,
-    /// Own validator's secret key.
-    secret_key: SecretKey,
+    /// Own validator's secret key (used e.g. for block production).
+    secret_key: signature::SecretKey,
+    /// Own validator's voting secret key.
+    voting_secret_key: aggsig::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -79,7 +80,8 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
     #[must_use]
     pub fn new(
         own_id: ValidatorId,
-        secret_key: SecretKey,
+        secret_key: signature::SecretKey,
+        voting_secret_key: aggsig::SecretKey,
         validators: Vec<ValidatorInfo>,
         all2all: A,
         disseminator: D,
@@ -91,7 +93,13 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         let all2all = Arc::new(all2all);
 
         // let cancel = cancel_token.clone();
-        let mut votor = Votor::new(own_id, secret_key.clone(), tx.clone(), rx, all2all.clone());
+        let mut votor = Votor::new(
+            own_id,
+            voting_secret_key.clone(),
+            tx.clone(),
+            rx,
+            all2all.clone(),
+        );
         let votor_handle = tokio::spawn(async move { votor.voting_loop().await.unwrap() });
 
         let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
@@ -100,6 +108,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         Self {
             info: epoch_info.validator(own_id).clone(),
             secret_key,
+            voting_secret_key,
             epoch_info,
             blockstore: RwLock::new(blockstore),
             pool: Arc::new(RwLock::new(pool)),
@@ -213,6 +222,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                         let start_time = Instant::now();
                         let mut data = vec![0; MAX_DATA_PER_SLICE];
                         rng.fill_bytes(&mut data);
+                        // pack parent information in first slice
                         if slice_index == 0 {
                             data[0..8].copy_from_slice(&block.to_be_bytes());
                             data[8..40].copy_from_slice(&block_hash);
@@ -224,6 +234,8 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                             merkle_root: None,
                             data,
                         };
+
+                        // shred and disseminate slice
                         let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
                         for s in shreds {
                             self.disseminator.send(&s).await?;
@@ -233,7 +245,9 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                                 guard.add_block(slot, hash, parent_slot, parent_hash).await;
                             }
                         }
-                        sleep(Duration::from_millis(40).saturating_sub(start_time.elapsed())).await;
+
+                        // artificially ensure block time close to 400 ms
+                        sleep(Duration::from_millis(38).saturating_sub(start_time.elapsed())).await;
                     }
 
                     // build off own block next

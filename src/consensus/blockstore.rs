@@ -1,7 +1,9 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Data structure holding blocks per slot.
+//! Data structure holding blocks for each slot.
+//!
+//!
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -228,7 +230,8 @@ mod tests {
     use super::*;
 
     use crate::ValidatorInfo;
-    use crate::crypto::aggsig::SecretKey;
+    use crate::crypto::aggsig;
+    use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, MAX_DATA_PER_SLICE, TOTAL_SHREDS};
 
     use color_eyre::Result;
@@ -237,10 +240,12 @@ mod tests {
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, Blockstore) {
         let sk = SecretKey::new(&mut rand::rng());
+        let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         let info = ValidatorInfo {
             id: 0,
             stake: 1,
             pubkey: sk.to_pk(),
+            voting_pubkey: voting_sk.to_pk(),
             all2all_address: "".to_owned(),
             disseminator_address: "".to_owned(),
             repair_address: "".to_owned(),

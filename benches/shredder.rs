@@ -4,7 +4,7 @@
 use divan::counter::BytesCount;
 use rand::prelude::*;
 
-use alpenglow::crypto::aggsig::SecretKey;
+use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
     AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shred, Shredder,
     Slice,

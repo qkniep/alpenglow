@@ -45,9 +45,11 @@ impl<N: Network> All2All for TrivialAll2All<N> {
 mod tests {
     use super::*;
 
-    use crate::{crypto::aggsig::SecretKey, network::simulated::SimulatedNetworkCore};
+    use crate::crypto::aggsig;
+    use crate::crypto::signature::SecretKey;
+    use crate::network::simulated::SimulatedNetworkCore;
 
-    use tokio::{task::JoinSet, time::timeout};
+    use tokio::task::JoinSet;
 
     use std::{sync::Arc, time::Duration};
 
@@ -67,10 +69,12 @@ mod tests {
                 net_others.push(core.join_unlimited(i).await);
             }
             let sk = SecretKey::new(&mut rand::rng());
+            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
                 all2all_address: format!("{}", i),
                 disseminator_address: "".to_owned(),
                 repair_address: "".to_owned(),

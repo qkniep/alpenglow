@@ -113,7 +113,8 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
 mod tests {
     use super::*;
 
-    use crate::crypto::aggsig::SecretKey;
+    use crate::crypto::aggsig;
+    use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
 
@@ -129,13 +130,16 @@ mod tests {
         base_port: u16,
     ) -> (Vec<SecretKey>, Vec<Rotor<UdpNetwork, StakeWeightedSampler>>) {
         let mut sks = Vec::new();
+        let mut voting_sks = Vec::new();
         let mut validators = Vec::new();
         for i in 0..count {
             sks.push(SecretKey::new(&mut rand::rng()));
+            voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
+                voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: format!("127.0.0.1:{}", base_port + i as u16),
                 repair_address: String::new(),

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::Slot;
-use crate::crypto::aggsig::{PublicKey, SecretKey};
-use crate::crypto::{Hash, MerkleTree, Signature, hash};
+use crate::crypto::signature::{PublicKey, SecretKey, Signature};
+use crate::crypto::{Hash, MerkleTree, hash};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;

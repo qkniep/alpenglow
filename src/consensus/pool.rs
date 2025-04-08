@@ -307,7 +307,7 @@ impl Pool {
         }
 
         // verify signature
-        let pk = &self.validators[vote.signer() as usize].pubkey;
+        let pk = &self.validators[vote.signer() as usize].voting_pubkey;
         if !vote.check_sig(pk) {
             return Err(PoolError::InvalidSignature);
         }
@@ -589,7 +589,8 @@ impl SlotState {
         let mut votor_events = SmallVec::new();
         self.voted_stakes.skip += stake;
         if self.is_quorum(self.voted_stakes.skip) && self.certificates.skip.is_none() {
-            let votes: Vec<_> = self.votes.skip.iter().filter_map(|x| x.clone()).collect();
+            let mut votes = self.votes.skip_votes();
+            votes.extend(self.votes.skip_fallback_votes());
             let cert = SkipCert::new_unchecked(&votes, &self.validators);
             new_certs.push(Cert::Skip(cert));
             votor_events.push(VotorEvent::SkipCertified(slot));
@@ -718,34 +719,48 @@ impl SlotVotes {
             .map(|(_, s)| s.clone())
             .collect()
     }
+
+    fn skip_votes(&self) -> Vec<Vote> {
+        self.skip.iter().filter_map(|o| o.clone()).collect()
+    }
+
+    fn skip_fallback_votes(&self) -> Vec<Vote> {
+        self.skip_fallback
+            .iter()
+            .filter_map(|o| o.clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::{consensus::SLOTS_PER_WINDOW, crypto::aggsig::SecretKey};
+    use crate::consensus::SLOTS_PER_WINDOW;
+    use crate::crypto::aggsig::SecretKey;
+    use crate::crypto::signature;
 
     use tokio::sync::mpsc;
 
     fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
         let mut rng = rand::rng();
         let mut sks = Vec::new();
+        let mut voting_sks = Vec::new();
         let mut validators = Vec::new();
         for i in 0..num_validators {
-            let sk = SecretKey::new(&mut rng);
-            sks.push(sk.clone());
-            let pk = sk.to_pk();
+            sks.push(signature::SecretKey::new(&mut rng));
+            voting_sks.push(SecretKey::new(&mut rng));
             validators.push(ValidatorInfo {
                 id: i,
                 stake: 1,
-                pubkey: pk,
+                pubkey: sks[i as usize].to_pk(),
+                voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),
             });
         }
-        (sks, validators)
+        (voting_sks, validators)
     }
 
     #[tokio::test]

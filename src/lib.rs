@@ -15,11 +15,12 @@ pub mod repair;
 pub mod shredder;
 pub mod validator;
 
+use blst::min_sig::Signature;
 use serde::{Deserialize, Serialize};
 
 pub use all2all::All2All;
 pub use consensus::Alpenglow;
-use crypto::{Hash, aggsig::PublicKey};
+use crypto::{Hash, aggsig, signature};
 pub use disseminator::Disseminator;
 pub use validator::Validator;
 
@@ -49,7 +50,8 @@ pub struct Transaction(Vec<u8>);
 pub struct ValidatorInfo {
     pub id: ValidatorId,
     pub stake: Stake,
-    pub pubkey: PublicKey,
+    pub pubkey: signature::PublicKey,
+    pub voting_pubkey: aggsig::PublicKey,
     pub all2all_address: String,
     pub disseminator_address: String,
     pub repair_address: String,

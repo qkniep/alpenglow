@@ -3,7 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alpenglow::crypto::aggsig::SecretKey;
+use alpenglow::crypto::aggsig;
+use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::rotor::sampling_strategy::FaitAccompli1Sampler;
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_server, get_ping};
@@ -39,10 +40,12 @@ fn main() -> Result<()> {
         let stake = v.active_stake.unwrap_or(0);
         if stake > 0 {
             let sk = SecretKey::new(&mut rand::rng());
+            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
                 id: validators.len() as ValidatorId,
                 stake,
                 pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),
@@ -65,11 +68,13 @@ fn main() -> Result<()> {
         let ping_server = find_closest_ping_server(lat.parse().unwrap(), lon.parse().unwrap());
         stake_with_ping_server += stake;
         let sk = SecretKey::new(&mut rand::rng());
+        let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         validators_with_ping_data.push((
             ValidatorInfo {
                 id: validators_with_ping_data.len() as ValidatorId,
                 stake,
                 pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),

@@ -1,8 +1,9 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::crypto::aggsig::{PublicKey, SecretKey};
-use alpenglow::crypto::{Hash, MerkleTree, Signature, hash};
+use alpenglow::crypto::{
+    Hash, IndividualSignature, MerkleTree, Signature, aggsig, hash, signature,
+};
 use alpenglow::shredder::{MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE};
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
@@ -74,33 +75,69 @@ fn merkle_verify<const N: usize>(bencher: divan::Bencher) {
 }
 
 #[divan::bench]
-fn sign(bencher: divan::Bencher) {
+fn sign_ed25519(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
             let mut rng = rand::rng();
             let mut bytes = [0; 128];
             rng.fill_bytes(&mut bytes);
-            let sk = SecretKey::new(&mut rng);
+            let sk = signature::SecretKey::new(&mut rng);
             (sk, bytes)
         })
-        .bench_values(|(sk, bytes): (SecretKey, [u8; 128])| {
+        .bench_values(|(sk, bytes): (signature::SecretKey, [u8; 128])| {
             let _ = sk.sign(&bytes);
         });
 }
 
 #[divan::bench]
-fn verify_sig(bencher: divan::Bencher) {
+fn verify_ed25519(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
             let mut rng = rand::rng();
             let mut bytes = [0; 128];
             rng.fill_bytes(&mut bytes);
-            let sk = SecretKey::new(&mut rng);
+            let sk = signature::SecretKey::new(&mut rng);
             (sk.sign(&bytes), bytes, sk.to_pk())
         })
-        .bench_values(|(sig, bytes, pk): (Signature, [u8; 128], PublicKey)| {
-            sig.verify(&bytes, &pk)
+        .bench_values(
+            |(sig, bytes, pk): (Signature, [u8; 128], signature::PublicKey)| {
+                sig.verify(&bytes, &pk)
+            },
+        );
+}
+
+#[divan::bench]
+fn sign_bls(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut bytes = [0; 128];
+            rng.fill_bytes(&mut bytes);
+            let sk = aggsig::SecretKey::new(&mut rng);
+            (sk, bytes)
+        })
+        .bench_values(|(sk, bytes): (aggsig::SecretKey, [u8; 128])| {
+            let _ = sk.sign(&bytes);
         });
+}
+
+#[divan::bench]
+fn verify_bls(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut bytes = [0; 128];
+            rng.fill_bytes(&mut bytes);
+            let sk = aggsig::SecretKey::new(&mut rng);
+            (sk.sign(&bytes), bytes, sk.to_pk())
+        })
+        .bench_values(
+            |(sig, bytes, pk): (IndividualSignature, [u8; 128], aggsig::PublicKey)| {
+                sig.verify(&bytes, &pk)
+            },
+        );
 }

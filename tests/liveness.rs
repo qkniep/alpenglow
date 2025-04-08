@@ -4,7 +4,8 @@
 use std::collections::VecDeque;
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::crypto::aggsig::SecretKey;
+use alpenglow::crypto::aggsig;
+use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::{Rotor, rotor::StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
 use alpenglow::repair::Repair;
@@ -72,9 +73,11 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // prepare validator info for all nodes
     let mut rng = rand::rng();
     let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
     let mut validators = Vec::new();
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
+        voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let a2a_port = networks[3 * id as usize].port();
         let dis_port = networks[3 * id as usize + 1].port();
         let rep_port = networks[3 * id as usize + 2].port();
@@ -82,6 +85,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             id,
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
+            voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: format!("127.0.0.1:{a2a_port}"),
             disseminator_address: format!("127.0.0.1:{dis_port}"),
             repair_address: format!("127.0.0.1:{rep_port}"),
@@ -98,6 +102,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             Alpenglow::new(
                 v.id,
                 sks[v.id as usize].clone(),
+                voting_sks[v.id as usize].clone(),
                 validators.clone(),
                 all2all,
                 disseminator,

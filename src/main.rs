@@ -11,6 +11,7 @@ use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
 use alpenglow::consensus::Alpenglow;
 use alpenglow::crypto::aggsig;
+use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::network::UdpNetwork;
 use alpenglow::repair::Repair;
@@ -36,7 +37,7 @@ async fn main() -> Result<()> {
         .init();
 
     // spawn local cluster
-    let nodes = create_test_nodes(11);
+    let nodes = create_test_nodes(6);
     let mut node_tasks = Vec::new();
     for node in nodes {
         node_tasks.push(tokio::spawn(node.run()));
@@ -53,13 +54,16 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let mut port = 3000;
     let mut rng = rng();
     let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
     let mut validators = Vec::new();
     for id in 0..count {
-        sks.push(aggsig::SecretKey::new(&mut rng));
+        sks.push(SecretKey::new(&mut rng));
+        voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
             id,
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
+            voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: format!("127.0.0.1:{}", port),
             disseminator_address: format!("127.0.0.1:{}", port + 1),
             repair_address: format!("127.0.0.1:{}", port + 2),
@@ -81,6 +85,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             Alpenglow::new(
                 v.id,
                 sks[v.id as usize].clone(),
+                voting_sks[v.id as usize].clone(),
                 validators.clone(),
                 all2all,
                 disseminator,

@@ -53,7 +53,7 @@ pub struct PublicKey(BlstPublicKey);
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Signature(BlstSignature);
+pub struct IndividualSignature(BlstSignature);
 
 /// An aggregated signature that contains a bitmask of signers.
 ///
@@ -62,18 +62,6 @@ pub struct Signature(BlstSignature);
 pub struct AggregateSignature {
     sig: BlstSignature,
     bitmask: BitVec,
-}
-
-/// A type that can be converted into a byte string to be signed.
-///
-/// It is important to note that this may well be different from serializing
-/// the type to bytes. For example, a type containing a signature can have a
-/// `bytes_to_sign` implementation that serializes all fields except the
-/// signature. Also, serialization may be implementation-specific (e.g. specific
-/// to the storage engine) while `bytes_to_sign` is part of the protocol.
-pub trait Signable {
-    /// Returns the exact byte string to be signed.
-    fn bytes_to_sign(&self) -> Vec<u8>;
 }
 
 impl SecretKey {
@@ -99,9 +87,9 @@ impl SecretKey {
     /// Signs the byte string `msg` using this secret key.
     // TODO: use `Signable` here, and add new `sign_bytes` function?
     #[must_use]
-    pub fn sign(&self, msg: &[u8]) -> Signature {
+    pub fn sign(&self, msg: &[u8]) -> IndividualSignature {
         let sig = self.0.sign(msg, DST, &[]);
-        Signature(sig)
+        IndividualSignature(sig)
     }
 }
 
@@ -111,7 +99,7 @@ impl AsRef<BlstPublicKey> for PublicKey {
     }
 }
 
-impl Signature {
+impl IndividualSignature {
     /// Verifies that this is a valid signature of `msg` under `pk`.
     #[must_use]
     pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
@@ -125,7 +113,7 @@ impl AggregateSignature {
     /// Augments the aggregate signature with a bitmask of length `num_bits`,
     /// where the bits in `indices` are set to 1.
     #[must_use]
-    pub fn new(sigs: &[Signature], indices: &[ValidatorId], num_bits: usize) -> Self {
+    pub fn new(sigs: &[IndividualSignature], indices: &[ValidatorId], num_bits: usize) -> Self {
         let mut agg_sig = BlstAggSig::from_signature(&sigs[0].0);
         for sig in &sigs[1..] {
             agg_sig.add_signature(&sig.0, true).unwrap();

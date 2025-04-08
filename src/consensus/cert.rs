@@ -4,8 +4,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::crypto::aggsig::Signable;
-use crate::crypto::{AggregateSignature, Hash};
+use crate::crypto::{AggregateSignature, Hash, Signable};
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
 use super::Vote;
@@ -210,7 +209,7 @@ impl NotarCert {
     /// Checks that the aggregated signature is valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
-        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
         let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
@@ -296,7 +295,7 @@ impl NotarFallbackCert {
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
-        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
 
         let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
         let sig1_valid = self
@@ -396,7 +395,7 @@ impl SkipCert {
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
-        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
 
         let vote_bytes = VoteKind::Skip(self.slot).bytes_to_sign();
         let sig1_valid = self
@@ -477,7 +476,7 @@ impl FastFinalCert {
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
-        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
         let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
@@ -540,7 +539,7 @@ impl FinalCert {
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
-        let pks: Vec<_> = validators.iter().map(|v| v.pubkey).collect();
+        let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
         let vote_bytes = VoteKind::Final(self.slot).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
@@ -551,24 +550,28 @@ mod tests {
     use super::*;
 
     use crate::crypto::aggsig::SecretKey;
+    use crate::crypto::signature;
 
     fn create_signers(signers: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
         let mut sks = Vec::new();
+        let mut voting_sks = Vec::new();
         let mut info = Vec::new();
 
         for i in 0..signers {
-            sks.push(SecretKey::new(&mut rand::rng()));
+            sks.push(signature::SecretKey::new(&mut rand::rng()));
+            voting_sks.push(SecretKey::new(&mut rand::rng()));
             info.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sks.last().unwrap().to_pk(),
+                voting_pubkey: voting_sks.last().unwrap().to_pk(),
                 all2all_address: String::new(),
                 disseminator_address: String::new(),
                 repair_address: String::new(),
             });
         }
 
-        (sks, info)
+        (voting_sks, info)
     }
 
     fn create_votes(kind: VoteKind, sks: &[SecretKey]) -> Vec<Vote> {

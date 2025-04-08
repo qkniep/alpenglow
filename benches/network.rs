@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use alpenglow::consensus::Vote;
-use alpenglow::crypto::{Hash, aggsig::SecretKey};
+use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::NetworkMessage;
 use alpenglow::shredder::{
     MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice,
@@ -24,7 +24,7 @@ fn serialize_vote(bencher: divan::Bencher) {
             let mut rng = rand::rng();
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
-            let sk = SecretKey::new(&mut rng);
+            let sk = aggsig::SecretKey::new(&mut rng);
             NetworkMessage::Vote(Vote::new_notar(0, hash, &sk, 0))
         })
         .bench_values(|msg: NetworkMessage| msg.to_bytes());
@@ -38,7 +38,7 @@ fn deserialize_vote(bencher: divan::Bencher) {
             let mut rng = rand::rng();
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
-            let sk = SecretKey::new(&mut rng);
+            let sk = aggsig::SecretKey::new(&mut rng);
             let msg = NetworkMessage::Vote(Vote::new_notar(0, hash, &sk, 0));
             msg.to_bytes()
         })
@@ -61,7 +61,7 @@ fn serialize_slice(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let sk = SecretKey::new(&mut rng);
+            let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(&slice, &sk).unwrap();
             shreds.into_iter().map(NetworkMessage::Shred).collect()
         })
@@ -88,7 +88,7 @@ fn serialize_slice_into(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let sk = SecretKey::new(&mut rng);
+            let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(&slice, &sk).unwrap();
             let buf = vec![0; MAX_DATA_PER_SLICE];
             let msgs = shreds.into_iter().map(NetworkMessage::Shred).collect();
@@ -119,7 +119,7 @@ fn deserialize_slice(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let sk = SecretKey::new(&mut rng);
+            let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(&slice, &sk).unwrap();
             let msgs: Vec<_> = shreds.into_iter().map(NetworkMessage::Shred).collect();
             let mut serialized = Vec::new();

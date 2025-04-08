@@ -91,10 +91,8 @@ impl Network for SimulatedNetwork {
 mod tests {
     use super::*;
 
-    use crate::{
-        crypto::aggsig::SecretKey,
-        shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS},
-    };
+    use crate::crypto::signature::SecretKey;
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
 
     use rand::RngCore;
 
