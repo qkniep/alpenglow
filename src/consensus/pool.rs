@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Data structure handling votes and certificates.
+//!
+//!
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -49,9 +53,10 @@ pub enum SlashableOffence {
 pub struct Pool {
     /// State for each slot. Contains all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
-    ///
+    /// Map from block (slot, hash) to parent block (slot, hash).
     parents: BTreeMap<(Slot, Hash), (Slot, Hash)>,
-    ///
+    /// Map from parent block (slot, hash) to block (slot, hash) waiting on
+    /// branch certified status of its parent.
     pending_branch_certified: BTreeMap<(Slot, Hash), (Slot, Hash)>,
     /// Highest slot that is at least notarized fallabck.
     highest_notarized_fallback_slot: Slot,
@@ -172,7 +177,12 @@ impl Pool {
         Ok(())
     }
 
+    /// Adds a new certificate to the pool. Certificate is assumed to be valid.
     ///
+    /// Caller needs to ensure that the certificate passes all validity checks:
+    /// - slot is not too old or too far in the future
+    /// - signature is valid
+    /// - certificate is not a duplicate
     async fn add_valid_cert(&mut self, cert: Cert) {
         let slot = cert.slot();
         let slot_state = self
@@ -331,7 +341,10 @@ impl Pool {
         Ok(())
     }
 
+    /// Registers a new block with its respective parent in the pool.
     ///
+    /// This should be called once for every valid block (e.g. directly by blockstore).
+    /// Ensures that the parent information is available for branch-certified checks.
     pub async fn add_block(
         &mut self,
         slot: Slot,
@@ -477,15 +490,15 @@ impl SlotState {
     }
 
     const fn is_weak_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.total_stake * 2 + 4) / 5
+        stake >= (self.total_stake * 2).div_ceil(5)
     }
 
     const fn is_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.total_stake * 3 + 4) / 5
+        stake >= (self.total_stake * 3).div_ceil(5)
     }
 
     const fn is_strong_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.total_stake * 4 + 4) / 5
+        stake >= (self.total_stake * 4).div_ceil(5)
     }
 
     /// Adds a given amount of `stake` to notarization counter for `block_hash`.

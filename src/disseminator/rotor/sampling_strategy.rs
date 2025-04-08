@@ -169,7 +169,16 @@ impl SamplingStrategy for TurbineSampler {
     }
 }
 
+/// A sampler that uses the FA1-F committee sampling strategy.
 ///
+/// This is a strict improvement over performing IID stake-weighted sampling.
+/// It achieves lower variance by deterministically sampling high-stake validators.
+///
+/// FA1-F is parameterized by a fallback sampler F and runs in two phases:
+/// 1. Any validator with more than 1/k fractional stake, is deterministically
+///    selected floor(fractional stake * k) times.
+/// 2. For the remaining k' samples, sample each validator from F, instantiated
+///    with modified stake weights: S'(v) = S(v) - floor(S(v) * k) / k
 ///
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
@@ -179,6 +188,27 @@ pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
 
 impl<F: SamplingStrategy> FaitAccompli1Sampler<F> {
     pub const fn new(validators: Vec<ValidatorInfo>, fallback_sampler: F) -> Self {
+        Self {
+            validators,
+            fallback_sampler,
+        }
+    }
+}
+
+impl FaitAccompli1Sampler<StakeWeightedSampler> {
+    /// Creates a new FA1-F sampler with an IID stake-weighted fallback sampler.
+    // FIXME: hard-coded k=64
+    // TODO: how to handle initializing fallback sampler?
+    //       support running sample_multiple(...) on different k?
+    pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>) -> Self {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let mut validators_truncated_stake = validators.clone();
+        for v in &mut validators_truncated_stake {
+            let frac_stake = v.stake as f64 / total_stake as f64;
+            let samples = (frac_stake * 64 as f64).floor() as u64;
+            v.stake -= samples * total_stake / 64;
+        }
+        let fallback_sampler = StakeWeightedSampler::new(validators_truncated_stake);
         Self {
             validators,
             fallback_sampler,
@@ -209,7 +239,7 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
     }
 }
 
-///
+/// A sampler that uses the FA2 committee sampling strategy.
 ///
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli2Sampler {
@@ -378,13 +408,44 @@ mod tests {
 
     #[test]
     fn fa1_sampler() {
-        // TODO: add test
+        // with k equal-weight nodes this deterministically selects all nodes
+        // FIXME: panics when trying to create fallback sampler with all 0 stakes
         //
-        // with k equal weight nodes this deterministically selects all nodes
-        //
+        // let validators = create_validator_info(64);
+        // let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators);
+        // let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        // assert_eq!(sampled.len(), 64);
+        // let sampled: HashSet<_> = sampled.into_iter().map(|v| v.id).collect();
+        // assert_eq!(sampled.len(), 64);
+        // for id in 0..64 {
+        //     assert!(sampled.contains(&id));
+        // }
+
         // with many low-stake nodes this becomes the underlying fallback distribution
-        //
-        // with a mix, high stake nodes appear at least `floor(stake * n)` times
+        let validators = create_validator_info(1000);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators);
+        let sampled_val = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled_val.len(), 64);
+        let sampled_ids: HashSet<_> = sampled_val.iter().map(|v| v.id).collect();
+        let max_appearances = sampled_ids
+            .iter()
+            .map(|i| sampled_val.iter().filter(|v| v.id == *i).count())
+            .max()
+            .unwrap();
+        assert!(max_appearances >= 1);
+        assert!(max_appearances < 3);
+
+        // with a mix, high stake nodes appear at least `floor(stake * k)` times
+        let mut validators = create_validator_info(1000);
+        validators[0].stake = 52;
+        validators[1].stake = 52;
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators);
+        let sampled_val = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled_val.len(), 64);
+        let sampled0 = sampled_val.iter().filter(|v| v.id == 0).count();
+        let sampled1 = sampled_val.iter().filter(|v| v.id == 1).count();
+        assert!(sampled0 >= 3);
+        assert!(sampled1 >= 3);
     }
 
     #[test]

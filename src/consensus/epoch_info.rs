@@ -5,31 +5,36 @@ use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
 use super::SLOTS_PER_WINDOW;
 
-///
+/// Epoch-specfic validator information.
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
     pub(crate) validators: Vec<ValidatorInfo>,
 }
 
 impl EpochInfo {
-    ///
+    /// Creates a new `EpochInfo` instance with the given validators.
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
         Self { validators }
     }
 
+    /// Gives the validator info for the given validator ID.
     ///
+    /// # Panics
+    ///
+    /// Panics if the validator ID is out of range.
     pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
         &self.validators[id as usize]
     }
 
-    ///
+    /// Gives the validator info for the leader for the given slot.
+    // TODO: actual stake-based pseudorandom leader schedule
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
         self.validator(leader_id)
     }
 
-    ///
+    /// Gives the total stake over all validators.
     pub fn total_stake(&self) -> Stake {
         self.validators.iter().map(|v| v.stake).sum()
     }

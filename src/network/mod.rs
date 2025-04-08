@@ -1,6 +1,29 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! An abstraction layer for networking.
+//!
+//! The [`Network`] trait provides a common interface for networking operations.
+//! Messages are abstracted as [`NetworkMessage`], instead of e.g. raw bytes.
+//!
+//! Specific implementations for different underlying network stacks are provided:
+//! - [`UdpNetwork`] abstracts a simple UDP socket
+//! - [`TcpNetwork`] handles TCP connections under the hood
+//! - [`SimulatedNetwork`] provides a simulated network for local testing
+//!
+//! # Examples
+//!
+//! ```
+//! use alpenglow::network::{Network, NetworkMessage};
+//!
+//! async fn send_ping_receive_pong(network: impl Network) {
+//!     let msg = NetworkMessage::Ping;
+//!     network.send(&msg, "127.0.0.1:1337").await.unwrap();
+//!     let received = network.receive().await.unwrap();
+//!     assert!(matches!(received, NetworkMessage::Pong));
+//! }
+//! ```
+
 pub mod simulated;
 mod tcp;
 mod udp;

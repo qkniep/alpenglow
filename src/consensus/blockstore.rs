@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Data structure holding blocks per slot.
+
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -30,7 +32,7 @@ pub struct Blockstore {
 
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
-    ///
+    /// Information about all active validators.
     epoch_info: Arc<EpochInfo>,
     /// Cache of previously verified Merkle roots.
     merkle_root_cache: HashMap<(Slot, usize), Hash>,

@@ -1,6 +1,9 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
-//
+
+//! Shredding and deshredding of blocks.
+//!
+//!
 // TODO: split this file up
 
 use aes::Aes128;
@@ -47,10 +50,15 @@ pub enum ShredderError {
 /// During deshredding, multiple shreds are turned into a slice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slice {
+    /// Slot number this slice is part of.
     pub slot: Slot,
+    /// Index of the slice within its slot.
     pub slice_index: usize,
+    /// Indicates whether this is the last slice in the slot.
     pub is_last: bool,
+    /// Merkle root hash over all shreds in this slice.
     pub merkle_root: Option<Hash>,
+    /// Payload bytes.
     pub data: Vec<u8>,
 }
 
@@ -225,18 +233,26 @@ pub struct ShredPayload {
     pub(crate) data: Vec<u8>,
 }
 
+/// A trait for shredding and deshredding.
+///
+/// Abstracts the process of turning a raw payload of bytes for an entire slice
+/// into shreds and turning shreds back into the raw payload of a slice.
 pub trait Shredder {
+    /// Maximum number of payload bytes that fit into a slice.
+    ///
+    /// For the regular shredder, this is [`MAX_DATA_PER_SLICE`].
+    /// However, this can be less if the specfic shredder adds some overhead.
     const MAX_DATA_SIZE: usize;
 
-    /// Splits the given slice into `TOTAL_SHREDS` shreds, which depending on
+    /// Splits the given slice into [`TOTAL_SHREDS`] shreds, which depending on
     /// the specific implementation can be any combination of data and coding.
     ///
     /// # Errors
     ///
     /// - Implementations may return an error if the input is invalid or if the
     ///   shredding process fails for any implementation-specific reason.
-    /// - Should always return `ShredderError::TooMuchData` if the `slice` is
-    ///   too big, i.e., more than `MAX_DATA_PER_SLICE` bytes.
+    /// - Should always return [`ShredderError::TooMuchData`] if the `slice` is
+    ///   too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
     fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredderError>;
 
     /// Puts the given shreds back together into a complete slice.
@@ -245,21 +261,21 @@ pub trait Shredder {
     ///
     /// - Implementations may return an error if the input is invalid or if the
     ///   deshredding process fails for any implementation-specific reason.
-    /// - Should always return `ShredderError::TooMuchData` if the reconstructed
-    ///   slice is too big, i.e., more than `MAX_DATA_PER_SLICE` bytes.
+    /// - Should always return [`ShredderError::TooMuchData`] if the reconstructed
+    ///   slice is too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
     fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError>;
 }
 
-/// A shredder that augments the `DATA_SHREDS` data shreds with
+/// A shredder that augments the [`DATA_SHREDS`] data shreds with
 /// `TOTAL_SHREDS - DATA_SHREDS` coding shreds and outputs both.
 pub struct RegularShredder;
 
-/// A shredder that only produces `TOTAL_SHREDS` coding shreds.
+/// A shredder that only produces [`TOTAL_SHREDS`] coding shreds.
 pub struct CodingOnlyShredder;
 
 /// A shredder that uses the RAONT-RS all-or-nothing construction.
 ///
-/// It outputs `DATA_SHREDS` encrypted data shreds and
+/// It outputs [`DATA_SHREDS`] encrypted data shreds and
 /// `TOTAL_SHREDS - DATA_SHREDS` coding shreds.
 ///
 /// See also: <https://eprint.iacr.org/2016/1014>

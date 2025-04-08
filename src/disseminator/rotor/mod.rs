@@ -233,14 +233,18 @@ mod tests {
         };
         let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
 
-        let data_shreds_received = Arc::new(Mutex::new(HashSet::new()));
-        let code_shreds_received = Arc::new(Mutex::new(HashSet::new()));
+        let mut data_shreds_received = Vec::with_capacity(rotors.len());
+        (0..rotors.len())
+            .for_each(|_| data_shreds_received.push(Arc::new(Mutex::new(HashSet::new()))));
+        let mut code_shreds_received = Vec::with_capacity(rotors.len());
+        (0..rotors.len())
+            .for_each(|_| code_shreds_received.push(Arc::new(Mutex::new(HashSet::new()))));
         let mut rotor_tasks = Vec::new();
 
         // forward & receive shreds on "non-leader" Rotor instance
-        for _ in 0..rotors.len() - 1 {
-            let dsr = data_shreds_received.clone();
-            let csr = code_shreds_received.clone();
+        for i in 0..rotors.len() - 1 {
+            let dsr = data_shreds_received[i].clone();
+            let csr = code_shreds_received[i].clone();
             let rotor_non_leader = rotors.pop().unwrap();
             rotor_tasks.push(task::spawn(async move {
                 loop {
@@ -281,11 +285,14 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // non-leader should have received all shreds via Rotor
-        assert_eq!(
-            data_shreds_received.lock().await.len() + code_shreds_received.lock().await.len(),
-            TOTAL_SHREDS
-        );
+        // non-leader instances should have received all shreds via Rotor
+        for i in 0..9 {
+            assert_eq!(
+                data_shreds_received[i].lock().await.len()
+                    + code_shreds_received[i].lock().await.len(),
+                TOTAL_SHREDS
+            );
+        }
         rotor_task_leader.abort();
         for task in rotor_tasks {
             task.abort();

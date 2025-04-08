@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Fast block dissemination protocols.
+//!
+//!
+
 pub mod rotor;
 pub mod trivial;
 pub mod turbine;

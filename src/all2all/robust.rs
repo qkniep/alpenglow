@@ -9,7 +9,8 @@ use crate::network::{Network, NetworkError, NetworkMessage};
 use super::All2All;
 
 /// A more robust implementation of an all-to-all broadcast protocol.
-/// Broadcasts each message over the underlying `Network`.
+///
+/// Broadcasts each message over the underlying [`Network`].
 // TODO: acutally make more robust (retransmits, ...)
 pub struct RobustAll2All<N: Network> {
     validators: Vec<ValidatorInfo>,

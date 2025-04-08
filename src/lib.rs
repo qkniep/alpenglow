@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Alpenglow: Global High-Performance Proof-of-Stake Blockchain with Erasure Coding
+//!
+//! Implementation of the Alpenglow consensus protocol.
+
 pub mod all2all;
 pub mod consensus;
 pub mod crypto;
@@ -21,9 +25,9 @@ pub use validator::Validator;
 
 /// Slot number type.
 pub type Slot = u64;
-///
+/// Validator ID number type.
 pub type ValidatorId = u64;
-///
+/// Validator stake type.
 pub type Stake = u64;
 
 ///

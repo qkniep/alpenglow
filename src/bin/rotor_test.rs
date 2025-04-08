@@ -117,8 +117,8 @@ fn main() -> Result<()> {
     let validators_with_ping_data: Vec<_> =
         validators_with_ping_data.into_iter().map(|v| v.0).collect();
     let leader_sampler = StakeWeightedSampler::new(validators_with_ping_data.clone());
-    let fallback = StakeWeightedSampler::new(validators_with_ping_data.clone());
-    let rotor_sampler = FaitAccompli1Sampler::new(validators_with_ping_data.clone(), fallback);
+    let rotor_sampler =
+        FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators_with_ping_data.clone());
     latency_test(
         validators_with_ping_data,
         validator_to_ping_server,
@@ -129,8 +129,7 @@ fn main() -> Result<()> {
     let sampler = StakeWeightedSampler::new(validators.clone());
     rotor_sampling_test(validators.clone(), sampler, 64);
 
-    let fallback = StakeWeightedSampler::new(validators.clone());
-    let sampler = FaitAccompli1Sampler::new(validators.clone(), fallback);
+    let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone());
     rotor_sampling_test(validators.clone(), sampler, 64);
 
     Ok(())

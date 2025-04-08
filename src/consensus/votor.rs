@@ -1,12 +1,15 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Main voting logic for the consensus protocol.
+//!
+//! Besides [`super::Pool`], [`Votor`] is the other main internal component Alpenglow.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use color_eyre::Result;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
 use crate::crypto::Hash;

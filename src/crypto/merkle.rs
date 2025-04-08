@@ -1,6 +1,17 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implementation of a Merkle tree.
+//!
+//! It supports non-power-of-two leaf count by adding empty leaves.
+//! That is, a tree with 3 leaves is equivalent to a tree with 4 leaves,
+//! where the 4th leaf has the empty byte slice `&[]` as its data.
+//!
+//! Labels are used to reduce the impact of multiple attack vectors:
+//! - multi-target attacks against this and other implementations
+//! - rainbow tables / pre-calculation attacks
+//! - ambiguity between leaf and inner nodes with unknown tree height
+
 use super::{Hash, hash};
 
 const LEAF_LABEL: [u8; 22] = *b"\x00ALPENGLOW-MERKLE-TREE";
@@ -8,13 +19,13 @@ const LEFT_LABEL: [u8; 22] = *b"\x01ALPENGLOW-MERKLE-TREE";
 const RIGHT_LABEL: [u8; 22] = *b"\x02ALPENGLOW-MERKLE-TREE";
 
 /// Implementation of a Merkle tree.
-/// This implementation non-power-of-two leaf count by adding empty leaves.
 pub struct MerkleTree {
     nodes: Vec<Hash>,
     height: usize,
 }
 
 impl MerkleTree {
+    /// Creates a new Merkle tree from the given data for each leaf.
     pub fn new(data: &[impl AsRef<[u8]>]) -> Self {
         let mut nodes = Vec::new();
         let mut height = 0;
@@ -166,5 +177,19 @@ mod tests {
 
         // verify proper handling of non-power-of-two leaves by checking node count
         assert_eq!(tree.nodes.len(), 4 + 2 + 1);
+    }
+
+    #[test]
+    fn non_power_of_two() {
+        let data1 = vec![b"hello"; 33];
+        let tree1 = MerkleTree::new(&data1);
+
+        let mut data2 = vec![&b"hello"[..]; 33];
+        let empty_slice: &[u8] = &[];
+        data2.extend_from_slice(vec![empty_slice; 31].as_slice());
+        let tree2 = MerkleTree::new(&data2);
+
+        // missing leaves should be equivalent to empty leaves
+        assert_eq!(tree1.get_root(), tree2.get_root());
     }
 }

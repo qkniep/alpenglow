@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Cryptographic primitives.
+//!
+//! This module contains any cryptographic primitives used by the library.
+
 pub mod aggsig;
 pub mod hash;
 pub mod merkle;

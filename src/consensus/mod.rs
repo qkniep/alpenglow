@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Core consensus logic and data structures.
+//!
+//!
+
 mod blockstore;
 mod cert;
 mod epoch_info;

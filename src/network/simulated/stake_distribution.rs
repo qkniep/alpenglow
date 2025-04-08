@@ -1,11 +1,27 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+//! Utilities for working with the stake distribution of Solana mainnet.
+//!
+//! Validator data is taken from [Validators.app](https://validators.app/).
+//! The data is stored in the `data/mainnet_validators_validatorsdotapp.json` file.
+//! It contains all validators (i.e. nodes with non-zero stake) on Solana mainnet.
+//!
+//! # Examples
+//!
+//! ```
+//! use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
+//!
+//! let mut stakes = Vec::new();
+//! for validator in VALIDATOR_DATA.iter() {
+//!     if validator.is_active && validator.delinquent == Some(false) {
+//!         stakes.push(validator.active_stake.unwrap());
+//!     }
+//! }
+//! ```
+
 use std::fs::File;
 use std::sync::LazyLock;
-
-use geo::{Distance, Haversine, Point};
 
 use crate::Stake;
 

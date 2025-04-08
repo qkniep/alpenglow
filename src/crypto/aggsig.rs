@@ -1,6 +1,30 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implementation of an aggregate signature scheme.
+//!
+//! This uses the [`blst`] implementation of BLS signatures.
+//! Specifically, it uses the BLS12-381 G2 (min sig) signature scheme.
+//!
+//! # Examples
+//!
+//! ```
+//! use alpenglow::crypto::aggsig::{AggregateSignature, SecretKey};
+//!
+//! let msg = b"hello world";
+//!
+//! let sk1 = SecretKey::new(&mut rand::rng());
+//! let pk1 = sk1.to_pk();
+//! let sig1 = sk1.sign(msg);
+//!
+//! let sk2 = SecretKey::new(&mut rand::rng());
+//! let pk2 = sk2.to_pk();
+//! let sig2 = sk2.sign(msg);
+//!
+//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], &[0, 1], 2);
+//! assert!(aggsig.verify(msg, &[pk1, pk2]));
+//! ```
+
 use bitvec::vec::BitVec;
 use blst::min_sig::AggregateSignature as BlstAggSig;
 use blst::min_sig::PublicKey as BlstPublicKey;
@@ -14,29 +38,48 @@ use crate::ValidatorId;
 const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 
 /// A secret key for the aggregate signature scheme.
+///
+/// This is a wrapper around [`blst::min_sig::SecretKey`].
 #[derive(Clone, Debug)]
 pub struct SecretKey(BlstSecretKey);
 
 /// A public key for the aggregate signature scheme.
+///
+/// This is a wrapper around [`blst::min_sig::PublicKey`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PublicKey(BlstPublicKey);
 
 /// An individual signature as part of the aggregate signature scheme.
+///
+/// This is a wrapper around [`blst::min_sig::Signature`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Signature(BlstSignature);
 
 /// An aggregated signature that contains a bitmask of signers.
+///
+/// This is a wrapper around [`blst::min_sig::Signature`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AggregateSignature {
     sig: BlstSignature,
     bitmask: BitVec,
 }
 
+/// A type that can be converted into a byte string to be signed.
+///
+/// It is important to note that this may well be different from serializing
+/// the type to bytes. For example, a type containing a signature can have a
+/// `bytes_to_sign` implementation that serializes all fields except the
+/// signature. Also, serialization may be implementation-specific (e.g. specific
+/// to the storage engine) while `bytes_to_sign` is part of the protocol.
 pub trait Signable {
+    /// Returns the exact byte string to be signed.
     fn bytes_to_sign(&self) -> Vec<u8>;
 }
 
 impl SecretKey {
+    /// Generates a new secret key.
+    ///
+    /// The required entropy is derived from the provided `rng`.
     pub fn new(rng: &mut impl CryptoRng) -> Self {
         let mut ikm = [0u8; 32];
         rng.fill_bytes(&mut ikm);
@@ -46,12 +89,15 @@ impl SecretKey {
         Self(sk)
     }
 
+    /// Converts this secret key into the corresponding public key.
     #[must_use]
     pub fn to_pk(&self) -> PublicKey {
         let pk = self.0.sk_to_pk();
         PublicKey(pk)
     }
 
+    /// Signs the byte string `msg` using this secret key.
+    // TODO: use `Signable` here, and add new `sign_bytes` function?
     #[must_use]
     pub fn sign(&self, msg: &[u8]) -> Signature {
         let sig = self.0.sign(msg, DST, &[]);

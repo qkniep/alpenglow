@@ -11,7 +11,7 @@ use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
 use alpenglow::consensus::Alpenglow;
 use alpenglow::crypto::aggsig;
-use alpenglow::disseminator::{Rotor, TrivialDisseminator};
+use alpenglow::disseminator::Rotor;
 use alpenglow::network::UdpNetwork;
 use alpenglow::repair::Repair;
 
@@ -47,7 +47,6 @@ async fn main() -> Result<()> {
 }
 
 type TestNode = Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>>;
-// type TestNode = Alpenglow<TrivialAll2All<UdpNetwork>, TrivialDisseminator<UdpNetwork>>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // prepare validator info for all nodes
@@ -77,7 +76,6 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), network);
             let network = UdpNetwork::new(start_port as u16 + 1);
             let disseminator = Rotor::new(v.id, validators.clone(), network);
-            // let disseminator = TrivialDisseminator::new(validators.clone(), network);
             let network = UdpNetwork::new(start_port as u16 + 2);
             let repair = Repair::new(v.id, validators.clone(), network);
             Alpenglow::new(
