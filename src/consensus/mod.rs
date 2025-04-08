@@ -233,8 +233,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                                 guard.add_block(slot, hash, parent_slot, parent_hash).await;
                             }
                         }
-                        sleep(Duration::from_millis(40) - start_time.elapsed()).await;
-                        // sleep(Duration::from_millis(10)).await;
+                        sleep(Duration::from_millis(40).saturating_sub(start_time.elapsed())).await;
                     }
 
                     // build off own block next
