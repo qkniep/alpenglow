@@ -61,7 +61,8 @@ fn serialize_slice(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let shreds = RegularShredder::shred(&slice).unwrap();
+            let sk = SecretKey::new(&mut rng);
+            let shreds = RegularShredder::shred(&slice, &sk).unwrap();
             shreds.into_iter().map(NetworkMessage::Shred).collect()
         })
         .bench_values(|msgs: Vec<NetworkMessage>| {
@@ -87,7 +88,8 @@ fn serialize_slice_into(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let shreds = RegularShredder::shred(&slice).unwrap();
+            let sk = SecretKey::new(&mut rng);
+            let shreds = RegularShredder::shred(&slice, &sk).unwrap();
             let buf = vec![0; MAX_DATA_PER_SLICE];
             let msgs = shreds.into_iter().map(NetworkMessage::Shred).collect();
             (buf, msgs)
@@ -117,7 +119,8 @@ fn deserialize_slice(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let shreds = RegularShredder::shred(&slice).unwrap();
+            let sk = SecretKey::new(&mut rng);
+            let shreds = RegularShredder::shred(&slice, &sk).unwrap();
             let msgs: Vec<_> = shreds.into_iter().map(NetworkMessage::Shred).collect();
             let mut serialized = Vec::new();
             for msg in msgs {

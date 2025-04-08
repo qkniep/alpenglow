@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
@@ -33,7 +34,8 @@ fn turbine_tree(bencher: divan::Bencher) {
                 merkle_root: None,
                 data: slice_data,
             };
-            let mut shreds = RegularShredder::shred(&slice).unwrap();
+            let sk = SecretKey::new(&mut rng);
+            let mut shreds = RegularShredder::shred(&slice, &sk).unwrap();
             let shred = shreds.pop().unwrap();
 
             (shred, turbine1, turbine2)
