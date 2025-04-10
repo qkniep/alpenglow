@@ -56,6 +56,8 @@ async fn too_many_crashes() {
     liveness_test_internal(11, 5, false).await;
 }
 
+// TODO: implement transient failure test
+//
 // #[tokio::test]
 // async fn transient_failure() {
 //     liveness_test(11, 1).await;
@@ -119,7 +121,6 @@ async fn liveness_test(num_nodes: usize, num_crashes: usize) {
 async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_succeed: bool) {
     // start `num_nodes` nodes
     let nodes = create_test_nodes(num_nodes as u64);
-    // let mut node_tasks = Vec::new();
     let mut node_cancel_tokens = Vec::new();
     let mut pools = Vec::new();
     for node in nodes {
@@ -140,13 +141,8 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
                 }
                 let new_finalized = pool.read().await.finalized_slot();
                 if new_finalized <= finalized[i] {
-                    println!("no progress on node {} after {} s", i, 5 * t);
+                    panic!("no progress on node {} after {} s", i, 5 * t);
                 }
-                println!(
-                    "newly finalized on node {}: {} (prev {})",
-                    i, new_finalized, finalized[i]
-                );
-                assert!(new_finalized > finalized[i]);
                 finalized[i] = new_finalized;
             }
         }

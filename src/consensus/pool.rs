@@ -940,6 +940,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn branch_certified_notar_fallback() {
+        let (sks, validators) = generate_validators(11);
+        let (tx, rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(validators, tx);
+
+        pool.add_block(0, [0; 32], 0, Hash::default()).await;
+        pool.add_block(1, [1; 32], 0, [0; 32]).await;
+
+        assert!(!pool.is_notarized(0));
+        assert!(!pool.is_branch_certified(0));
+        for v in 0..11 {
+            let vote = Vote::new_notar(0, [0; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(pool.is_notarized(0));
+        assert!(pool.is_branch_certified(0));
+
+        // receive mixed notar & notar-fallback votes
+        assert!(!pool.is_notarized(1));
+        assert!(!pool.is_branch_certified(1));
+        for v in 0..4 {
+            let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        for v in 4..7 {
+            let vote = Vote::new_notar_fallback(1, [1; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(!pool.is_notarized(1));
+        assert!(pool.is_branch_certified(1));
+        drop(rx);
+    }
+
+    #[tokio::test]
     async fn branch_certified_delayed_block() {
         let (sks, validators) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
@@ -994,6 +1028,42 @@ mod tests {
             let vote = Vote::new_notar(0, [0; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
+        assert!(pool.is_notarized(0));
+        assert!(pool.is_branch_certified(0));
+
+        // branch can only be certified once we saw votes for parent
+        assert!(pool.is_branch_certified(1));
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn branch_certified_late_cert() {
+        let (sks, validators) = generate_validators(11);
+        let (tx, rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(validators.clone(), tx);
+
+        // register blocks with their parents
+        pool.add_block(0, [0; 32], 0, Hash::default()).await;
+        pool.add_block(1, [1; 32], 0, [0; 32]).await;
+
+        // receive votes out of order
+        assert!(!pool.is_notarized(1));
+        for v in 0..11 {
+            let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(pool.is_notarized(1));
+        assert!(!pool.is_branch_certified(1));
+
+        // receive late cert
+        assert!(!pool.is_notarized(0));
+        assert!(!pool.is_branch_certified(0));
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_notar(0, [0; 32], &sks[v as usize], v));
+        }
+        let cert = NotarCert::try_new(&votes, &validators).unwrap();
+        pool.add_cert(Cert::Notar(cert)).await.unwrap();
         assert!(pool.is_notarized(0));
         assert!(pool.is_branch_certified(0));
 

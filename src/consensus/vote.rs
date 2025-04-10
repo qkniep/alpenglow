@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Vote types used for the consensus protocol.
+//!
+//!
+
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::aggsig::{PublicKey, SecretKey};

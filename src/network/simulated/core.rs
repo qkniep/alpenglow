@@ -52,9 +52,9 @@ pub struct SimulatedNetworkCore {
     latencies: RwLock<HashMap<(ValidatorId, ValidatorId), Duration>>,
     /// Fallback latency to use for any link that is not configured.
     default_latency: Duration,
-    ///
+    /// Maximum jitter to apply to each packet in milliseconds.
     per_packet_jitter_ms: f64,
-    ///
+    /// Any packet is lost with this probability.
     per_packet_loss_probability: f64,
     /// Priority queue of packets that are waiting to be delivered.
     pending: Arc<Mutex<BinaryHeap<SimulatedPacket>>>,

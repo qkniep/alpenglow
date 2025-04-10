@@ -21,7 +21,7 @@
 //! let pk2 = sk2.to_pk();
 //! let sig2 = sk2.sign(msg);
 //!
-//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], &[0, 1], 2);
+//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [0, 1], 2);
 //! assert!(aggsig.verify(msg, &[pk1, pk2]));
 //! ```
 

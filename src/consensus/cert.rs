@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Certificate types used for the consensus protocol.
+//!
+//!
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -542,6 +546,8 @@ mod tests {
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::signature;
 
+    use std::collections::HashSet;
+
     fn create_signers(signers: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
@@ -571,6 +577,17 @@ mod tests {
             .collect()
     }
 
+    fn check_full_cert(cert: Cert, info: &[ValidatorInfo]) {
+        let total_stake: Stake = info.iter().map(|v| v.stake).sum();
+        assert!(cert.check_sig(info));
+        assert_eq!(cert.stake(), total_stake);
+        let signers: HashSet<_> = cert.signers().collect();
+        for v in info {
+            assert!(cert.is_signer(v.id));
+            assert!(signers.contains(&v.id));
+        }
+    }
+
     #[test]
     fn create() {
         let (sks, info) = create_signers(100);
@@ -580,35 +597,35 @@ mod tests {
         let res = NotarCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::Notar(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
 
         // notar-fallback cert
         let votes: Vec<Vote> = create_votes(VoteKind::NotarFallback(0, Hash::default()), &sks);
         let res = NotarFallbackCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::NotarFallback(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
 
         // skip cert
         let votes: Vec<Vote> = create_votes(VoteKind::Skip(0), &sks);
         let res = SkipCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::Skip(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
 
         // fast finalization cert
         let votes: Vec<Vote> = create_votes(VoteKind::Notar(0, Hash::default()), &sks);
         let res = FastFinalCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::FastFinal(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
 
         // finalization cert
         let votes: Vec<Vote> = create_votes(VoteKind::Final(0), &sks);
         let res = FinalCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::Final(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
     }
 
     #[test]
@@ -621,7 +638,7 @@ mod tests {
         let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
         assert!(res.is_ok());
         let cert = Cert::NotarFallback(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
 
         // notar-fallback + notar
         let vote1 = Vote::new_notar_fallback(0, Hash::default(), &sks[0], 0);
@@ -629,7 +646,7 @@ mod tests {
         let res = NotarFallbackCert::try_new(&[vote1, vote2], &info);
         assert!(res.is_ok());
         let cert = Cert::NotarFallback(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
     }
 
     #[test]
@@ -642,7 +659,7 @@ mod tests {
         let res = SkipCert::try_new(&[vote1, vote2], &info);
         assert!(res.is_ok());
         let cert = Cert::Skip(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
 
         // skip-fallback + skip
         let vote1 = Vote::new_skip_fallback(0, &sks[0], 0);
@@ -650,7 +667,7 @@ mod tests {
         let res = SkipCert::try_new(&[vote1, vote2], &info);
         assert!(res.is_ok());
         let cert = Cert::Skip(res.unwrap());
-        assert!(cert.check_sig(&info));
+        check_full_cert(cert, &info);
     }
 
     #[test]
