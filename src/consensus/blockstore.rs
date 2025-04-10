@@ -5,7 +5,7 @@
 //!
 //!
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use tokio::sync::mpsc::Sender;
@@ -31,6 +31,8 @@ pub struct Blockstore {
     canonical: BTreeMap<Slot, Hash>,
     /// Holds hashes of alternative blocks for a given slot number.
     alternatives: BTreeMap<Slot, Vec<Hash>>,
+    ///
+    first_shred_seen: BTreeSet<Slot>,
 
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
@@ -49,6 +51,7 @@ impl Blockstore {
             blocks: BTreeMap::new(),
             canonical: BTreeMap::new(),
             alternatives: BTreeMap::new(),
+            first_shred_seen: BTreeSet::new(),
             votor_channel,
             epoch_info,
             merkle_root_cache: HashMap::new(),
@@ -84,7 +87,8 @@ impl Blockstore {
         }
         slice_shreds.push(shred);
 
-        if self.stored_shreds_for_slot(slot) == 1 {
+        if self.first_shred_seen.contains(&slot) {
+            self.first_shred_seen.insert(slot);
             let event = VotorEvent::FirstShred(slot);
             self.votor_channel.send(event).await.unwrap();
         }
