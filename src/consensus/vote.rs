@@ -147,8 +147,8 @@ impl Vote {
 
     /// Returns the signature of this vote.
     #[must_use]
-    pub const fn sig(&self) -> IndividualSignature {
-        self.sig
+    pub const fn sig(&self) -> &IndividualSignature {
+        &self.sig
     }
 
     /// Returns the signer of this vote.

@@ -113,16 +113,20 @@ impl AggregateSignature {
     /// Augments the aggregate signature with a bitmask of length `num_bits`,
     /// where the bits in `indices` are set to 1.
     #[must_use]
-    pub fn new(sigs: &[IndividualSignature], indices: &[ValidatorId], num_bits: usize) -> Self {
-        let mut agg_sig = BlstAggSig::from_signature(&sigs[0].0);
-        for sig in &sigs[1..] {
+    pub fn new<'a>(
+        sigs: impl IntoIterator<Item = &'a IndividualSignature>,
+        indices: impl IntoIterator<Item = ValidatorId>,
+        num_bits: usize,
+    ) -> Self {
+        let mut sigs_iter = sigs.into_iter();
+        let mut agg_sig = BlstAggSig::from_signature(&sigs_iter.next().unwrap().0);
+        for sig in sigs_iter {
             agg_sig.add_signature(&sig.0, true).unwrap();
         }
 
-        // PERF: improve
-        let mut bitmask = BitVec::new();
-        for i in 0..num_bits {
-            bitmask.push(indices.contains(&(i as u64)));
+        let mut bitmask = bitvec::bitvec![0; num_bits];
+        for i in indices {
+            bitmask.set(i as usize, true);
         }
 
         Self {
@@ -198,7 +202,7 @@ mod tests {
         assert!(sig1.verify(msg, &pk1));
         assert!(sig2.verify(msg, &pk2));
 
-        let mut aggsig = AggregateSignature::new(&[sig1, sig2], &[0, 1], 2);
+        let mut aggsig = AggregateSignature::new(&[sig1, sig2], [0, 1], 2);
 
         // check aggregate signature
         assert!(aggsig.verify(msg, &[pk1, pk2]));
@@ -251,7 +255,7 @@ mod tests {
         assert!(sig3.verify(msg, &pk3));
 
         // only aggregate over 2/3 signatures
-        let aggsig = AggregateSignature::new(&[sig1, sig3], &[0, 2], 3);
+        let aggsig = AggregateSignature::new(&[sig1, sig3], [0, 2], 3);
 
         // check signers bitmask
         let signers: Vec<_> = aggsig.signers().collect();

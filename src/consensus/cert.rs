@@ -180,10 +180,7 @@ impl NotarCert {
             }
         }
 
-        // PERF: remove memory allocations
-        let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
-        let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
-        let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let agg_sig = aggsig_from_votes(votes, validators);
         let stake: Stake = votes
             .iter()
             .map(|v| validators[v.signer() as usize].stake)
@@ -261,17 +258,13 @@ impl NotarFallbackCert {
         let agg_sig_notar = if notar_votes.peek().is_none() {
             None
         } else {
-            let sigs: Vec<_> = notar_votes.clone().map(Vote::sig).collect();
-            let indices: Vec<_> = notar_votes.map(Vote::signer).collect();
-            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+            Some(aggsig_from_votes_iter(notar_votes, validators))
         };
 
         let agg_sig_notar_fallback = if nf_votes.peek().is_none() {
             None
         } else {
-            let sigs: Vec<_> = nf_votes.clone().map(Vote::sig).collect();
-            let indices: Vec<_> = nf_votes.map(Vote::signer).collect();
-            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+            Some(aggsig_from_votes_iter(nf_votes, validators))
         };
 
         Ok(Self {
@@ -348,31 +341,19 @@ impl SkipCert {
             .map(|v| validators[v.signer() as usize].stake)
             .sum();
 
-        // PERF: remove memory allocations
-        // let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
-        // let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
-        // let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
-        let skip_votes: Vec<_> = votes.iter().filter(|v| v.is_skip()).cloned().collect();
-        let sf_votes: Vec<_> = votes
-            .iter()
-            .filter(|v| v.is_skip_fallback())
-            .cloned()
-            .collect();
+        let mut skip_votes = votes.iter().filter(|v| v.is_skip()).peekable();
+        let mut sf_votes = votes.iter().filter(|v| v.is_skip_fallback()).peekable();
 
-        let agg_sig_skip = if skip_votes.is_empty() {
+        let agg_sig_skip = if skip_votes.peek().is_none() {
             None
         } else {
-            let sigs: Vec<_> = skip_votes.iter().map(Vote::sig).collect();
-            let indices: Vec<_> = skip_votes.iter().map(Vote::signer).collect();
-            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+            Some(aggsig_from_votes_iter(skip_votes, validators))
         };
 
-        let agg_sig_skip_fallback = if sf_votes.is_empty() {
+        let agg_sig_skip_fallback = if sf_votes.peek().is_none() {
             None
         } else {
-            let sigs: Vec<_> = sf_votes.iter().map(Vote::sig).collect();
-            let indices: Vec<_> = sf_votes.iter().map(Vote::signer).collect();
-            Some(AggregateSignature::new(&sigs, &indices, validators.len()))
+            Some(aggsig_from_votes_iter(sf_votes, validators))
         };
 
         Ok(Self {
@@ -447,10 +428,7 @@ impl FastFinalCert {
             }
         }
 
-        // PERF: remove memory allocations
-        let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
-        let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
-        let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let agg_sig = aggsig_from_votes(votes, validators);
         let stake: Stake = votes
             .iter()
             .map(|v| validators[v.signer() as usize].stake)
@@ -511,10 +489,7 @@ impl FinalCert {
             }
         }
 
-        // PERF: remove memory allocations
-        let sigs: Vec<_> = votes.iter().map(Vote::sig).collect();
-        let indices: Vec<_> = votes.iter().map(Vote::signer).collect();
-        let agg_sig = AggregateSignature::new(&sigs, &indices, validators.len());
+        let agg_sig = aggsig_from_votes(votes, validators);
         let stake: Stake = votes
             .iter()
             .map(|v| validators[v.signer() as usize].stake)
@@ -543,6 +518,21 @@ impl FinalCert {
         let vote_bytes = VoteKind::Final(self.slot).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
+}
+
+fn aggsig_from_votes(votes: &[Vote], validators: &[ValidatorInfo]) -> AggregateSignature {
+    let sigs = votes.iter().map(Vote::sig);
+    let indices = votes.iter().map(Vote::signer);
+    AggregateSignature::new(sigs, indices, validators.len())
+}
+
+fn aggsig_from_votes_iter<'a>(
+    votes: impl IntoIterator<Item = &'a Vote> + Clone,
+    validators: &[ValidatorInfo],
+) -> AggregateSignature {
+    let sigs = votes.clone().into_iter().map(Vote::sig);
+    let indices = votes.into_iter().map(Vote::signer);
+    AggregateSignature::new(sigs, indices, validators.len())
 }
 
 #[cfg(test)]
