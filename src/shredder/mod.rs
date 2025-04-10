@@ -203,6 +203,7 @@ impl Shred {
     }
 }
 
+///
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataShredWithPath {
     pub(crate) payload: DataShred,
@@ -211,6 +212,7 @@ pub struct DataShredWithPath {
     merkle_path: Vec<Hash>,
 }
 
+///
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CodingShredWithPath {
     pub(crate) payload: CodingShred,
@@ -219,18 +221,21 @@ pub struct CodingShredWithPath {
     merkle_path: Vec<Hash>,
 }
 
+///
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataShred(ShredPayload);
+///
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CodingShred(ShredPayload);
 
+///
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
     pub(crate) slot: Slot,
     pub(crate) slice_index: usize,
     pub(crate) index_in_slice: usize,
     pub(crate) is_last_slice: bool,
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: bytes::Bytes,
 }
 
 /// A trait for shredding and deshredding.
@@ -473,7 +478,7 @@ fn shred_reed_solomon_raw(
         slice_index,
         index_in_slice: index,
         is_last_slice,
-        data,
+        data: data.into(),
     };
     let data_shreds: Vec<_> = data_parts
         .into_iter()
@@ -528,7 +533,7 @@ fn deshred_reed_solomon(
     let mut restored_payload = Vec::with_capacity(MAX_DATA_PER_SLICE);
     for (i, d) in data_shreds.into_iter().enumerate() {
         let shred_data = match d {
-            Some(data_ref) => data_ref,
+            Some(data_ref) => data_ref.as_ref(),
             None => restored.get(&i).unwrap(),
         };
         restored_payload.extend_from_slice(shred_data);

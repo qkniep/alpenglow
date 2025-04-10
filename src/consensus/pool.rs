@@ -471,7 +471,7 @@ impl SlotState {
             VoteKind::NotarFallback(_, _) => {
                 let block_hash = vote.block_hash().unwrap();
                 self.votes.notar_fallback[v].push((block_hash, vote));
-                self.count_notar_fallback_stake(slot, &block_hash, voter_stake)
+                self.count_notar_fallback_stake(&block_hash, voter_stake)
             }
             VoteKind::Skip(_) => {
                 self.votes.skip[v] = Some(vote);
@@ -484,7 +484,7 @@ impl SlotState {
             }
             VoteKind::Final(_) => {
                 self.votes.finalize[v] = Some(vote);
-                self.count_finalize_stake(slot, voter_stake)
+                self.count_finalize_stake(voter_stake)
             }
         }
     }
@@ -554,7 +554,6 @@ impl SlotState {
     /// Returns potentially created certificates and newly emitted votor events.
     fn count_notar_fallback_stake(
         &mut self,
-        slot: Slot,
         block_hash: &Hash,
         stake: Stake,
     ) -> (SmallVec<[Cert; 2]>, SmallVec<[VotorEvent; 2]>) {
@@ -607,18 +606,12 @@ impl SlotState {
     /// Returns potentially created certificates and newly emitted votor events.
     fn count_finalize_stake(
         &mut self,
-        slot: Slot,
         stake: Stake,
     ) -> (SmallVec<[Cert; 2]>, SmallVec<[VotorEvent; 2]>) {
         let mut new_certs = SmallVec::new();
         self.voted_stakes.finalize += stake;
         if self.is_quorum(self.voted_stakes.finalize) && self.certificates.finalize.is_none() {
-            let votes: Vec<_> = self
-                .votes
-                .finalize
-                .iter()
-                .filter_map(|x| x.clone())
-                .collect();
+            let votes: Vec<_> = self.votes.final_votes();
             let cert = FinalCert::new_unchecked(&votes, &self.validators);
             new_certs.push(Cert::Final(cert));
         }
@@ -729,6 +722,10 @@ impl SlotVotes {
             .iter()
             .filter_map(|o| o.clone())
             .collect()
+    }
+
+    fn final_votes(&self) -> Vec<Vote> {
+        self.finalize.iter().filter_map(|x| x.clone()).collect()
     }
 }
 

@@ -1,20 +1,19 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use divan::counter::BytesCount;
-use rand::prelude::*;
-
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
     AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shred, Shredder,
     Slice,
 };
+use divan::counter::BytesCount;
+use rand::prelude::*;
 
 fn main() {
     divan::main();
 }
 
-#[divan::bench(types = [RegularShredder, PetsShredder, AontShredder, CodingOnlyShredder])]
+#[divan::bench(types = [RegularShredder, CodingOnlyShredder, PetsShredder, AontShredder])]
 fn shred<S: Shredder>(bencher: divan::Bencher) {
     let size = S::MAX_DATA_SIZE;
 
@@ -39,7 +38,7 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
         });
 }
 
-#[divan::bench(types = [RegularShredder, PetsShredder, AontShredder, CodingOnlyShredder])]
+#[divan::bench(types = [RegularShredder, CodingOnlyShredder, PetsShredder, AontShredder])]
 fn deshred<S: Shredder>(bencher: divan::Bencher) {
     let size = S::MAX_DATA_SIZE;
 

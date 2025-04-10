@@ -66,10 +66,12 @@ impl NetworkMessage {
     /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
     /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
-        let (msg, _num_bytes) = bincode::serde::decode_from_slice(
-            bytes,
-            bincode::config::standard().with_limit::<MTU_BYTES>(),
-        )?;
+        if bytes.len() > MTU_BYTES {
+            return Err(NetworkError::Deserialization(
+                bincode::error::DecodeError::LimitExceeded,
+            ));
+        }
+        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
         Ok(msg)
     }
 

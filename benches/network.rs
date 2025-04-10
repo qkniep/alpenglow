@@ -1,7 +1,9 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use alpenglow::Slot;
 use alpenglow::consensus::Vote;
+use alpenglow::crypto::signature::SecretKey;
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::NetworkMessage;
 use alpenglow::shredder::{
@@ -90,7 +92,7 @@ fn serialize_slice_into(bencher: divan::Bencher) {
             };
             let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(&slice, &sk).unwrap();
-            let buf = vec![0; MAX_DATA_PER_SLICE];
+            let buf = vec![0; 1500];
             let msgs = shreds.into_iter().map(NetworkMessage::Shred).collect();
             (buf, msgs)
         })
@@ -132,37 +134,5 @@ fn deserialize_slice(bencher: divan::Bencher) {
             for bytes in serialized {
                 let _ = NetworkMessage::from_bytes(&bytes);
             }
-        });
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Test<'a> {
-    x: usize,
-    y: usize,
-    b: bool,
-    data: &'a [u8],
-}
-
-#[divan::bench]
-fn deserialize_borrow(bencher: divan::Bencher) {
-    bencher
-        .counter(ItemsCount::new(1_usize))
-        .counter(BytesCount::new(MAX_DATA_PER_SLICE))
-        .with_inputs(|| {
-            let mut rng = rand::rng();
-            let mut data = vec![0; MAX_DATA_PER_SHRED];
-            rng.fill_bytes(&mut data);
-            let shred = Test {
-                x: 42,
-                y: 42,
-                b: true,
-                data: &data,
-            };
-            bincode::serde::encode_to_vec(shred, bincode::config::standard()).unwrap()
-        })
-        .bench_values(|serialized: Vec<u8>| {
-            let (_, _): (Test, usize) =
-                bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::standard())
-                    .unwrap();
         });
 }
