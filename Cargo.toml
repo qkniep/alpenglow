@@ -34,6 +34,7 @@ geo = "0.30"
 hex = "0.4"
 moka = { version = "0.12", features = ["future"] }
 rand = "0.9"
+rayon = "1.10.0"
 reed-solomon-erasure = { version = "6", features = ["simd-accel"] }
 reed-solomon-simd = "3"
 reqwest = "0.12"

@@ -13,7 +13,7 @@ use crate::{Slot, ValidatorId, ValidatorInfo};
 
 use super::Disseminator;
 
-pub use sampling_strategy::{SamplingStrategy, StakeWeightedSampler};
+pub use sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
 pub struct Rotor<N: Network, S: SamplingStrategy> {
@@ -30,6 +30,23 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     /// Provided `network` will be used to send and receive shreds.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
         let sampler = StakeWeightedSampler::new(validators.clone());
+        Self {
+            validator_id,
+            validators,
+            network,
+            sampler,
+        }
+    }
+}
+
+impl<N: Network> Rotor<N, FaitAccompli1Sampler<StakeWeightedSampler>> {
+    /// Creates a new Rotor instance with the FA1 sampling strategy.
+    ///
+    /// Contact information for all validators is provided in `validators`.
+    /// Provided `network` will be used to send and receive shreds.
+    pub fn new_fa1(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
+        let sampler =
+            FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 64);
         Self {
             validator_id,
             validators,

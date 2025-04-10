@@ -89,6 +89,7 @@ dependencies = [
  "hex",
  "moka",
  "rand 0.9.0",
+ "rayon",
  "reed-solomon-erasure",
  "reed-solomon-simd",
  "reqwest",

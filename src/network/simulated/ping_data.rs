@@ -29,33 +29,37 @@ use std::sync::LazyLock;
 use geo::{Distance, Haversine, Point};
 use serde::Deserialize;
 
+const MAX_PING_SERVERS: usize = 300;
+
 static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(MAX_PING_SERVERS);
     let file = File::open("data/servers-2020-07-19.csv").unwrap();
     let mut rdr = csv::Reader::from_reader(file);
     for result in rdr.deserialize() {
         let record: PingServer = result.unwrap();
         output.push(record);
     }
+    assert!(output.len() <= MAX_PING_SERVERS);
     output
 });
 
-static PING_DATA: LazyLock<HashMap<(usize, usize), f64>> = LazyLock::new(|| {
-    let mut output = HashMap::new();
-    let mut counts = HashMap::new();
+static PING_DATA: LazyLock<Vec<f64>> = LazyLock::new(|| {
+    let mut output = vec![0.0; MAX_PING_SERVERS * MAX_PING_SERVERS];
+    let mut counts = vec![0; MAX_PING_SERVERS * MAX_PING_SERVERS];
     let file = File::open("data/pings-2020-07-19-2020-07-20.csv").unwrap();
     let mut rdr = csv::Reader::from_reader(file);
     for result in rdr.deserialize() {
         let record: PingMeasurement = result.unwrap();
-        let count = counts
-            .entry((record.source, record.destination))
-            .or_insert(0);
+        assert!(record.source < MAX_PING_SERVERS);
+        assert!(record.destination < MAX_PING_SERVERS);
+        let index = get_index(record.source, record.destination);
+        let count = counts.get_mut(index).unwrap();
         if *count == 0 {
-            output.insert((record.source, record.destination), record.avg);
+            output[index] = record.avg;
         } else {
-            let avg = output[&(record.source, record.destination)];
+            let avg = output[index];
             let new_avg = (avg * *count as f64 + record.avg) / (*count + 1) as f64;
-            output.insert((record.source, record.destination), new_avg);
+            output[index] = new_avg;
         }
         *count += 1;
     }
@@ -121,5 +125,10 @@ pub fn find_closest_ping_server(lat: f64, lon: f64) -> &'static PingServer {
 /// Returns `None` if the servers are not in the dataset or ping measurements
 /// for this specific pair are not available.
 pub fn get_ping(source: usize, destination: usize) -> Option<f64> {
-    PING_DATA.get(&(source, destination)).copied()
+    let index = get_index(source, destination);
+    PING_DATA.get(index).copied()
+}
+
+fn get_index(source: usize, destination: usize) -> usize {
+    source * PING_SERVERS.len() + destination
 }

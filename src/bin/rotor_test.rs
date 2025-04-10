@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
@@ -13,6 +13,7 @@ use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
+use rayon::prelude::*;
 use tracing::level_filters::LevelFilter;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -114,28 +115,41 @@ fn main() -> Result<()> {
         .for_each(|(i, v)| {
             v.0.id = i as ValidatorId;
         });
-    let mut validator_to_ping_server = HashMap::new();
-    for (v, p) in &validators_with_ping_data {
-        validator_to_ping_server.insert(v.id, *p);
+    let mut ping_servers = Vec::with_capacity(validators_with_ping_data.len());
+    for (_, p) in &validators_with_ping_data {
+        ping_servers.push(*p);
     }
 
     let validators_with_ping_data: Vec<_> =
         validators_with_ping_data.into_iter().map(|v| v.0).collect();
-    let leader_sampler = StakeWeightedSampler::new(validators_with_ping_data.clone());
-    let rotor_sampler =
-        FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators_with_ping_data.clone());
-    latency_test(
-        validators_with_ping_data,
-        validator_to_ping_server,
-        leader_sampler,
-        rotor_sampler,
-    );
+    (64..=128).into_par_iter().for_each(|k| {
+        let leader_sampler = StakeWeightedSampler::new(validators_with_ping_data.clone());
+        let rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+            validators_with_ping_data.clone(),
+            k,
+        );
+        let mut tester = LatencyTest::new(
+            validators_with_ping_data.clone(),
+            ping_servers.clone(),
+            leader_sampler,
+            rotor_sampler,
+            k as usize,
+        );
+        tester.run_many(100_000, LatencyTestStage::Rotor);
+    });
 
-    let sampler = StakeWeightedSampler::new(validators.clone());
-    rotor_sampling_test(validators.clone(), sampler, 64);
+    info!("StakeWeightedSampler:");
+    (64..=128).into_par_iter().for_each(|k| {
+        let sampler = StakeWeightedSampler::new(validators.clone());
+        rotor_sampling_test(validators.clone(), sampler, k);
+    });
 
-    let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone());
-    rotor_sampling_test(validators.clone(), sampler, 64);
+    info!("FaitAccompli1Sampler:");
+    (64..=128).into_par_iter().for_each(|k| {
+        let sampler =
+            FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), k as u64);
+        rotor_sampling_test(validators.clone(), sampler, k);
+    });
 
     Ok(())
 }
@@ -155,15 +169,15 @@ impl LatencyStats {
 
     fn record_latencies(
         &mut self,
-        mut latencies: Vec<(f64, ValidatorId)>,
+        latencies: &mut Vec<(f64, ValidatorId)>,
         validators: &[ValidatorInfo],
     ) {
-        latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let max_rotor_latency = latencies.last().unwrap().0;
         let mut p60_rotor_latency = 0.0;
         let mut stake_so_far = 0;
-        for (latency, v) in &latencies {
+        for (latency, v) in &*latencies {
             stake_so_far += validators[*v as usize].stake;
             if stake_so_far as f64 > total_stake as f64 * 0.6 {
                 p60_rotor_latency = *latency;
@@ -172,7 +186,7 @@ impl LatencyStats {
         }
         let mut p80_rotor_latency = 0.0;
         let mut stake_so_far = 0;
-        for (latency, v) in &latencies {
+        for (latency, v) in &*latencies {
             stake_so_far += validators[*v as usize].stake;
             if stake_so_far as f64 > total_stake as f64 * 0.8 {
                 p80_rotor_latency = *latency;
@@ -195,139 +209,219 @@ impl LatencyStats {
     }
 }
 
-fn latency_test(
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LatencyTestStage {
+    Direct,
+    Rotor,
+    Notar,
+    Final,
+}
+
+struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
-    validator_to_ping_server: HashMap<ValidatorId, &PingServer>,
-    leader_sampler: impl SamplingStrategy,
-    rotor_sampler: impl SamplingStrategy,
-) {
-    let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-    let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
-    let mut direct_stats = LatencyStats::new();
-    let mut rotor_stats = LatencyStats::new();
-    let mut notar_stats = LatencyStats::new();
-    let mut fast_final_stats = LatencyStats::new();
-    let mut slow_final_stats = LatencyStats::new();
-    let leader = leader_sampler.sample(&mut rng);
-    let leader_location = &validator_to_ping_server[&leader.id].location;
-    info!("leader location: {}", leader_location);
-    for _ in 0..100 {
-        let relays = rotor_sampler.sample_multiple(96, &mut rng);
-        let mut relay_latencies = Vec::new();
-        for relay in &relays {
-            let leader_ping_server = validator_to_ping_server[&leader.id].id;
-            let relay_ping_server = validator_to_ping_server[&relay.id].id;
-            let latency = get_ping(leader_ping_server, relay_ping_server).unwrap();
-            relay_latencies.push(latency);
-        }
+    ping_servers: Vec<&'static PingServer>,
+    leader_sampler: L,
+    rotor_sampler: R,
+    num_shreds: usize,
 
-        let mut direct_latencies = Vec::new();
-        for v in &validators {
-            let leader_ping_server = validator_to_ping_server[&leader.id].id;
-            let v_ping_server = validator_to_ping_server[&v.id].id;
-            let latency = get_ping(leader_ping_server, v_ping_server).unwrap();
-            direct_latencies.push((latency, v.id));
-        }
+    direct_stats: LatencyStats,
+    rotor_stats: LatencyStats,
+    notar_stats: LatencyStats,
+    fast_final_stats: LatencyStats,
+    slow_final_stats: LatencyStats,
 
-        let mut rotor_latencies = Vec::new();
-        for v in &validators {
-            let mut latencies = Vec::new();
-            for (relay, latency) in relays.iter().zip(relay_latencies.iter()) {
-                let relay_ping_server = validator_to_ping_server[&relay.id].id;
-                let v_ping_server = validator_to_ping_server[&v.id].id;
-                let latency = latency + get_ping(relay_ping_server, v_ping_server).unwrap();
-                latencies.push(latency);
-            }
-            latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let threshold_latency = latencies[31];
-            rotor_latencies.push((threshold_latency, v.id));
-        }
+    relay_latencies: Vec<f64>,
+    direct_latencies: Vec<(f64, ValidatorId)>,
+    rotor_latencies: Vec<(f64, ValidatorId)>,
+    notar_latencies: Vec<(f64, ValidatorId)>,
+    fast_final_latencies: Vec<(f64, ValidatorId)>,
+    slow_final_latencies: Vec<(f64, ValidatorId)>,
+    tmp_latencies: Vec<f64>,
+}
 
-        let mut notar_latencies = Vec::new();
-        for (v1_rotor_latency, v1) in &rotor_latencies {
-            let mut latencies = Vec::new();
-            for (v2_rotor_latency, v2) in &rotor_latencies {
-                let v1_ping_server = validator_to_ping_server[v1].id;
-                let v2_ping_server = validator_to_ping_server[v2].id;
-                let latency = v2_rotor_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                latencies.push((latency, *v2));
-            }
-            latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let mut notar_latency = 0.0;
-            let mut stake_so_far = 0;
-            for (latency, v) in &latencies {
-                stake_so_far += validators[*v as usize].stake;
-                if stake_so_far as f64 > total_stake as f64 * 0.6 {
-                    notar_latency = *latency;
-                    break;
-                }
-            }
-            notar_latency = notar_latency.max(*v1_rotor_latency);
-            notar_latencies.push((notar_latency, *v1));
-        }
+impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
+    fn new(
+        validators: Vec<ValidatorInfo>,
+        ping_servers: Vec<&'static PingServer>,
+        leader_sampler: L,
+        rotor_sampler: R,
+        k: usize,
+    ) -> Self {
+        let num_val = validators.len();
+        Self {
+            validators,
+            ping_servers,
+            leader_sampler,
+            rotor_sampler,
+            num_shreds: k,
 
-        let mut fast_final_latencies = Vec::new();
-        for (v1_rotor_latency, v1) in &rotor_latencies {
-            let mut latencies = Vec::new();
-            for (v2_rotor_latency, v2) in &rotor_latencies {
-                let v1_ping_server = validator_to_ping_server[v1].id;
-                let v2_ping_server = validator_to_ping_server[v2].id;
-                let latency = v2_rotor_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                latencies.push((latency, *v2));
-            }
-            latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let mut fast_final_latency = 0.0;
-            let mut stake_so_far = 0;
-            for (latency, v) in &latencies {
-                stake_so_far += validators[*v as usize].stake;
-                if stake_so_far as f64 > total_stake as f64 * 0.8 {
-                    fast_final_latency = *latency;
-                    break;
-                }
-            }
-            fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
-            fast_final_latencies.push((fast_final_latency, *v1));
-        }
+            direct_stats: LatencyStats::new(),
+            rotor_stats: LatencyStats::new(),
+            notar_stats: LatencyStats::new(),
+            fast_final_stats: LatencyStats::new(),
+            slow_final_stats: LatencyStats::new(),
 
-        let mut slow_final_latencies = Vec::new();
-        for (v1_notar_latency, v1) in &notar_latencies {
-            let mut latencies = Vec::new();
-            for (v2_notar_latency, v2) in &notar_latencies {
-                let v1_ping_server = validator_to_ping_server[v1].id;
-                let v2_ping_server = validator_to_ping_server[v2].id;
-                let latency = v2_notar_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                latencies.push((latency, *v2));
-            }
-            latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let mut slow_final_latency = 0.0;
-            let mut stake_so_far = 0;
-            for (latency, v) in &latencies {
-                stake_so_far += validators[*v as usize].stake;
-                if stake_so_far as f64 > total_stake as f64 * 0.6 {
-                    slow_final_latency = *latency;
-                    break;
-                }
-            }
-            slow_final_latency = slow_final_latency.max(*v1_notar_latency);
-            slow_final_latencies.push((slow_final_latency, *v1));
+            relay_latencies: vec![0.0; k],
+            direct_latencies: vec![(0.0, 0); num_val],
+            rotor_latencies: vec![(0.0, 0); num_val],
+            notar_latencies: vec![(0.0, 0); num_val],
+            fast_final_latencies: vec![(0.0, 0); num_val],
+            slow_final_latencies: vec![(0.0, 0); num_val],
+            tmp_latencies: vec![0.0; k],
         }
-
-        direct_stats.record_latencies(direct_latencies, &validators);
-        rotor_stats.record_latencies(rotor_latencies, &validators);
-        notar_stats.record_latencies(notar_latencies, &validators);
-        fast_final_stats.record_latencies(fast_final_latencies, &validators);
-        slow_final_stats.record_latencies(slow_final_latencies, &validators);
     }
-    info!("Direct:");
-    direct_stats.print();
-    info!("Rotor:");
-    rotor_stats.print();
-    info!("Notarization:");
-    notar_stats.print();
-    info!("Fast-Finalization:");
-    fast_final_stats.print();
-    info!("Slow-Finalization:");
-    slow_final_stats.print();
+
+    fn run_many(&mut self, iterations: usize, up_to_stage: LatencyTestStage) {
+        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
+        let total_stake: Stake = self.validators.iter().map(|v| v.stake).sum();
+        for _ in 0..iterations {
+            let leader = self.leader_sampler.sample(&mut rng);
+            let leader_location = &self.ping_servers[leader.id as usize].location;
+            let relays = self
+                .rotor_sampler
+                .sample_multiple(self.num_shreds, &mut rng);
+            for (i, relay) in relays.iter().enumerate() {
+                let leader_ping_server = self.ping_servers[leader.id as usize].id;
+                let relay_ping_server = self.ping_servers[relay.id as usize].id;
+                let latency = get_ping(leader_ping_server, relay_ping_server).unwrap();
+                self.relay_latencies[i] = latency;
+            }
+
+            for (i, v) in self.validators.iter().enumerate() {
+                let leader_ping_server = self.ping_servers[leader.id as usize].id;
+                let v_ping_server = self.ping_servers[v.id as usize].id;
+                let latency = get_ping(leader_ping_server, v_ping_server).unwrap();
+                self.direct_latencies[i] = (latency, v.id);
+            }
+
+            if up_to_stage == LatencyTestStage::Direct {
+                continue;
+            }
+
+            for (i, v) in self.validators.iter().enumerate() {
+                for (j, (relay, latency)) in
+                    relays.iter().zip(self.relay_latencies.iter()).enumerate()
+                {
+                    let relay_ping_server = self.ping_servers[relay.id as usize].id;
+                    let v_ping_server = self.ping_servers[v.id as usize].id;
+                    let latency = latency + get_ping(relay_ping_server, v_ping_server).unwrap();
+                    self.tmp_latencies[j] = latency;
+                }
+                self.tmp_latencies
+                    .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+                let threshold_latency = self.tmp_latencies[31];
+                self.rotor_latencies[i] = (threshold_latency, v.id);
+            }
+
+            if up_to_stage == LatencyTestStage::Rotor {
+                continue;
+            }
+
+            for (v1_rotor_latency, v1) in &self.rotor_latencies {
+                let mut latencies = Vec::new();
+                for (v2_rotor_latency, v2) in &self.rotor_latencies {
+                    let v1_ping_server = self.ping_servers[*v1 as usize].id;
+                    let v2_ping_server = self.ping_servers[*v2 as usize].id;
+                    let latency =
+                        v2_rotor_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
+                    latencies.push((latency, *v2));
+                }
+                latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+                let mut notar_latency = 0.0;
+                let mut stake_so_far = 0;
+                for (latency, v) in &latencies {
+                    stake_so_far += self.validators[*v as usize].stake;
+                    if stake_so_far as f64 > total_stake as f64 * 0.6 {
+                        notar_latency = *latency;
+                        break;
+                    }
+                }
+                notar_latency = notar_latency.max(*v1_rotor_latency);
+                self.notar_latencies[*v1 as usize] = (notar_latency, *v1);
+            }
+
+            if up_to_stage == LatencyTestStage::Notar {
+                continue;
+            }
+
+            for (v1_rotor_latency, v1) in &self.rotor_latencies {
+                let mut latencies = Vec::new();
+                for (v2_rotor_latency, v2) in &self.rotor_latencies {
+                    let v1_ping_server = self.ping_servers[*v1 as usize].id;
+                    let v2_ping_server = self.ping_servers[*v2 as usize].id;
+                    let latency =
+                        v2_rotor_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
+                    latencies.push((latency, *v2));
+                }
+                latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+                let mut fast_final_latency: f64 = 0.0;
+                let mut stake_so_far = 0;
+                for (latency, v) in &latencies {
+                    stake_so_far += self.validators[*v as usize].stake;
+                    if stake_so_far as f64 > total_stake as f64 * 0.8 {
+                        fast_final_latency = *latency;
+                        break;
+                    }
+                }
+                fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
+                self.fast_final_latencies[*v1 as usize] = (fast_final_latency, *v1);
+            }
+
+            for (v1_notar_latency, v1) in &self.notar_latencies {
+                let mut latencies = Vec::new();
+                for (v2_notar_latency, v2) in &self.notar_latencies {
+                    let v1_ping_server = self.ping_servers[*v1 as usize].id;
+                    let v2_ping_server = self.ping_servers[*v2 as usize].id;
+                    let latency =
+                        v2_notar_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
+                    latencies.push((latency, *v2));
+                }
+                latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+                let mut slow_final_latency: f64 = 0.0;
+                let mut stake_so_far = 0;
+                for (latency, v) in &latencies {
+                    stake_so_far += self.validators[*v as usize].stake;
+                    if stake_so_far as f64 > total_stake as f64 * 0.6 {
+                        slow_final_latency = *latency;
+                        break;
+                    }
+                }
+                slow_final_latency = slow_final_latency.max(*v1_notar_latency);
+                self.slow_final_latencies[*v1 as usize] = (slow_final_latency, *v1);
+            }
+
+            self.direct_stats
+                .record_latencies(&mut self.direct_latencies, &self.validators);
+            self.rotor_stats
+                .record_latencies(&mut self.rotor_latencies, &self.validators);
+            self.notar_stats
+                .record_latencies(&mut self.notar_latencies, &self.validators);
+            self.fast_final_stats
+                .record_latencies(&mut self.fast_final_latencies, &self.validators);
+            self.slow_final_stats
+                .record_latencies(&mut self.slow_final_latencies, &self.validators);
+        }
+        println!(
+            "{},{},{},{},{},{},{}",
+            self.num_shreds,
+            self.direct_stats.max_latency,
+            self.direct_stats.p60_latency,
+            self.direct_stats.p80_latency,
+            self.rotor_stats.max_latency,
+            self.rotor_stats.p60_latency,
+            self.rotor_stats.p80_latency
+        );
+        // info!("[{k} Shreds] Direct:");
+        // direct_stats.print();
+        // info!("[{k} Shreds] Rotor:");
+        // rotor_stats.print();
+        // info!("[{k} Shreds] Notarization:");
+        // notar_stats.print();
+        // info!("[{k} Shreds] Fast-Finalization:");
+        // fast_final_stats.print();
+        // info!("[{k} Shreds] Slow-Finalization:");
+        // slow_final_stats.print();
+    }
 }
 
 fn rotor_sampling_test(
@@ -338,35 +432,42 @@ fn rotor_sampling_test(
     let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
     let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
     let mut validators_to_corrupt = validators.clone();
+    let mut tests = 0;
     let mut failures = 0;
-    for _ in 0..1_000_000 {
-        // greedily corrupt up to 40% of validators
+    'outer: for _ in 0..10_000 {
+        // greedily corrupt less than 40% of validators
         let mut corrupted = HashSet::new();
         let mut corrupted_stake = 0.0;
         validators_to_corrupt.shuffle(&mut rng);
 
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / total_stake as f64;
-            if corrupted_stake + rel_stake <= 0.4 {
+            if corrupted_stake + rel_stake < 0.4 {
                 corrupted.insert(v.id);
                 corrupted_stake += rel_stake;
             }
         }
 
-        let sampled = sampler.sample_multiple(num_shreds, &mut rng);
-        let mut corrupted_samples = 0;
-        for v in sampled {
-            if corrupted.contains(&v.id) {
-                corrupted_samples += 1;
+        for _ in 0..10_000 {
+            let sampled = sampler.sample_multiple(num_shreds, &mut rng);
+            let mut corrupted_samples = 0;
+            for v in sampled {
+                if corrupted.contains(&v.id) {
+                    corrupted_samples += 1;
+                }
             }
-        }
-        if corrupted_samples > num_shreds - 32 {
-            failures += 1;
+            tests += 1;
+            if corrupted_samples > num_shreds - 32 {
+                failures += 1;
+                if failures >= 3 {
+                    break 'outer;
+                }
+            }
         }
     }
     info!(
-        "failures: {} ({}%)",
-        failures,
-        failures as f64 / 1e6 * 100.0
+        "{:<3} shreds, failures [log2]: {:.3}",
+        num_shreds,
+        (failures as f64 / tests as f64).log2()
     );
 }

@@ -200,13 +200,13 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
     // FIXME: hard-coded k=64
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
-    pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>) -> Self {
+    pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let mut validators_truncated_stake = validators.clone();
         for v in &mut validators_truncated_stake {
             let frac_stake = v.stake as f64 / total_stake as f64;
-            let samples = (frac_stake * 64 as f64).floor() as u64;
-            v.stake -= samples * total_stake / 64;
+            let samples = (frac_stake * k as f64).floor() as u64;
+            v.stake -= samples * total_stake / k;
         }
         let fallback_sampler = StakeWeightedSampler::new(validators_truncated_stake);
         Self {
@@ -426,7 +426,7 @@ mod tests {
 
         // with many low-stake nodes this becomes the underlying fallback distribution
         let validators = create_validator_info(1000);
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
         let sampled_val = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled_val.len(), 64);
         let sampled_ids: HashSet<_> = sampled_val.iter().map(|v| v.id).collect();
@@ -442,7 +442,7 @@ mod tests {
         let mut validators = create_validator_info(1000);
         validators[0].stake = 52;
         validators[1].stake = 52;
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
         let sampled_val = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled_val.len(), 64);
         let sampled0 = sampled_val.iter().filter(|v| v.id == 0).count();
