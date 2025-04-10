@@ -25,6 +25,16 @@ pub fn hash(data: &[u8]) -> Hash {
     hasher.finalize().into()
 }
 
+/// Hashes all the given data slices together using SHA-256.
+#[must_use]
+pub fn hash_all(data: &[&[u8]]) -> Hash {
+    let mut hasher = Sha256::new();
+    for item in data {
+        hasher.update(item);
+    }
+    hasher.finalize().into()
+}
+
 /// Truncates the given hash to a shorter 128-bit hash.
 #[must_use]
 pub fn truncate(hash: Hash) -> ShortHash {

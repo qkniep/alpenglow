@@ -400,13 +400,13 @@ impl Shredder for AontShredder {
             slice.is_last,
             &buffer,
             DATA_SHREDS,
-            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
         )?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
-        let mut buffer = deshred_reed_solomon(shreds, DATA_SHREDS, DATA_SHREDS)?;
+        let mut buffer = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         if buffer.len() < 16 {
             return Err(ShredderError::BadEncoding);
         }
@@ -469,8 +469,8 @@ fn shred_reed_solomon_raw(
     }
 
     let shred_bytes = data.len() / DATA_SHREDS;
-    let data_parts: Vec<_> = data.chunks(shred_bytes).map(<[u8]>::to_vec).collect();
-    let coding_parts = rs::encode(num_data, num_coding, &data_parts).unwrap();
+    let data_parts = data.chunks(shred_bytes);
+    let coding_parts = rs::encode(num_data, num_coding, data_parts.clone()).unwrap();
 
     // map raw data/coding parts to `DataShred` and `CodingShred`
     let payload_from_index_and_data = |index: usize, data: Vec<u8>| ShredPayload {
@@ -483,7 +483,7 @@ fn shred_reed_solomon_raw(
     let data_shreds: Vec<_> = data_parts
         .into_iter()
         .enumerate()
-        .map(|(i, p)| DataShred(payload_from_index_and_data(i, p)))
+        .map(|(i, p)| DataShred(payload_from_index_and_data(i, p.to_vec())))
         .collect();
     let coding_shreds: Vec<_> = coding_parts
         .into_iter()
@@ -536,14 +536,13 @@ fn deshred_reed_solomon(
             Some(data_ref) => data_ref.as_ref(),
             None => restored.get(&i).unwrap(),
         };
+        if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE {
+            return Err(ShredderError::TooMuchData);
+        }
         restored_payload.extend_from_slice(shred_data);
     }
 
-    if restored_payload.len() > MAX_DATA_PER_SLICE {
-        Err(ShredderError::TooMuchData)
-    } else {
-        Ok(restored_payload)
-    }
+    Ok(restored_payload)
 }
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
@@ -553,7 +552,7 @@ fn data_and_coding_to_output_shreds(
     coding: Vec<CodingShred>,
     sk: &SecretKey,
 ) -> Vec<Shred> {
-    let mut shreds = Vec::new();
+    let mut shreds = Vec::with_capacity(data.len() + coding.len());
     let num_data_shreds = data.len();
 
     let tree = build_merkle_tree(&data, &coding);
@@ -582,12 +581,11 @@ fn data_and_coding_to_output_shreds(
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
 fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -> MerkleTree {
-    let leaves: Vec<_> = data_shreds
+    let leaves = data_shreds
         .iter()
-        .map(|d| &d.0.data)
-        .chain(coding_shreds.iter().map(|c| &c.0.data))
-        .collect();
-    MerkleTree::new(&leaves)
+        .map(|d| d.0.data.as_ref())
+        .chain(coding_shreds.iter().map(|c| c.0.data.as_ref()));
+    MerkleTree::new_from_iter(leaves)
 }
 
 #[cfg(test)]

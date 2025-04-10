@@ -12,7 +12,7 @@
 //! - rainbow tables / pre-calculation attacks
 //! - ambiguity between leaf and inner nodes with unknown tree height
 
-use super::{Hash, hash};
+use super::{Hash, hash::hash_all};
 
 const LEAF_LABEL: [u8; 22] = *b"\x00ALPENGLOW-MERKLE-TREE";
 const LEFT_LABEL: [u8; 22] = *b"\x01ALPENGLOW-MERKLE-TREE";
@@ -27,12 +27,17 @@ pub struct MerkleTree {
 impl MerkleTree {
     /// Creates a new Merkle tree from the given data for each leaf.
     pub fn new(data: &[impl AsRef<[u8]>]) -> Self {
+        Self::new_from_iter(data.iter().map(|leaf| leaf.as_ref()))
+    }
+
+    /// Creates a new Merkle tree from the given data for each leaf.
+    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a [u8]>) -> Self {
         let mut nodes = Vec::new();
         let mut height = 0;
 
         // calculate leaf hashes
         for leaf in data {
-            let leaf_hash = hash_leaf(leaf.as_ref());
+            let leaf_hash = hash_leaf(leaf);
             nodes.push(leaf_hash);
         }
 
@@ -108,7 +113,7 @@ impl MerkleTree {
 /// The label prevents the possibility to claim an intermediate node was a leaf.
 /// It also makes the Merkle tree more robust against pre-calculation attacks.
 fn hash_leaf(data: &[u8]) -> Hash {
-    hash(&[&LEAF_LABEL[..], data].concat())
+    hash_all(&[&LEAF_LABEL[..], data])
 }
 
 /// Hashes a pair of child hashes into a parent non-leaf node with labels.
@@ -116,7 +121,7 @@ fn hash_leaf(data: &[u8]) -> Hash {
 /// The labels prevent the possibility to claim an intermediate node was a leaf.
 /// They also make the Merkle tree more robust against pre-calculation attacks.
 fn hash_pair(left: Hash, right: Hash) -> Hash {
-    hash(&[&LEFT_LABEL[..], &left, &RIGHT_LABEL[..], &right].concat())
+    hash_all(&[&LEFT_LABEL[..], &left, &RIGHT_LABEL[..], &right])
 }
 
 #[cfg(test)]
