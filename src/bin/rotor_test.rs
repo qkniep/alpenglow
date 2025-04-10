@@ -21,13 +21,11 @@ use tracing_subscriber::{EnvFilter, prelude::*};
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    // enable `tracing` and `tokio-console`
-    let console_layer = console_subscriber::spawn();
+    // enable `tracing`
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::DEBUG.into())
         .from_env_lossy();
     tracing_subscriber::registry()
-        .with(console_layer)
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
         .init();

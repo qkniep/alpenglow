@@ -16,8 +16,8 @@ use blockstore::Blockstore;
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
 use pool::{Pool, PoolError};
-use tokio_util::sync::CancellationToken;
 pub use vote::Vote;
+use votor::Votor;
 
 use std::marker::{Send, Sync};
 use std::time::Instant;
@@ -27,8 +27,8 @@ use color_eyre::Result;
 use rand::{RngCore, SeedableRng};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
-use votor::Votor;
 
 use crate::crypto::{Hash, aggsig, signature};
 use crate::network::{NetworkError, NetworkMessage, UdpNetwork};
@@ -189,7 +189,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         }
     }
 
-    /// Handles the leader side of the the consensus protocol.
+    /// Handles the leader side of the consensus protocol.
     ///
     /// Once all previous blocks have been notarized or skipped and the next
     /// slot belongs to our leader window, we will produce a block.
@@ -239,6 +239,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                         let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
                         for s in shreds {
                             self.disseminator.send(&s).await?;
+                            // PERF: move expensive add_shred() call out of block production
                             let b = self.blockstore.write().await.add_shred(s).await;
                             if let Some((slot, hash, parent_slot, parent_hash)) = b {
                                 let mut guard = self.pool.write().await;
