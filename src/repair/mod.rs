@@ -5,8 +5,8 @@
 //!
 //!
 
+use log::warn;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};

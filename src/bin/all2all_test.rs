@@ -7,11 +7,13 @@ use std::{io, time::Duration};
 
 use bincode::{Decode, Encode};
 use clap::Parser;
+use color_eyre::Result;
+use log::{debug, info};
+use logforth::append;
+use logforth::filter::EnvFilter;
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::{net::UdpSocket, task::JoinSet};
-use tracing::{debug, info};
-use tracing_subscriber::{EnvFilter, prelude::*};
 
 // TODO: allow for different leader per round
 const LEADER: usize = 0;
@@ -101,16 +103,24 @@ struct VoteMsg {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+    // enable fancy `color_eyre` error messages
+    color_eyre::install()?;
+
+    // enable `logforth` logging
+    logforth::builder()
+        .dispatch(|d| {
+            d.filter(EnvFilter::from_default_env())
+                .append(append::Stderr::default())
+        })
+        .apply();
 
     let machine = Machine::new(args.id);
-    machine.run().await
+    machine.run().await?;
+
+    Ok(())
 }
 
 struct Machine {

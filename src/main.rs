@@ -1,11 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::disseminator::rotor::StakeWeightedSampler;
-use color_eyre::Result;
-use rand::rng;
-use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{EnvFilter, prelude::*};
+use std::borrow::Cow;
 
 use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
@@ -13,36 +9,79 @@ use alpenglow::consensus::Alpenglow;
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
+use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
 use alpenglow::repair::Repair;
+use color_eyre::Result;
+use fastrace::collector::Config;
+use fastrace::prelude::*;
+use fastrace_opentelemetry::OpenTelemetryReporter;
+use log::warn;
+use logforth::append;
+use logforth::filter::EnvFilter;
+use opentelemetry::trace::SpanKind;
+use opentelemetry::{InstrumentationScope, KeyValue};
+use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use opentelemetry_sdk::Resource;
+use rand::rng;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `tracing` and `tokio-console`
-    // let console_layer = console_subscriber::spawn();
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::DEBUG.into())
-        .from_env_lossy();
-    tracing_subscriber::registry()
-        // .with(console_layer)
-        .with(filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .compact()
-                .without_time()
-                .with_target(false),
-        )
-        .init();
+    // enable `fastrace` tracing
+    let reporter = OpenTelemetryReporter::new(
+        SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint("http://127.0.0.1:4317".to_string())
+            .with_protocol(opentelemetry_otlp::Protocol::Grpc)
+            .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
+            .build()
+            .expect("initialize oltp exporter"),
+        SpanKind::Server,
+        Cow::Owned(
+            Resource::builder()
+                .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
+                .build(),
+        ),
+        InstrumentationScope::builder("alpenglow")
+            .with_version(env!("CARGO_PKG_VERSION"))
+            .build(),
+    );
+    fastrace::set_reporter(reporter, Config::default());
 
-    // spawn local cluster
-    let nodes = create_test_nodes(6);
-    let mut node_tasks = Vec::new();
-    for node in nodes {
-        node_tasks.push(tokio::spawn(node.run()));
+    // enable `logforth` logging
+    logforth::builder()
+        .dispatch(|d| {
+            d.filter(EnvFilter::from_default_env())
+                .append(append::Stderr::default())
+        })
+        .apply();
+
+    {
+        let parent = SpanContext::random();
+
+        // spawn local cluster
+        let nodes = create_test_nodes(2);
+        let mut node_tasks = Vec::new();
+        let mut cancel_tokens = Vec::new();
+        for (i, node) in nodes.into_iter().enumerate() {
+            let span_name = format!("node {}", i);
+            let span = Span::root(span_name, parent);
+            cancel_tokens.push(node.get_cancel_token());
+            node_tasks.push(tokio::spawn(node.run().in_span(span)));
+        }
+
+        tokio::signal::ctrl_c().await.unwrap();
+        warn!("shutting down all nodes");
+        for token in cancel_tokens.iter() {
+            token.cancel();
+        }
+        futures::future::join_all(node_tasks).await;
     }
-    futures::future::join_all(node_tasks).await;
+
+    fastrace::flush();
 
     Ok(())
 }

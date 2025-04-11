@@ -7,8 +7,8 @@ pub mod stake_distribution;
 mod token_bucket;
 
 pub use core::SimulatedNetworkCore;
+use log::warn;
 use token_bucket::TokenBucket;
-use tracing::warn;
 
 use std::sync::Arc;
 

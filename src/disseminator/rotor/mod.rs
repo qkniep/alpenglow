@@ -3,8 +3,8 @@
 
 pub mod sampling_strategy;
 
+use log::warn;
 use rand::prelude::*;
-use tracing::warn;
 
 use crate::consensus::SLOTS_PER_WINDOW;
 use crate::network::{Network, NetworkError, NetworkMessage};

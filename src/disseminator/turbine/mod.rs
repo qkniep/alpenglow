@@ -1,9 +1,9 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use log::warn;
 use moka::future::Cache;
 use rand::prelude::*;
-use tracing::warn;
 
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::Shred;

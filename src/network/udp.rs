@@ -3,8 +3,8 @@
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use log::warn;
 use tokio::net::UdpSocket;
-use tracing::warn;
 
 use super::{MTU_BYTES, Network, NetworkError, NetworkMessage};
 

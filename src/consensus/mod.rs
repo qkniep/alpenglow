@@ -15,6 +15,8 @@ mod votor;
 use blockstore::Blockstore;
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
+use fastrace::Span;
+use fastrace::future::FutureExt;
 use pool::{Pool, PoolError};
 pub use vote::Vote;
 use votor::Votor;
@@ -24,11 +26,11 @@ use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
+use log::{debug, info, trace, warn};
 use rand::{RngCore, SeedableRng};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, trace, warn};
 
 use crate::crypto::{Hash, aggsig, signature};
 use crate::network::{NetworkError, NetworkMessage, UdpNetwork};
@@ -100,7 +102,10 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
             rx,
             all2all.clone(),
         );
-        let votor_handle = tokio::spawn(async move { votor.voting_loop().await.unwrap() });
+        let votor_handle = tokio::spawn(
+            async move { votor.voting_loop().await.unwrap() }
+                .in_span(Span::enter_with_local_parent("voting loop")),
+        );
 
         let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
         let pool = Pool::new(validators.clone(), tx);
@@ -125,23 +130,27 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
     /// # Errors
     ///
     /// Returns an error only if any of the tasks panics.
+    #[fastrace::trace(short_name = true)]
     pub async fn run(self) -> Result<()> {
-        let n = Arc::new(self);
-        let nn = n.clone();
-        let msg_loop = tokio::spawn(async move { nn.message_loop().await });
-        let nn = n.clone();
-        let prod_loop = tokio::spawn(async move { nn.block_production_loop().await });
+        let msg_loop_span = Span::enter_with_local_parent("message loop");
+        let node = Arc::new(self);
+        let nn = node.clone();
+        let msg_loop = tokio::spawn(async move { nn.message_loop().await }.in_span(msg_loop_span));
 
-        while !n.cancel_token.is_cancelled() {
-            sleep(Duration::from_millis(10)).await;
-        }
-        n.votor_handle.abort();
+        let block_production_span = Span::enter_with_local_parent("block production");
+        let nn = node.clone();
+        let prod_loop = tokio::spawn(
+            async move { nn.block_production_loop().await }.in_span(block_production_span),
+        );
+
+        node.cancel_token.cancelled().await;
+        node.votor_handle.abort();
         msg_loop.abort();
         prod_loop.abort();
 
-        // let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
-        // msg_res??;
-        // prod_res??;
+        let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
+        msg_res??;
+        prod_res??;
         Ok(())
     }
 
@@ -169,17 +178,17 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                 // res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
                 res = self.all2all.receive() => {
                     let alpenglow = self.clone();
-                    tokio::spawn(async move {
+                    // tokio::spawn(async move {
                         alpenglow.handle_all2all_message(res.unwrap()).await.unwrap();
-                    });
+                    // });
                 }
                 // handle shreds received by block dissemination protocol
                 // res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
                 res = self.disseminator.receive() => {
                     let alpenglow = self.clone();
-                    tokio::spawn(async move {
+                    // tokio::spawn(async move {
                         alpenglow.handle_disseminator_shred(res.unwrap()).await.unwrap();
-                    });
+                    // });
                 }
                 // handle repair requests
                 res = self.repair.receive() => self.handle_repair_message(res?).await?,
@@ -211,11 +220,12 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                 let mut block = parent;
                 let mut block_hash = parent_hash;
                 for slot in first_slot_in_window..=last_slot_in_window {
+                    let slot_span = Span::enter_with_local_parent(format!("slot {}", slot));
                     let mut rng = rand::rngs::SmallRng::seed_from_u64(slot);
                     let hash = &hex::encode(block_hash)[..8];
                     info!(
-                        self.info.id,
-                        "producing block in slot {slot} with parent {hash} in slot {block}"
+                        "[validator {}] producing block in slot {} with parent {} in slot {}",
+                        self.info.id, slot, hash, block
                     );
                     // TODO: send actual data
                     for slice_index in 0..10 {
@@ -240,10 +250,11 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                         for s in shreds {
                             self.disseminator.send(&s).await?;
                             // PERF: move expensive add_shred() call out of block production
-                            let b = self.blockstore.write().await.add_shred(s).await;
-                            if let Some((slot, hash, parent_slot, parent_hash)) = b {
-                                let mut guard = self.pool.write().await;
-                                guard.add_block(slot, hash, parent_slot, parent_hash).await;
+                            let mut blockstore = self.blockstore.write().await;
+                            let block = blockstore.add_shred(s).await;
+                            if let Some((slot, hash, parent_slot, parent_hash)) = block {
+                                let mut pool = self.pool.write().await;
+                                pool.add_block(slot, hash, parent_slot, parent_hash).await;
                             }
                         }
 
@@ -273,13 +284,17 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                 if let Some(block_hash) = self.pool.read().await.branch_certified_hash(slot) {
                     let hash = &hex::encode(block_hash)[..8];
                     info!(
-                        self.info.id,
-                        "block production: notarized block {hash} in slot {slot}",
+                        "[validator {}] block production: notarized block {} in slot {}",
+                        self.info.id, hash, slot
                     );
                     parent = slot;
                     parent_hash = block_hash;
                 } else {
-                    warn!(self.info.id, "block production: skipped slot {slot}");
+                    // warn!(self.info.id, "block production: skipped slot {slot}");
+                    warn!(
+                        "[validator {}] block production: skipped slot {}",
+                        self.info.id, slot
+                    );
                 }
             }
         }
@@ -287,6 +302,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         Ok(())
     }
 
+    #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
         trace!("received all2all msg: {:?}", msg);
         match msg {
@@ -295,17 +311,18 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
                 Err(PoolError::Slashable(offence)) => {
                     warn!("slashable offence detected: {offence}")
                 }
-                Err(err) => trace!("ignoring invalid vote: {err}"),
+                Err(err) => debug!("ignoring invalid vote: {err}"),
             },
             NetworkMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
                 Ok(()) => {}
-                Err(err) => trace!("ignoring invalid cert: {err}"),
+                Err(err) => debug!("ignoring invalid cert: {err}"),
             },
             msg => warn!("unexpected message on all2all port: {:?}", msg),
         }
         Ok(())
     }
 
+    #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
         self.disseminator.forward(&shred).await?;
         let b = self.blockstore.write().await.add_shred(shred).await;

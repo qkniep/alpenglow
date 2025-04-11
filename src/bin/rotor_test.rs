@@ -11,24 +11,24 @@ use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_ser
 use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
+use log::{info, warn};
+use logforth::append;
+use logforth::filter::EnvFilter;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
-use tracing::level_filters::LevelFilter;
-use tracing::{info, warn};
-use tracing_subscriber::{EnvFilter, prelude::*};
 
 fn main() -> Result<()> {
+    // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `tracing`
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::DEBUG.into())
-        .from_env_lossy();
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // enable `logforth` logging
+    logforth::builder()
+        .dispatch(|d| {
+            d.filter(EnvFilter::from_default_env())
+                .append(append::Stderr::default())
+        })
+        .apply();
 
     // turn ValidatorData into ValidatorInfo
     let mut validators = Vec::new();

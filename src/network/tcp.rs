@@ -4,11 +4,11 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use futures::{SinkExt, StreamExt};
+use log::warn;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use tracing::warn;
 
 use crate::ValidatorId;
 

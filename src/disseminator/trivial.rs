@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use tracing::warn;
+use log::warn;
 
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};

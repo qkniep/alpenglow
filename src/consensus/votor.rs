@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use color_eyre::Result;
+use log::{debug, trace};
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{debug, trace};
 
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
@@ -121,6 +121,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     /// Handles the voting (leader and non-leader) side of consensus protocol.
     ///
     /// Checks consensus conditions and broadcasts new votes.
+    #[fastrace::trace]
     pub async fn voting_loop(&mut self) -> Result<()> {
         while let Some(event) = self.event_receiver.recv().await {
             if self.retired_slots.contains(&event.slot()) {
@@ -131,7 +132,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             match event {
                 // events from Pool
                 VotorEvent::BranchCertified(slot, hash) => {
-                    trace!(slot, self.validator_id, "branch_certified");
                     self.branch_certified.insert(slot, hash);
                     self.try_final(slot, hash).await;
                     self.check_pending_blocks().await;
@@ -140,7 +140,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     }
                 }
                 VotorEvent::SkipCertified(slot) => {
-                    trace!(slot, "skip_certified");
                     self.skip_certified.insert(slot);
                     self.check_pending_blocks().await;
                     if slot % SLOTS_PER_WINDOW == SLOTS_PER_WINDOW - 1 {
@@ -148,7 +147,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     }
                 }
                 VotorEvent::SafeToNotar(slot, hash) => {
-                    trace!(slot, "safe_to_notar");
                     if !self.voted.contains(&slot)
                         || self.voted_notar.get(&slot) == Some(&hash)
                         || self.voted_notar_fallback.contains(&(slot, hash))
@@ -162,7 +160,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     self.skipped.insert(slot);
                 }
                 VotorEvent::SafeToSkip(slot) => {
-                    trace!(slot, "safe_to_skip");
                     let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_id);
                     self.all2all.broadcast(&vote.into()).await.unwrap();
                     self.try_skip_window(slot).await;
@@ -194,11 +191,9 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
 
                 // events from Votor itself
                 VotorEvent::Timeout(slot) => {
-                    trace!(slot, "timeout");
                     self.try_skip_window(slot).await;
                 }
                 VotorEvent::TimeoutCrashedLeader(slot) => {
-                    trace!(slot, "timeout_crashed_leader");
                     if !self.received_shred.contains(&slot) {
                         self.try_skip_window(slot).await;
                     }
@@ -245,7 +240,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             let parent_certified =
                 slot == 0 || self.branch_certified.get(&parent_slot) == Some(&parent_hash);
             let skips_certified = (parent_slot + 1..slot).all(|s| self.skip_certified.contains(&s));
-            debug!(slot, parent_certified, skips_certified, "try_notar");
+            debug!("try notar slot {}", slot);
             if !parent_certified || !skips_certified {
                 return false;
             }
@@ -279,7 +274,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
 
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
     async fn try_skip_window(&mut self, slot: Slot) {
-        trace!(slot, "try_skip_window");
+        trace!("try skip window of slot {}", slot);
         let first_slot = slot / SLOTS_PER_WINDOW * SLOTS_PER_WINDOW;
         for s in first_slot..first_slot + SLOTS_PER_WINDOW {
             if self.voted.insert(s) {
@@ -387,8 +382,12 @@ mod tests {
         for i in 0..SLOTS_PER_WINDOW {
             tx.send(VotorEvent::SkipCertified(i)).await.unwrap();
         }
+
+        // only receive first shred of first block, no full block for the next window
         let event = VotorEvent::FirstShred(SLOTS_PER_WINDOW);
         tx.send(event).await.unwrap();
+
+        // should vote skip for all slots
         for i in 0..SLOTS_PER_WINDOW {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {

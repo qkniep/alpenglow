@@ -8,10 +8,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use log::{debug, error, info, trace};
 use smallvec::SmallVec;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info, trace};
 
 use crate::crypto::Hash;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
@@ -247,7 +247,7 @@ impl Pool {
         block_hash: Hash,
         mut certified_so_far: Vec<(Slot, Hash)>,
     ) -> Vec<(Slot, Hash)> {
-        debug!(slot, "check_branch_certified");
+        debug!("checking branch-certified for slot {}", slot);
         let hash = &hex::encode(block_hash)[..8];
 
         let Some((parent_slot, parent_hash)) = self.parents.get(&(slot, block_hash)) else {

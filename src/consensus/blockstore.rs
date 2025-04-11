@@ -8,8 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use log::{debug, trace};
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, trace};
 
 use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::{self, RegularShredder, Shred, Shredder, Slice};
@@ -31,7 +31,7 @@ pub struct Blockstore {
     canonical: BTreeMap<Slot, Hash>,
     /// Holds hashes of alternative blocks for a given slot number.
     alternatives: BTreeMap<Slot, Vec<Hash>>,
-    ///
+    /// Indicates for which slots we already received at least one shred.
     first_shred_seen: BTreeSet<Slot>,
 
     /// Event channel for sending notifications to Votor.
@@ -60,6 +60,7 @@ impl Blockstore {
 
     /// Stores a new shred in the blockstore.
     /// Reconstructs the corresponding slice and block if possible.
+    #[fastrace::trace(short_name = true)]
     pub async fn add_shred(&mut self, shred: Shred) -> Option<(Slot, Hash, Slot, Hash)> {
         let slot = shred.slot();
         let slice = shred.slice();

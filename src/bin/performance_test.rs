@@ -17,29 +17,22 @@ use alpenglow::network::{SimulatedNetwork, UdpNetwork};
 use alpenglow::repair::Repair;
 use alpenglow::{Alpenglow, Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
-use tracing::level_filters::LevelFilter;
-use tracing::{info, warn};
-use tracing_subscriber::{EnvFilter, prelude::*};
+use log::{info, warn};
+use logforth::append;
+use logforth::filter::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `tracing` and `tokio-console`
-    // let console_layer = console_subscriber::spawn();
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::DEBUG.into())
-        .from_env_lossy();
-    tracing_subscriber::registry()
-        // .with(console_layer)
-        .with(filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .compact()
-                .without_time()
-                .with_target(false),
-        )
-        .init();
+    // enable `logforth` logging
+    logforth::builder()
+        .dispatch(|d| {
+            d.filter(EnvFilter::from_default_env())
+                .append(append::Stderr::default())
+        })
+        .apply();
 
     // turn ValidatorData into ValidatorInfo
     let mut validators = Vec::new();
