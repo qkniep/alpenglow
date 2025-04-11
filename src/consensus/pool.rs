@@ -89,18 +89,27 @@ struct SlotState {
 
 // PERF: replace storing Votes (50% size overhead) with storing only signatures?
 struct SlotVotes {
+    /// Notarization votes for all validators (indexed by `ValidatorId`).
     notar: Vec<Option<(Hash, Vote)>>,
+    /// Notar-fallback votes for all validators (indexed by `ValidatorId`).
     notar_fallback: Vec<Vec<(Hash, Vote)>>,
+    /// Skip votes for all validators (indexed by `ValidatorId`).
     skip: Vec<Option<Vote>>,
+    /// Skip-fallback votes for all validators (indexed by `ValidatorId`).
     skip_fallback: Vec<Option<Vote>>,
+    /// Finalization votes for all validators (indexed by `ValidatorId`).
     finalize: Vec<Option<Vote>>,
 }
 
 #[derive(Default)]
 struct SlotVotedStake {
+    /// Amount of stake for each block has for which we have a notarization vote.
     notar: BTreeMap<Hash, Stake>,
+    /// Amount of stake for each block hash for which we have a notar-fallback vote.
     notar_fallback: BTreeMap<Hash, Stake>,
+    /// Amount of stake for which we have a skip(-fallback) vote.
     skip: Stake,
+    /// Amount of stake for which we have a finalization vote.
     finalize: Stake,
     /// Amount of stake for which we have either notar or skip vote.
     notar_or_skip: Stake,
@@ -110,10 +119,15 @@ struct SlotVotedStake {
 
 #[derive(Default)]
 struct SlotCertificates {
+    /// Notarization certificate for this slot, if it exists.
     notar: Option<NotarCert>,
+    /// Notar-fallback certificate for this slot, if it exists.
     notar_fallback: Option<NotarFallbackCert>,
+    /// Skip certificate for this slot, if it exists.
     skip: Option<SkipCert>,
+    /// Fast finalization certificate for this slot, if it exists.
     fast_finalize: Option<FastFinalCert>,
+    /// Finalization certificate for this slot, if it exists.
     finalize: Option<FinalCert>,
 }
 
@@ -154,12 +168,8 @@ impl Pool {
             return Err(PoolError::InvalidSignature);
         }
 
-        // initilize slot state if it doesn't exist yet
-        let slot_state = self
-            .slot_states
-            .entry(cert.slot())
-            .or_insert_with(|| SlotState::new(self.validators.clone()));
-        let certs = &mut slot_state.certificates;
+        // get `SlotCertificates`, initialize if it doesn't exist yet
+        let certs = &mut self.slot_state(slot).certificates;
 
         // check if the certificate is a duplicate
         let duplicate = match cert {
@@ -185,14 +195,10 @@ impl Pool {
     /// - certificate is not a duplicate
     async fn add_valid_cert(&mut self, cert: Cert) {
         let slot = cert.slot();
-        let slot_state = self
-            .slot_states
-            .entry(slot)
-            .or_insert_with(|| SlotState::new(self.validators.clone()));
 
         // actually add certificate
-        trace!("adding cert to pool: {:?}", cert);
-        slot_state.add_cert(cert.clone());
+        trace!("adding cert to pool: {cert:?}");
+        self.slot_state(slot).add_cert(cert.clone());
 
         // handle resulting state updates
         match &cert {
@@ -228,11 +234,10 @@ impl Pool {
     async fn check_branch_certified(&mut self, slot: Slot, block_hash: Hash) {
         let newly_certified = self.check_branch_certified_internal(slot, block_hash, Vec::new());
 
+        // notify votor of newly branch-certified blocks
         for (slot, block_hash) in newly_certified {
-            self.votor_event_channel
-                .send(VotorEvent::BranchCertified(slot, block_hash))
-                .await
-                .unwrap();
+            let event = VotorEvent::BranchCertified(slot, block_hash);
+            self.votor_event_channel.send(event).await.unwrap();
         }
     }
 
@@ -269,17 +274,13 @@ impl Pool {
             return certified_so_far;
         }
 
-        let slot_state = self
-            .slot_states
-            .entry(slot)
-            .or_insert_with(|| SlotState::new(self.validators.clone()));
-        if slot_state.branch_certified.is_some() {
+        if self.slot_state(slot).branch_certified.is_some() {
             debug!("already certified: {slot} {hash}");
             return certified_so_far;
         }
 
         debug!("newly certified: {slot} {hash}");
-        slot_state.branch_certified = Some(block_hash);
+        self.slot_state(slot).branch_certified = Some(block_hash);
         certified_so_far.push((slot, block_hash));
         let pending = self.pending_branch_certified.remove(&(slot, block_hash));
         if let Some((pending_slot, pending_hash)) = pending {
@@ -312,24 +313,18 @@ impl Pool {
             return Err(PoolError::InvalidSignature);
         }
 
-        // initilize slot state if it doesn't exist yet
-        let slot_state = self
-            .slot_states
-            .entry(slot)
-            .or_insert_with(|| SlotState::new(Arc::clone(&self.validators)));
-
         // check if vote is valid and should be counted
         let voter = vote.signer();
         let voter_stake = self.validators[voter as usize].stake;
-        if let Some(offence) = slot_state.check_slashable_offence(&vote) {
+        if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
             return Err(PoolError::Slashable(offence));
-        } else if slot_state.should_ignore_vote(&vote) {
+        } else if self.slot_state(slot).should_ignore_vote(&vote) {
             return Err(PoolError::Duplicate);
         }
 
         // actually add the vote
-        trace!("adding vote to pool: {:?}", vote);
-        let (new_certs, votor_events) = slot_state.add_vote(vote, voter_stake);
+        trace!("adding vote to pool: {vote:?}");
+        let (new_certs, votor_events) = self.slot_state(slot).add_vote(vote, voter_stake);
 
         // handle any resulting events
         for cert in new_certs {
@@ -400,7 +395,7 @@ impl Pool {
         }
     }
 
-    /// Returns the block hash the pool currently sees as branch certified for this slot, if any.
+    /// Returns the block hash the pool currently sees as branch certified in this slot, if any.
     pub fn branch_certified_hash(&self, slot: Slot) -> Option<Hash> {
         self.slot_states
             .get(&slot)
@@ -428,6 +423,12 @@ impl Pool {
         self.slot_states = self
             .slot_states
             .split_off(&self.highest_slow_finalized_slot);
+    }
+
+    fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
+        self.slot_states
+            .entry(slot)
+            .or_insert_with(|| SlotState::new(Arc::clone(&self.validators)))
     }
 }
 
@@ -558,11 +559,8 @@ impl SlotState {
         stake: Stake,
     ) -> (SmallVec<[Cert; 2]>, SmallVec<[VotorEvent; 2]>) {
         let mut new_certs = SmallVec::new();
-        let nf_stake = self
-            .voted_stakes
-            .notar_fallback
-            .entry(*block_hash)
-            .or_insert(0);
+        let nf_stakes = &mut self.voted_stakes.notar_fallback;
+        let nf_stake = nf_stakes.entry(*block_hash).or_insert(0);
         *nf_stake += stake;
         let nf_stake = *nf_stake;
         let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
@@ -696,6 +694,7 @@ impl SlotVotes {
         }
     }
 
+    // PERF: return iterators here (to avoid memory allocation)?
     fn notar_votes(&self, block_hash: &Hash) -> Vec<Vote> {
         self.notar
             .iter()
