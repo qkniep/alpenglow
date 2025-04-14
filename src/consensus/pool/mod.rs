@@ -17,10 +17,10 @@ use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
 use crate::crypto::Hash;
-use crate::{Slot, ValidatorId, ValidatorInfo};
+use crate::{Slot, ValidatorId};
 
 use super::votor::VotorEvent;
-use super::{Cert, Vote};
+use super::{Cert, EpochInfo, Vote};
 
 use slot_state::SlotState;
 use valid_to_root_tracker::ValidToRootTracker;
@@ -67,7 +67,7 @@ pub struct Pool {
     highest_slow_finalized_slot: Slot,
     /// Information about all active validators.
     // TODO: replace with EpochInfo
-    validators: Arc<Vec<ValidatorInfo>>,
+    epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
 }
@@ -76,14 +76,14 @@ impl Pool {
     /// Creates a new empty pool with no votes.
     ///
     /// Any events will later be sent on [`Pool::votor_event_channel`].
-    pub fn new(validators: Vec<ValidatorInfo>, votor_event_channel: Sender<VotorEvent>) -> Self {
+    pub fn new(epoch_info: Arc<EpochInfo>, votor_event_channel: Sender<VotorEvent>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
             branch_certified_tracker: ValidToRootTracker::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
             highest_slow_finalized_slot: 0,
-            validators: Arc::new(validators),
+            epoch_info,
             votor_event_channel,
         }
     }
@@ -104,7 +104,7 @@ impl Pool {
         }
 
         // verify signature
-        if !cert.check_sig(&self.validators) {
+        if !cert.check_sig(&self.epoch_info.validators) {
             return Err(PoolError::InvalidSignature);
         }
 
@@ -195,14 +195,14 @@ impl Pool {
         }
 
         // verify signature
-        let pk = &self.validators[vote.signer() as usize].voting_pubkey;
+        let pk = &self.epoch_info.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
             return Err(PoolError::InvalidSignature);
         }
 
         // check if vote is valid and should be counted
         let voter = vote.signer();
-        let voter_stake = self.validators[voter as usize].stake;
+        let voter_stake = self.epoch_info.validator(voter).stake;
         if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
             return Err(PoolError::Slashable(offence));
         } else if self.slot_state(slot).should_ignore_vote(&vote) {
@@ -312,7 +312,7 @@ impl Pool {
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
         self.slot_states
             .entry(slot)
-            .or_insert_with(|| SlotState::new(Arc::clone(&self.validators)))
+            .or_insert_with(|| SlotState::new(Arc::clone(&self.epoch_info)))
     }
 }
 
@@ -320,6 +320,7 @@ impl Pool {
 mod tests {
     use super::*;
 
+    use crate::ValidatorInfo;
     use crate::consensus::SLOTS_PER_WINDOW;
     use crate::consensus::cert::NotarCert;
     use crate::crypto::aggsig::SecretKey;
@@ -327,7 +328,7 @@ mod tests {
 
     use tokio::sync::mpsc;
 
-    fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
+    fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
         let mut rng = rand::rng();
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
@@ -345,14 +346,15 @@ mod tests {
                 repair_address: String::new(),
             });
         }
-        (voting_sks, validators)
+        let epoch_info = Arc::new(EpochInfo::new(validators));
+        (voting_sks, epoch_info)
     }
 
     #[tokio::test]
     async fn handle_invalid_votes() {
-        let (_, validators) = generate_validators(11);
+        let (_, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         let wrong_sk = SecretKey::new(&mut rand::rng());
         let vote = Vote::new_notar(0, Hash::default(), &wrong_sk, 0);
@@ -362,9 +364,9 @@ mod tests {
 
     #[tokio::test]
     async fn notarize_block() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // all nodes notarize block in slot 0
         assert!(!pool.is_notarized(0));
@@ -394,9 +396,9 @@ mod tests {
 
     #[tokio::test]
     async fn skip_block() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // all nodes vote skip on slot 0
         assert!(!pool.is_skip_certified(0));
@@ -426,9 +428,9 @@ mod tests {
 
     #[tokio::test]
     async fn finalize_block() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // all nodes vote finalize on slot 0
         assert!(!pool.is_finalized(0));
@@ -461,9 +463,9 @@ mod tests {
 
     #[tokio::test]
     async fn fast_finalize_block() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         pool.add_block(0, Hash::default(), 0, Hash::default()).await;
         pool.add_block(1, Hash::default(), 0, Hash::default()).await;
@@ -500,9 +502,9 @@ mod tests {
 
     #[tokio::test]
     async fn simple_branch_certified() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
         pool.add_block(2, [2; 32], 1, [1; 32]).await;
@@ -529,9 +531,9 @@ mod tests {
 
     #[tokio::test]
     async fn branch_certified_notar_fallback() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
         pool.add_block(2, [2; 32], 1, [1; 32]).await;
@@ -563,9 +565,9 @@ mod tests {
 
     #[tokio::test]
     async fn branch_certified_delayed_block() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
 
@@ -594,9 +596,9 @@ mod tests {
 
     #[tokio::test]
     async fn branch_certified_out_of_order() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // register blocks with their parents
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
@@ -626,9 +628,9 @@ mod tests {
 
     #[tokio::test]
     async fn branch_certified_late_cert() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators.clone(), tx);
+        let mut pool = Pool::new(epoch_info.clone(), tx);
 
         // register blocks with their parents
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
@@ -650,7 +652,7 @@ mod tests {
         for v in 0..7 {
             votes.push(Vote::new_notar(1, [1; 32], &sks[v as usize], v));
         }
-        let cert = NotarCert::try_new(&votes, &validators).unwrap();
+        let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
         assert!(pool.is_notarized(1));
         assert!(pool.is_branch_certified(1));
@@ -662,9 +664,9 @@ mod tests {
 
     #[tokio::test]
     async fn regular_handover() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // register blocks with their parents
         for slot in 0..SLOTS_PER_WINDOW + 1 {
@@ -697,9 +699,9 @@ mod tests {
 
     #[tokio::test]
     async fn one_skip_handover() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // register blocks with their parents
         for slot in 0..SLOTS_PER_WINDOW {
@@ -748,9 +750,9 @@ mod tests {
 
     #[tokio::test]
     async fn two_skip_handover() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // register blocks with their parents
         for slot in 0..SLOTS_PER_WINDOW {
@@ -803,9 +805,9 @@ mod tests {
 
     #[tokio::test]
     async fn skip_window_handover() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // register blocks with their parents
         for slot in 0..2 * SLOTS_PER_WINDOW {
@@ -856,9 +858,9 @@ mod tests {
 
     #[tokio::test]
     async fn pruning() {
-        let (sks, validators) = generate_validators(11);
+        let (sks, epoch_info) = generate_validators(11);
         let (tx, rx) = mpsc::channel(1024);
-        let mut pool = Pool::new(validators, tx);
+        let mut pool = Pool::new(epoch_info, tx);
 
         // all nodes vote notarize on slot 0
         assert!(!pool.is_finalized(0));

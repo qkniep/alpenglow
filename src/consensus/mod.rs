@@ -90,7 +90,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         repair: Repair<UdpNetwork>,
     ) -> Self {
         let cancel_token = CancellationToken::new();
-        let epoch_info = Arc::new(EpochInfo::new(validators.clone()));
+        let epoch_info = Arc::new(EpochInfo::new(validators));
         let (tx, rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
@@ -108,7 +108,7 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         );
 
         let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
-        let pool = Pool::new(validators.clone(), tx);
+        let pool = Pool::new(epoch_info.clone(), tx);
 
         Self {
             info: epoch_info.validator(own_id).clone(),

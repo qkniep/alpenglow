@@ -13,9 +13,9 @@ use smallvec::SmallVec;
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
 use crate::consensus::vote::VoteKind;
 use crate::consensus::votor::VotorEvent;
-use crate::consensus::{Cert, Vote};
+use crate::consensus::{Cert, EpochInfo, Vote};
 use crate::crypto::Hash;
-use crate::{Slot, Stake, ValidatorInfo};
+use crate::{Slot, Stake};
 
 use super::SlashableOffence;
 
@@ -30,9 +30,7 @@ pub struct SlotState {
     /// it and all its ancestors are notarized(-fallback).
     pub(super) branch_certified: Option<Hash>,
     /// Information about all validators active in this slot.
-    pub(super) validators: Arc<Vec<ValidatorInfo>>,
-    /// Total amount of stake active for this slot.
-    pub(super) total_stake: Stake,
+    pub(super) epoch_info: Arc<EpochInfo>,
 }
 
 // PERF: replace storing Votes (50% size overhead) with storing only signatures?
@@ -80,15 +78,13 @@ pub struct SlotCertificates {
 }
 
 impl SlotState {
-    pub fn new(validators: Arc<Vec<ValidatorInfo>>) -> Self {
-        let total_stake = validators.iter().map(|v| v.stake).sum();
+    pub fn new(epoch_info: Arc<EpochInfo>) -> Self {
         Self {
-            votes: SlotVotes::new(validators.len()),
+            votes: SlotVotes::new(epoch_info.validators.len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
             branch_certified: None,
-            validators,
-            total_stake,
+            epoch_info,
         }
     }
 
@@ -137,16 +133,16 @@ impl SlotState {
         }
     }
 
-    const fn is_weak_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.total_stake * 2).div_ceil(5)
+    fn is_weak_quorum(&self, stake: Stake) -> bool {
+        stake >= (self.epoch_info.total_stake() * 2).div_ceil(5)
     }
 
-    const fn is_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.total_stake * 3).div_ceil(5)
+    fn is_quorum(&self, stake: Stake) -> bool {
+        stake >= (self.epoch_info.total_stake() * 3).div_ceil(5)
     }
 
-    const fn is_strong_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.total_stake * 4).div_ceil(5)
+    fn is_strong_quorum(&self, stake: Stake) -> bool {
+        stake >= (self.epoch_info.total_stake() * 4).div_ceil(5)
     }
 
     /// Adds a given amount of `stake` to notarization counter for `block_hash`.
@@ -184,12 +180,12 @@ impl SlotState {
         }
         if self.is_quorum(notar_stake) && self.certificates.notar.is_none() {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, &self.validators);
+            let cert = NotarCert::new_unchecked(&votes, &self.epoch_info.validators);
             new_certs.push(Cert::Notar(cert));
         }
         if self.is_strong_quorum(notar_stake) && self.certificates.fast_finalize.is_none() {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = FastFinalCert::new_unchecked(&votes, &self.validators);
+            let cert = FastFinalCert::new_unchecked(&votes, &self.epoch_info.validators);
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -214,7 +210,7 @@ impl SlotState {
         if self.is_quorum(nf_stake + notar_stake) && self.certificates.notar_fallback.is_none() {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, &self.validators);
+            let cert = NotarFallbackCert::new_unchecked(&votes, &self.epoch_info.validators);
             new_certs.push(Cert::NotarFallback(cert));
         }
         (new_certs, SmallVec::new())
@@ -235,7 +231,7 @@ impl SlotState {
         if self.is_quorum(self.voted_stakes.skip) && self.certificates.skip.is_none() {
             let mut votes = self.votes.skip_votes();
             votes.extend(self.votes.skip_fallback_votes());
-            let cert = SkipCert::new_unchecked(&votes, &self.validators);
+            let cert = SkipCert::new_unchecked(&votes, &self.epoch_info.validators);
             new_certs.push(Cert::Skip(cert));
             votor_events.push(VotorEvent::SkipCertified(slot));
         }
@@ -257,7 +253,7 @@ impl SlotState {
         self.voted_stakes.finalize += stake;
         if self.is_quorum(self.voted_stakes.finalize) && self.certificates.finalize.is_none() {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, &self.validators);
+            let cert = FinalCert::new_unchecked(&votes, &self.epoch_info.validators);
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new())
@@ -379,6 +375,7 @@ impl SlotVotes {
 mod tests {
     use super::*;
 
+    use crate::ValidatorInfo;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::signature;
 
