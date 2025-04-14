@@ -375,11 +375,11 @@ impl SlotVotes {
 mod tests {
     use super::*;
 
-    use crate::ValidatorInfo;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::signature;
+    use crate::{ValidatorId, ValidatorInfo};
 
-    fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
+    fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
         let mut rng = rand::rng();
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
@@ -397,11 +397,59 @@ mod tests {
                 repair_address: String::new(),
             });
         }
-        (voting_sks, validators)
+        let epoch_info = Arc::new(EpochInfo::new(validators));
+        (voting_sks, epoch_info)
     }
 
     #[tokio::test]
-    async fn basic() {
-        let (_, _) = generate_validators(11);
+    async fn quorums() {
+        let (_, epoch_info) = generate_validators(6);
+        let slot_state = SlotState::new(epoch_info);
+        assert!(slot_state.is_weak_quorum(3));
+        assert!(!slot_state.is_quorum(3));
+        assert!(slot_state.is_quorum(4));
+        assert!(!slot_state.is_strong_quorum(4));
+        assert!(slot_state.is_strong_quorum(5));
+
+        let (_, epoch_info) = generate_validators(11);
+        let slot_state = SlotState::new(epoch_info);
+        assert!(slot_state.is_weak_quorum(5));
+        assert!(!slot_state.is_quorum(5));
+        assert!(slot_state.is_quorum(7));
+        assert!(!slot_state.is_strong_quorum(7));
+        assert!(slot_state.is_strong_quorum(9));
+    }
+
+    #[tokio::test]
+    async fn add_cert() {
+        let (sks, epoch_info) = generate_validators(11);
+        let mut slot_state = SlotState::new(epoch_info.clone());
+        let votes: Vec<_> = sks
+            .iter()
+            .enumerate()
+            .map(|(i, sk)| Vote::new_notar(1, [1; 32], sk, i as ValidatorId))
+            .collect();
+        let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert!(slot_state.certificates.notar.is_none());
+        slot_state.add_cert(Cert::Notar(cert));
+        assert!(slot_state.certificates.notar.is_some());
+    }
+
+    #[tokio::test]
+    async fn add_vote() {
+        let (sks, epoch_info) = generate_validators(11);
+        let mut slot_state = SlotState::new(epoch_info.clone());
+        for (i, sk) in sks.iter().enumerate() {
+            let vote = Vote::new_notar(1, [1; 32], sk, i as ValidatorId);
+            let voter_stake = epoch_info.validator(i as ValidatorId).stake;
+            assert!(slot_state.votes.notar[i].is_none());
+            slot_state.add_vote(vote.clone(), voter_stake);
+            let notar_vote = &slot_state.votes.notar[i];
+            assert!(notar_vote.is_some());
+            assert_eq!(notar_vote.clone().unwrap().0, [1; 32]);
+            assert!(notar_vote.clone().unwrap().1.is_notar());
+            assert_eq!(notar_vote.clone().unwrap().1.slot(), 1);
+            assert_eq!(notar_vote.clone().unwrap().1.signer(), i as ValidatorId);
+        }
     }
 }
