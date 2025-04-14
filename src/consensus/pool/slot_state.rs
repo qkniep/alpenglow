@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Data structure handling votes and certificates.
+//! Data structure handling votes and certificates for a single slot.
 //!
 //!
 

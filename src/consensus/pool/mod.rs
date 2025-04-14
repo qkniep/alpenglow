@@ -6,11 +6,12 @@
 //!
 
 mod slot_state;
+mod valid_to_root_tracker;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use log::{debug, error, info, trace};
+use log::{error, info, trace};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
@@ -21,6 +22,7 @@ use super::votor::VotorEvent;
 use super::{Cert, Vote};
 
 use slot_state::SlotState;
+use valid_to_root_tracker::ValidToRootTracker;
 
 /// Errors the Pool may throw when adding a vote or certificate.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -54,11 +56,8 @@ pub enum SlashableOffence {
 pub struct Pool {
     /// State for each slot. Contains all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
-    /// Map from block (slot, hash) to parent block (slot, hash).
-    parents: BTreeMap<(Slot, Hash), (Slot, Hash)>,
-    /// Map from parent block (slot, hash) to block (slot, hash) waiting on
-    /// branch certified status of its parent.
-    pending_branch_certified: BTreeMap<(Slot, Hash), (Slot, Hash)>,
+    /// Keeps track of which blocks are branch-certified.
+    branch_certified_tracker: ValidToRootTracker,
     /// Highest slot that is at least notarized fallabck.
     highest_notarized_fallback_slot: Slot,
     /// Highest slot that was finalized or fast-finalized.
@@ -79,8 +78,7 @@ impl Pool {
     pub fn new(validators: Vec<ValidatorInfo>, votor_event_channel: Sender<VotorEvent>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
-            parents: BTreeMap::new(),
-            pending_branch_certified: BTreeMap::new(),
+            branch_certified_tracker: ValidToRootTracker::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
             highest_slow_finalized_slot: 0,
@@ -145,17 +143,26 @@ impl Pool {
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
                 let block_hash = cert.block_hash().unwrap();
-                self.check_branch_certified(cert.slot(), block_hash).await;
+                let newly_certified = self.branch_certified_tracker.mark_valid((slot, block_hash));
+                for (slot, hash) in newly_certified {
+                    let event = VotorEvent::BranchCertified(slot, hash);
+                    self.votor_event_channel.send(event).await.unwrap();
+                    self.slot_state(slot).branch_certified = Some(hash);
+                }
                 self.highest_notarized_fallback_slot =
                     slot.max(self.highest_notarized_fallback_slot);
             }
             Cert::FastFinal(_) => {
                 info!("fast finalized slot {slot}");
                 let block_hash = cert.block_hash().unwrap();
-                self.check_branch_certified(cert.slot(), block_hash).await;
-                if self.branch_certified_hash(slot) == Some(block_hash) {
-                    self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
+                let id = (slot, block_hash);
+                let newly_certified = self.branch_certified_tracker.mark_valid(id);
+                for (slot, hash) in newly_certified {
+                    let event = VotorEvent::BranchCertified(slot, hash);
+                    self.votor_event_channel.send(event).await.unwrap();
+                    self.slot_state(slot).branch_certified = Some(hash);
                 }
+                self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
@@ -168,68 +175,6 @@ impl Pool {
         // send to votor for broadcasting
         let event = VotorEvent::CertCreated(Box::new(cert));
         self.votor_event_channel.send(event).await.unwrap();
-    }
-
-    /// Recursively checks if branch and its ancestors are certified.
-    /// Sends [`VotorEvent::BranchCertified`] for each newly certified block.
-    async fn check_branch_certified(&mut self, slot: Slot, block_hash: Hash) {
-        let newly_certified = self.check_branch_certified_internal(slot, block_hash, Vec::new());
-
-        // notify votor of newly branch-certified blocks
-        for (slot, block_hash) in newly_certified {
-            let event = VotorEvent::BranchCertified(slot, block_hash);
-            self.votor_event_channel.send(event).await.unwrap();
-        }
-    }
-
-    /// Performs actual checking and recursion over ancestors.
-    ///
-    /// Ancestors are checked only if the branch-certified status changed.
-    /// This separation circumvents the difficulties of recursive async functions,
-    /// by keeping access to the async channel only in `check_branch_certified`.
-    fn check_branch_certified_internal(
-        &mut self,
-        slot: Slot,
-        block_hash: Hash,
-        mut certified_so_far: Vec<(Slot, Hash)>,
-    ) -> Vec<(Slot, Hash)> {
-        debug!("checking branch-certified for slot {}", slot);
-        let hash = &hex::encode(block_hash)[..8];
-
-        let Some((parent_slot, parent_hash)) = self.parents.get(&(slot, block_hash)) else {
-            debug!("no parent: {slot} {hash}");
-            return certified_so_far;
-        };
-
-        if !self.is_notarized_fallback(slot) && !self.is_notarized(slot) {
-            debug!("not notarized: {slot} {hash}");
-            return certified_so_far;
-        }
-
-        let parent_certified =
-            slot == 0 || self.branch_certified_hash(*parent_slot) == Some(*parent_hash);
-        if !parent_certified {
-            debug!("parent not certified: {slot} {hash}");
-            self.pending_branch_certified
-                .insert((*parent_slot, *parent_hash), (slot, block_hash));
-            return certified_so_far;
-        }
-
-        if self.slot_state(slot).branch_certified.is_some() {
-            debug!("already certified: {slot} {hash}");
-            return certified_so_far;
-        }
-
-        debug!("newly certified: {slot} {hash}");
-        self.slot_state(slot).branch_certified = Some(block_hash);
-        certified_so_far.push((slot, block_hash));
-        let pending = self.pending_branch_certified.remove(&(slot, block_hash));
-        if let Some((pending_slot, pending_hash)) = pending {
-            debug!("now checking ancestors");
-            self.check_branch_certified_internal(pending_slot, pending_hash, certified_so_far)
-        } else {
-            certified_so_far
-        }
     }
 
     /// Adds a new vote to the pool. Checks validity of the vote.
@@ -288,17 +233,14 @@ impl Pool {
         parent_slot: Slot,
         parent_hash: Hash,
     ) {
-        if self.parents.contains_key(&(slot, block_hash)) {
-            let hash = &hex::encode(block_hash)[..8];
-            error!("pool: block already added: {slot} {hash}");
-            return;
+        let id = (slot, block_hash);
+        let parent = (parent_slot, parent_hash);
+        let newly_certified = self.branch_certified_tracker.add_with_parent(id, parent);
+        for (slot, hash) in newly_certified {
+            let event = VotorEvent::BranchCertified(slot, hash);
+            self.votor_event_channel.send(event).await.unwrap();
+            self.slot_state(slot).branch_certified = Some(hash);
         }
-        let hash = &hex::encode(block_hash)[..8];
-        let hash2 = &hex::encode(parent_hash)[..8];
-        debug!("pool: added block {slot} {hash} with parent {parent_slot} {hash2}");
-        self.parents
-            .insert((slot, block_hash), (parent_slot, parent_hash));
-        self.check_branch_certified(slot, block_hash).await;
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.
@@ -561,26 +503,26 @@ mod tests {
         let (tx, rx) = mpsc::channel(1024);
         let mut pool = Pool::new(validators, tx);
 
-        pool.add_block(0, [0; 32], 0, Hash::default()).await;
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
-
-        assert!(!pool.is_notarized(0));
-        assert!(!pool.is_branch_certified(0));
-        for v in 0..11 {
-            let vote = Vote::new_notar(0, [0; 32], &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
-        }
-        assert!(pool.is_notarized(0));
-        assert!(pool.is_branch_certified(0));
+        pool.add_block(2, [2; 32], 1, [1; 32]).await;
 
         assert!(!pool.is_notarized(1));
         assert!(!pool.is_branch_certified(1));
-        for v in 0..11 {
+        for v in 0..7 {
             let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_notarized(1));
         assert!(pool.is_branch_certified(1));
+
+        assert!(!pool.is_notarized(2));
+        assert!(!pool.is_branch_certified(2));
+        for v in 0..7 {
+            let vote = Vote::new_notar(2, [2; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(pool.is_notarized(2));
+        assert!(pool.is_branch_certified(2));
         drop(rx);
     }
 
@@ -590,31 +532,31 @@ mod tests {
         let (tx, rx) = mpsc::channel(1024);
         let mut pool = Pool::new(validators, tx);
 
-        pool.add_block(0, [0; 32], 0, Hash::default()).await;
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
+        pool.add_block(2, [2; 32], 1, [1; 32]).await;
 
-        assert!(!pool.is_notarized(0));
-        assert!(!pool.is_branch_certified(0));
-        for v in 0..11 {
-            let vote = Vote::new_notar(0, [0; 32], &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
-        }
-        assert!(pool.is_notarized(0));
-        assert!(pool.is_branch_certified(0));
-
-        // receive mixed notar & notar-fallback votes
         assert!(!pool.is_notarized(1));
         assert!(!pool.is_branch_certified(1));
-        for v in 0..4 {
+        for v in 0..7 {
             let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        for v in 4..7 {
-            let vote = Vote::new_notar_fallback(1, [1; 32], &sks[v as usize], v);
+        assert!(pool.is_notarized(1));
+        assert!(pool.is_branch_certified(1));
+
+        // receive mixed notar & notar-fallback votes
+        assert!(!pool.is_notarized(2));
+        assert!(!pool.is_branch_certified(2));
+        for v in 0..4 {
+            let vote = Vote::new_notar(2, [2; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(!pool.is_notarized(1));
-        assert!(pool.is_branch_certified(1));
+        for v in 4..7 {
+            let vote = Vote::new_notar_fallback(2, [2; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(!pool.is_notarized(2));
+        assert!(pool.is_branch_certified(2));
         drop(rx);
     }
 
@@ -624,28 +566,28 @@ mod tests {
         let (tx, rx) = mpsc::channel(1024);
         let mut pool = Pool::new(validators, tx);
 
-        pool.add_block(0, [0; 32], 0, Hash::default()).await;
-
-        assert!(!pool.is_notarized(0));
-        assert!(!pool.is_branch_certified(0));
-        for v in 0..11 {
-            let vote = Vote::new_notar(0, [0; 32], &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
-        }
-        assert!(pool.is_notarized(0));
-        assert!(pool.is_branch_certified(0));
+        pool.add_block(1, [1; 32], 0, [0; 32]).await;
 
         assert!(!pool.is_notarized(1));
-        for v in 0..11 {
+        assert!(!pool.is_branch_certified(1));
+        for v in 0..7 {
             let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_notarized(1));
-        assert!(!pool.is_branch_certified(1));
+        assert!(pool.is_branch_certified(1));
+
+        assert!(!pool.is_notarized(2));
+        for v in 0..7 {
+            let vote = Vote::new_notar(2, [2; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(pool.is_notarized(2));
+        assert!(!pool.is_branch_certified(2));
 
         // branch can only be certified once we know the parent
-        pool.add_block(1, [1; 32], 0, [0; 32]).await;
-        assert!(pool.is_branch_certified(1));
+        pool.add_block(2, [2; 32], 1, [1; 32]).await;
+        assert!(pool.is_branch_certified(2));
         drop(rx);
     }
 
@@ -656,28 +598,28 @@ mod tests {
         let mut pool = Pool::new(validators, tx);
 
         // register blocks with their parents
-        pool.add_block(0, [0; 32], 0, Hash::default()).await;
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
+        pool.add_block(2, [2; 32], 1, [1; 32]).await;
 
         // receive votes out of order
+        assert!(!pool.is_notarized(2));
+        for v in 0..7 {
+            let vote = Vote::new_notar(2, [2; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert!(pool.is_notarized(2));
+        assert!(!pool.is_branch_certified(2));
+
         assert!(!pool.is_notarized(1));
-        for v in 0..11 {
+        for v in 0..7 {
             let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_notarized(1));
-        assert!(!pool.is_branch_certified(1));
-
-        assert!(!pool.is_notarized(0));
-        for v in 0..11 {
-            let vote = Vote::new_notar(0, [0; 32], &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
-        }
-        assert!(pool.is_notarized(0));
-        assert!(pool.is_branch_certified(0));
+        assert!(pool.is_branch_certified(1));
 
         // branch can only be certified once we saw votes for parent
-        assert!(pool.is_branch_certified(1));
+        assert!(pool.is_branch_certified(2));
         drop(rx);
     }
 
@@ -688,32 +630,32 @@ mod tests {
         let mut pool = Pool::new(validators.clone(), tx);
 
         // register blocks with their parents
-        pool.add_block(0, [0; 32], 0, Hash::default()).await;
         pool.add_block(1, [1; 32], 0, [0; 32]).await;
+        pool.add_block(2, [2; 32], 1, [1; 32]).await;
 
         // receive votes out of order
-        assert!(!pool.is_notarized(1));
-        for v in 0..11 {
-            let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
+        assert!(!pool.is_notarized(2));
+        for v in 0..7 {
+            let vote = Vote::new_notar(2, [2; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_notarized(1));
-        assert!(!pool.is_branch_certified(1));
+        assert!(pool.is_notarized(2));
+        assert!(!pool.is_branch_certified(2));
 
         // receive late cert
-        assert!(!pool.is_notarized(0));
-        assert!(!pool.is_branch_certified(0));
+        assert!(!pool.is_notarized(1));
+        assert!(!pool.is_branch_certified(1));
         let mut votes = Vec::new();
-        for v in 0..11 {
-            votes.push(Vote::new_notar(0, [0; 32], &sks[v as usize], v));
+        for v in 0..7 {
+            votes.push(Vote::new_notar(1, [1; 32], &sks[v as usize], v));
         }
         let cert = NotarCert::try_new(&votes, &validators).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
-        assert!(pool.is_notarized(0));
-        assert!(pool.is_branch_certified(0));
+        assert!(pool.is_notarized(1));
+        assert!(pool.is_branch_certified(1));
 
         // branch can only be certified once we saw votes for parent
-        assert!(pool.is_branch_certified(1));
+        assert!(pool.is_branch_certified(2));
         drop(rx);
     }
 

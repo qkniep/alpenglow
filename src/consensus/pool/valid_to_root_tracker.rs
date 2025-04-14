@@ -1,0 +1,312 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//!
+//!
+//!
+
+use std::collections::HashMap;
+
+use crate::consensus::vote::VoteKind;
+use crate::crypto::Hash;
+
+type BlockId = (u64, Hash);
+
+///
+pub struct ValidToRootTracker(HashMap<BlockId, ValidToRootState>);
+
+///
+#[derive(Clone, Default)]
+struct ValidToRootState {
+    valid_to_root: bool,
+    valid: bool,
+    parent: Option<BlockId>,
+    waiting_children: Vec<BlockId>,
+}
+
+impl ValidToRootState {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ValidToRootTracker {
+    ///
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    ///
+    pub fn new_with_root(root: BlockId) -> Self {
+        let mut tracker = Self::new();
+        tracker.0.insert(
+            root,
+            ValidToRootState {
+                valid_to_root: true,
+                valid: true,
+                parent: None,
+                waiting_children: Vec::new(),
+            },
+        );
+        tracker
+    }
+
+    ///
+    pub fn add_with_parent(&mut self, id: BlockId, parent: BlockId) -> Vec<BlockId> {
+        let state = self.0.entry(id).or_default();
+        if state.parent.is_some() {
+            return Vec::new();
+        }
+        let is_valid = state.valid;
+        state.parent = Some(parent);
+        let newly_certified = self.check_valid_to_root(id);
+
+        // if block was already valid, we need to wait for parent
+        if is_valid && newly_certified.is_empty() {
+            let parent_state = self.0.entry(parent).or_default();
+            parent_state.waiting_children.push(id);
+        }
+
+        newly_certified
+    }
+
+    ///
+    pub fn mark_valid(&mut self, id: BlockId) -> Vec<BlockId> {
+        let state = self.0.entry(id).or_default();
+        if state.valid {
+            return Vec::new();
+        }
+        let parent = state.parent;
+        state.valid = true;
+        let newly_certified = self.check_valid_to_root(id);
+
+        // if parent was already known, we need to wait for parent
+        if parent.is_some() && newly_certified.is_empty() {
+            let parent_state = self.0.entry(parent.unwrap()).or_default();
+            parent_state.waiting_children.push(id);
+        }
+
+        newly_certified
+    }
+
+    ///
+    pub fn is_valid_to_root(&self, id: BlockId) -> bool {
+        match self.0.get(&id) {
+            Some(state) => state.valid_to_root,
+            None => false,
+        }
+    }
+
+    ///
+    fn check_valid_to_root(&mut self, id: BlockId) -> Vec<BlockId> {
+        let mut newly_certified = Vec::new();
+        let state = self.0.get(&id).unwrap();
+        assert!(!state.valid_to_root);
+        let is_valid = state.valid;
+        let parent_state = state.parent.and_then(|p| self.0.get(&p));
+        let parent_valid_to_root = parent_state.is_some_and(|s| s.valid_to_root);
+
+        // if block becomes valid-to-root, check waiting children
+        if is_valid && (state.parent == Some((0, [0; 32])) || parent_valid_to_root) {
+            let state = self.0.get_mut(&id).unwrap();
+            state.valid_to_root = true;
+            newly_certified.push(id);
+            let children: Vec<_> = state.waiting_children.drain(..).collect();
+            for child in children {
+                self.check_valid_to_root_recursive(child, &mut newly_certified);
+            }
+        }
+
+        newly_certified
+    }
+
+    ///
+    fn check_valid_to_root_recursive(&mut self, id: BlockId, newly_certified: &mut Vec<BlockId>) {
+        let state = self.0.get_mut(&id).unwrap();
+        if state.valid {
+            state.valid_to_root = true;
+            newly_certified.push(id);
+            let children: Vec<_> = state.waiting_children.drain(..).collect();
+            for child in children {
+                self.check_valid_to_root_recursive(child, newly_certified);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_genesis() {
+        let mut tracker = ValidToRootTracker::new();
+        let genesis = (0, [0; 32]);
+        let block0 = (0, [42; 32]);
+        let block1 = (1, [1; 32]);
+        let block2 = (2, [2; 32]);
+        let block3 = (3, [3; 32]);
+        tracker.add_with_parent(block0, genesis);
+        tracker.add_with_parent(block1, block0);
+        tracker.add_with_parent(block2, block1);
+        tracker.add_with_parent(block3, block2);
+        tracker.mark_valid(block0);
+        assert!(tracker.is_valid_to_root(block0));
+        tracker.mark_valid(block1);
+        assert!(tracker.is_valid_to_root(block1));
+        tracker.mark_valid(block2);
+        assert!(tracker.is_valid_to_root(block2));
+        tracker.mark_valid(block3);
+        assert!(tracker.is_valid_to_root(block3));
+    }
+
+    #[test]
+    fn receive_blocks_first() {
+        let mut tracker = ValidToRootTracker::new_with_root((3, [3; 32]));
+        let window_blocks = [(4, [4; 32]), (5, [5; 32]), (6, [6; 32]), (7, [7; 32])];
+        let parents = [(3, [3; 32]), (4, [4; 32]), (5, [5; 32]), (6, [6; 32])];
+        for (i, block) in window_blocks.iter().copied().enumerate() {
+            assert_eq!(tracker.add_with_parent(block, parents[i]), vec![]);
+        }
+        for block in window_blocks {
+            assert!(!tracker.is_valid_to_root(block));
+        }
+        for block in window_blocks {
+            assert_eq!(tracker.mark_valid(block), vec![block]);
+        }
+        for block in window_blocks {
+            assert!(tracker.is_valid_to_root(block));
+        }
+    }
+
+    #[test]
+    fn see_notarization_first() {
+        let mut tracker = ValidToRootTracker::new_with_root((3, [3; 32]));
+        let window_blocks = [(4, [4; 32]), (5, [5; 32]), (6, [6; 32]), (7, [7; 32])];
+        let parents = [(3, [3; 32]), (4, [4; 32]), (5, [5; 32]), (6, [6; 32])];
+        for block in window_blocks {
+            assert_eq!(tracker.mark_valid(block), vec![]);
+        }
+        for block in window_blocks {
+            assert!(!tracker.is_valid_to_root(block));
+        }
+        for (i, block) in window_blocks.iter().copied().enumerate() {
+            assert_eq!(tracker.add_with_parent(block, parents[i]), vec![block]);
+        }
+        for block in window_blocks {
+            assert!(tracker.is_valid_to_root(block));
+        }
+    }
+
+    #[test]
+    fn recursive_blocks_first() {
+        let mut tracker = ValidToRootTracker::new_with_root((3, [3; 32]));
+        let window_blocks = [(4, [4; 32]), (5, [5; 32]), (6, [6; 32]), (7, [7; 32])];
+        let parents = [(3, [3; 32]), (4, [4; 32]), (5, [5; 32]), (6, [6; 32])];
+        for (i, block) in window_blocks.iter().copied().enumerate() {
+            assert_eq!(tracker.add_with_parent(block, parents[i]), vec![]);
+        }
+        for block in window_blocks {
+            assert!(!tracker.is_valid_to_root(block));
+        }
+        for block in window_blocks[1..].iter().copied() {
+            assert_eq!(tracker.mark_valid(block), vec![]);
+        }
+        assert_eq!(tracker.mark_valid(window_blocks[0]), window_blocks.to_vec());
+        for block in window_blocks {
+            assert!(tracker.is_valid_to_root(block));
+        }
+    }
+
+    #[test]
+    fn recurisve_notarization_first() {
+        let mut tracker = ValidToRootTracker::new_with_root((3, [3; 32]));
+        let window_blocks = [(4, [4; 32]), (5, [5; 32]), (6, [6; 32]), (7, [7; 32])];
+        let parents = [(3, [3; 32]), (4, [4; 32]), (5, [5; 32]), (6, [6; 32])];
+        for block in window_blocks {
+            assert_eq!(tracker.mark_valid(block), vec![]);
+        }
+        for block in window_blocks {
+            assert!(!tracker.is_valid_to_root(block));
+        }
+        for (i, block) in window_blocks.iter().copied().enumerate().skip(1) {
+            assert_eq!(tracker.add_with_parent(block, parents[i]), vec![]);
+        }
+        assert_eq!(
+            tracker.add_with_parent(window_blocks[0], parents[0]),
+            window_blocks.to_vec()
+        );
+        for block in window_blocks {
+            assert!(tracker.is_valid_to_root(block));
+        }
+    }
+
+    #[test]
+    fn skips() {
+        let mut tracker = ValidToRootTracker::new_with_root((3, [3; 32]));
+        assert_eq!(tracker.add_with_parent((4, [4; 32]), (3, [3; 32])), vec![]);
+        assert_eq!(tracker.mark_valid((4, [4; 32])), vec![(4, [4; 32])]);
+        let window_blocks = [(8, [8; 32]), (9, [9; 32]), (10, [10; 32]), (11, [11; 32])];
+        let parents = [(4, [4; 32]), (8, [8; 32]), (9, [9; 32]), (10, [10; 32])];
+        for (i, block) in window_blocks.iter().copied().enumerate() {
+            assert_eq!(tracker.add_with_parent(block, parents[i]), vec![]);
+        }
+        for block in window_blocks {
+            assert!(!tracker.is_valid_to_root(block));
+        }
+        for block in window_blocks[1..].iter().copied() {
+            assert_eq!(tracker.mark_valid(block), vec![]);
+        }
+        assert_eq!(tracker.mark_valid(window_blocks[0]), window_blocks.to_vec());
+        for block in window_blocks {
+            assert!(tracker.is_valid_to_root(block));
+        }
+    }
+
+    #[test]
+    fn out_of_order() {
+        let block3 = (3, [3; 32]);
+        let mut tracker = ValidToRootTracker::new_with_root(block3);
+        let block4 = (4, [4; 32]);
+        let block5 = (5, [5; 32]);
+        let block6 = (6, [6; 32]);
+        let block7 = (7, [7; 32]);
+        assert_eq!(tracker.mark_valid(block5), vec![]);
+        assert_eq!(tracker.mark_valid(block4), vec![]);
+        assert_eq!(tracker.mark_valid(block6), vec![]);
+        assert_eq!(tracker.add_with_parent(block6, block5), vec![]);
+        assert_eq!(tracker.add_with_parent(block7, block6), vec![]);
+        assert_eq!(tracker.add_with_parent(block5, block4), vec![]);
+
+        //
+        assert_eq!(
+            tracker.add_with_parent(block4, block3),
+            vec![block4, block5, block6]
+        );
+
+        //
+        assert_eq!(tracker.mark_valid(block7), vec![block7]);
+    }
+
+    #[test]
+    fn out_of_order_2() {
+        let block3 = (3, [3; 32]);
+        let mut tracker = ValidToRootTracker::new_with_root(block3);
+        let block4 = (4, [4; 32]);
+        let block5 = (5, [5; 32]);
+        let block6 = (6, [6; 32]);
+        let block7 = (7, [7; 32]);
+        assert_eq!(tracker.add_with_parent(block5, block4), vec![]);
+        assert_eq!(tracker.add_with_parent(block4, block3), vec![]);
+        assert_eq!(tracker.add_with_parent(block6, block5), vec![]);
+        assert_eq!(tracker.mark_valid(block6), vec![]);
+        assert_eq!(tracker.mark_valid(block7), vec![]);
+        assert_eq!(tracker.mark_valid(block5), vec![]);
+
+        //
+        assert_eq!(tracker.mark_valid(block4), vec![block4, block5, block6]);
+
+        //
+        assert_eq!(tracker.add_with_parent(block7, block6), vec![block7]);
+    }
+}
