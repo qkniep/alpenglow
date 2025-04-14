@@ -25,6 +25,8 @@ use super::{Cert, EpochInfo, Vote};
 use slot_state::SlotState;
 use valid_to_root_tracker::ValidToRootTracker;
 
+const PRUNING_OFFSET: Slot = 64;
+
 /// Errors the Pool may throw when adding a vote or certificate.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum PoolError {
@@ -169,6 +171,7 @@ impl Pool {
                 info!("slow finalized slot {slot}");
                 self.highest_slow_finalized_slot = slot.max(self.highest_slow_finalized_slot);
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
+                self.prune();
             }
             _ => {}
         };
@@ -301,12 +304,15 @@ impl Pool {
             .is_some_and(|state| state.certificates.skip.is_some())
     }
 
-    /// Cleans up old finalized slots from the certificate pool.
-    /// After this `slot_states` only contain entries >= `finalized_slot`.
+    /// Cleans up old finalized slots from the pool.
+    ///
+    /// After this, [`Self::slot_states`] will only contain entries for slots
+    /// >= [`Self::highest_slow_finalized_slot`] - [`PRUNING_OFFSET`].
     pub fn prune(&mut self) {
-        self.slot_states = self
-            .slot_states
-            .split_off(&self.highest_slow_finalized_slot);
+        let last_slot = self
+            .highest_slow_finalized_slot
+            .saturating_sub(PRUNING_OFFSET - 1);
+        self.slot_states = self.slot_states.split_off(&last_slot);
     }
 
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
@@ -862,41 +868,59 @@ mod tests {
         let (tx, rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, tx);
 
-        // all nodes vote notarize on slot 0
-        assert!(!pool.is_finalized(0));
-        for v in 0..11 {
-            let vote = Vote::new_notar(0, Hash::default(), &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        // all nodes vote finalize on [`PRUNING_OFFSET`] slots
+        for slot in 0..PRUNING_OFFSET {
+            assert!(!pool.is_finalized(slot));
+            for v in 0..11 {
+                let vote = Vote::new_final(slot, &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+            assert!(pool.is_finalized(slot));
         }
-        assert!(pool.is_finalized(0));
+        assert_eq!(pool.highest_slow_finalized_slot, PRUNING_OFFSET - 1);
 
-        // just enough nodes notarize block in slot 1
-        assert!(!pool.is_notarized(1));
-        for v in 0..7 {
-            let vote = Vote::new_notar(1, Hash::default(), &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
-        }
-        assert!(pool.is_notarized(1));
-
-        // after pruning both slots should still be there
+        // after pruning all slots should still be there
         pool.prune();
-        assert!(pool.is_finalized(0));
-        assert!(pool.is_notarized(1));
-        assert!(pool.slot_states.contains_key(&0));
-        assert!(pool.slot_states.contains_key(&1));
-
-        // just enough nodes vote finalize on slot 2
-        assert!(!pool.is_finalized(2));
-        for v in 0..7 {
-            let vote = Vote::new_final(2, &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        for slot in 0..PRUNING_OFFSET {
+            assert!(pool.is_finalized(slot));
+            assert!(pool.slot_states.contains_key(&slot));
         }
-        assert!(pool.is_finalized(2));
 
-        // after pruning NOW slots 0 and 1 should be gone
-        pool.prune();
-        assert!(!pool.slot_states.contains_key(&0));
-        assert!(!pool.slot_states.contains_key(&1));
+        // NOT enough nodes vote finalize on next 10 slots
+        for s in 0..10 {
+            let slot = PRUNING_OFFSET + s;
+            for v in 0..6 {
+                let vote = Vote::new_final(slot, &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+            assert!(!pool.is_finalized(slot));
+        }
+        assert_eq!(pool.highest_slow_finalized_slot, PRUNING_OFFSET - 1);
+
+        // first 10 slots should still be there
+        for slot in 0..10 {
+            assert!(pool.slot_states.contains_key(&slot));
+        }
+
+        // add one more vote each to finalize next 10 slots
+        for s in 0..10 {
+            let slot = PRUNING_OFFSET + s;
+            let vote = Vote::new_final(slot, &sks[6], 6);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+            assert!(pool.is_finalized(slot));
+        }
+        assert_eq!(pool.highest_slow_finalized_slot, PRUNING_OFFSET + 9);
+
+        // NOW first 10 slots should be gone
+        for slot in 0..10 {
+            assert!(!pool.slot_states.contains_key(&slot));
+        }
+
+        // other slots should still be there
+        for slot in 10..PRUNING_OFFSET + 10 {
+            assert!(pool.slot_states.contains_key(&slot));
+        }
+
         drop(rx);
     }
 }
