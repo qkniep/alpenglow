@@ -1,21 +1,23 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Tracks if a condition holds for a block and all of its ancestors.
 //!
+//! This can be used for any kind of chain validity property.
+//! Currently, in [`Alpenglow`] this is only used for tracking branch-certified.
 //!
-//!
+//! [`Alpenglow`]: crate::consensus::Alpenglow
 
 use std::collections::HashMap;
 
-use crate::consensus::vote::VoteKind;
 use crate::crypto::Hash;
 
 type BlockId = (u64, Hash);
 
-///
+/// Tracks a chain validity property for all blocks.
 pub struct ValidToRootTracker(HashMap<BlockId, ValidToRootState>);
 
-///
+/// Holds chain validity state for a single block.
 #[derive(Clone, Default)]
 struct ValidToRootState {
     valid_to_root: bool,
@@ -24,19 +26,15 @@ struct ValidToRootState {
     waiting_children: Vec<BlockId>,
 }
 
-impl ValidToRootState {
-    fn new() -> Self {
-        Self::default()
-    }
-}
-
 impl ValidToRootTracker {
+    /// Creates a new empty tracker.
     ///
+    /// Only the genesis block is considered valid-to-root.
     pub fn new() -> Self {
         Self(HashMap::new())
     }
 
-    ///
+    /// Creates a tracker with the specified root block marked as valid-to-root.
     pub fn new_with_root(root: BlockId) -> Self {
         let mut tracker = Self::new();
         tracker.0.insert(
@@ -51,7 +49,13 @@ impl ValidToRootTracker {
         tracker
     }
 
+    /// Adds a block with the specified parent.
     ///
+    /// If it already has a known parent, nothing happens.
+    /// If it was already marked valid, it is stored as waiting for the parent.
+    ///
+    /// Also, checks this block, and potentially its ancestors, to see if they
+    /// are now valid-to-root. Returns a list of blocks that are now valid-to-root.
     pub fn add_with_parent(&mut self, id: BlockId, parent: BlockId) -> Vec<BlockId> {
         let state = self.0.entry(id).or_default();
         if state.parent.is_some() {
@@ -70,7 +74,13 @@ impl ValidToRootTracker {
         newly_certified
     }
 
+    /// Marks the given block as locally fulfilling the validity condition.
     ///
+    /// If it was already marked valid, nothing happens.
+    /// If it already has a known parent, it is stored as waiting for the parent.
+    ///
+    /// Also, checks this block, and potentially its ancestors, to see if they
+    /// are now valid-to-root. Returns a list of blocks that are now valid-to-root.
     pub fn mark_valid(&mut self, id: BlockId) -> Vec<BlockId> {
         let state = self.0.entry(id).or_default();
         if state.valid {
@@ -89,7 +99,9 @@ impl ValidToRootTracker {
         newly_certified
     }
 
+    /// Returns `true` iff the given block is valid-to-root.
     ///
+    /// That is, it is locally valid, and all of its ancestors are valid-to-root.
     pub fn is_valid_to_root(&self, id: BlockId) -> bool {
         match self.0.get(&id) {
             Some(state) => state.valid_to_root,
@@ -97,7 +109,16 @@ impl ValidToRootTracker {
         }
     }
 
+    /// Checks if the given block is now valid-to-root.
     ///
+    /// If the block newly becomes valid-to-root, any waiting children are also checked.
+    ///
+    /// Returns a list of blocks that are now valid-to-root.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if the given block is not registered in the tracker.
+    /// - Panics if the block is already marked valid-to-root.
     fn check_valid_to_root(&mut self, id: BlockId) -> Vec<BlockId> {
         let mut newly_certified = Vec::new();
         let state = self.0.get(&id).unwrap();
@@ -120,9 +141,21 @@ impl ValidToRootTracker {
         newly_certified
     }
 
+    /// Recursively checks if the given block is now valid-to-root.
     ///
+    /// Compared to [`Self::check_valid_to_root`], this does not check the parent.
+    /// Instead, it is assumed that the parent is already valid-to-root.
+    /// If the block newly becomes valid-to-root, any waiting children are also checked.
+    ///
+    /// Adds any blocks that are now valid-to-root to `newly_certified`.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if the given block is not registered in the tracker.
+    /// - Panics if the block is already marked valid-to-root.
     fn check_valid_to_root_recursive(&mut self, id: BlockId, newly_certified: &mut Vec<BlockId>) {
         let state = self.0.get_mut(&id).unwrap();
+        assert!(!state.valid_to_root);
         if state.valid {
             state.valid_to_root = true;
             newly_certified.push(id);
@@ -131,6 +164,12 @@ impl ValidToRootTracker {
                 self.check_valid_to_root_recursive(child, newly_certified);
             }
         }
+    }
+}
+
+impl ValidToRootState {
+    fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -278,13 +317,14 @@ mod tests {
         assert_eq!(tracker.add_with_parent(block7, block6), vec![]);
         assert_eq!(tracker.add_with_parent(block5, block4), vec![]);
 
-        //
+        // registering block 3 as parent of block 4 triggers chain-reaction
+        // of blocks 4, 5 and 6 being marked as valid-to-root
         assert_eq!(
             tracker.add_with_parent(block4, block3),
             vec![block4, block5, block6]
         );
 
-        //
+        // block 7 only becomes valid-to-root after being marked as valid
         assert_eq!(tracker.mark_valid(block7), vec![block7]);
     }
 
@@ -303,10 +343,11 @@ mod tests {
         assert_eq!(tracker.mark_valid(block7), vec![]);
         assert_eq!(tracker.mark_valid(block5), vec![]);
 
-        //
+        // marking block 4 as valid triggers chain-reaction of blocks 4, 5 and 6
+        // being marked as valid-to-root
         assert_eq!(tracker.mark_valid(block4), vec![block4, block5, block6]);
 
-        //
+        // block 7 only becomes valid-to-root after registering block 6 as its parent
         assert_eq!(tracker.add_with_parent(block7, block6), vec![block7]);
     }
 }

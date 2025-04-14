@@ -3,7 +3,8 @@
 
 //! Data structure handling votes and certificates.
 //!
-//!
+//! Any received votes or certificates are placed into the pool.
+//! The pool then tracks status for each slot and sends notification to votor.
 
 mod slot_state;
 mod valid_to_root_tracker;
