@@ -15,7 +15,6 @@ pub mod repair;
 pub mod shredder;
 pub mod validator;
 
-use blst::min_sig::Signature;
 use serde::{Deserialize, Serialize};
 
 pub use all2all::All2All;
