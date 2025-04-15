@@ -1,16 +1,18 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! A trivial implementation of an all-to-all broadcast protocol.
+//!
+//! Broadcasts each message once over the underlying [`Network`].
+//! After that, the message is forgotten. The protocol is thus completely stateless.
+//! If the underlying [`Network`] is not reliable, the message might be lost.
+
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
 
 use super::All2All;
 
-/// A trivial implementation of an all-to-all broadcast protocol.
-///
-/// Broadcasts each message once over the underlying [`Network`].
-/// After that, the message is forgotten. The protocol is thus completely stateless.
-/// If the underlying [`Network`] is not reliable, the message might be lost.
+/// Instance of the trivial all-to-all broadcast protocol.
 pub struct TrivialAll2All<N: Network> {
     validators: Vec<ValidatorInfo>,
     network: N,

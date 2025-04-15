@@ -1,6 +1,11 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! A more robust implementation of an all-to-all broadcast protocol.
+//!
+//! Broadcasts each message over the underlying instance of [`Network`].
+//! The message may be retransmitted multiple times.
+
 use std::collections::VecDeque;
 
 use crate::ValidatorInfo;
@@ -8,9 +13,7 @@ use crate::network::{Network, NetworkError, NetworkMessage};
 
 use super::All2All;
 
-/// A more robust implementation of an all-to-all broadcast protocol.
-///
-/// Broadcasts each message over the underlying [`Network`].
+/// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
 pub struct RobustAll2All<N: Network> {
     validators: Vec<ValidatorInfo>,
@@ -19,6 +22,10 @@ pub struct RobustAll2All<N: Network> {
 }
 
 impl<N: Network> RobustAll2All<N> {
+    /// Creates a new `RobustAll2All` instance.
+    ///
+    /// Messages will be broadcast to all `validators` over the provided `network`.
+    /// Potential retransmits will be handled automatically, also over the `network`.
     pub fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
         let queues = vec![VecDeque::new(); validators.len()];
         Self {

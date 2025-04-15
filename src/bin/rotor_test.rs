@@ -291,7 +291,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
             let leader = self.leader_sampler.sample(&mut rng);
-            let leader_location = &self.ping_servers[leader.id as usize].location;
             let relays = self
                 .rotor_sampler
                 .sample_multiple(self.num_shreds, &mut rng);
@@ -506,15 +505,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         rotor_sampler: R,
         k: usize,
     ) -> Self {
-        let workload_test = WorkloadTest {
-            validators: validators.clone(),
-            leader_sampler,
-            rotor_sampler,
-            num_shreds: k,
-
-            leader_workload: 0,
-            workload: vec![0; validators.len()],
-        };
+        let workload_test = WorkloadTest::new(validators.clone(), leader_sampler, rotor_sampler, k);
         Self::from_workload_test(validators, leader_bandwidth, bandwidths, workload_test)
     }
 
