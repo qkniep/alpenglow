@@ -11,7 +11,6 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
-use alpenglow::repair::Repair;
 use color_eyre::Result;
 use fastrace::collector::Config;
 use fastrace::prelude::*;
@@ -86,7 +85,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-type TestNode = Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>>;
+type TestNode =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // prepare validator info for all nodes
@@ -119,8 +119,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), network);
             let network = UdpNetwork::new(start_port as u16 + 1);
             let disseminator = Rotor::new(v.id, validators.clone(), network);
-            let network = UdpNetwork::new(start_port as u16 + 2);
-            let repair = Repair::new(v.id, validators.clone(), network);
+            let repair_network = UdpNetwork::new(start_port as u16 + 2);
             Alpenglow::new(
                 v.id,
                 sks[v.id as usize].clone(),
@@ -128,7 +127,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 validators.clone(),
                 all2all,
                 disseminator,
-                repair,
+                repair_network,
             )
         })
         .collect()

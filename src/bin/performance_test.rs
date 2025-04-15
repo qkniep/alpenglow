@@ -14,7 +14,6 @@ use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::simulated::ping_data::{find_closest_ping_server, get_ping};
 use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork};
-use alpenglow::repair::Repair;
 use alpenglow::{Alpenglow, Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
 use log::{info, warn};
@@ -130,8 +129,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-type TestNode =
-    Alpenglow<TrivialAll2All<SimulatedNetwork>, Rotor<SimulatedNetwork, StakeWeightedSampler>>;
+type TestNode = Alpenglow<
+    TrivialAll2All<SimulatedNetwork>,
+    Rotor<SimulatedNetwork, StakeWeightedSampler>,
+    UdpNetwork,
+>;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
@@ -196,7 +198,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .map(|v| {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(v.id, validators.clone(), networks.pop_front().unwrap());
-            let repair = Repair::new(v.id, validators.clone(), udp_networks.pop_front().unwrap());
+            let repair_network = udp_networks.pop_front().unwrap();
             Alpenglow::new(
                 v.id,
                 sks[v.id as usize].clone(),
@@ -204,7 +206,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 validators.clone(),
                 all2all,
                 disseminator,
-                repair,
+                repair_network,
             )
         })
         .collect()

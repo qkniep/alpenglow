@@ -8,7 +8,6 @@ use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::{Rotor, rotor::StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
-use alpenglow::repair::Repair;
 use alpenglow::{Alpenglow, ValidatorInfo};
 use rand::prelude::*;
 
@@ -63,7 +62,8 @@ async fn too_many_crashes() {
 //     liveness_test(11, 1).await;
 // }
 
-type TestNode = Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>>;
+type TestNode =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
@@ -100,7 +100,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .map(|v| {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(v.id, validators.clone(), networks.pop_front().unwrap());
-            let repair = Repair::new(v.id, validators.clone(), networks.pop_front().unwrap());
+            let repair_network = networks.pop_front().unwrap();
             Alpenglow::new(
                 v.id,
                 sks[v.id as usize].clone(),
@@ -108,7 +108,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 validators.clone(),
                 all2all,
                 disseminator,
-                repair,
+                repair_network,
             )
         })
         .collect()

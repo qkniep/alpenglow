@@ -12,7 +12,7 @@ mod pool;
 mod vote;
 mod votor;
 
-use blockstore::Blockstore;
+pub use blockstore::Blockstore;
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
 use fastrace::Span;
@@ -33,7 +33,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::crypto::{Hash, aggsig, signature};
-use crate::network::{NetworkError, NetworkMessage, UdpNetwork};
+use crate::network::{Network, NetworkError, NetworkMessage, UdpNetwork};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
 use crate::{All2All, Disseminator, Slot, ValidatorId, ValidatorInfo};
@@ -51,7 +51,7 @@ const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
 const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator> {
+pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
     /// Own validator info.
     info: ValidatorInfo,
     /// Own validator's secret key (used e.g. for block production).
@@ -62,7 +62,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator> {
     epoch_info: Arc<EpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: RwLock<Blockstore>,
+    blockstore: Arc<RwLock<Blockstore>>,
     /// Pool of votes and certificates.
     pool: Arc<RwLock<Pool>>,
 
@@ -71,13 +71,18 @@ pub struct Alpenglow<A: All2All, D: Disseminator> {
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
     /// Block repair protocol.
-    repair: Repair<UdpNetwork>,
+    repair: Repair<R>,
 
     cancel_token: CancellationToken,
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
-impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static> Alpenglow<A, D> {
+impl<A, D, R> Alpenglow<A, D, R>
+where
+    A: All2All + Sync + Send + 'static,
+    D: Disseminator + Sync + Send + 'static,
+    R: Network + Sync + Send + 'static,
+{
     /// Creates a new Alpenglow consensus node.
     #[must_use]
     pub fn new(
@@ -87,9 +92,10 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         validators: Vec<ValidatorInfo>,
         all2all: A,
         disseminator: D,
-        repair: Repair<UdpNetwork>,
+        repair_network: R,
     ) -> Self {
         let cancel_token = CancellationToken::new();
+        let vals = validators.clone();
         let epoch_info = Arc::new(EpochInfo::new(validators));
         let (tx, rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
@@ -108,14 +114,16 @@ impl<A: All2All + Sync + Send + 'static, D: Disseminator + Sync + Send + 'static
         );
 
         let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
+        let blockstore = Arc::new(RwLock::new(blockstore));
         let pool = Pool::new(epoch_info.clone(), tx);
+        let repair = Repair::new(own_id, vals, Arc::clone(&blockstore), repair_network);
 
         Self {
             info: epoch_info.validator(own_id).clone(),
             secret_key,
             voting_secret_key,
             epoch_info,
-            blockstore: RwLock::new(blockstore),
+            blockstore,
             pool: Arc::new(RwLock::new(pool)),
             all2all,
             disseminator: Arc::new(disseminator),

@@ -5,34 +5,37 @@
 //!
 //!
 
+use std::sync::Arc;
+
 use log::warn;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
+use crate::consensus::Blockstore;
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::shredder::Shred;
+use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
-///
+/// Message types for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairMessage {
-    ///
+    /// Request for information from another validator.
     Request(RepairRequest),
-    ///
+    /// Response to a request from another validator.
     Response(RepairResponse),
 }
 
-///
-// TODO: maybe include slot number?
+/// Request messages for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairRequest {
     /// Request for the total number of slices in block with a given hash.
-    SliceCount(Hash),
+    SliceCount(Slot, Hash),
     /// Request for the root hash of a slice, identified by block hash and slice index.
-    SliceRoot(Hash, u64),
+    SliceRoot(Slot, Hash, usize),
     /// Request for shred, identified by block hash, slice index and shred index.
-    Shred(Hash, u64, u64),
+    Shred(Slot, Hash, usize, usize),
 }
 
 /// Response messages for the repair sub-protocol.
@@ -44,27 +47,36 @@ pub enum RepairRequest {
 pub enum RepairResponse {
     /// Response with the total number of slices for a specific block.
     SliceCount(RepairRequest, usize),
-    /// Response with the Merkle root hash of a specific slice.
-    SliceRoot(RepairRequest, Hash),
+    /// Response with the Merkle root hash of a specific slice, plus corresponding proof.
+    SliceRoot(RepairRequest, Hash, Vec<Hash>),
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
 }
 
-/// Implementation of double-Merkle based block repair protocol.
+/// Instance of double-Merkle based block repair protocol.
 pub struct Repair<N: Network> {
     own_id: ValidatorId,
     validators: Vec<ValidatorInfo>,
+    blockstore: Arc<RwLock<Blockstore>>,
     network: N,
     sampler: StakeWeightedSampler,
 }
 
 impl<N: Network> Repair<N> {
+    /// Creates a new repair instance.
     ///
-    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
+    /// Given `network` will be used for sending and receiving requests and responses.
+    pub fn new(
+        own_id: ValidatorId,
+        validators: Vec<ValidatorInfo>,
+        blockstore: Arc<RwLock<Blockstore>>,
+        network: N,
+    ) -> Self {
         let sampler = StakeWeightedSampler::new(validators.clone());
         Self {
             own_id,
             validators,
+            blockstore,
             network,
             sampler,
         }
@@ -72,24 +84,73 @@ impl<N: Network> Repair<N> {
 
     ///
     pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
-        let k = self.request_slice_count(block_hash).await;
+        unimplemented!()
     }
 
+    /// Tries to answer the given repair request.
     ///
+    /// If we do not have the block the request refers to, the request is ignored.
+    /// Otherwise, the correct response is sent back to the sender of the request.
     pub async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
+        let slot = request.slot();
+        let hash = request.hash();
+        let blockstore = self.blockstore.read().await;
+        if blockstore.canonical_block_hash(slot) != Some(hash) {
+            return Ok(());
+        }
         let response = match request {
-            RepairRequest::SliceCount(hash) => RepairResponse::SliceCount(request, 0),
-            RepairRequest::SliceRoot(hash, slice) => {
-                RepairResponse::SliceRoot(request, Hash::default())
+            RepairRequest::SliceCount(_, _) => {
+                let k = blockstore.stored_shreds_for_slot(slot) / TOTAL_SHREDS;
+                RepairResponse::SliceCount(request, k)
             }
-            RepairRequest::Shred(_, _, _) => unimplemented!(),
-            // RepairRequest::Shred(hash, slice, shred) => RepairResponse::Shred(request, Shred::default()),
+            RepairRequest::SliceRoot(_, _, slice) => {
+                let shred_index = slice * TOTAL_SHREDS;
+                let shred = blockstore.get_shred(slot, slice, shred_index).unwrap();
+                let root = shred.merkle_root();
+                // TODO: include double-Merkle proof
+                RepairResponse::SliceRoot(request, root, vec![/* double-Merkle proof */])
+            }
+            RepairRequest::Shred(_, _, slice, shred) => {
+                let shred = blockstore.get_shred(slot, slice, shred).unwrap().clone();
+                RepairResponse::Shred(request, shred)
+            }
         };
+        drop(blockstore);
         self.send_response(response).await
     }
 
+    /// Handles a repair response, storing the received data.
+    ///
+    /// If the response contains a shred, it will be stored in the [`Blockstore`].
+    /// Otherwise, metadata is stored in the [`Repair`] struct itself.
+    /// Does nothing if the response is not well-formed.
+    // TODO: store data in self or into blockstore
+    pub async fn handle_response(&mut self, response: RepairResponse) {
+        match response {
+            RepairResponse::SliceCount(req, count) => {
+                let RepairRequest::SliceCount(slot, hash) = req else {
+                    return;
+                };
+                // TODO: store slice count for block
+            }
+            RepairResponse::SliceRoot(req, root, proof) => {
+                let RepairRequest::SliceRoot(slot, hash, slice) = req else {
+                    return;
+                };
+                // TODO: verify double-Merkle proof
+                // TODO: store Merkle root for slice of block
+            }
+            RepairResponse::Shred(req, shred) => {
+                let RepairRequest::Shred(_, _, _, _) = req else {
+                    return;
+                };
+                self.blockstore.write().await.add_shred(shred).await;
+            }
+        };
+    }
+
     /// Tries to receive and deserialize messages from the underlying network.
-    /// Resolves to the next successfully deserialized `RepairMessage`.
+    /// Resolves to the next successfully deserialized [`RepairMessage`].
     ///
     /// # Errors
     ///
@@ -103,18 +164,29 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    async fn request_slice_count(&self, hash: Hash) -> Result<(), NetworkError> {
-        let req = RepairRequest::SliceCount(hash);
+    async fn request_slice_count(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
+        let req = RepairRequest::SliceCount(slot, hash);
         self.send_request(req).await
     }
 
-    async fn request_slice_root(&self, hash: Hash, slice: u64) -> Result<(), NetworkError> {
-        let req = RepairRequest::SliceRoot(hash, slice);
+    async fn request_slice_root(
+        &self,
+        slot: Slot,
+        hash: Hash,
+        slice: usize,
+    ) -> Result<(), NetworkError> {
+        let req = RepairRequest::SliceRoot(slot, hash, slice);
         self.send_request(req).await
     }
 
-    async fn request_shred(&self, hash: Hash, slice: u64, shred: u64) -> Result<(), NetworkError> {
-        let req = RepairRequest::Shred(hash, slice, shred);
+    async fn request_shred(
+        &self,
+        slot: Slot,
+        hash: Hash,
+        slice: usize,
+        shred: usize,
+    ) -> Result<(), NetworkError> {
+        let req = RepairRequest::Shred(slot, hash, slice, shred);
         self.send_request(req).await
     }
 
@@ -128,8 +200,43 @@ impl<N: Network> Repair<N> {
     async fn send_response(&self, response: RepairResponse) -> Result<(), NetworkError> {
         let repair = RepairMessage::Response(response);
         let msg = NetworkMessage::Repair(repair);
+        // TODO: send back to correct validator
         let to = &self.sampler.sample(&mut rand::rng()).repair_address;
         self.network.send(&msg, to).await
+    }
+}
+
+impl RepairRequest {
+    fn slot(&self) -> Slot {
+        match self {
+            Self::SliceCount(slot, _)
+            | Self::SliceRoot(slot, _, _)
+            | Self::Shred(slot, _, _, _) => *slot,
+        }
+    }
+
+    fn hash(&self) -> Hash {
+        match self {
+            Self::SliceCount(_, hash)
+            | Self::SliceRoot(_, hash, _)
+            | Self::Shred(_, hash, _, _) => *hash,
+        }
+    }
+}
+
+impl RepairResponse {
+    fn request(&self) -> &RepairRequest {
+        match self {
+            Self::SliceCount(req, _) | Self::SliceRoot(req, _, _) | Self::Shred(req, _) => req,
+        }
+    }
+
+    fn slot(&self) -> Slot {
+        self.request().slot()
+    }
+
+    fn hash(&self) -> Hash {
+        self.request().hash()
     }
 }
 
