@@ -151,25 +151,43 @@ impl TurbineSampler {
     }
 
     /// Creates a new `TurbineSampler` instance simulating the given fanout.
-    // FIXME: broken
-    // TODO: support more than 2 levels of Turbine
+    // FIXME: slow and still somewhat incaccurate
+    // TODO: support more than 2 levels of Turbine?
     pub fn new_with_fanout(mut validators: Vec<ValidatorInfo>, turbine_fanout: usize) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
 
         // calculate expected work for each validator
-        let mut expected_work = Vec::new();
-        for v in &validators {
-            let root_prob = v.stake as f64 / total_stake as f64;
-            let root_work = root_prob * (turbine_fanout as f64).max(validators.len() as f64);
-            let mut level1_prob = (1.0 - root_prob) * root_prob;
-            let mut level1_work = 0.0;
-            for pos in 0..turbine_fanout {
-                level1_work += level1_prob
-                    * (turbine_fanout as f64)
-                        .min((validators.len().saturating_sub(turbine_fanout * pos)) as f64);
-                level1_prob *= 1.0 - root_prob;
+        let mut expected_work = vec![0.0; validators.len()];
+        for leader in &validators {
+            let validators_left = validators.len() - 1;
+            let prob = leader.stake as f64 / total_stake as f64;
+            expected_work[leader.id as usize] += prob;
+            for root in &validators {
+                if root.id == leader.id {
+                    continue;
+                }
+                let validators_left = validators_left - 1;
+                let stake_left = total_stake - leader.stake;
+                let prob = prob * root.stake as f64 / stake_left as f64;
+                let root_work = (turbine_fanout as f64).min(validators_left as f64);
+                expected_work[root.id as usize] += prob * root_work;
+                for maybe_level1 in &validators {
+                    if maybe_level1.id == leader.id || maybe_level1.id == root.id {
+                        continue;
+                    }
+                    let stake_left = total_stake - root.stake;
+                    let select_prob = maybe_level1.stake as f64 / stake_left as f64;
+                    let full_level1_slots = validators_left / turbine_fanout;
+                    let prob_full =
+                        prob * (1.0 - (1.0 - select_prob).powi(full_level1_slots as i32));
+                    let full_level1_work = turbine_fanout as f64;
+                    expected_work[maybe_level1.id as usize] += prob_full * full_level1_work;
+                    let prob_partial =
+                        prob * (1.0 - select_prob).powi(full_level1_slots as i32) * select_prob;
+                    let partial_level1_work = (validators_left % turbine_fanout) as f64;
+                    expected_work[maybe_level1.id as usize] += prob_partial * partial_level1_work;
+                }
             }
-            expected_work.push(root_work + level1_work);
         }
 
         // turn expected work into stakes
@@ -433,26 +451,64 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn turbine_sampler() {
-        // check upper bound
+        let mut rng = rand::rng();
         let mut validators = create_validator_info(4000);
-        validators[0].stake = 10_000;
-        let sampler = TurbineSampler::new_with_fanout(validators, 200);
-        let sampled_val = sampler.sample_multiple(100, &mut rand::rng());
-        let sampled_ids: HashSet<_> = sampled_val.iter().map(|v| v.id).collect();
-        let max_appearances = sampled_ids
-            .iter()
-            .map(|i| sampled_val.iter().filter(|v| v.id == *i).count())
-            .max()
-            .unwrap();
-        // should be sampled an expected 5 times
-        assert!(max_appearances > 0);
-        assert!(max_appearances < 10);
+        // two large nodes with 5% of the stake each
+        validators[0].stake = 200;
+        validators[1].stake = 200;
+        let sampler = TurbineSampler::new_with_fanout(validators.clone(), 200);
+        let sampled_val = sampler.sample_multiple(64 * 100, &mut rng);
+        let appearances0 = sampled_val.iter().filter(|v| v.id == 0).count();
+        let appearances1 = sampled_val.iter().filter(|v| v.id == 1).count();
+        let work0 = (64 * 100 / 20) + appearances0 * validators.len();
+        let work1 = (64 * 100 / 20) + appearances1 * validators.len();
+
+        let mut turbine_work0 = 0;
+        let mut turbine_work1 = 0;
+        for _ in 0..64 * 100 {
+            let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
+            let validator_ids: Vec<_> = weighted_shuffle
+                .shuffle(&mut rng)
+                .map(|i| i as ValidatorId)
+                .collect();
+
+            let leader = validator_ids[0];
+            if leader == 0 {
+                turbine_work0 += 1;
+            } else if leader == 1 {
+                turbine_work1 += 1;
+            }
+            let root = validator_ids[1];
+            if root == 0 {
+                turbine_work0 += 200;
+            } else if root == 1 {
+                turbine_work1 += 200;
+            }
+            let mut validators_left = validators.len() - 2 - 200;
+            for i in 0..200 {
+                let parent = validator_ids[2 + i] as usize;
+                if parent == 0 {
+                    turbine_work0 += 200.min(validators_left);
+                } else if parent == 1 {
+                    turbine_work1 += 200.min(validators_left);
+                }
+                if validators_left < 200 {
+                    break;
+                }
+                validators_left -= 200;
+            }
+        }
+
+        let rel_workload = (turbine_work0 + turbine_work1) as f64 / (work0 + work1) as f64;
+        assert!(rel_workload < 1.1);
+        assert!(rel_workload > 0.9);
     }
 
     #[tokio::test]
     #[ignore]
-    async fn turbine_sampler_vs_turbine() {
+    async fn turbine_sampler_real_world() {
         const SLICES: usize = 100_000;
 
         // use real mainnet validator stake distribution
@@ -525,8 +581,8 @@ mod tests {
             println!("validator {}, {} stake, tw {}, sw {}", i, stake, tw, sw);
             let rel_workload = tw / sw;
             if tw > 0.01 || sw > 0.01 {
-                assert!(rel_workload < 1.5);
-                assert!(rel_workload > 0.5);
+                assert!(rel_workload < 1.2);
+                assert!(rel_workload > 0.8);
             }
         }
     }

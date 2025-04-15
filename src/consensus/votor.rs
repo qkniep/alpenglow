@@ -376,6 +376,7 @@ mod tests {
         (other_a2a, tx)
     }
 
+    // FIXME: sometimes waits forever
     #[tokio::test]
     async fn skips() {
         let (other_a2a, tx) = start_votor().await;
