@@ -244,7 +244,9 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             if !parent_certified || !skips_certified {
                 return false;
             }
-        } else if self.voted_notar.get(&parent_slot) != Some(&parent_hash) {
+        } else if parent_slot != slot - 1
+            || self.voted_notar.get(&parent_slot) != Some(&parent_hash)
+        {
             return false;
         }
         debug!(
