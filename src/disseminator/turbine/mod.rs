@@ -1,6 +1,15 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implementation of Solana's Turbine block dissemination protocol.
+//!
+//! For each slot and shred index, a different Turbine tree is built.
+//! Each tree corresponds to a stake-weighted shuffling of the validators.
+//!
+//! See also: <https://docs.anza.xyz/consensus/turbine-block-propagation>
+
+mod weighted_shuffle;
+
 use log::warn;
 use moka::future::Cache;
 use rand::prelude::*;
@@ -11,7 +20,15 @@ use crate::{Slot, ValidatorId, ValidatorInfo};
 
 use super::Disseminator;
 
-const DEFAULT_FANOUT: usize = 200;
+pub(crate) use weighted_shuffle::WeightedShuffle;
+
+/// Default fanout for the Turbine tree.
+pub const DEFAULT_FANOUT: usize = 200;
+
+/// Maximum number of different Turbine trees cached.
+///
+/// A [`TurbineTree`] takes roughly 1600 bytes of memory to store.
+/// So, caching up to 2^16 trees occupies roughly 100 MiB of memory.
 const MAX_CACHED_TREES: u64 = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
@@ -24,9 +41,11 @@ pub struct Turbine<N: Network> {
 }
 
 /// View of the Turbine tree from a specific validator's perspective.
-/// Only contais the information relevant for sending and receiving shreds.
+///
+/// Only contains the information relevant for sending and receiving shreds.
+/// The rest of the tree is not stored, especially to make caching more efficient.
 #[derive(Clone, Debug)]
-struct TurbineTree {
+pub(crate) struct TurbineTree {
     root: ValidatorId,
     parent: Option<ValidatorId>,
     children: Vec<ValidatorId>,
@@ -45,9 +64,15 @@ impl<N: Network> Turbine<N> {
     }
 
     /// Turns this instance into a new instance with a different fanout value.
+    ///
+    /// This invalidates all cached trees.
     #[must_use]
-    pub const fn with_fanout(mut self, fanout: usize) -> Self {
+    pub fn with_fanout(mut self, fanout: usize) -> Self {
+        if fanout == self.fanout {
+            return self;
+        }
         self.fanout = fanout;
+        self.tree_cache = Cache::new(MAX_CACHED_TREES);
         self
     }
 
@@ -131,14 +156,27 @@ impl TurbineTree {
         slot: Slot,
         shred: usize,
     ) -> Self {
-        let mut validator_ids: Vec<_> = validators.iter().map(|v| v.id).collect();
-        let seed = [slot.to_be_bytes(), shred.to_be_bytes(), [0; 8], [0; 8]].concat();
+        // seed the RNG
+        let seed = [
+            b"ALPENGLOWTURBINE",
+            &slot.to_be_bytes()[..],
+            &shred.to_be_bytes()[..],
+        ]
+        .concat();
+        assert_eq!(seed.len(), 32);
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
-        // TODO: shuffle stake weighted
-        validator_ids.shuffle(&mut rng);
 
-        let own_pos = validator_ids.iter().position(|v| *v == own_id).unwrap();
+        // stake-weighted shuffle
+        let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
+        // TODO: remove leader
+        let validator_ids: Vec<_> = weighted_shuffle
+            .shuffle(&mut rng)
+            .map(|i| i as ValidatorId)
+            .collect();
+
+        // find root & parent
         let root = validator_ids[0];
+        let own_pos = validator_ids.iter().position(|v| *v == own_id).unwrap();
         let parent_pos = match own_pos {
             0 => None,
             _ => Some((own_pos - 1) / fanout),

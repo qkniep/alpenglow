@@ -8,6 +8,7 @@ if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 	cargo test --release -- --test-threads=1 --ignored \
 		high_bandwidth \
 		unlimited_bandwidth \
+		turbine_sampler_vs_turbine \
 		only_correct_nodes \
 		many_nodes \
 		single_crash \

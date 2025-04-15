@@ -6,14 +6,27 @@ use std::sync::Mutex;
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
 
-use crate::{Stake, ValidatorInfo};
+use crate::{Stake, ValidatorInfo, disseminator::turbine::DEFAULT_FANOUT};
 
 const MAX_TRIES_PER_SAMPLE: usize = 100_000;
 
 /// An abstraction for randomly sampling validators based on some distribution.
 pub trait SamplingStrategy {
+    /// Samples a validator with this probability distribution.
+    ///
+    /// Depending on the implementor, this may or may not be stateless.
+    ///
+    /// # Panics
+    ///
+    /// Implementations may panic if the sampler has reached an invalid state
+    /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
     fn sample(&self, rng: &mut dyn rand::RngCore) -> &ValidatorInfo;
 
+    ///
+    ///
+    /// # Panics
+    ///
+    /// Panics if any of the `k` calls to [`SamplingStrategy::sample`] panics.
     fn sample_multiple(&self, k: usize, rng: &mut dyn rand::RngCore) -> Vec<ValidatorInfo> {
         (0..k).map(|_| self.sample(rng)).cloned().collect()
     }
@@ -77,6 +90,7 @@ pub struct DecayingAcceptanceSampler {
 }
 
 impl DecayingAcceptanceSampler {
+    /// Creates a new `DecayingAcceptanceSampler` instance.
     pub fn new(validators: Vec<ValidatorInfo>, max_samples: f64) -> Self {
         let sample_count = vec![0; validators.len()];
         Self {
@@ -95,6 +109,11 @@ impl DecayingAcceptanceSampler {
 }
 
 impl SamplingStrategy for DecayingAcceptanceSampler {
+    /// Samples a validator with the given probability distribution.
+    ///
+    /// # Panics
+    ///
+    /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
     fn sample(&self, rng: &mut dyn rand::RngCore) -> &ValidatorInfo {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
@@ -123,26 +142,37 @@ pub struct TurbineSampler {
 }
 
 impl TurbineSampler {
+    /// Creates a new `TurbineSampler` instance simulating the [`DEFAULT_FANOUT`]
+    /// from the actual [`Turbine`] implementation.
+    ///
+    /// [`Turbine`]: crate::disseminator::turbine::Turbine
+    pub fn new(validators: Vec<ValidatorInfo>) -> Self {
+        Self::new_with_fanout(validators, DEFAULT_FANOUT)
+    }
+
+    /// Creates a new `TurbineSampler` instance simulating the given fanout.
     // FIXME: broken
     // TODO: support more than 2 levels of Turbine
-    pub fn new(mut validators: Vec<ValidatorInfo>, turbine_fanout: usize) -> Self {
+    pub fn new_with_fanout(mut validators: Vec<ValidatorInfo>, turbine_fanout: usize) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let expected_work: Vec<_> = validators
-            .iter()
-            .map(|v| {
-                let root_prob = v.stake as f64 / total_stake as f64;
-                let root_work = root_prob * (turbine_fanout as f64).max(validators.len() as f64);
-                let mut level1_prob = (1.0 - root_prob) * root_prob;
-                let mut level1_work = 0.0;
-                for pos in 0..turbine_fanout {
-                    level1_work += level1_prob
-                        * (turbine_fanout as f64)
-                            .min((validators.len().saturating_sub(turbine_fanout * pos)) as f64);
-                    level1_prob *= 1.0 - root_prob;
-                }
-                root_work + level1_work
-            })
-            .collect();
+
+        // calculate expected work for each validator
+        let mut expected_work = Vec::new();
+        for v in &validators {
+            let root_prob = v.stake as f64 / total_stake as f64;
+            let root_work = root_prob * (turbine_fanout as f64).max(validators.len() as f64);
+            let mut level1_prob = (1.0 - root_prob) * root_prob;
+            let mut level1_work = 0.0;
+            for pos in 0..turbine_fanout {
+                level1_work += level1_prob
+                    * (turbine_fanout as f64)
+                        .min((validators.len().saturating_sub(turbine_fanout * pos)) as f64);
+                level1_prob *= 1.0 - root_prob;
+            }
+            expected_work.push(root_work + level1_work);
+        }
+
+        // turn expected work into stakes
         for (i, w) in expected_work.iter().enumerate() {
             validators[i].stake = (w * 1_000_000_000.0) as Stake;
         }
@@ -155,16 +185,23 @@ impl TurbineSampler {
 }
 
 impl SamplingStrategy for TurbineSampler {
+    /// Samples a validator with the given probability distribution.
+    ///
+    /// # Panics
+    ///
+    /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
     fn sample(&self, rng: &mut dyn rand::RngCore) -> &ValidatorInfo {
         let root = self.stake_weighted.sample(rng);
         if rng.random::<f64>() < 0.2 {
             root
         } else {
-            let mut sample = self.stake_weighted.sample(rng);
-            while sample.id == root.id {
-                sample = self.stake_weighted.sample(rng);
+            for _ in 0..MAX_TRIES_PER_SAMPLE {
+                let sample = self.stake_weighted.sample(rng);
+                if sample.id != root.id {
+                    return sample;
+                }
             }
-            sample
+            panic!("rejected all {MAX_TRIES_PER_SAMPLE} samples");
         }
     }
 }
@@ -187,6 +224,7 @@ pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
 }
 
 impl<F: SamplingStrategy> FaitAccompli1Sampler<F> {
+    /// Creates a new FA1-F sampler with the provided fallback sampler.
     pub const fn new(validators: Vec<ValidatorInfo>, fallback_sampler: F) -> Self {
         Self {
             validators,
@@ -197,7 +235,6 @@ impl<F: SamplingStrategy> FaitAccompli1Sampler<F> {
 
 impl FaitAccompli1Sampler<StakeWeightedSampler> {
     /// Creates a new FA1-F sampler with an IID stake-weighted fallback sampler.
-    // FIXME: hard-coded k=64
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
     pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
@@ -208,7 +245,11 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
             let samples = (frac_stake * k as f64).floor() as u64;
             v.stake -= samples * total_stake / k;
         }
-        let fallback_sampler = StakeWeightedSampler::new(validators_truncated_stake);
+        let not_all_zero = validators_truncated_stake.iter().any(|v| v.stake != 0);
+        let fallback_sampler = match not_all_zero {
+            true => StakeWeightedSampler::new(validators_truncated_stake),
+            false => StakeWeightedSampler::new(validators.clone()),
+        };
         Self {
             validators,
             fallback_sampler,
@@ -248,7 +289,7 @@ pub struct FaitAccompli2Sampler {
 
 impl FaitAccompli2Sampler {
     pub const fn new(validators: Vec<ValidatorInfo>) -> Self {
-        Self { validators }
+        unimplemented!()
     }
 }
 
@@ -262,13 +303,15 @@ impl SamplingStrategy for FaitAccompli2Sampler {
 mod tests {
     use super::*;
 
+    use crate::ValidatorId;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
+    use crate::disseminator::turbine::{TurbineTree, WeightedShuffle};
+    use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
 
-    use core::f64;
     use std::collections::HashSet;
 
-    fn create_validator_info(count: u64) -> Vec<ValidatorInfo> {
+    fn create_validator_info(count: ValidatorId) -> Vec<ValidatorInfo> {
         let mut validators = Vec::new();
         for i in 0..count {
             let sk = SecretKey::new(&mut rand::rng());
@@ -391,38 +434,115 @@ mod tests {
 
     #[test]
     fn turbine_sampler() {
-        // // check upper bound
-        // let mut validators = create_validator_info(4000);
-        // validators[0].stake = 10_000;
-        // let sampler = TurbineSampler::new(validators, 200);
-        // let sampled_val = sampler.sample_multiple(100, &mut rand::rng());
-        // let sampled_ids: HashSet<_> = sampled_val.iter().map(|v| v.id).collect();
-        // let max_appearances = sampled_ids
-        //     .iter()
-        //     .map(|i| sampled_val.iter().filter(|v| v.id == *i).count())
-        //     .max()
-        //     .unwrap();
-        // // should be sampled an expected 5 times
-        // assert!(max_appearances > 0);
-        // assert!(max_appearances < 10);
+        // check upper bound
+        let mut validators = create_validator_info(4000);
+        validators[0].stake = 10_000;
+        let sampler = TurbineSampler::new_with_fanout(validators, 200);
+        let sampled_val = sampler.sample_multiple(100, &mut rand::rng());
+        let sampled_ids: HashSet<_> = sampled_val.iter().map(|v| v.id).collect();
+        let max_appearances = sampled_ids
+            .iter()
+            .map(|i| sampled_val.iter().filter(|v| v.id == *i).count())
+            .max()
+            .unwrap();
+        // should be sampled an expected 5 times
+        assert!(max_appearances > 0);
+        assert!(max_appearances < 10);
+    }
 
-        // TODO: compare to actual `Turbine` implementation
+    #[tokio::test]
+    #[ignore]
+    async fn turbine_sampler_vs_turbine() {
+        const SLICES: usize = 100_000;
+
+        // use real mainnet validator stake distribution
+        let mut stakes = Vec::new();
+        for validator in VALIDATOR_DATA.iter() {
+            if validator.is_active && validator.delinquent == Some(false) {
+                let stake = validator.active_stake.unwrap();
+                if stake > 0 {
+                    stakes.push(stake);
+                }
+            }
+        }
+        let total_stake: Stake = stakes.iter().sum();
+        let mut validators = create_validator_info(stakes.len() as ValidatorId);
+        for (i, stake) in stakes.into_iter().enumerate() {
+            validators[i].stake = stake;
+        }
+
+        // count workload of each validator in Turbine
+        let mut rng = rand::rng();
+        let mut turbine_workload = vec![0; validators.len()];
+        for _ in 0..64 * SLICES {
+            let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
+            let validator_ids: Vec<_> = weighted_shuffle
+                .shuffle(&mut rng)
+                .map(|i| i as ValidatorId)
+                .collect();
+
+            let _leader = validator_ids[0];
+            let root = validator_ids[1];
+            turbine_workload[root as usize] += DEFAULT_FANOUT;
+            let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
+            for i in 0..DEFAULT_FANOUT {
+                let parent = validator_ids[2 + i] as usize;
+                turbine_workload[parent] += DEFAULT_FANOUT.min(validators_left);
+                if validators_left < DEFAULT_FANOUT {
+                    break;
+                }
+                validators_left -= DEFAULT_FANOUT;
+            }
+        }
+        let turbine_workload_normalized = turbine_workload
+            .into_iter()
+            .map(|w| w as f64 / (64.0 * SLICES as f64));
+
+        // count workload of each validator in TurbineSampler
+        let mut sampler_workload = vec![0; validators.len()];
+        let sampler = TurbineSampler::new(validators.clone());
+        for _ in 0..SLICES {
+            let relays = sampler.sample_multiple(64, &mut rng);
+            for relay in relays {
+                let relay_leader_prob = relay.stake as f64 / total_stake as f64;
+                if rng.random_bool(relay_leader_prob) {
+                    sampler_workload[relay.id as usize] += validators.len() - 1;
+                } else {
+                    sampler_workload[relay.id as usize] += validators.len() - 2;
+                }
+            }
+        }
+        let sampler_workload_normalized = sampler_workload
+            .into_iter()
+            .map(|w| w as f64 / (64.0 * SLICES as f64));
+
+        // compare the two
+        let stake_iter = validators.iter().map(|v| v.stake).enumerate();
+        let iter = stake_iter
+            .zip(turbine_workload_normalized)
+            .zip(sampler_workload_normalized);
+        for (((i, stake), tw), sw) in iter {
+            println!("validator {}, {} stake, tw {}, sw {}", i, stake, tw, sw);
+            let rel_workload = tw / sw;
+            if tw > 0.01 || sw > 0.01 {
+                assert!(rel_workload < 1.5);
+                assert!(rel_workload > 0.5);
+            }
+        }
     }
 
     #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
-        // FIXME: panics when trying to create fallback sampler with all 0 stakes
-        //
-        // let validators = create_validator_info(64);
-        // let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators);
-        // let sampled = sampler.sample_multiple(64, &mut rand::rng());
-        // assert_eq!(sampled.len(), 64);
-        // let sampled: HashSet<_> = sampled.into_iter().map(|v| v.id).collect();
-        // assert_eq!(sampled.len(), 64);
-        // for id in 0..64 {
-        //     assert!(sampled.contains(&id));
-        // }
+        let validators = create_validator_info(64);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled.len(), 64);
+        let sampled: HashSet<_> = sampled.into_iter().map(|v| v.id).collect();
+        assert_eq!(sampled.len(), 64);
+        for id in 0..64 {
+            assert!(sampled.contains(&id));
+        }
 
         // with many low-stake nodes this becomes the underlying fallback distribution
         let validators = create_validator_info(1000);
