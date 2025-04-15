@@ -9,6 +9,7 @@ use alpenglow::disseminator::rotor::sampling_strategy::FaitAccompli1Sampler;
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_server, get_ping};
 use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
+use alpenglow::shredder::TOTAL_SHREDS;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
 use log::{info, warn};
@@ -106,6 +107,20 @@ fn main() -> Result<()> {
         "{} validators with ping data",
         validators_with_ping_data.len()
     );
+
+    let bandwidths = vec![10_000_000_000; validators.len()];
+    let leader_sampler = StakeWeightedSampler::new(validators.clone());
+    let rotor_sampler =
+        FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 64);
+    let mut tester = BandwidthTest::new(
+        validators.clone(),
+        10_000_000_000,
+        bandwidths,
+        leader_sampler,
+        rotor_sampler,
+        64,
+    );
+    tester.run(10_000_000);
 
     validators_with_ping_data
         .iter_mut()
@@ -221,6 +236,7 @@ struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     rotor_sampler: R,
     num_shreds: usize,
+    total_stake: Stake,
 
     direct_stats: LatencyStats,
     rotor_stats: LatencyStats,
@@ -246,12 +262,14 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         k: usize,
     ) -> Self {
         let num_val = validators.len();
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         Self {
             validators,
             ping_servers,
             leader_sampler,
             rotor_sampler,
             num_shreds: k,
+            total_stake,
 
             direct_stats: LatencyStats::new(),
             rotor_stats: LatencyStats::new(),
@@ -271,7 +289,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
 
     fn run_many(&mut self, iterations: usize, up_to_stage: LatencyTestStage) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
-        let total_stake: Stake = self.validators.iter().map(|v| v.stake).sum();
         for _ in 0..iterations {
             let leader = self.leader_sampler.sample(&mut rng);
             let leader_location = &self.ping_servers[leader.id as usize].location;
@@ -329,7 +346,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
                 let mut stake_so_far = 0;
                 for (latency, v) in &latencies {
                     stake_so_far += self.validators[*v as usize].stake;
-                    if stake_so_far as f64 > total_stake as f64 * 0.6 {
+                    if stake_so_far as f64 > self.total_stake as f64 * 0.6 {
                         notar_latency = *latency;
                         break;
                     }
@@ -356,7 +373,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
                 let mut stake_so_far = 0;
                 for (latency, v) in &latencies {
                     stake_so_far += self.validators[*v as usize].stake;
-                    if stake_so_far as f64 > total_stake as f64 * 0.8 {
+                    if stake_so_far as f64 > self.total_stake as f64 * 0.8 {
                         fast_final_latency = *latency;
                         break;
                     }
@@ -379,7 +396,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
                 let mut stake_so_far = 0;
                 for (latency, v) in &latencies {
                     stake_so_far += self.validators[*v as usize].stake;
-                    if stake_so_far as f64 > total_stake as f64 * 0.6 {
+                    if stake_so_far as f64 > self.total_stake as f64 * 0.6 {
                         slow_final_latency = *latency;
                         break;
                     }
@@ -419,6 +436,123 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         // fast_final_stats.print();
         // info!("[{k} Shreds] Slow-Finalization:");
         // slow_final_stats.print();
+    }
+}
+
+struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
+    validators: Vec<ValidatorInfo>,
+    leader_sampler: L,
+    rotor_sampler: R,
+    num_shreds: usize,
+
+    leader_workload: u64,
+    workload: Vec<u64>,
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
+    fn new(validators: Vec<ValidatorInfo>, leader_sampler: L, rotor_sampler: R, k: usize) -> Self {
+        let num_val = validators.len();
+        Self {
+            validators,
+            leader_sampler,
+            rotor_sampler,
+            num_shreds: k,
+
+            leader_workload: 0,
+            workload: vec![0; num_val],
+        }
+    }
+
+    fn run_multiple(&mut self, slices: usize) {
+        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
+        for _ in 0..slices {
+            let leader = self.leader_sampler.sample(&mut rng);
+            self.leader_workload += TOTAL_SHREDS as u64;
+            self.workload[leader.id as usize] += TOTAL_SHREDS as u64;
+            let relays = self
+                .rotor_sampler
+                .sample_multiple(self.num_shreds, &mut rng);
+            for relay in relays {
+                if leader.id == relay.id {
+                    self.workload[relay.id as usize] += self.validators.len() as u64 - 1;
+                } else {
+                    self.workload[relay.id as usize] += self.validators.len() as u64 - 2;
+                }
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.workload = vec![0; self.validators.len()];
+    }
+
+    fn get_workload(&self) -> (u64, &[u64]) {
+        (self.leader_workload, &self.workload)
+    }
+}
+
+struct BandwidthTest<L: SamplingStrategy, R: SamplingStrategy> {
+    leader_bandwidth: u64,
+    bandwidths: Vec<u64>,
+    workload_test: WorkloadTest<L, R>,
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
+    fn new(
+        validators: Vec<ValidatorInfo>,
+        leader_bandwidth: u64,
+        bandwidths: Vec<u64>,
+        leader_sampler: L,
+        rotor_sampler: R,
+        k: usize,
+    ) -> Self {
+        let workload_test = WorkloadTest {
+            validators: validators.clone(),
+            leader_sampler,
+            rotor_sampler,
+            num_shreds: k,
+
+            leader_workload: 0,
+            workload: vec![0; validators.len()],
+        };
+        Self::from_workload_test(validators, leader_bandwidth, bandwidths, workload_test)
+    }
+
+    fn from_workload_test(
+        validators: Vec<ValidatorInfo>,
+        leader_bandwidth: u64,
+        bandwidths: Vec<u64>,
+        workload_test: WorkloadTest<L, R>,
+    ) -> Self {
+        assert_eq!(validators.len(), bandwidths.len());
+        Self {
+            leader_bandwidth,
+            bandwidths,
+            workload_test,
+        }
+    }
+
+    fn run(&mut self, slices: usize) {
+        self.workload_test.run_multiple(slices);
+        self.evaluate();
+    }
+
+    fn evaluate(&self) {
+        let (leader_workload, workload) = self.workload_test.get_workload();
+        let seconds = (8 * 1500 * leader_workload) as f64 / self.leader_bandwidth as f64;
+        let mut min_supported_bandwidth = self.leader_bandwidth as f64;
+        for (i, shreds) in workload.iter().enumerate() {
+            let bytes = 1500 * shreds;
+            let required_bandwidth = (bytes * 8) as f64 / seconds;
+            let ratio = required_bandwidth / self.bandwidths[i] as f64;
+            if self.leader_bandwidth as f64 / ratio < min_supported_bandwidth {
+                min_supported_bandwidth = self.leader_bandwidth as f64 / ratio;
+            }
+        }
+        println!(
+            "min. supported bandwidth: {:.1} Mbit/s",
+            min_supported_bandwidth / 1e6 / 2.0,
+        );
     }
 }
 

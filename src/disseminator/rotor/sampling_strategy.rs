@@ -6,7 +6,8 @@ use std::sync::Mutex;
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
 
-use crate::{Stake, ValidatorInfo, disseminator::turbine::DEFAULT_FANOUT};
+use crate::disseminator::turbine::DEFAULT_FANOUT;
+use crate::{Stake, ValidatorInfo};
 
 const MAX_TRIES_PER_SAMPLE: usize = 100_000;
 
@@ -22,7 +23,7 @@ pub trait SamplingStrategy {
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
     fn sample(&self, rng: &mut dyn rand::RngCore) -> &ValidatorInfo;
 
-    ///
+    /// Samples `k` validators with this probability distribution.
     ///
     /// # Panics
     ///
@@ -33,6 +34,9 @@ pub trait SamplingStrategy {
 }
 
 /// A basic sampler that picks all validators with equal probability.
+///
+/// This sampler is stateless and chooses validators with replacement.
+/// Multiple samples from this are thus independent and identically distributed.
 pub struct UniformSampler {
     validators: Vec<ValidatorInfo>,
 }
@@ -51,12 +55,16 @@ impl SamplingStrategy for UniformSampler {
 }
 
 /// A sampler that picks validators directly proportional to their stake.
+///
+/// This sampler is stateless and chooses validators with replacement.
+/// Multiple samples from this are thus independent and identically distributed.
 pub struct StakeWeightedSampler {
     validators: Vec<ValidatorInfo>,
     stake_index: WeightedIndex<u64>,
 }
 
 impl StakeWeightedSampler {
+    /// Creates a new `StakeWeightedSampler` instance.
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
         let stakes: Vec<u64> = validators.iter().map(|v| v.stake).collect();
         let stake_index = WeightedIndex::new(&stakes).unwrap();
@@ -326,6 +334,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::disseminator::turbine::{TurbineTree, WeightedShuffle};
     use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
+    use crate::shredder::TOTAL_SHREDS;
 
     use std::collections::HashSet;
 
@@ -453,21 +462,23 @@ mod tests {
     #[test]
     #[ignore]
     fn turbine_sampler() {
+        const SLICES: usize = 100;
+
         let mut rng = rand::rng();
         let mut validators = create_validator_info(4000);
         // two large nodes with 5% of the stake each
         validators[0].stake = 200;
         validators[1].stake = 200;
-        let sampler = TurbineSampler::new_with_fanout(validators.clone(), 200);
-        let sampled_val = sampler.sample_multiple(64 * 100, &mut rng);
+        let sampler = TurbineSampler::new(validators.clone());
+        let sampled_val = sampler.sample_multiple(TOTAL_SHREDS * SLICES, &mut rng);
         let appearances0 = sampled_val.iter().filter(|v| v.id == 0).count();
         let appearances1 = sampled_val.iter().filter(|v| v.id == 1).count();
-        let work0 = (64 * 100 / 20) + appearances0 * validators.len();
-        let work1 = (64 * 100 / 20) + appearances1 * validators.len();
+        let work0 = (TOTAL_SHREDS * SLICES / 20) + appearances0 * validators.len();
+        let work1 = (TOTAL_SHREDS * SLICES / 20) + appearances1 * validators.len();
 
         let mut turbine_work0 = 0;
         let mut turbine_work1 = 0;
-        for _ in 0..64 * 100 {
+        for _ in 0..TOTAL_SHREDS * SLICES {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
             let validator_ids: Vec<_> = weighted_shuffle
                 .shuffle(&mut rng)
@@ -482,22 +493,22 @@ mod tests {
             }
             let root = validator_ids[1];
             if root == 0 {
-                turbine_work0 += 200;
+                turbine_work0 += DEFAULT_FANOUT;
             } else if root == 1 {
-                turbine_work1 += 200;
+                turbine_work1 += DEFAULT_FANOUT;
             }
-            let mut validators_left = validators.len() - 2 - 200;
-            for i in 0..200 {
+            let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
+            for i in 0..DEFAULT_FANOUT {
                 let parent = validator_ids[2 + i] as usize;
                 if parent == 0 {
-                    turbine_work0 += 200.min(validators_left);
+                    turbine_work0 += DEFAULT_FANOUT.min(validators_left);
                 } else if parent == 1 {
-                    turbine_work1 += 200.min(validators_left);
+                    turbine_work1 += DEFAULT_FANOUT.min(validators_left);
                 }
-                if validators_left < 200 {
+                if validators_left < DEFAULT_FANOUT {
                     break;
                 }
-                validators_left -= 200;
+                validators_left -= DEFAULT_FANOUT;
             }
         }
 
@@ -530,7 +541,7 @@ mod tests {
         // count workload of each validator in Turbine
         let mut rng = rand::rng();
         let mut turbine_workload = vec![0; validators.len()];
-        for _ in 0..64 * SLICES {
+        for _ in 0..TOTAL_SHREDS * SLICES {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
             let validator_ids: Vec<_> = weighted_shuffle
                 .shuffle(&mut rng)
@@ -580,9 +591,9 @@ mod tests {
         for (((i, stake), tw), sw) in iter {
             println!("validator {}, {} stake, tw {}, sw {}", i, stake, tw, sw);
             let rel_workload = tw / sw;
-            if tw > 0.01 || sw > 0.01 {
-                assert!(rel_workload < 1.2);
-                assert!(rel_workload > 0.8);
+            if tw > 0.01 {
+                assert!(rel_workload < 1.25);
+                assert!(rel_workload > 0.75);
             }
         }
     }
