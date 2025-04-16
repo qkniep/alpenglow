@@ -36,7 +36,7 @@ use crate::crypto::{Hash, aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
-use crate::{All2All, Disseminator, Slot, ValidatorId, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Number of slots in each leader window.
 pub const SLOTS_PER_WINDOW: u64 = 4;
@@ -84,22 +84,20 @@ where
     /// Creates a new Alpenglow consensus node.
     #[must_use]
     pub fn new(
-        own_id: ValidatorId,
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
-        validators: Vec<ValidatorInfo>,
         all2all: A,
         disseminator: D,
         repair_network: R,
+        epoch_info: Arc<EpochInfo>,
     ) -> Self {
         let cancel_token = CancellationToken::new();
-        let epoch_info = Arc::new(EpochInfo::new(own_id, validators));
         let (tx, rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
         // let cancel = cancel_token.clone();
         let mut votor = Votor::new(
-            own_id,
+            epoch_info.own_id,
             voting_secret_key.clone(),
             tx.clone(),
             rx,

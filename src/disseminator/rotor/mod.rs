@@ -3,13 +3,15 @@
 
 pub mod sampling_strategy;
 
+use std::sync::Arc;
+
 use log::warn;
 use rand::prelude::*;
 
-use crate::consensus::SLOTS_PER_WINDOW;
+use crate::Slot;
+use crate::consensus::EpochInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::Shred;
-use crate::{Slot, ValidatorId, ValidatorInfo};
 
 use super::Disseminator;
 
@@ -17,10 +19,9 @@ pub use sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeighte
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
 pub struct Rotor<N: Network, S: SamplingStrategy> {
-    validator_id: ValidatorId,
-    validators: Vec<ValidatorInfo>,
     network: N,
     sampler: S,
+    epoch_info: Arc<EpochInfo>,
 }
 
 impl<N: Network> Rotor<N, StakeWeightedSampler> {
@@ -28,13 +29,13 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
-        let sampler = StakeWeightedSampler::new(validators.clone());
+    pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
+        let validators = epoch_info.validators.clone();
+        let sampler = StakeWeightedSampler::new(validators);
         Self {
-            validator_id,
-            validators,
             network,
             sampler,
+            epoch_info,
         }
     }
 }
@@ -44,14 +45,13 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<StakeWeightedSampler>> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new_fa1(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
-        let sampler =
-            FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 64);
+    pub fn new_fa1(network: N, epoch_info: Arc<EpochInfo>) -> Self {
+        let validators = epoch_info.validators.clone();
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
         Self {
-            validator_id,
-            validators,
             network,
             sampler,
+            epoch_info,
         }
     }
 }
@@ -66,23 +66,25 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
         let relay = self.sample_relay(shred.slot(), shred.index_in_slot());
         let msg = NetworkMessage::Shred(shred.clone());
-        let v = &self.validators[relay as usize];
+        let v = &self.epoch_info.validator(relay);
         self.network.send(&msg, &v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
-    async fn broadcast_if_relay(&self, shred: &Shred, leader: u64) -> Result<(), NetworkError> {
+    async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkError> {
+        let leader = self.epoch_info.leader(shred.slot()).id;
+
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred.slot(), shred.index_in_slot());
-        if self.validator_id != relay {
+        if self.epoch_info.own_id != relay {
             return Ok(());
         }
 
         // otherwise, broadcast
         let msg = NetworkMessage::Shred(shred.clone());
         let bytes = msg.to_bytes();
-        for v in &self.validators {
+        for v in &self.epoch_info.validators {
             if v.id == leader || v.id == relay {
                 continue;
             }
@@ -98,12 +100,6 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
         self.sampler.sample(&mut rng).id
     }
-
-    // HACK: remove this workaround, give Rotor access to EpochInfo
-    fn leader(&self, slot: Slot) -> ValidatorId {
-        let window = slot / SLOTS_PER_WINDOW;
-        window % self.validators.len() as ValidatorId
-    }
 }
 
 impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S> {
@@ -112,8 +108,7 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
     }
 
     async fn forward(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let slot = shred.slot();
-        Self::broadcast_if_relay(self, shred, self.leader(slot)).await
+        Self::broadcast_if_relay(self, shred).await
     }
 
     async fn receive(&self) -> Result<Shred, NetworkError> {
@@ -130,6 +125,7 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
 mod tests {
     use super::*;
 
+    use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
@@ -165,8 +161,9 @@ mod tests {
 
         let mut rotors = Vec::new();
         for i in 0..count {
+            let epoch_info = Arc::new(EpochInfo::new(i, validators.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
-            rotors.push(Rotor::new(i, validators.clone(), network));
+            rotors.push(Rotor::new(network, epoch_info));
         }
         (sks, rotors)
     }

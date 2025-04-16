@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::Alpenglow;
+use alpenglow::consensus::{Alpenglow, EpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
@@ -114,20 +115,20 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
     validators
         .iter()
         .map(|v| {
+            let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
             let start_port = 3000 + v.id * 3;
             let network = UdpNetwork::new(start_port as u16);
             let all2all = TrivialAll2All::new(validators.clone(), network);
             let network = UdpNetwork::new(start_port as u16 + 1);
-            let disseminator = Rotor::new(v.id, validators.clone(), network);
+            let disseminator = Rotor::new(network, epoch_info.clone());
             let repair_network = UdpNetwork::new(start_port as u16 + 2);
             Alpenglow::new(
-                v.id,
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
-                validators.clone(),
                 all2all,
                 disseminator,
                 repair_network,
+                epoch_info,
             )
         })
         .collect()
