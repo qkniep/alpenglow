@@ -4,19 +4,21 @@
 //! Block repair sub-protocol.
 //!
 //!
+// WARN: this is incomplete!
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use log::warn;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::Slot;
 use crate::consensus::{Blockstore, EpochInfo};
-use crate::crypto::Hash;
+use crate::crypto::{Hash, MerkleTree};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
-use crate::{Slot, ValidatorId, ValidatorInfo};
 
 /// Message types for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,6 +60,8 @@ pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Blockstore>>,
     network: N,
     sampler: StakeWeightedSampler,
+    slice_counts: BTreeMap<(Slot, Hash), usize>,
+    slice_roots: BTreeMap<(Slot, Hash, usize), Hash>,
     epoch_info: Arc<EpochInfo>,
 }
 
@@ -70,11 +74,14 @@ impl<N: Network> Repair<N> {
         network: N,
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
-        let sampler = StakeWeightedSampler::new(epoch_info.validators.clone());
+        let validators = epoch_info.validators.clone();
+        let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,
             network,
             sampler,
+            slice_counts: BTreeMap::new(),
+            slice_roots: BTreeMap::new(),
             epoch_info,
         }
     }
@@ -104,8 +111,8 @@ impl<N: Network> Repair<N> {
                 let shred_index = slice * TOTAL_SHREDS;
                 let shred = blockstore.get_shred(slot, slice, shred_index).unwrap();
                 let root = shred.merkle_root();
-                // TODO: include double-Merkle proof
-                RepairResponse::SliceRoot(request, root, vec![/* double-Merkle proof */])
+                let proof = blockstore.create_double_merkle_proof(slot, slice);
+                RepairResponse::SliceRoot(request, root, proof)
             }
             RepairRequest::Shred(_, _, slice, shred) => {
                 let shred = blockstore.get_shred(slot, slice, shred).unwrap().clone();
@@ -121,26 +128,38 @@ impl<N: Network> Repair<N> {
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the response is not well-formed.
-    // TODO: store data in self or into blockstore
     pub async fn handle_response(&mut self, response: RepairResponse) {
+        let slot = response.slot();
+        let block_hash = response.hash();
         match response {
             RepairResponse::SliceCount(req, count) => {
-                let RepairRequest::SliceCount(slot, hash) = req else {
+                let RepairRequest::SliceCount(_, _) = req else {
                     return;
                 };
-                // TODO: store slice count for block
+                // TODO: include & check proof
+                self.slice_counts.insert((slot, block_hash), count);
             }
-            RepairResponse::SliceRoot(req, root, proof) => {
-                let RepairRequest::SliceRoot(slot, hash, slice) = req else {
+            RepairResponse::SliceRoot(req, slice_root, proof) => {
+                let RepairRequest::SliceRoot(_, _, slice) = req else {
                     return;
                 };
-                // TODO: verify double-Merkle proof
-                // TODO: store Merkle root for slice of block
+                if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
+                    return;
+                }
+                self.slice_roots
+                    .insert((slot, block_hash, slice), slice_root);
             }
             RepairResponse::Shred(req, shred) => {
-                let RepairRequest::Shred(_, _, _, _) = req else {
+                let RepairRequest::Shred(_, _, slice, index) = req else {
                     return;
                 };
+                if shred.slot() != slot || shred.slice() == slice || shred.index_in_slice() == index
+                {
+                    return;
+                }
+                // TODO: make sure shred is checked against correct merkle_root
+                //
+                /* if !shred.merkle_root ... { return; } */
                 self.blockstore.write().await.add_shred(shred).await;
             }
         };

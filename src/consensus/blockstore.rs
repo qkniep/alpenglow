@@ -33,6 +33,8 @@ pub struct Blockstore {
     alternatives: BTreeMap<Slot, Vec<Hash>>,
     /// Indicates for which slots we already received at least one shred.
     first_shred_seen: BTreeSet<Slot>,
+    /// Stores double-Merkle tree for each canonical block.
+    double_merkle_trees: BTreeMap<Slot, MerkleTree>,
 
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
@@ -52,6 +54,7 @@ impl Blockstore {
             canonical: BTreeMap::new(),
             alternatives: BTreeMap::new(),
             first_shred_seen: BTreeSet::new(),
+            double_merkle_trees: BTreeMap::new(),
             votor_channel,
             epoch_info,
             merkle_root_cache: HashMap::new(),
@@ -120,7 +123,7 @@ impl Blockstore {
         }
         if let Some(last_slice) = self.last_slice_index(slot) {
             if self.stored_slices_for_slot(slot) == last_slice + 1 {
-                // calculate double-Merkle block hash
+                // calculate double-Merkle tree & block hash
                 let merkle_roots: Vec<_> = self
                     .slices
                     .range(&(slot, 0)..)
@@ -129,6 +132,7 @@ impl Blockstore {
                     .collect();
                 let tree = MerkleTree::new(&merkle_roots);
                 let block_hash = tree.get_root();
+                self.double_merkle_trees.insert(slot, tree);
 
                 // reconstruct block header
                 let first_slice = self.slices.get(&(slot, 0)).unwrap();
@@ -148,6 +152,17 @@ impl Blockstore {
                 // clean up raw slices
                 for slice_index in 0..=last_slice {
                     self.slices.remove(&(slot, slice_index));
+                }
+
+                // delete shreds after last, if there are any
+                let keys_to_delete: Vec<_> = self
+                    .shreds
+                    .range(&(slot, last_slice)..&(slot + 1, 0))
+                    .map(|(k, _)| k)
+                    .copied()
+                    .collect();
+                for key in keys_to_delete {
+                    self.shreds.remove(&key);
                 }
 
                 let event = VotorEvent::Block(slot, block_hash, parent_slot, parent_hash);
@@ -227,6 +242,11 @@ impl Blockstore {
     /// Gives the number of stored shreds for a given slot and slice.
     pub fn stored_shreds_for_slice(&self, slot: Slot, slice: usize) -> usize {
         self.shreds.get(&(slot, slice)).map_or(0, |s| s.len())
+    }
+
+    pub fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash> {
+        let tree = self.double_merkle_trees.get(&slot).unwrap();
+        tree.create_proof(slice)
     }
 }
 

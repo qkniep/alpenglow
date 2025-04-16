@@ -76,6 +76,7 @@ impl MerkleTree {
     /// The proof is the Merkle path from the leaf to the root.
     #[must_use]
     pub fn create_proof(&self, index: usize) -> Vec<Hash> {
+        // TODO: handle out-of-bounds index
         let mut proof = Vec::new();
         let mut i = index;
         let mut left = 0;
@@ -91,12 +92,25 @@ impl MerkleTree {
         proof
     }
 
+    /// Checks a Merkle path against a leaf's data.
+    ///
     /// Returns `true` iff `proof` is a valid Merkle path for a leaf containing
-    /// `data` at the given `index` in the given Merkle root.
+    /// `data` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
     pub fn check_proof(data: &[u8], index: usize, root: Hash, proof: &[Hash]) -> bool {
+        let hash = hash_leaf(data);
+        MerkleTree::check_hash_proof(hash, index, root, proof)
+    }
+
+    /// Checks a Merkle path against a leaf hash.
+    ///
+    /// Returns `true` iff `proof` is a valid Merkle path for a leaf that hashes
+    /// to the given `hash` at the given `index` in the tree corresponding to
+    /// the given `root`.
+    #[must_use]
+    pub fn check_hash_proof(hash: Hash, index: usize, root: Hash, proof: &[Hash]) -> bool {
         let mut i = index;
-        let mut node = hash_leaf(data);
+        let mut node = hash;
         for h in proof {
             node = match i % 2 {
                 0 => hash_pair(node, *h),
