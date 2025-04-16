@@ -1,6 +1,24 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Different strategies for sampling validators.
+//!
+//! First, this module provides a trait for randomly sampling validators.
+//! To implement a new sampling strategy, you need to implement [`SamplingStrategy`],
+//! by implementing [`SamplingStrategy::sample`].
+//! The trait provides a default implementation for sampling `k` validators,
+//! via [`SamplingStrategy::sample_multiple`].
+//! However, samplers might override this for performance reasons.
+//!
+//! # Sampling strategies
+//!
+//! This module provides implementations for the following sampling strategies:
+//! - [`UniformSampler`] does uniform sampling with replacement.
+//! - [`StakeWeightedSampler`] samples validators proportional to their stake.
+//! - [`DecayingAcceptanceSampler`] samples validators less as they approach maximum.
+//! - [`TurbineSampler`] simulates the workload of Turbine.
+//! - [`FaitAccompli1Sampler`] uses the FA1-F committee sampling strategy.
+
 use std::sync::Mutex;
 
 use rand::distr::weighted::WeightedIndex;
