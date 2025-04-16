@@ -150,9 +150,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     }
                 }
                 VotorEvent::SafeToNotar(slot, hash) => {
-                    if self.voted_notar.get(&slot) == Some(&hash) {
-                        continue;
-                    }
                     let vote =
                         Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_id);
                     self.all2all.broadcast(&vote.into()).await.unwrap();

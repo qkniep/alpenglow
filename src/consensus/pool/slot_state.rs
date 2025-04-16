@@ -35,6 +35,8 @@ pub struct SlotState {
     pending_safe_to_notar: BTreeSet<Hash>,
     /// Hashes of blocks for which safe-to-notar has already been reached.
     sent_safe_to_notar: BTreeSet<Hash>,
+    /// Indicates if safe-to-skip has already been sent for this slot.
+    sent_safe_to_skip: bool,
     /// Information about all validators active in this slot.
     pub(super) epoch_info: Arc<EpochInfo>,
 }
@@ -97,6 +99,7 @@ impl SlotState {
             branch_certified: None,
             pending_safe_to_notar: BTreeSet::new(),
             sent_safe_to_notar: BTreeSet::new(),
+            sent_safe_to_skip: false,
             epoch_info,
         }
     }
@@ -205,8 +208,12 @@ impl SlotState {
         if !self.sent_safe_to_notar.contains(block_hash) && self.check_safe_to_notar(block_hash) {
             votor_events.push(VotorEvent::SafeToNotar(slot, *block_hash));
         }
-        if self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar) {
+        if !self.sent_safe_to_skip
+            && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
+            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+        {
             votor_events.push(VotorEvent::SafeToSkip(slot));
+            self.sent_safe_to_skip = true;
         }
         if self.is_quorum(notar_stake) && self.certificates.notar.is_none() {
             let votes = self.votes.notar_votes(block_hash);
@@ -277,8 +284,12 @@ impl SlotState {
             new_certs.push(Cert::Skip(cert));
             votor_events.push(VotorEvent::SkipCertified(slot));
         }
-        if self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar) {
+        if !self.sent_safe_to_skip
+            && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
+            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+        {
             votor_events.push(VotorEvent::SafeToSkip(slot));
+            self.sent_safe_to_skip = true;
         }
         (new_certs, votor_events)
     }
