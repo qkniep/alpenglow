@@ -11,7 +11,7 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::consensus::Blockstore;
+use crate::consensus::{Blockstore, EpochInfo};
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
@@ -55,11 +55,10 @@ pub enum RepairResponse {
 
 /// Instance of double-Merkle based block repair protocol.
 pub struct Repair<N: Network> {
-    own_id: ValidatorId,
-    validators: Vec<ValidatorInfo>,
     blockstore: Arc<RwLock<Blockstore>>,
     network: N,
     sampler: StakeWeightedSampler,
+    epoch_info: Arc<EpochInfo>,
 }
 
 impl<N: Network> Repair<N> {
@@ -67,18 +66,16 @@ impl<N: Network> Repair<N> {
     ///
     /// Given `network` will be used for sending and receiving requests and responses.
     pub fn new(
-        own_id: ValidatorId,
-        validators: Vec<ValidatorInfo>,
         blockstore: Arc<RwLock<Blockstore>>,
         network: N,
+        epoch_info: Arc<EpochInfo>,
     ) -> Self {
-        let sampler = StakeWeightedSampler::new(validators.clone());
+        let sampler = StakeWeightedSampler::new(epoch_info.validators.clone());
         Self {
-            own_id,
-            validators,
             blockstore,
             network,
             sampler,
+            epoch_info,
         }
     }
 

@@ -616,6 +616,7 @@ mod tests {
         }
     }
 
+    // FIXME: flaky test
     #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes

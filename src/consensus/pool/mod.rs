@@ -68,7 +68,6 @@ pub struct Pool {
     /// Highest slot that has a finalization certificate (not fast-finalized).
     highest_slow_finalized_slot: Slot,
     /// Information about all active validators.
-    // TODO: replace with EpochInfo
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
@@ -352,7 +351,7 @@ mod tests {
                 repair_address: String::new(),
             });
         }
-        let epoch_info = Arc::new(EpochInfo::new(validators));
+        let epoch_info = Arc::new(EpochInfo::new(0, validators));
         (voting_sks, epoch_info)
     }
 

@@ -256,7 +256,7 @@ mod tests {
             repair_address: "".to_owned(),
         };
         let validators = vec![info];
-        let epoch_info = EpochInfo::new(validators);
+        let epoch_info = EpochInfo::new(0, validators);
         (sk, Blockstore::new(Arc::new(epoch_info), tx))
     }
 

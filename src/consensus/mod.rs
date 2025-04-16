@@ -33,7 +33,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::crypto::{Hash, aggsig, signature};
-use crate::network::{Network, NetworkError, NetworkMessage, UdpNetwork};
+use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
 use crate::{All2All, Disseminator, Slot, ValidatorId, ValidatorInfo};
@@ -52,8 +52,6 @@ const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
 
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
-    /// Own validator info.
-    info: ValidatorInfo,
     /// Own validator's secret key (used e.g. for block production).
     secret_key: signature::SecretKey,
     /// Own validator's voting secret key.
@@ -95,8 +93,7 @@ where
         repair_network: R,
     ) -> Self {
         let cancel_token = CancellationToken::new();
-        let vals = validators.clone();
-        let epoch_info = Arc::new(EpochInfo::new(validators));
+        let epoch_info = Arc::new(EpochInfo::new(own_id, validators));
         let (tx, rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
@@ -116,10 +113,9 @@ where
         let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
         let blockstore = Arc::new(RwLock::new(blockstore));
         let pool = Pool::new(epoch_info.clone(), tx);
-        let repair = Repair::new(own_id, vals, Arc::clone(&blockstore), repair_network);
+        let repair = Repair::new(Arc::clone(&blockstore), repair_network, epoch_info.clone());
 
         Self {
-            info: epoch_info.validator(own_id).clone(),
             secret_key,
             voting_secret_key,
             epoch_info,
@@ -162,8 +158,8 @@ where
         Ok(())
     }
 
-    pub const fn get_info(&self) -> &ValidatorInfo {
-        &self.info
+    pub fn get_info(&self) -> &ValidatorInfo {
+        self.epoch_info.validator(self.epoch_info.own_id)
     }
 
     pub fn get_pool(&self) -> Arc<RwLock<Pool>> {
@@ -224,7 +220,7 @@ where
             let leader = self.epoch_info.leader(first_slot_in_window);
 
             // produce blocks if we are the leader
-            if leader.id == self.info.id {
+            if leader.id == self.epoch_info.own_id {
                 let mut block = parent;
                 let mut block_hash = parent_hash;
                 for slot in first_slot_in_window..=last_slot_in_window {
@@ -233,7 +229,7 @@ where
                     let hash = &hex::encode(block_hash)[..8];
                     info!(
                         "[validator {}] producing block in slot {} with parent {} in slot {}",
-                        self.info.id, slot, hash, block
+                        self.epoch_info.own_id, slot, hash, block
                     );
                     // TODO: send actual data
                     for slice_index in 0..10 {
@@ -293,7 +289,7 @@ where
                     let hash = &hex::encode(block_hash)[..8];
                     info!(
                         "[validator {}] block production: notarized block {} in slot {}",
-                        self.info.id, hash, slot
+                        self.epoch_info.own_id, hash, slot
                     );
                     parent = slot;
                     parent_hash = block_hash;
@@ -301,7 +297,7 @@ where
                     // warn!(self.info.id, "block production: skipped slot {slot}");
                     warn!(
                         "[validator {}] block production: skipped slot {}",
-                        self.info.id, slot
+                        self.epoch_info.own_id, slot
                     );
                 }
             }

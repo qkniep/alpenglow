@@ -8,13 +8,14 @@ use super::SLOTS_PER_WINDOW;
 /// Epoch-specfic validator information.
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
+    pub(crate) own_id: ValidatorId,
     pub(crate) validators: Vec<ValidatorInfo>,
 }
 
 impl EpochInfo {
     /// Creates a new `EpochInfo` instance with the given validators.
-    pub fn new(validators: Vec<ValidatorInfo>) -> Self {
-        Self { validators }
+    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+        Self { own_id, validators }
     }
 
     /// Gives the validator info for the given validator ID.

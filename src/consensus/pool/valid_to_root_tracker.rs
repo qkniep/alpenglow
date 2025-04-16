@@ -37,15 +37,7 @@ impl ValidToRootTracker {
     /// Creates a tracker with the specified root block marked as valid-to-root.
     pub fn new_with_root(root: BlockId) -> Self {
         let mut tracker = Self::new();
-        tracker.0.insert(
-            root,
-            ValidToRootState {
-                valid_to_root: true,
-                valid: true,
-                parent: None,
-                waiting_children: Vec::new(),
-            },
-        );
+        tracker.0.insert(root, ValidToRootState::new_root());
         tracker
     }
 
@@ -170,6 +162,15 @@ impl ValidToRootTracker {
 impl ValidToRootState {
     fn new() -> Self {
         Self::default()
+    }
+
+    fn new_root() -> Self {
+        ValidToRootState {
+            valid_to_root: true,
+            valid: true,
+            parent: None,
+            waiting_children: Vec::new(),
+        }
     }
 }
 

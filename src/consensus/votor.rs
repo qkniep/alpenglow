@@ -4,6 +4,12 @@
 //! Main voting logic for the consensus protocol.
 //!
 //! Besides [`super::Pool`], [`Votor`] is the other main internal component Alpenglow.
+//! It handles the main voting decisions for the consensus protocol. As input it
+//! receives events of type [`VotorEvent`] over a channel, depending on the event
+//! type these were emitted by  [`super::Pool`], [`super::Blockstore`] and itself.
+//! Votor keeps its own internal state for each slot based on previous events and votes.
+//!
+//! Votor has access to an instance of [`All2All`] for broadcasting votes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -64,8 +70,6 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     voted: BTreeSet<Slot>,
     /// Indicates for which slots we already voted notar and for what hash.
     voted_notar: BTreeMap<Slot, Hash>,
-    /// Indicates for which slot-hash pairs we already voted notar-fallback.
-    voted_notar_fallback: BTreeSet<(Slot, Hash)>,
     /// Indicates for which slots we voted skip.
     skipped: BTreeSet<Slot>,
     /// Indicates for which slots we received at least one shred.
@@ -103,7 +107,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         Self {
             voted: BTreeSet::new(),
             voted_notar: BTreeMap::new(),
-            voted_notar_fallback: BTreeSet::new(),
             skipped: BTreeSet::new(),
             received_shred: BTreeSet::new(),
             branch_certified: BTreeMap::new(),
@@ -147,10 +150,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     }
                 }
                 VotorEvent::SafeToNotar(slot, hash) => {
-                    if !self.voted.contains(&slot)
-                        || self.voted_notar.get(&slot) == Some(&hash)
-                        || self.voted_notar_fallback.contains(&(slot, hash))
-                    {
+                    if self.voted_notar.get(&slot) == Some(&hash) {
                         continue;
                     }
                     let vote =

@@ -3,10 +3,12 @@
 
 //! Implementation of a digital signature scheme.
 //!
-//!
+//! This implements the Ed25519 digital signature scheme, as specified in
+//! [RFC 8032](https://tools.ietf.org/html/rfc8032).
+//! Specifically, this is a wrapper around the [`ed25519_consensus`] crate.
 
 use ed25519_consensus::{SigningKey, VerificationKey};
-use rand::{CryptoRng, RngCore};
+use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
 
 /// A secret key for the digital signature scheme.
