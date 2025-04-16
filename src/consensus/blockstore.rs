@@ -157,7 +157,7 @@ impl Blockstore {
                 // delete shreds after last, if there are any
                 let keys_to_delete: Vec<_> = self
                     .shreds
-                    .range(&(slot, last_slice)..&(slot + 1, 0))
+                    .range(&(slot, last_slice + 1)..&(slot + 1, 0))
                     .map(|(k, _)| k)
                     .copied()
                     .collect();
