@@ -325,35 +325,12 @@ impl Pool {
 mod tests {
     use super::*;
 
-    use crate::ValidatorInfo;
     use crate::consensus::SLOTS_PER_WINDOW;
     use crate::consensus::cert::NotarCert;
     use crate::crypto::aggsig::SecretKey;
-    use crate::crypto::signature;
+    use crate::tests::generate_validators;
 
     use tokio::sync::mpsc;
-
-    fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
-        let mut rng = rand::rng();
-        let mut sks = Vec::new();
-        let mut voting_sks = Vec::new();
-        let mut validators = Vec::new();
-        for i in 0..num_validators {
-            sks.push(signature::SecretKey::new(&mut rng));
-            voting_sks.push(SecretKey::new(&mut rng));
-            validators.push(ValidatorInfo {
-                id: i,
-                stake: 1,
-                pubkey: sks[i as usize].to_pk(),
-                voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            });
-        }
-        let epoch_info = Arc::new(EpochInfo::new(0, validators));
-        (voting_sks, epoch_info)
-    }
 
     #[tokio::test]
     async fn handle_invalid_votes() {

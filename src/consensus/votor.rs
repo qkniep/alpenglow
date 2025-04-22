@@ -322,49 +322,17 @@ impl VotorEvent {
 mod tests {
     use super::*;
 
-    use crate::ValidatorInfo;
     use crate::all2all::TrivialAll2All;
-    use crate::crypto::signature;
-    use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{NetworkMessage, SimulatedNetwork};
+    use crate::tests::{generate_all2all_instances, generate_validators};
 
     use tokio::sync::mpsc;
 
-    use std::collections::VecDeque;
-
     type A2A = TrivialAll2All<SimulatedNetwork>;
 
-    async fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<A2A>) {
-        let mut rng = rand::rng();
-        let core = Arc::new(SimulatedNetworkCore::new().with_jitter(0.0));
-        let mut sks = Vec::new();
-        let mut voting_sks = Vec::new();
-        let mut networks = VecDeque::new();
-        let mut validators = Vec::new();
-        for i in 0..num_validators {
-            sks.push(signature::SecretKey::new(&mut rng));
-            voting_sks.push(SecretKey::new(&mut rng));
-            networks.push_back(core.join_unlimited(i).await);
-            validators.push(ValidatorInfo {
-                id: i,
-                stake: 1,
-                pubkey: sks[i as usize].to_pk(),
-                voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: format!("{}", i),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            });
-        }
-        let mut all2all = Vec::new();
-        for _ in 0..num_validators {
-            let network = networks.pop_front().unwrap();
-            all2all.push(TrivialAll2All::new(validators.clone(), network));
-        }
-        (voting_sks, all2all)
-    }
-
     async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>) {
-        let (sks, mut a2a) = generate_validators(2).await;
+        let (sks, epoch_info) = generate_validators(2);
+        let mut a2a = generate_all2all_instances(epoch_info.validators.clone()).await;
         let (tx, rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
