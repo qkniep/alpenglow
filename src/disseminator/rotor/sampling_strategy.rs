@@ -55,6 +55,7 @@ pub trait SamplingStrategy {
 ///
 /// This sampler is stateless and chooses validators with replacement.
 /// Multiple samples from this are thus independent and identically distributed.
+#[derive(Clone)]
 pub struct UniformSampler {
     validators: Vec<ValidatorInfo>,
 }
@@ -76,6 +77,7 @@ impl SamplingStrategy for UniformSampler {
 ///
 /// This sampler is stateless and chooses validators with replacement.
 /// Multiple samples from this are thus independent and identically distributed.
+#[derive(Clone)]
 pub struct StakeWeightedSampler {
     validators: Vec<ValidatorInfo>,
     stake_index: WeightedIndex<u64>,
@@ -153,6 +155,22 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
 
         panic!("rejected all {MAX_TRIES_PER_SAMPLE} samples");
     }
+
+    fn sample_multiple(&self, k: usize, rng: &mut dyn rand::RngCore) -> Vec<ValidatorInfo> {
+        let samples = (0..k).map(|_| self.sample(rng)).cloned().collect();
+        self.reset();
+        samples
+    }
+}
+
+impl Clone for DecayingAcceptanceSampler {
+    fn clone(&self) -> Self {
+        Self {
+            stake_weighted: self.stake_weighted.clone(),
+            max_samples: self.max_samples,
+            sample_count: Mutex::new(self.sample_count.lock().unwrap().clone()),
+        }
+    }
 }
 
 /// A sampler that simulates the probability distribution in Turbine for Rotor.
@@ -161,6 +179,7 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
 /// Specifically, it should respect the same upper bound on the amount of work,
 /// that is, for `v` validators and given `turbine_fanout` any validator should
 /// be sampled no more than with probability `turbine_fanout / v`.
+#[derive(Clone)]
 pub struct TurbineSampler {
     stake_weighted: StakeWeightedSampler,
     /// Specific fanout of the Turbine tree we want to simulate.
@@ -321,6 +340,15 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
             validators.push(self.fallback_sampler.sample(rng).clone());
         }
         validators
+    }
+}
+
+impl<F: SamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
+    fn clone(&self) -> Self {
+        Self {
+            validators: self.validators.clone(),
+            fallback_sampler: self.fallback_sampler.clone(),
+        }
     }
 }
 
