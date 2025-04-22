@@ -1,6 +1,11 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! UDP network interface.
+//!
+//! This module provides an implementation of the [`Network`] trait for UDP sockets.
+//! It is essentially a wrapper around [`tokio::net::UdpSocket`].
+
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use log::warn;
@@ -39,7 +44,7 @@ impl UdpNetwork {
         Self::new(0)
     }
 
-    /// Returns the port number the network is bound to.
+    /// Returns the UDP port number the network is bound to.
     pub fn port(&self) -> u16 {
         self.socket.local_addr().unwrap().port()
     }

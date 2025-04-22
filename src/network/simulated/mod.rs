@@ -1,6 +1,21 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Simulated network interface.
+//!
+//! This module provides a in implementation of a simulated network interface,
+//! which may be used for local testing and simulations.
+//! It works by having [`SimulatedNetwork`] instances communicate with eachother
+//! via an underlying [`SimulatedNetworkCore`], which links them together.
+//! The network core handles channels for sending packets from one node to another.
+//! These channels are artificially limited in bandwidth through [`TokenBucket`]s.
+//! The core also delays delivery of packets, simulating network latency, and
+//! supports jitter as well as packet loss.
+//!
+//! Further, this module exposes real-world data via its sub-modules:
+//! - [`ping_data`] for latencies between Solana mainnet validators.
+//! - [`stake_distribution`] for working with the Solana mainnet stake distribution.
+
 mod core;
 pub mod ping_data;
 pub mod stake_distribution;
@@ -18,7 +33,7 @@ use crate::ValidatorId;
 
 use super::{Network, NetworkError, NetworkMessage};
 
-/// A simulated network interface for local testing and benchmarking.
+/// A simulated network interface for local testing and simulations.
 ///
 /// # Examples
 // TODO: add examples
