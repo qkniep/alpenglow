@@ -21,7 +21,7 @@ use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_ser
 use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
-use log::{info, warn};
+use log::{debug, info, warn};
 use logforth::append;
 use logforth::filter::EnvFilter;
 use rayon::prelude::*;
@@ -49,10 +49,13 @@ fn main() -> Result<()> {
         .map(|(v, _)| v.clone())
         .collect();
 
+    // TODO: indicatif progress bar
+
+    // run all tests for the different sampling strategies
     for sampling_strat in [
         "uniform",
         "stake_weighted",
-        "fait_accompli1",
+        "fa1",
         "decaying_acceptance",
         "turbine",
     ] {
@@ -62,6 +65,7 @@ fn main() -> Result<()> {
             let rotor_sampler = UniformSampler::new(validators.clone());
             let ping_rotor_sampler = UniformSampler::new(validators_with_pings.clone());
             run_tests(
+                sampling_strat,
                 &validators,
                 &validators_and_ping_servers,
                 leader_sampler,
@@ -75,6 +79,7 @@ fn main() -> Result<()> {
             let rotor_sampler = StakeWeightedSampler::new(validators.clone());
             let ping_rotor_sampler = StakeWeightedSampler::new(validators_with_pings.clone());
             run_tests(
+                sampling_strat,
                 &validators,
                 &validators_and_ping_servers,
                 leader_sampler,
@@ -82,7 +87,7 @@ fn main() -> Result<()> {
                 ping_leader_sampler,
                 ping_rotor_sampler,
             )
-        } else if sampling_strat == "fait_accompli1" {
+        } else if sampling_strat == "fa1" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone());
             let rotor_sampler =
@@ -92,6 +97,7 @@ fn main() -> Result<()> {
                 64,
             );
             run_tests(
+                sampling_strat,
                 &validators,
                 &validators_and_ping_servers,
                 leader_sampler,
@@ -106,6 +112,7 @@ fn main() -> Result<()> {
             let ping_rotor_sampler =
                 DecayingAcceptanceSampler::new(validators_with_pings.clone(), 3.0);
             run_tests(
+                sampling_strat,
                 &validators,
                 &validators_and_ping_servers,
                 leader_sampler,
@@ -119,6 +126,7 @@ fn main() -> Result<()> {
             let rotor_sampler = TurbineSampler::new(validators.clone());
             let ping_rotor_sampler = TurbineSampler::new(validators_with_pings.clone());
             run_tests(
+                sampling_strat,
                 &validators,
                 &validators_and_ping_servers,
                 leader_sampler,
@@ -144,10 +152,11 @@ fn load_validators() -> (
         }
         let stake = v.active_stake.unwrap_or(0);
         if stake > 0 {
+            let id = validators.len() as ValidatorId;
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
-                id: validators.len() as ValidatorId,
+                id,
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
@@ -196,7 +205,9 @@ fn load_validators() -> (
     let mut nodes_without_ping = HashSet::new();
     for (v1, p1) in &validators_with_ping_data {
         for (v2, p2) in &validators_with_ping_data {
-            if get_ping(p1.id, p2.id).is_none() {
+            if get_ping(p1.id, p2.id).is_none()
+                || (get_ping(p2.id, p1.id) == Some(0.0) && p2.id != p1.id)
+            {
                 nodes_without_ping.insert(v1.id);
                 nodes_without_ping.insert(v2.id);
             }
@@ -228,6 +239,7 @@ fn run_tests<
     L: SamplingStrategy + Sync + Send + Clone,
     R: SamplingStrategy + Sync + Send + Clone,
 >(
+    test_name: &str,
     validators: &[ValidatorInfo],
     validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
     leader_sampler: L,
@@ -235,35 +247,101 @@ fn run_tests<
     ping_leader_sampler: L,
     ping_rotor_sampler: R,
 ) {
-    const MAX_BANDWIDTH: u64 = 10_000_000_000; // 10 Gbps
+    const MAX_BANDWIDTHS: [u64; 3] = [
+        1_000_000_000,   // 1 Gbps
+        10_000_000_000,  // 10 Gbps
+        100_000_000_000, // 100 Gbps
+    ];
 
     // bandwidth experiment
-    let bandwidths = vec![MAX_BANDWIDTH; validators.len()];
-    let mut tester = BandwidthTest::new(
-        validators,
-        MAX_BANDWIDTH,
-        bandwidths,
-        leader_sampler.clone(),
-        rotor_sampler.clone(),
-        64,
-    );
-    tester.run(10_000_000);
+    MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
+        for num_shreds in [64, 128, 256] {
+            info!(
+                "{test_name} bandwidth test ({:.1} Gbps, {} shreds)",
+                max_bandwidth as f64 / 1e9,
+                num_shreds
+            );
+            let bandwidths = vec![max_bandwidth; validators.len()];
+            let mut tester = BandwidthTest::new(
+                validators,
+                max_bandwidth,
+                bandwidths,
+                leader_sampler.clone(),
+                rotor_sampler.clone(),
+                num_shreds,
+            );
+            tester.run(1_000_000);
+        }
+    });
 
-    // latency experiment
-    (64..=128).into_par_iter().for_each(|k| {
+    const SHRED_COMBINATIONS: [(usize, usize); 5] =
+        [(32, 64), (32, 80), (32, 96), (64, 128), (128, 256)];
+
+    // latency experiments with random leaders
+    SHRED_COMBINATIONS.into_par_iter().for_each(|(n, k)| {
+        info!("{test_name} latency tests (random leaders, n={n}, k={k})");
         let mut tester = LatencyTest::new(
             validators_with_ping_data,
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
-            k as usize,
+            n,
+            k,
         );
-        tester.run_many(100_000, LatencyTestStage::Rotor);
+        let test_name = format!("{}-{}-{}", test_name, n, k);
+        tester.run_many(&test_name, 100, LatencyTestStage::Final);
     });
 
-    // safety experiments
-    // info!("UniformSampler:");
-    for k in [64] {
-        let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), k);
-        tester.run();
+    // latency experiments with fixed leaders
+    const CITIES: [&str; 9] = [
+        "Westpoort",
+        "London",
+        "Zurich",
+        "New York City",
+        "Los Angeles",
+        "Tokyo",
+        "Singapore",
+        "Cape Town",
+        "Buenos Aires",
+    ];
+    for (n, k) in &SHRED_COMBINATIONS {
+        CITIES.into_par_iter().for_each(|city| {
+            info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
+            let leader = find_leader_in_city(validators_with_ping_data, city);
+            let mut tester = LatencyTest::new(
+                validators_with_ping_data,
+                ping_leader_sampler.clone(),
+                ping_rotor_sampler.clone(),
+                *n,
+                *k,
+            );
+            let test_name = format!("{}-{}-{}", test_name, n, k);
+            tester.run_many_with_leader(&test_name, 100, LatencyTestStage::Final, leader.clone());
+        });
     }
+
+    // safety experiments (Byzantine only, 20%)
+    for (n, k) in &SHRED_COMBINATIONS {
+        info!("{test_name} safety test (n={n}, k={k})");
+        let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+        tester.run(0.2);
+    }
+
+    // safety experiments (Crash + Byz., 40%)
+    for (n, k) in &SHRED_COMBINATIONS {
+        info!("{test_name} safety test (n={n}, k={k})");
+        let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+        tester.run(0.4);
+    }
+}
+
+fn find_leader_in_city(
+    validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
+    city: &str,
+) -> ValidatorInfo {
+    for (v, p) in validators_with_ping_data {
+        if p.location == city {
+            return v.clone();
+        }
+    }
+    panic!("leader not found in {}", city);
 }

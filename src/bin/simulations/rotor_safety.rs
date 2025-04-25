@@ -1,3 +1,10 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//!
+//!
+//!
+
 use std::collections::HashSet;
 use std::sync::{Mutex, RwLock};
 
@@ -7,10 +14,12 @@ use log::info;
 use rand::prelude::*;
 use rayon::prelude::*;
 
+///
 pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
     sampler: RwLock<S>,
+    num_data_shreds: usize,
     num_shreds: usize,
 
     tests: Mutex<usize>,
@@ -18,7 +27,13 @@ pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {
 }
 
 impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
-    pub fn new(validators: Vec<ValidatorInfo>, sampler: S, num_shreds: usize) -> Self {
+    ///
+    pub fn new(
+        validators: Vec<ValidatorInfo>,
+        sampler: S,
+        num_data_shreds: usize,
+        num_shreds: usize,
+    ) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let tests = Mutex::new(0);
         let failures = RwLock::new(0);
@@ -27,6 +42,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             validators,
             total_stake,
             sampler,
+            num_data_shreds,
             num_shreds,
 
             tests,
@@ -34,10 +50,11 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         }
     }
 
-    pub fn run(&self) {
-        let small_failure_rate = self.run_small();
-        let large_failure_rate = self.run_large();
-        let random_failure_rate = self.run_random();
+    ///
+    pub fn run(&self, attack_frac: f64) {
+        let small_failure_rate = self.run_small(attack_frac);
+        let large_failure_rate = self.run_large(attack_frac);
+        let random_failure_rate = self.run_random(attack_frac);
         let attack_prob = small_failure_rate
             .min(large_failure_rate)
             .min(random_failure_rate);
@@ -49,15 +66,15 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         );
     }
 
-    fn run_small(&self) -> f64 {
-        // corrupt 40% smallest validators
+    fn run_small(&self, attack_frac: f64) -> f64 {
+        // corrupt `attack_frac` smallest validators
         let mut corrupted = HashSet::new();
         let mut validators_to_corrupt = self.validators.clone();
         validators_to_corrupt.sort_by_key(|v| v.stake);
         let mut corrupted_stake = 0.0;
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
-            if corrupted_stake + rel_stake < 0.2 {
+            if corrupted_stake + rel_stake < attack_frac {
                 corrupted.insert(v.id);
                 corrupted_stake += rel_stake;
             } else {
@@ -70,15 +87,15 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         *self.failures.read().unwrap() as f64 / *self.tests.lock().unwrap() as f64
     }
 
-    fn run_large(&self) -> f64 {
-        // corrupt 40% largest validators
+    fn run_large(&self, attack_frac: f64) -> f64 {
+        // corrupt `attack_frac` largest validators
         let mut corrupted = HashSet::new();
         let mut validators_to_corrupt = self.validators.clone();
         validators_to_corrupt.sort_by_key(|v| -(v.stake as i64));
         let mut corrupted_stake = 0.0;
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
-            if corrupted_stake + rel_stake < 0.2 {
+            if corrupted_stake + rel_stake < attack_frac {
                 corrupted.insert(v.id);
                 corrupted_stake += rel_stake;
             } else {
@@ -91,9 +108,9 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         *self.failures.read().unwrap() as f64 / *self.tests.lock().unwrap() as f64
     }
 
-    fn run_random(&self) -> f64 {
+    fn run_random(&self, attack_frac: f64) -> f64 {
         (0..100_000).into_par_iter().for_each(|_| {
-            // greedily corrupt less than 40% of validators
+            // greedily corrupt less than `attack_frac` of validators
             let mut corrupted = HashSet::new();
             let mut validators_to_corrupt = self.validators.clone();
             let mut corrupted_stake = 0.0;
@@ -101,7 +118,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
 
             for v in &validators_to_corrupt {
                 let rel_stake = v.stake as f64 / self.total_stake as f64;
-                if corrupted_stake + rel_stake < 0.2 {
+                if corrupted_stake + rel_stake < attack_frac {
                     corrupted.insert(v.id);
                     corrupted_stake += rel_stake;
                 }
@@ -124,7 +141,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 }
             }
             *self.tests.lock().unwrap() += 1;
-            if corrupted_samples > self.num_shreds - 32 {
+            if corrupted_samples > self.num_shreds - self.num_data_shreds {
                 let mut failures = self.failures.write().unwrap();
                 *failures += 1;
             }

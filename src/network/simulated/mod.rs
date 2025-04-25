@@ -8,7 +8,7 @@
 //! It works by having [`SimulatedNetwork`] instances communicate with eachother
 //! via an underlying [`SimulatedNetworkCore`], which links them together.
 //! The network core handles channels for sending packets from one node to another.
-//! These channels are artificially limited in bandwidth through [`TokenBucket`]s.
+//! These channels are artificially limited in bandwidth through token buckets.
 //! The core also delays delivery of packets, simulating network latency, and
 //! supports jitter as well as packet loss.
 //!

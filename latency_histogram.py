@@ -1,0 +1,104 @@
+# Copyright (c) Anza Technology, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+CITIES = [
+    "Westpoort",
+    "London",
+    "Zurich",
+    "New York City",
+    "Los Angeles",
+    "Tokyo",
+    "Singapore",
+    "Cape Town",
+    "Buenos Aires",
+]
+
+def city_name_to_print(city):
+    if city == "Westpoort":
+        return "Amsterdam"
+    else:
+        return city
+
+plt.rc('axes', axisbelow=True)
+
+# average of averages
+file_path = "./data/output/simulations/latency/stake_weighted-32-64.csv"
+df = pd.read_csv(file_path)
+
+print(df['final'].mean())
+print(df['fast_final'].mean())
+print(df['slow_final'].mean())
+
+plt.figure(figsize=(12, 7))
+metrics = ['final', 'slow_final', 'fast_final']
+for metric in reversed(metrics):
+    plt.bar(df['percentile'], df[metric], label=metric, alpha=0.5)
+
+plt.title(f"Latency Histogram for Random Leaders")
+plt.xlabel("validators reached [% of stake]")
+plt.ylabel("latency [ms]")
+plt.legend()
+plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.savefig(f"./data/output/simulations/latency/latency_histogram_final_only.png", dpi=300)
+
+# average of averages
+file_path = "./data/output/simulations/latency/stake_weighted-32-64.csv"
+df = pd.read_csv(file_path)
+
+plt.figure(figsize=(12, 7))
+metrics = ['direct', 'rotor', 'notar', 'final', 'slow_final']
+for metric in reversed(metrics):
+    plt.bar(df['percentile'], df[metric], label=metric)
+
+plt.title(f"Latency Histogram for Random Leaders")
+plt.xlabel("validators reached [% of stake]")
+plt.ylabel("latency [ms]")
+plt.legend()
+plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.savefig(f"./data/output/simulations/latency/latency_histogram.png", dpi=300)
+
+# individual city plots
+for city in CITIES:
+    file_path = f"./data/output/simulations/latency/{city}/stake_weighted-32-64.csv"
+    df = pd.read_csv(file_path)
+
+    plt.figure(figsize=(12, 7))
+    metrics = ['direct', 'rotor', 'notar', 'final', 'slow_final']
+    for metric in reversed(metrics):
+        plt.bar(df['percentile'], df[metric], label=metric)
+
+    cityname = city_name_to_print(city)
+    plt.title(f"Latency Histogram for Leader in {cityname}")
+    plt.xlabel("validators reached [% of stake]")
+    plt.ylabel("latency [ms]")
+    plt.legend()
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    city_filename = cityname.lower().replace(" ", "_")
+    plt.savefig(f"./data/output/simulations/latency/latency_histogram_{city_filename}.png", dpi=300)
+
+# individual city plots (fancy)
+plt.rcParams.update({'font.size': 14, 'axes.titlesize': 18, 'axes.labelsize': 16})
+for city in CITIES:
+    file_path = f"./data/output/simulations/latency/{city}/stake_weighted-32-64.csv"
+    df = pd.read_csv(file_path)
+    df['percentile'] = df['percentile'] - 0.5
+
+    plt.figure(figsize=(12, 7))
+    plt.bar(df['percentile'], df['final'], label='Alpenglow Finalization', color='#00FFA3')
+    plt.bar(df['percentile'], df['direct'], label='Direct Network Delay', color='black')
+
+    cityname = city_name_to_print(city)
+    plt.title(f"Latency Histogram for Leader in {cityname}")
+    plt.xlabel("validators reached [% of stake]")
+    plt.ylabel("latency [ms]")
+    plt.legend()
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    city_filename = cityname.lower().replace(" ", "_")
+    plt.savefig(f"./data/output/simulations/latency/fancy_latency_histogram_{city_filename}.png", dpi=300)

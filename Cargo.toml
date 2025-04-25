@@ -33,6 +33,7 @@ fastrace-opentelemetry = "0.10"
 futures = "0.3"
 geo = "0.30"
 hex = "0.4"
+indicatif = { version = "0.17", features = ["rayon", "tokio"] }
 log = "0.4"
 logforth = { version = "0.24", features = ["colored", "fastrace"] }
 moka = { version = "0.12", features = ["future"] }

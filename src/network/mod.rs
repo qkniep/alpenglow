@@ -41,7 +41,8 @@ pub use simulated::SimulatedNetwork;
 pub use tcp::TcpNetwork;
 pub use udp::UdpNetwork;
 
-const MTU_BYTES: usize = 1500;
+/// Maximum payload size of a UDP packet.
+pub const MTU_BYTES: usize = 1500;
 
 /// Network message type.
 ///

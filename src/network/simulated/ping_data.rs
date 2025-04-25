@@ -132,3 +132,9 @@ pub fn get_ping(source: usize, destination: usize) -> Option<f64> {
 fn get_index(source: usize, destination: usize) -> usize {
     source * PING_SERVERS.len() + destination
 }
+
+impl PingServer {
+    pub fn coordinates(&self) -> (f64, f64) {
+        (self.latitude, self.longitude)
+    }
+}

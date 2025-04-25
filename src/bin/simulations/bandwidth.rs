@@ -1,15 +1,23 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Rotor simulated workload and bandwidth testing.
+//!
+//!
+
 use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::SamplingStrategy;
-use alpenglow::shredder::TOTAL_SHREDS;
 use rand::prelude::*;
 
+///
 pub struct BandwidthTest<L: SamplingStrategy, R: SamplingStrategy> {
     leader_bandwidth: u64,
     bandwidths: Vec<u64>,
     workload_test: WorkloadTest<L, R>,
 }
 
-struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
+///
+pub struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     leader_sampler: L,
     rotor_sampler: R,
@@ -20,15 +28,17 @@ struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
+    ///
     pub fn new(
         validators: &[ValidatorInfo],
         leader_bandwidth: u64,
         bandwidths: Vec<u64>,
         leader_sampler: L,
         rotor_sampler: R,
-        k: usize,
+        num_shreds: usize,
     ) -> Self {
-        let workload_test = WorkloadTest::new(validators, leader_sampler, rotor_sampler, k);
+        let workload_test =
+            WorkloadTest::new(validators, leader_sampler, rotor_sampler, num_shreds);
         Self::from_workload_test(validators, leader_bandwidth, bandwidths, workload_test)
     }
 
@@ -46,6 +56,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         }
     }
 
+    ///
     pub fn run(&mut self, slices: usize) {
         self.workload_test.run_multiple(slices);
         self.evaluate();
@@ -71,43 +82,65 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
-    fn new(validators: &[ValidatorInfo], leader_sampler: L, rotor_sampler: R, k: usize) -> Self {
+    /// Creates a new workload test.
+    ///
+    ///
+    pub fn new(
+        validators: &[ValidatorInfo],
+        leader_sampler: L,
+        rotor_sampler: R,
+        num_shreds: usize,
+    ) -> Self {
         let num_val = validators.len();
         Self {
             validators: validators.to_vec(),
             leader_sampler,
             rotor_sampler,
-            num_shreds: k,
+            num_shreds,
 
             leader_workload: 0,
             workload: vec![0; num_val],
         }
     }
 
-    fn run_multiple(&mut self, slices: usize) {
+    /// Simulates distribution of `slices` slices via Rotor.
+    ///
+    /// Adds the workload from these iterations to the running totals.
+    pub fn run_multiple(&mut self, slices: usize) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..slices {
-            let leader = self.leader_sampler.sample(&mut rng);
-            self.leader_workload += TOTAL_SHREDS as u64;
-            self.workload[leader.id as usize] += TOTAL_SHREDS as u64;
-            let relays = self
-                .rotor_sampler
-                .sample_multiple(self.num_shreds, &mut rng);
-            for relay in relays {
-                if leader.id == relay.id {
-                    self.workload[relay.id as usize] += self.validators.len() as u64 - 1;
-                } else {
-                    self.workload[relay.id as usize] += self.validators.len() as u64 - 2;
-                }
+            self.run_one(&mut rng);
+        }
+    }
+
+    /// Simulates distribution of one slice via Rotor.
+    ///
+    /// Adds the workload from this iteration to the running totals.
+    pub fn run_one(&mut self, rng: &mut impl Rng) {
+        let leader = self.leader_sampler.sample(rng);
+        self.leader_workload += self.num_shreds as u64;
+        self.workload[leader.id as usize] += self.num_shreds as u64;
+        let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
+        for relay in relays {
+            if leader.id == relay.id {
+                self.workload[relay.id as usize] += self.validators.len() as u64 - 1;
+            } else {
+                self.workload[relay.id as usize] += self.validators.len() as u64 - 2;
             }
         }
     }
 
-    fn reset(&mut self) {
+    /// Resets the internal state.
+    ///
+    /// This is useful for running multiple independent tests.
+    pub fn reset(&mut self) {
         self.workload = vec![0; self.validators.len()];
     }
 
-    fn get_workload(&self) -> (u64, &[u64]) {
+    /// Returns the workload for the leader and the workload per validator.
+    ///
+    /// Workload is defined as the total number of shreds sent by each.
+    pub fn get_workload(&self) -> (u64, &[u64]) {
         (self.leader_workload, &self.workload)
     }
 }
