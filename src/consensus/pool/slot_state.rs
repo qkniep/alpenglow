@@ -27,9 +27,8 @@ pub struct SlotState {
     pub(super) voted_stakes: SlotVotedStake,
     /// Certificates for this slot, contains all certificate types and validators.
     pub(super) certificates: SlotCertificates,
-    /// Indicates if a block hash in this slot is branch certified, that is,
-    /// it and all its ancestors are notarized(-fallback).
-    pub(super) branch_certified: Option<Hash>,
+    ///
+    parents: BTreeMap<Hash, (Slot, Hash)>,
     /// Hashes of blocks that have reached the necessary votes for safe-to-notar
     /// and are only waiting for our only vote to arrive.
     pending_safe_to_notar: BTreeSet<Hash>,
@@ -96,7 +95,7 @@ impl SlotState {
             votes: SlotVotes::new(epoch_info.validators.len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
-            branch_certified: None,
+            parents: BTreeMap::new(),
             pending_safe_to_notar: BTreeSet::new(),
             sent_safe_to_notar: BTreeSet::new(),
             sent_safe_to_skip: false,
@@ -166,6 +165,20 @@ impl SlotState {
         }
 
         (certs_created, votor_events)
+    }
+
+    pub fn add_block(
+        &mut self,
+        block_id: (Slot, Hash),
+        parent: (Slot, Hash),
+    ) -> Option<VotorEvent> {
+        let (slot, hash) = block_id;
+        self.parents.insert(hash, parent);
+        if !self.sent_safe_to_notar.contains(&hash) && self.check_safe_to_notar(&hash) {
+            Some(VotorEvent::SafeToNotar(slot, hash))
+        } else {
+            None
+        }
     }
 
     fn is_weakest_quorum(&self, stake: Stake) -> bool {
@@ -282,7 +295,6 @@ impl SlotState {
             votes.extend(self.votes.skip_fallback_votes());
             let cert = SkipCert::new_unchecked(&votes, &self.epoch_info.validators);
             new_certs.push(Cert::Skip(cert));
-            votor_events.push(VotorEvent::SkipCertified(slot));
         }
         if !self.sent_safe_to_skip
             && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
@@ -379,6 +391,10 @@ impl SlotState {
     }
 
     fn check_safe_to_notar(&mut self, block_hash: &Hash) -> bool {
+        let Some((parent_slot, parent_hash)) = self.parents.get(block_hash) else {
+            return false;
+        };
+        // TODO: need to check if parent is certified (notar-fallback)
         let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
         let skip_stake = self.voted_stakes.skip;
         if !self.is_weakest_quorum(notar_stake) {
@@ -429,6 +445,7 @@ impl SlotVotes {
     }
 
     /// Returns all notar-fallback votes for the given block hash.
+    // PERF: return iterators here (to avoid memory allocation)?
     pub fn notar_fallback_votes(&self, block_hash: &Hash) -> Vec<Vote> {
         self.notar_fallback
             .iter()
@@ -439,11 +456,13 @@ impl SlotVotes {
     }
 
     /// Returns all skip votes for this slot.
+    // PERF: return iterators here (to avoid memory allocation)?
     pub fn skip_votes(&self) -> Vec<Vote> {
         self.skip.iter().filter_map(|o| o.clone()).collect()
     }
 
     /// Returns all skip-fallback votes for this slot.
+    // PERF: return iterators here (to avoid memory allocation)?
     pub fn skip_fallback_votes(&self) -> Vec<Vote> {
         self.skip_fallback
             .iter()
@@ -452,6 +471,7 @@ impl SlotVotes {
     }
 
     /// Returns all finalization votes for this slot.
+    // PERF: return iterators here (to avoid memory allocation)?
     pub fn final_votes(&self) -> Vec<Vote> {
         self.finalize.iter().filter_map(|x| x.clone()).collect()
     }

@@ -165,7 +165,12 @@ impl Blockstore {
                     self.shreds.remove(&key);
                 }
 
-                let event = VotorEvent::Block(slot, block_hash, parent_slot, parent_hash);
+                let event = VotorEvent::Block {
+                    slot,
+                    hash: block_hash,
+                    parent_slot,
+                    parent_hash,
+                };
                 self.votor_channel.send(event).await.unwrap();
                 let hash = &hex::encode(block_hash)[..8];
                 let phash = &hex::encode(parent_hash)[..8];

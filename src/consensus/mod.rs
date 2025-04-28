@@ -12,21 +12,15 @@ mod pool;
 mod vote;
 mod votor;
 
-pub use blockstore::Blockstore;
-pub use cert::Cert;
-pub use epoch_info::EpochInfo;
-use fastrace::Span;
-use fastrace::future::FutureExt;
-use pool::{Pool, PoolError};
-pub use vote::Vote;
-use votor::Votor;
-
 use std::marker::{Send, Sync};
 use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
+use fastrace::Span;
+use fastrace::future::FutureExt;
 use log::{debug, info, trace, warn};
+use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::sleep;
@@ -37,6 +31,13 @@ use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+
+pub use blockstore::Blockstore;
+pub use cert::Cert;
+pub use epoch_info::EpochInfo;
+use pool::{Pool, PoolError};
+pub use vote::Vote;
+use votor::Votor;
 
 /// Number of slots in each leader window.
 pub const SLOTS_PER_WINDOW: u64 = 4;
@@ -217,88 +218,79 @@ where
             let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
             let leader = self.epoch_info.leader(first_slot_in_window);
 
-            // produce blocks if we are the leader
-            if leader.id == self.epoch_info.own_id {
-                let mut block = parent;
-                let mut block_hash = parent_hash;
-                for slot in first_slot_in_window..=last_slot_in_window {
-                    let slot_span = Span::enter_with_local_parent(format!("slot {}", slot));
-                    let mut rng = rand::rngs::SmallRng::seed_from_u64(slot);
-                    let hash = &hex::encode(block_hash)[..8];
-                    info!(
-                        "[validator {}] producing block in slot {} with parent {} in slot {}",
-                        self.epoch_info.own_id, slot, hash, block
-                    );
-                    // TODO: send actual data
-                    for slice_index in 0..10 {
-                        let start_time = Instant::now();
-                        let mut data = vec![0; MAX_DATA_PER_SLICE];
-                        rng.fill_bytes(&mut data);
-                        // pack parent information in first slice
-                        if slice_index == 0 {
-                            data[0..8].copy_from_slice(&block.to_be_bytes());
-                            data[8..40].copy_from_slice(&block_hash);
-                        }
-                        let slice = Slice {
-                            slot,
-                            slice_index,
-                            is_last: slice_index == 9,
-                            merkle_root: None,
-                            data,
-                        };
+            // don't do anything if we are not the leader
+            if leader.id != self.epoch_info.own_id {
+                continue;
+            }
 
-                        // shred and disseminate slice
-                        let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
-                        for s in shreds {
-                            self.disseminator.send(&s).await?;
-                            // PERF: move expensive add_shred() call out of block production
-                            let mut blockstore = self.blockstore.write().await;
-                            let block = blockstore.add_shred(s).await;
-                            if let Some((slot, hash, parent_slot, parent_hash)) = block {
-                                let mut pool = self.pool.write().await;
-                                pool.add_block(slot, hash, parent_slot, parent_hash).await;
-                            }
-                        }
-
-                        // artificially ensure block time close to 400 ms
-                        sleep(Duration::from_millis(38).saturating_sub(start_time.elapsed())).await;
+            // wait for parent of first slot (except genesis)
+            if window > 0 {
+                (parent, parent_hash) = loop {
+                    let pool = self.pool.read().await;
+                    match pool.parents_ready(first_slot_in_window).first() {
+                        Some((s, h)) => break (*s, *h),
+                        None => sleep(Duration::from_millis(1)).await,
                     }
-
-                    // build off own block next
-                    block = slot;
-                    block_hash = self
-                        .blockstore
-                        .read()
-                        .await
-                        .canonical_block_hash(slot)
-                        .unwrap();
-                }
+                };
             }
 
-            // wait to see notarization or skip certificates before proceeding to next window
+            // produce blocks for all slots in window
+            let mut block = parent;
+            let mut block_hash = parent_hash;
             for slot in first_slot_in_window..=last_slot_in_window {
-                // PERF: maybe replace busy loop
-                while !self.pool.read().await.is_branch_certified(slot)
-                    && !self.pool.read().await.is_skip_certified(slot)
-                {
-                    sleep(Duration::from_millis(1)).await;
-                }
-                if let Some(block_hash) = self.pool.read().await.branch_certified_hash(slot) {
-                    let hash = &hex::encode(block_hash)[..8];
-                    info!(
-                        "[validator {}] block production: notarized block {} in slot {}",
-                        self.epoch_info.own_id, hash, slot
-                    );
-                    parent = slot;
-                    parent_hash = block_hash;
-                } else {
-                    // warn!(self.info.id, "block production: skipped slot {slot}");
-                    warn!(
-                        "[validator {}] block production: skipped slot {}",
-                        self.epoch_info.own_id, slot
-                    );
+                self.produce_block(slot, (block, block_hash)).await?;
+
+                // build off own block next
+                let blockstore = self.blockstore.read().await;
+                block = slot;
+                block_hash = blockstore.canonical_block_hash(slot).unwrap();
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn produce_block(&self, slot: Slot, parent: (Slot, Hash)) -> Result<()> {
+        let slot_span = Span::enter_with_local_parent(format!("slot {}", slot));
+        let mut rng = SmallRng::seed_from_u64(slot);
+        let hash = &hex::encode(parent.1)[..8];
+        info!(
+            "validator {} producing block in slot {} with parent {} in slot {}",
+            self.epoch_info.own_id, slot, hash, parent.0
+        );
+        // TODO: send actual data
+        for slice_index in 0..10 {
+            let start_time = Instant::now();
+            let mut data = vec![0; MAX_DATA_PER_SLICE];
+            rng.fill_bytes(&mut data);
+            // pack parent information in first slice
+            if slice_index == 0 {
+                data[0..8].copy_from_slice(&parent.0.to_be_bytes());
+                data[8..40].copy_from_slice(&parent.1);
+            }
+            let slice = Slice {
+                slot,
+                slice_index,
+                is_last: slice_index == 9,
+                merkle_root: None,
+                data,
+            };
+
+            // shred and disseminate slice
+            let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
+            for s in shreds {
+                self.disseminator.send(&s).await?;
+                // PERF: move expensive add_shred() call out of block production
+                let mut blockstore = self.blockstore.write().await;
+                let block = blockstore.add_shred(s).await;
+                if let Some((slot, hash, parent_slot, parent_hash)) = block {
+                    let mut pool = self.pool.write().await;
+                    pool.add_block(slot, hash, parent_slot, parent_hash).await;
                 }
             }
+
+            // artificially ensure block time close to 400 ms
+            sleep(Duration::from_millis(38).saturating_sub(start_time.elapsed())).await;
         }
 
         Ok(())
@@ -313,11 +305,11 @@ where
                 Err(PoolError::Slashable(offence)) => {
                     warn!("slashable offence detected: {offence}")
                 }
-                Err(err) => debug!("ignoring invalid vote: {err}"),
+                Err(err) => trace!("ignoring invalid vote: {err}"),
             },
             NetworkMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
                 Ok(()) => {}
-                Err(err) => debug!("ignoring invalid cert: {err}"),
+                Err(err) => trace!("ignoring invalid cert: {err}"),
             },
             msg => warn!("unexpected message on all2all port: {:?}", msg),
         }
