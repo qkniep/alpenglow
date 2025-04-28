@@ -17,13 +17,30 @@ use fastrace::collector::Config;
 use fastrace::prelude::*;
 use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-use logforth::append;
+use logforth::color::LevelColor;
 use logforth::filter::EnvFilter;
+use logforth::{Layout, append};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use rand::rng;
+
+#[derive(Debug, Clone, Copy)]
+struct MinimalLogforthLayout;
+
+impl Layout for MinimalLogforthLayout {
+    fn format(
+        &self,
+        record: &log::Record,
+        _: &[Box<dyn logforth::Diagnostic>],
+    ) -> anyhow::Result<Vec<u8>> {
+        let colors = LevelColor::default();
+        let level = colors.colorize_record_level(false, record.level());
+        let message = record.args();
+        Ok(format!("{level:>5} {message}").into_bytes())
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -55,7 +72,7 @@ async fn main() -> Result<()> {
     logforth::builder()
         .dispatch(|d| {
             d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default())
+                .append(append::Stderr::default().with_layout(MinimalLogforthLayout))
         })
         .apply();
 
