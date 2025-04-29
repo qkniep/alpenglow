@@ -19,7 +19,7 @@ use std::{sync::Arc, time::Duration};
 use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{debug, info, trace, warn};
+use log::{info, trace, warn};
 use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
 use tokio::sync::{RwLock, mpsc};
@@ -45,18 +45,17 @@ pub const SLOTS_PER_WINDOW: u64 = 4;
 const DELTA: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the block.
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
-/// Timeout to use when we have seen at least one shred from the leader's block.
-const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
 /// Timeout to use when we haven't seen any shred from the leader's block.
 /// This is used to skip honest but crashed leaders faster.
 const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
+/// Timeout to use when we have seen at least one shred from the leader's block.
+const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
 
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
     /// Own validator's secret key (used e.g. for block production).
+    /// This is not the same as the voting secret key, which is held by [`Votor`].
     secret_key: signature::SecretKey,
-    /// Own validator's voting secret key.
-    voting_secret_key: aggsig::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -72,7 +71,9 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
     /// Block repair protocol.
     repair: Repair<R>,
 
+    /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
+    /// Votor task handle.
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
@@ -99,7 +100,7 @@ where
         // let cancel = cancel_token.clone();
         let mut votor = Votor::new(
             epoch_info.own_id,
-            voting_secret_key.clone(),
+            voting_secret_key,
             tx.clone(),
             rx,
             all2all.clone(),
@@ -116,7 +117,6 @@ where
 
         Self {
             secret_key,
-            voting_secret_key,
             epoch_info,
             blockstore,
             pool: Arc::new(RwLock::new(pool)),

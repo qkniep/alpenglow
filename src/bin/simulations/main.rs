@@ -288,7 +288,7 @@ fn run_tests<
             k,
         );
         let test_name = format!("{}-{}-{}", test_name, n, k);
-        tester.run_many(&test_name, 100, LatencyTestStage::Final);
+        tester.run_many(&test_name, 1000, LatencyTestStage::Final);
     });
 
     // latency experiments with fixed leaders
@@ -316,7 +316,7 @@ fn run_tests<
                 *k,
             );
             let test_name = format!("{}-{}-{}", test_name, n, k);
-            tester.run_many_with_leader(&test_name, 100, LatencyTestStage::Final, leader.clone());
+            tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final, leader.clone());
         });
     }
 

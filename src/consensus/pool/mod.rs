@@ -12,7 +12,7 @@ mod slot_state;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use log::{error, info, trace, warn};
+use log::{info, trace};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
@@ -60,7 +60,7 @@ pub struct Pool {
     /// State for each slot. Stores all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
     /// Keeps track of which blocks are branch-certified.
-    branch_certified_tracker: ParentReadyTracker,
+    parent_ready_tracker: ParentReadyTracker,
 
     /// Highest slot that is at least notarized fallabck.
     highest_notarized_fallback_slot: Slot,
@@ -82,7 +82,7 @@ impl Pool {
     pub fn new(epoch_info: Arc<EpochInfo>, votor_event_channel: Sender<VotorEvent>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
-            branch_certified_tracker: ParentReadyTracker::new(),
+            parent_ready_tracker: ParentReadyTracker::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
             highest_slow_finalized_slot: 0,
@@ -148,7 +148,7 @@ impl Pool {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
                 let block_hash = cert.block_hash().unwrap();
                 let newly_certified = self
-                    .branch_certified_tracker
+                    .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
                     assert_eq!(slot % SLOTS_PER_WINDOW, 0);
@@ -163,7 +163,7 @@ impl Pool {
                     slot.max(self.highest_notarized_fallback_slot);
             }
             Cert::Skip(_) => {
-                let newly_certified = self.branch_certified_tracker.mark_skipped(slot);
+                let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
                     assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
@@ -176,14 +176,6 @@ impl Pool {
             }
             Cert::FastFinal(_) => {
                 info!("fast finalized slot {slot}");
-                // let block_hash = cert.block_hash().unwrap();
-                // let id = (slot, block_hash);
-                // let newly_certified = self.branch_certified_tracker.mark_valid(id);
-                // for (slot, hash) in newly_certified {
-                //     let event = VotorEvent::BranchCertified(slot, hash);
-                //     self.votor_event_channel.send(event).await.unwrap();
-                //     self.slot_state(slot).branch_certified = Some(hash);
-                // }
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
             }
             Cert::Final(_) => {
@@ -297,20 +289,20 @@ impl Pool {
         }
     }
 
-    /// Returns `true` iff the pool currently sees this slot as branch certified.
+    /// Returns `true` iff the given parent is ready for the given slot.
     ///
-    ///
+    /// This requires that the parent is at least notarized-fallback.
+    /// Also, if the parent is in a slot before `slot-1`, then all slots in
+    /// `parent+1..slot-1` must be skip-certified.
     pub fn is_parent_ready(&self, slot: Slot, parent: (Slot, Hash)) -> bool {
-        self.branch_certified_tracker
+        self.parent_ready_tracker
             .parents_ready(slot)
             .contains(&parent)
     }
 
-    ///
-    ///
-    ///
+    /// Returns all possible parents for the given slot that are ready.
     pub fn parents_ready(&self, slot: Slot) -> &[(Slot, Hash)] {
-        self.branch_certified_tracker.parents_ready(slot)
+        self.parent_ready_tracker.parents_ready(slot)
     }
 
     /// Returns `true` iff the pool contains a skip certificate for the slot.

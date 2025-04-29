@@ -5,6 +5,7 @@
 //!
 //!
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -338,18 +339,36 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
             }
         }
 
-        self.direct_stats
-            .record_latencies(&mut self.direct_latencies, &self.validators);
-        self.rotor_stats
-            .record_latencies(&mut self.rotor_latencies, &self.validators);
-        self.notar_stats
-            .record_latencies(&mut self.notar_latencies, &self.validators);
-        self.fast_final_stats
-            .record_latencies(&mut self.fast_final_latencies, &self.validators);
-        self.slow_final_stats
-            .record_latencies(&mut self.slow_final_latencies, &self.validators);
-        self.final_stats
-            .record_latencies(&mut self.final_latencies, &self.validators);
+        self.direct_stats.record_latencies(
+            &mut self.direct_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
+        self.rotor_stats.record_latencies(
+            &mut self.rotor_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
+        self.notar_stats.record_latencies(
+            &mut self.notar_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
+        self.fast_final_stats.record_latencies(
+            &mut self.fast_final_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
+        self.slow_final_stats.record_latencies(
+            &mut self.slow_final_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
+        self.final_stats.record_latencies(
+            &mut self.final_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
     }
 
     /// Writes latency test results to a CSV file.
@@ -388,6 +407,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
 
 struct LatencyStats {
     sum_percentile_latencies: [f64; 100],
+    percentile_location: Vec<HashMap<String, f64>>,
     count: u64,
 }
 
@@ -400,23 +420,36 @@ impl LatencyStats {
         &mut self,
         latencies: &mut Vec<(f64, ValidatorId)>,
         validators: &[ValidatorInfo],
+        ping_servers: &[&'static PingServer],
     ) {
         latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let percentile_stake = total_stake as f64 / 100.0;
         let mut percentile = 1;
-        let mut stake_so_far = 0;
+        let mut stake_so_far = 0.0;
         for (latency, v) in &*latencies {
-            stake_so_far += validators[*v as usize].stake;
-            while stake_so_far as f64 > total_stake as f64 * percentile as f64 / 100.0 {
-                self.sum_percentile_latencies[percentile as usize - 1] += latency;
-                percentile += 1;
+            let mut validator_stake = validators[*v as usize].stake as f64;
+            for _ in 0..100 {
+                let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
+                let abs_stake_contrib = validator_stake.min(percentile_stake_left);
+                let rel_stake_contrib = abs_stake_contrib / percentile_stake;
+                let latency_contrib = rel_stake_contrib * *latency;
+                self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
+                let count = self.percentile_location[percentile as usize - 1]
+                    .entry(ping_servers[*v as usize].location.clone())
+                    .or_default();
+                *count += abs_stake_contrib;
+                stake_so_far += abs_stake_contrib;
+                validator_stake -= abs_stake_contrib;
+                if percentile < 100 && stake_so_far >= percentile as f64 * percentile_stake {
+                    percentile += 1;
+                } else {
+                    break;
+                }
             }
         }
+        assert!((stake_so_far - total_stake as f64).abs() < 1000.0);
         assert!(percentile >= 100);
-        if percentile == 100 {
-            let max_latency = latencies.last().unwrap().0;
-            self.sum_percentile_latencies[99] += max_latency;
-        }
         self.count += 1;
     }
 
@@ -433,6 +466,15 @@ impl LatencyStats {
         info!("avg p80 latency: {:.2}", avg_p80_latency);
         let avg_max_latency = self.get_avg_percentile_latency(100);
         info!("avg max latency: {:.2}", avg_max_latency);
+
+        for percentile in 1..=100 {
+            println!("percentile: {percentile}");
+            let total_count: f64 = self.percentile_location[percentile - 1].values().sum();
+            for (location, count) in &self.percentile_location[percentile - 1] {
+                let frac = *count * 100.0 / total_count;
+                println!("    location: {}, frac: {:.2}%", location, frac);
+            }
+        }
     }
 }
 
@@ -440,6 +482,7 @@ impl Default for LatencyStats {
     fn default() -> Self {
         Self {
             sum_percentile_latencies: [0.0; 100],
+            percentile_location: vec![HashMap::new(); 100],
             count: 0,
         }
     }
