@@ -1,0 +1,107 @@
+name,stake,address,ip,cloud,city,country,coords,ping
+Mysten-1,235248877.446939,/dns/mysten-1.mainnet.sui.io/tcp/8080/http,45.63.91.154,"The Constant Company, LLC",Santa Clara,US,"37.3924,-121.9623",0
+Figment,230973640.915639,/dns/sui-mainnet-figment.staking.production.figment.io/tcp/8080/http,51.222.248.87,OVH SAS,Beauharnois,CA,"45.3134,-73.8725",104.0
+Mysten-2,228357775.398641,/dns/mysten-2.mainnet.sui.io/tcp/8080/http,136.244.64.220,"The Constant Company, LLC",London,GB,"51.5085,-0.1257",0
+P2P.ORG,220683358.028571,/dns/val1.premainnet.sui.p2p.org/tcp/8080/http,212.117.185.244,"Servers.com, Inc.",Amsterdam,NL,"52.3740,4.8897",26.6
+Triton One,210253018.711575,/dns/validator.mainnet.sui.rpcpool.com/tcp/8080/http,202.8.8.8,TeraSwitch Networks Inc.,Amsterdam,NL,"52.3740,4.8897",27.7
+Blockdaemon,204418907.743391,/dns/bd-sui-main-validator-01.bdnodes.net/tcp/8080/http,208.91.107.169,TeraSwitch Networks Inc.,Den’enchōfu,JP,"35.6170,139.7486",290.0
+Anchorage Digital-2,180734780.871062,/dns/sui.vestige.systems/tcp/8080/http,80.93.18.164,Digiweb ltd,Dublin,IE,"53.3331,-6.2489",0
+Chorus One,161205051.897927,/dns/sui-mainnet.chorus.one/tcp/8080/http,46.165.244.19,Leaseweb Deutschland GmbH,Frankfurt am Main,DE,"50.1155,8.6842",26.9
+Luganodes,160823995.154736,/dns/sui-mainnet.nodes.lgns.xyz/tcp/8080/http,93.115.25.174,UAB Cherry Servers,Vilnius,LT,"54.6892,25.2798",15.4
+Aftermath,143232670.091623,/dns/validator.sui.mainnet.aftermath.finance/tcp/8080/http,57.128.47.71,OVH SAS,Strasbourg,FR,"48.5839,7.7455",22.6
+Everstake,139293009.438399,/dns/sui-main.everstake.one/tcp/8080/http,45.250.254.103,Latitude.sh,Ashburn,US,"39.0437,-77.4875",107.0
+DSRV,138991572.837486,/dns/validator-01.sui.dsrvlabs.net/tcp/8080/http,141.95.171.152,OVH SAS,Lille,FR,"50.6330,3.0586",27.7
+Overclock,138550830.1159,/dns/sui-mainnet.overclock.run/tcp/8080/http,84.17.53.103,Datacamp Limited,Zürich,CH,"47.3667,8.5500",30.2
+Cosmostation,138539887.953753,/dns/sui-mainnet-validator.cosmostation.io/tcp/8080/http,172.255.251.44,"Servers.com, Inc.",Amsterdam,NL,"52.3740,4.8897",36.2
+mrgn,128502715.80038,/dns/mainnet.fengsui.wtf/tcp/8080/http,141.98.216.164,TeraSwitch Networks Inc.,Newark,US,"40.7357,-74.1724",96.4
+Blockscope,124165066.177136,/dns/sui.blockscope.net/tcp/8080/http,15.235.82.231,OVH SAS,Beauharnois,CA,"45.3134,-73.8725",105.0
+Chainode Tech,123770199.805804,/dns/sui-mainnet.chainode.tech/tcp/8080/http,103.50.32.114,Latitude.sh,London,GB,"51.5085,-0.1257",35.0
+Kiln,123465644.278437,/dns/validator-0.sui.mainnet.kiln.fi/tcp/8080/http,162.19.43.6,OVH SAS,Strasbourg,FR,"48.5839,7.7455",22.7
+BartestneT,120631844.593426,/dns/sui-validator.bartestnet.com/tcp/8080/http,45.250.253.76,Latitude.sh,New York City,US,"40.7143,-74.0060",96.3
+Ahoy Validator,118757520.676527,/dns/main.ahoyvalidator.xyz/tcp/8080/http,103.50.32.109,Latitude.sh,London,GB,"51.5085,-0.1257",35.1
+ContributionDAO,117685996.774616,/dns/sui-mainnnet.contributiondao.com/tcp/8080/http,141.95.99.142,OVH SAS,Frankfurt am Main,DE,"50.1155,8.6842",0
+Republic Crypto | Runtime,114235332.242991,/dns/v.sui.mainnet.republiccrypto-source.info/tcp/8080/http,91.210.226.206,Michael Sebastian Schinzel trading as IP-Projects GmbH & Co. KG,Frankfurt am Main,DE,"50.1155,8.6842",0
+n1stake/ Vincagame,112980960.705631,/dns/sui-mainnet.n1stake.com/tcp/8080/http,173.231.17.194,"WebNX, Inc.",Salt Lake City,US,"40.7608,-111.8911",169.0
+Durian,112462101.888026,/dns/p2p.1c167974-23b6-423e-a4d4-bc0ce92ca4fb.sui.bison.run/tcp/8080/http,54.169.118.60,"Amazon.com, Inc.",Singapore,SG,"1.2897,103.8501",0
+Persimmon,112455841.654742,/dns/p2p.0018df71-34f0-470d-b60c-77f8dbf7960d.sui.bison.run/tcp/8080/http,35.78.224.141,"Amazon.com, Inc.",Tokyo,JP,"35.6895,139.6917",0
+MoveFuns DAO,112259754.557085,/dns/sui-validator.mainnet.movefuns.org/tcp/8080/http,135.181.228.230,Hetzner Online GmbH,Helsinki,FI,"60.1695,24.9354",0.281
+Staketab | Suiscan,107284396.033419,/dns/sui-mainnet.staketab.com/tcp/8080/http,103.50.32.107,Latitude.sh,London,GB,"51.5085,-0.1257",35.0
+BlockVision,106441192.064527,/dns/sui-validator.blockvision.org/tcp/8080/http,35.240.145.14,Google LLC,Singapore,SG,"1.2897,103.8501",187.0
+Coinbase Cloud,101315284.458959,/dns/p2p.7861b075-7a9d-4ed7-a4fb-a861830573e1.sui.bison.run/tcp/8080/http,18.202.244.51,"Amazon.com, Inc.",Dublin,IE,"53.3331,-6.2489",0
+HashedPotatoes,95263794.2179702,/dns/suimain.hashedpotatoes.net/tcp/8080/http,69.67.149.35,Latitude.sh,Los Angeles,US,"34.0522,-118.2437",173.0
+TrustedPoint,92578785.1689277,/dns/sui-mainnet.testnet-pride.com/tcp/8080/http,45.250.253.74,Latitude.sh,New York City,US,"40.7143,-74.0060",104.0
+TPT,88728636.655579,/dns/sui-mainnet.thepassivetrust.com/tcp/8080/http,161.97.131.71,Contabo GmbH,Düsseldorf,DE,"51.2217,6.7762",26.9
+Artifact,88518371.2752368,/dns/sui.artifact-staking.io/tcp/8080/http,206.125.33.6,Scott Technology Center,Omaha,US,"41.2563,-95.9404",0
+Coinage x DAIC,88323066.0459982,/dns/sui-mainnet.dzdaic.com/tcp/8080/http,37.252.184.226,IPAX GmbH,Vienna,AT,"48.2085,16.3721",39.3
+POPS,88162463.0574627,/dns/val01-sui-m.pops.one/tcp/8080/http,185.8.104.19,UAB Cherry Servers,Vilnius,LT,"54.6892,25.2798",0
+Nodeinfra,86517943.4034673,/dns/sui-mainnet.nodeinfravalidators.com/tcp/8080/http,64.130.52.116,TeraSwitch Networks Inc.,Amsterdam,NL,"52.3740,4.8897",26.7
+Stakin,84805843.846472,/dns/sui-mainnet.stakin-nodes.com/tcp/8080/http,93.115.25.75,UAB Cherry Servers,Vilnius,LT,"54.6892,25.2798",15.4
+Laine,84440633.9671316,/dns/sui-mainnet.laine.one/tcp/8080/http,103.50.32.184,Latitude.sh,London,GB,"51.5085,-0.1257",35.0
+01node,84335146.4636106,/dns/sui-mainnet.01no.de/tcp/8080/http,195.14.6.175,01NODE STAKING SERVICES S.R.L.,Bucharest,RO,"44.4323,26.1063",66.8
+GalaxyDigital,83381629.0240974,/dns/sui.bci.glxy.com/tcp/8080/http,52.215.11.218,"Amazon.com, Inc.",Dublin,IE,"53.3331,-6.2489",0
+Staking Defense League,83220841.4085209,/dns/sui-mainnet.stakingdefenseleague.com/tcp/8080/http,188.214.129.144,UAB Cherry Servers,Vilnius,LT,"54.6892,25.2798",15.5
+OKXEarn,83203399.5265699,/ip4/43.207.255.138/tcp/18080/http,43.207.255.138,"Amazon.com, Inc.",Tokyo,JP,"35.6895,139.6917",0
+Encapsulate (fka KingSuper),82290748.2771633,/dns/sui-mainnet.kingsuper.services/tcp/8080/http,139.84.139.8,"The Constant Company, LLC",Doddaballapura,IN,"13.2257,77.5750",149.0
+ChainIDE,82183010.0151422,/dns/sui.chainide.com/tcp/8080/http,47.236.75.72,"Alibaba (US) Technology Co., Ltd.",Singapore,SG,"1.2897,103.8501",277.0
+BwareLabs,81854193.8745984,/ip4/141.95.34.55/tcp/8080/http,141.95.34.55,OVH SAS,Frankfurt am Main,DE,"50.1155,8.6842",21.1
+KiligLab,81063387.1736798,/dns/mainnet.sui.kiliglab.io/tcp/8080/http,8.213.144.236,"Alibaba (US) Technology Co., Ltd.",Seoul,KR,"37.5660,126.9784",240.0
+MIDL.dev,78189149.1096041,/dns/sui.midl.dev/tcp/8080/http,62.210.140.115,SCALEWAY S.A.S.,Paris,FR,"48.8534,2.3488",0
+Stardust Staking,76592156.185539,/dns/sui.starduststaking.com/tcp/8080/http,46.229.233.174,VNET a.s.,Bratislava,SK,"48.1482,17.1067",36.6
+ONBUFF,72043604.3005432,/dns/mainnet-sui-validator.onbuff.com/tcp/8080/http,52.231.106.71,Microsoft Corporation,Seoul,KR,"37.5660,126.9784",0
+Chainflow,70430254.7501864,/dns/suimain01.chainflow.io/tcp/8080/http,185.8.104.18,UAB Cherry Servers,Vilnius,LT,"54.6892,25.2798",15.8
+ORBR,68163104.4292183,/dns/rbr-1.mainet.sui.io/tcp/8080/http,78.141.245.48,"The Constant Company, LLC",London,GB,"51.5085,-0.1257",0
+Stakingcabin,63576043.3164762,/dns/mnv.sui.stakingcabin.com/tcp/8080/http,54.64.235.237,"Amazon.com, Inc.",Tokyo,JP,"35.6895,139.6917",281.0
+Restake,63556298.4492539,/dns/restake-sui-main-00-0.machine.restake.tech/tcp/8080/http,103.219.171.17,Latitude.sh,Frankfurt am Main,DE,"50.1155,8.6842",20.5
+Scale3,62551313.1003342,/dns/sui-mainnet-validator.scale3labs.com/tcp/8080/http,45.250.254.151,Latitude.sh,Ashburn,US,"39.0437,-77.4875",107.0
+Citadel.one,62054973.6658048,/dns/sui-val.citadel.one/tcp/8080/http,141.94.137.186,OVH SAS,Lille,FR,"50.6330,3.0586",28.4
+Staking Facilities,61212000.946826,/dns/sui.stakingwizard.com/tcp/8080/http,5.199.170.77,UAB Cherry Servers,Šiauliai,LT,"55.9333,23.3167",15.4
+Stakefish,52350248.0706454,/dns/sui-mainnet.ops.fish/tcp/8080/http,147.75.199.7,"Packet Host, Inc.",Parsippany,US,"40.8579,-74.4260",112.0
+Ankr,48419875.638346,/dns/sui-mainnet-validator.ankr.com/tcp/8080/http,107.6.94.244,SingleHop LLC,San Jose,US,"37.3394,-121.8950",170.0
+Allnodes,44277639.0787702,/dns/sui.allnodes.me/tcp/8080/http,169.155.45.15,Allnodes Inc,Frankfurt am Main,DE,"50.1155,8.6842",0
+Shinlabs,42145570.5019202,/dns/sui-mainnet.shinlabs.xyz/tcp/8080/http,43.130.123.214,"Tencent Building, Kejizhongyi Avenue",Ashburn,US,"39.0437,-77.4875",118.0
+Nelrann,41574781.2910441,/dns/sui-validator.nelrann.org/tcp/8080/http,185.209.178.171,Latitude.sh,New York City,US,"40.7143,-74.0060",96.0
+Bixin/ Kelepool,40882436.7187754,/dns/n1.sui.kelepool.io/tcp/8080/http,47.251.23.207,"Alibaba (US) Technology Co., Ltd.",San Jose,US,"37.3394,-121.8950",0
+Cypher Capital,39803060.0650122,/dns/cypher-mainnet.juicystake.io/tcp/8080/http,69.2.39.168,REV,Gonzales,US,"30.2385,-90.9201",133.0
+Coming Chat,38893339.5638357,/dns/sui-mainnet-validator.coming.chat/tcp/8080/http,167.179.89.33,"The Constant Company, LLC",Ōi,JP,"35.6090,139.7302",279.0
+CogentCrypto,38619602.4189665,/dns/suinode.cogentcrypto.io/tcp/8080/http,45.250.254.99,Latitude.sh,Ashburn,US,"39.0437,-77.4875",107.0
+Brightlystake,37980220.2115391,/dns/sui-mainnet.brightlystake.com/tcp/8080/http,139.84.155.177,"The Constant Company, LLC",Doddaballapura,IN,"13.2257,77.5750",148.0
+Nodes.Guru,37055146.3560896,/dns/sui-validator.nodes.guru/tcp/8080/http,141.95.99.90,OVH SAS,Frankfurt am Main,DE,"50.1155,8.6842",21.0
+Staked,36963025.1406955,/dns/sui-mainnet.prod-eks-eu-west-1.staked.cloud/tcp/8080/http,54.195.211.175,"Amazon.com, Inc.",Dublin,IE,"53.3331,-6.2489",0
+SyncNode,36956344.2869088,/dns/suimain1.syncnode.ro/tcp/8080/http,103.50.32.122,Latitude.sh,London,GB,"51.5085,-0.1257",35.0
+proofgroup,36738120.1993982,/dns/sui.obscurastaking.com/tcp/8080/http,207.53.234.207,"CoreWeave, Inc",Chicago,US,"41.8500,-87.6500",129.0
+Imperator.co,36722134.0046056,/dns/sui-mainnet.imperator.co/tcp/8080/http,57.128.97.53,OVH SAS,Lille,FR,"50.6330,3.0586",27.7
+Swiss Staking,36714382.7675464,/dns/sui.swiss-staking.ch/tcp/8080/http,82.220.39.51,BSE Software GmbH,Zürich,CH,"47.3667,8.5500",41.7
+StakeWithUs,36668969.6978814,/dns/sui-mainnet.stakewith.us/tcp/8080/http,178.18.252.36,Contabo GmbH,Düsseldorf,DE,"51.2217,6.7762",26.9
+Astro-Stakers,36586840.0209943,/dns/sui-main.astrostakers.com/tcp/8080/http,45.32.177.0,"The Constant Company, LLC",London,GB,"51.5085,-0.1257",38.6
+B-harvest,36572144.4197448,/dns/sui-v.bharvest.io/tcp/8080/http,198.13.34.226,"The Constant Company, LLC",Ōi,JP,"35.6090,139.7302",288.0
+SynergyNodes,36560873.2697597,/dns/sui.synergynodes.com/tcp/8080/http,194.48.168.246,Michael Sebastian Schinzel trading as IP-Projects GmbH & Co. KG,Frankfurt am Main,DE,"50.1155,8.6842",26.5
+Noders,36326104.8710876,/dns/sui-rpc-mainnet.nodersteam.com/tcp/8080/http,149.28.137.164,"The Constant Company, LLC",Singapore,SG,"1.3215,103.6957",254.0
+Gaucho,34334683.7183006,/dns/sui.wizardfiction.com/tcp/8080/http,45.250.253.97,Latitude.sh,New York City,US,"40.7143,-74.0060",95.9
+Chainbase,33127379.8486066,/dns/mainnet-validator.sui.chainbase.online/tcp/8080/http,8.222.240.218,"Alibaba (US) Technology Co., Ltd.",Singapore,SG,"1.2897,103.8501",0
+Studio Mirai,32012414.9713245,/dns/mainnet.validator.sm.xyz/tcp/8080/http,79.127.216.34,Datacamp Limited,Frankfurt am Main,DE,"50.1155,8.6842",26.8
+Peeranha,31702273.8111732,/dns/sui-validator.peeranha.io/tcp/8080/http,45.250.253.92,Latitude.sh,New York City,US,"40.7143,-74.0060",96.0
+InfStones,31680202.580786,/dns/prod.sui.infstones.io/tcp/8080/http,150.136.151.212,Oracle Corporation,Ashburn,US,"39.0437,-77.4875",0
+Anchorage Digital-1,31525776.3608716,/dns/sui.harbor.chorus.one/tcp/8080/http,198.244.253.76,OVH SAS,Bexley,GB,"51.4416,0.1487",31.6
+Neuler,31293110.0837693,/dns/sui.validator.neuler.xyz/tcp/8080/http,103.219.171.15,Latitude.sh,Frankfurt am Main,DE,"50.1155,8.6842",0
+Sentio,31214005.8712611,/dns/sui-mainnet-validator.sentio.xyz/tcp/8080/http,131.153.238.118,SECURED SERVERS LLC,Ashburn,US,"39.0437,-77.4875",105.0
+ZKV,30810939.1416782,/dns/validator.mainnet.sui.zkvalidator.com/tcp/8080/http,65.21.128.113,Hetzner Online GmbH,Helsinki,FI,"60.1695,24.9354",0.231
+Suiet,30791634.8620059,/dns/mainnet-validator.suiet.app/tcp/8080/http,15.235.214.130,OVH SAS,Singapore,SG,"1.2897,103.8501",191.0
+Omnistake,29396397.1297876,/dns/sui.omnistake.com/tcp/8080/http,18.188.215.65,"Amazon.com, Inc.",Columbus,US,"39.9612,-82.9988",0
+XPRV,29197983.531408,/dns/sui.xprv.io/tcp/8080/http,54.38.136.66,OVH SAS,Warsaw,PL,"52.2284,21.0522",0
+gumi,28843157.52549,/dns/mainnet.sui.gu3.jp/tcp/8080/http,13.230.215.202,"Amazon.com, Inc.",Tokyo,JP,"35.6895,139.6917",0
+BLRD,28726866.9736928,/dns/validator-sui-mainnet.blrd.inc/tcp/8080/http,35.213.112.171,Google LLC,Tokyo,JP,"35.6895,139.6917",255.0
+Stakely,28462138.3927268,/dns/sui.stakely.io/tcp/8080/http,,,,,"45.5088,-73.5878",0
+HashQuark,28421380.3528196,/dns/sui.hashkey.cloud/tcp/8080/http,13.228.138.28,"Amazon.com, Inc.",Singapore,SG,"1.2897,103.8501",0
+Juicy Stake,28312188.0073226,/dns/juicy-sui-main.juicystake.io/tcp/8080/http,69.2.39.167,REV,Gonzales,US,"30.2385,-90.9201",133.0
+QuantNode,28305867.8571753,/dns/validator.sui.quantnode.tech/tcp/8080/http,103.50.32.129,Latitude.sh,London,GB,"51.5085,-0.1257",35.0
+TDMTech,28282796.5847974,/dns/sui-tdmtech-validator.ankr.com/tcp/8080/http,109.123.108.59,UK-2 Limited,London,GB,"51.5085,-0.1257",36.7
+Node Guardians,28281813.3588327,/dns/sui.nodeguardians.io/tcp/8080/http,51.222.152.21,OVH SAS,Beauharnois,CA,"45.3134,-73.8725",0
+Moonlet,28245721.4120655,/dns/sui-mainnet.moonlet.network/tcp/8080/http,103.219.171.14,Latitude.sh,Frankfurt am Main,DE,"50.1155,8.6842",0
+Forbole,28245360.6322803,/dns/sui-mainnet.forbole.com/tcp/8080/http,5.10.24.66,Amito Ltd,London,GB,"51.5085,-0.1257",37.3
+Parasol,28237531.6942246,/dns/mainnet.parasolsui.com/tcp/8080/http,43.130.125.249,"Tencent Building, Kejizhongyi Avenue",Ashburn,US,"39.0437,-77.4875",118.0
+H2O Nodes,28222928.0542825,/dns/sui-mainnet.h2o-nodes.com/tcp/8080/http,185.125.95.23,uvensys GmbH,Frankfurt am Main,DE,"50.1155,8.6842",0
+A41,28215809.3441803,/dns/validator.sui.a41.io/tcp/8080/http,195.201.186.66,Hetzner Online GmbH,Nürnberg,DE,"49.4542,11.0775",0
+Latitude.sh,27136610.6957286,/dns/sui.manystake.com/tcp/8080/http,103.219.168.185,Latitude.sh,London,GB,"51.5085,-0.1257",0
+BlockEden.xyz,26365837.8652569,/dns/sui-mainnet-validator.blockeden.xyz/tcp/8080/http,34.168.101.125,Google LLC,The Dalles,US,"45.5946,-121.1787",161.0
+NodeReal,24949055.5762792,/dns/sui-mainnet-validator.nodereal.io/tcp/8080/http,3.216.88.226,"Amazon.com, Inc.",Ashburn,US,"39.0437,-77.4875",0
+SenseiNode,21159666.0466263,/dns/sui-mainnet.senseinode.com/tcp/8080/http,69.67.148.48,Latitude.sh,Santiago de Querétaro,MX,"20.5881,-100.3881",181.0

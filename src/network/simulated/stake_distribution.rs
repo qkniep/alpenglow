@@ -23,15 +23,21 @@
 use std::fs::File;
 use std::sync::LazyLock;
 
+use serde::Deserialize;
+
 use crate::Stake;
 
+/// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     let file = File::open("data/mainnet_validators_validatorsdotapp.json").unwrap();
     let validators: Vec<ValidatorData> = serde_json::from_reader(file).unwrap();
     validators
 });
 
-#[derive(Clone, Debug, serde::Deserialize)]
+/// Data for a single validator on Solana.
+///
+/// This matches the format of the data in `data/mainnet_validators_validatorsdotapp.json`.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ValidatorData {
     pub network: String,
     pub account: String,
@@ -40,9 +46,7 @@ pub struct ValidatorData {
     pub www_url: Option<String>,
     pub details: Option<String>,
     pub avatar_url: Option<String>,
-    // "created_at": "2024-08-26 17:31:03 UTC",
     pub created_at: String,
-    // "updated_at": "2024-10-22 03:35:05 UTC",
     pub updated_at: String,
     pub admin_warning: Option<String>,
     pub jito: bool,
@@ -69,17 +73,68 @@ pub struct ValidatorData {
     pub ip: String,
     pub data_center_key: Option<String>,
     pub autonomous_system_number: Option<u32>,
-    // "latitude": "51.1784",
     pub latitude: Option<String>,
-    // "longitude": "7.1601",
     pub longitude: Option<String>,
     pub data_center_host: Option<String>,
     pub vote_account: String,
     pub epoch_credits: Option<u64>,
     pub epoch: Option<u16>,
     pub skipped_slots: Option<u64>,
-    // "skipped_slot_percent": "0.0",
     pub skipped_slot_percent: Option<String>,
     pub ping_time: Option<f64>,
     pub url: String,
+}
+
+/// Same as [`VALIDATOR_DATA`], but for Sui mainnet.
+pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
+    // read CSV
+    let file = File::open("data/sui_validators.csv").unwrap();
+    let reader = csv::Reader::from_reader(file);
+    let sui_validators: Vec<SuiValidatorData> =
+        reader.into_deserialize().map(Result::unwrap).collect();
+
+    // map from SuiValidatorData to ValidatorData
+    let validators: Vec<ValidatorData> = sui_validators
+        .into_iter()
+        .map(|v| {
+            let (lat, lon) = v.coords.split_once(',').unwrap();
+            ValidatorData {
+                name: Some(v.name),
+                is_active: true,
+                active_stake: Some((v.stake.round() * 100.0) as Stake),
+                delinquent: Some(false),
+                ip: v.ip.unwrap_or(v.address.clone()),
+                data_center_key: Some(format!(
+                    "{}-{}-{}",
+                    v.country.unwrap_or_default(),
+                    v.city.unwrap_or_default(),
+                    v.cloud.clone().unwrap_or_default()
+                )),
+                latitude: Some(lat.to_owned()),
+                longitude: Some(lon.to_owned()),
+                data_center_host: v.cloud,
+                ping_time: Some(v.ping),
+                url: v.address,
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    validators
+});
+
+/// Data for a single validator on Sui.
+///
+/// This matches the format of the data in `data/sui_validators.csv`.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SuiValidatorData {
+    name: String,
+    stake: f64,
+    address: String,
+    ip: Option<String>,
+    cloud: Option<String>,
+    city: Option<String>,
+    country: Option<String>,
+    coords: String,
+    ping: f64,
 }
