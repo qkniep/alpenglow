@@ -61,6 +61,8 @@ pub struct Pool {
     slot_states: BTreeMap<Slot, SlotState>,
     /// Keeps track of which blocks are branch-certified.
     parent_ready_tracker: ParentReadyTracker,
+    ///
+    s2n_waiting_parent_cert: BTreeMap<(Slot, Hash), (Slot, Hash)>,
 
     /// Highest slot that is at least notarized fallabck.
     highest_notarized_fallback_slot: Slot,
@@ -83,6 +85,7 @@ impl Pool {
         Self {
             slot_states: BTreeMap::new(),
             parent_ready_tracker: ParentReadyTracker::new(),
+            s2n_waiting_parent_cert: BTreeMap::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
             highest_slow_finalized_slot: 0,
@@ -117,7 +120,10 @@ impl Pool {
         // check if the certificate is a duplicate
         let duplicate = match cert {
             Cert::Notar(_) => certs.notar.is_some(),
-            Cert::NotarFallback(_) => certs.notar_fallback.is_some(),
+            Cert::NotarFallback(_) => certs
+                .notar_fallback
+                .iter()
+                .any(|nf| nf.block_hash() == &cert.block_hash().unwrap()),
             Cert::Skip(_) => certs.skip.is_some(),
             Cert::FastFinal(_) => certs.fast_finalize.is_some(),
             Cert::Final(_) => certs.finalize.is_some(),
@@ -147,10 +153,13 @@ impl Pool {
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
                 let block_hash = cert.block_hash().unwrap();
-                let newly_certified = self
+                if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
+                    self.votor_event_channel.send(event).await.unwrap();
+                }
+                let new_parents_ready = self
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
-                for (slot, (parent_slot, parent_hash)) in newly_certified {
+                for (slot, (parent_slot, parent_hash)) in new_parents_ready {
                     assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
                         slot,
@@ -247,10 +256,15 @@ impl Pool {
         parent_slot: Slot,
         parent_hash: Hash,
     ) {
-        let id = (slot, block_hash);
-        let parent = (parent_slot, parent_hash);
-        if let Some(event) = self.slot_state(slot).add_block(id, parent) {
-            self.votor_event_channel.send(event).await.unwrap();
+        if let Some(parent_state) = self.slot_states.get(&parent_slot) {
+            if parent_state.is_notar_fallback(&parent_hash) {
+                if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
+                    self.votor_event_channel.send(event).await.unwrap();
+                }
+            } else {
+                self.s2n_waiting_parent_cert
+                    .insert((parent_slot, parent_hash), (slot, block_hash));
+            }
         }
     }
 
@@ -283,7 +297,7 @@ impl Pool {
     /// Returns `true` iff the pool contains a notar(-fallback) certificate for the slot.
     pub fn is_notarized_fallback(&self, slot: Slot) -> bool {
         if let Some(state) = self.slot_states.get(&slot) {
-            state.certificates.notar.is_some() || state.certificates.notar_fallback.is_some()
+            state.certificates.notar.is_some() || !state.certificates.notar_fallback.is_empty()
         } else {
             false
         }
@@ -326,7 +340,7 @@ impl Pool {
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
         self.slot_states
             .entry(slot)
-            .or_insert_with(|| SlotState::new(Arc::clone(&self.epoch_info)))
+            .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 }
 

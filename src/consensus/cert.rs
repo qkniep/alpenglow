@@ -308,6 +308,10 @@ impl NotarFallbackCert {
 
         sig1_valid && sig2_valid
     }
+
+    pub fn block_hash(&self) -> &Hash {
+        &self.block_hash
+    }
 }
 
 /// A skip certificate is an aggregate of a quorum of skip(-fallback) votes.
