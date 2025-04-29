@@ -27,6 +27,8 @@ use serde::Deserialize;
 
 use crate::Stake;
 
+use super::ping_data::coordinates_for_city;
+
 /// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     let file = File::open("data/mainnet_validators_validatorsdotapp.json").unwrap();
@@ -137,4 +139,24 @@ pub struct SuiValidatorData {
     country: Option<String>,
     coords: String,
     ping: f64,
+}
+
+///
+pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
+    let mut validators = Vec::new();
+    for (city, frac_stake) in hubs {
+        let (lat, lon) = coordinates_for_city(&city).unwrap();
+        for _ in 0..30 {
+            let stake = (frac_stake * 100.0 * 10_000.0 / 30.0).round() as Stake;
+            validators.push(ValidatorData {
+                is_active: true,
+                active_stake: Some(stake),
+                delinquent: Some(false),
+                latitude: Some(lat.to_string()),
+                longitude: Some(lon.to_string()),
+                ..Default::default()
+            });
+        }
+    }
+    validators
 }

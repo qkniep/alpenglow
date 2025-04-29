@@ -108,6 +108,19 @@ struct PingMeasurement {
     mdev: f64,
 }
 
+/// Gives the coordinates for a city from the ping dataset.
+///
+/// Returns `None` if no ping server with the given city is in the dataset.
+pub fn coordinates_for_city(city: &str) -> Option<(f64, f64)> {
+    PING_SERVERS.iter().find_map(|server| {
+        if server.location == city {
+            Some(server.coordinates())
+        } else {
+            None
+        }
+    })
+}
+
 /// Gives the ping server from the dataset that is closest to the given coordinates.
 pub fn find_closest_ping_server(lat: f64, lon: f64) -> &'static PingServer {
     PING_SERVERS

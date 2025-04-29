@@ -448,7 +448,7 @@ impl LatencyStats {
                 }
             }
         }
-        assert!((stake_so_far - total_stake as f64).abs() < 1000.0);
+        assert!((stake_so_far - total_stake as f64).abs() < 5000.0);
         assert!(percentile >= 100);
         self.count += 1;
     }

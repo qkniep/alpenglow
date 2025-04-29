@@ -4,31 +4,58 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-CITIES = [
-    "Westpoort",
-    "Frankfurt",
-    "London",
-    "Zurich",
-    "New York City",
-    "Los Angeles",
-    "Tokyo",
-    "Singapore",
-    "Cape Town",
-    "Buenos Aires",
-]
+STAKE_DISTRIBUTION = 'solana'
+SAMPLING = 'stake_weighted'
+DATA_SHREDS = 256
+TOTAL_SHREDS = 512
+
+CITIES = []
+
+if STAKE_DISTRIBUTION == 'solana':
+    CITIES = [
+        'Westpoort',
+        'Frankfurt',
+        'London',
+        'Zurich',
+        'New York City',
+        'Los Angeles',
+        'Tokyo',
+        'Singapore',
+        'Cape Town',
+        'Buenos Aires',
+    ]
+elif STAKE_DISTRIBUTION == 'sui':
+    CITIES = [
+        'Los Angeles',
+        'Dublin',
+        'London',
+        'Paris',
+        'Frankfurt',
+        'Singapore',
+        'Tokyo',
+    ]
+elif STAKE_DISTRIBUTION == '5hubs':
+    CITIES = [
+        'San Francisco',
+        'New York City',
+        'London',
+        'Shanghai',
+        'Tokyo',
+    ]
 
 def city_name_to_print(city):
-    if city == "Westpoort":
-        return "Amsterdam"
+    if city == 'Westpoort':
+        return 'Amsterdam'
     else:
         return city
 
 plt.rc('axes', axisbelow=True)
 
-# average of averages
-file_path = "./data/output/simulations/latency/stake_weighted-32-64.csv"
+# load data frame from CSV
+file_path = f'./data/output/simulations/latency/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv'
 df = pd.read_csv(file_path)
 
+# average of averages (finalization types only)
 print(df['final'].mean())
 print(df['fast_final'].mean())
 print(df['slow_final'].mean())
@@ -46,10 +73,7 @@ plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
 plt.savefig(f"./data/output/simulations/latency/latency_histogram_final_only.png", dpi=300)
 
-# average of averages
-file_path = "./data/output/simulations/latency/stake_weighted-32-64.csv"
-df = pd.read_csv(file_path)
-
+# average of averages (all stages)
 plt.figure(figsize=(12, 7))
 metrics = ['direct', 'rotor', 'notar', 'final', 'slow_final']
 for metric in reversed(metrics):
@@ -65,7 +89,7 @@ plt.savefig(f"./data/output/simulations/latency/latency_histogram.png", dpi=300)
 
 # individual city plots
 for city in CITIES:
-    file_path = f"./data/output/simulations/latency/{city}/stake_weighted-32-64.csv"
+    file_path = f'./data/output/simulations/latency/{city}/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv'
     df = pd.read_csv(file_path)
 
     plt.figure(figsize=(12, 7))
@@ -86,7 +110,7 @@ for city in CITIES:
 # individual city plots (fancy)
 plt.rcParams.update({'font.size': 14, 'axes.titlesize': 18, 'axes.labelsize': 16})
 for city in CITIES:
-    file_path = f"./data/output/simulations/latency/{city}/stake_weighted-32-64.csv"
+    file_path = f'./data/output/simulations/latency/{city}/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv'
     df = pd.read_csv(file_path)
     df['percentile'] = df['percentile'] - 0.5
 
