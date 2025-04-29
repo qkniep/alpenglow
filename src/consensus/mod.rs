@@ -19,7 +19,7 @@ use std::{sync::Arc, time::Duration};
 use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use rand::rngs::SmallRng;
 use rand::{RngCore, SeedableRng};
 use tokio::sync::{RwLock, mpsc};
@@ -208,6 +208,7 @@ where
     async fn block_production_loop(&self) -> Result<()> {
         let mut parent: Slot = 0;
         let mut parent_hash = Hash::default();
+        let mut parent_ready = true;
 
         for window in 0.. {
             if self.cancel_token.is_cancelled() {
@@ -223,14 +224,33 @@ where
                 continue;
             }
 
-            // wait for parent of first slot (except genesis)
+            // wait for potential parent of first slot (except if first window)
             if window > 0 {
-                (parent, parent_hash) = loop {
+                // PERF: maybe replace busy loop with events
+                (parent, parent_hash, parent_ready) = loop {
+                    // build on ready parent, if any
                     let pool = self.pool.read().await;
-                    match pool.parents_ready(first_slot_in_window).first() {
-                        Some((s, h)) => break (*s, *h),
-                        None => sleep(Duration::from_millis(1)).await,
+                    if let Some((s, h)) = pool.parents_ready(first_slot_in_window).first() {
+                        let hash = &hex::encode(h)[..8];
+                        debug!("building block on ready parent {hash} in slot {s}");
+                        break (*s, *h, true);
                     }
+                    drop(pool);
+
+                    // optimisitically build on block in previous slot, if any
+                    let blockstore = self.blockstore.read().await;
+                    if let Some(h) = blockstore.canonical_block_hash(first_slot_in_window - 1) {
+                        let hash = &hex::encode(h)[..8];
+                        debug!(
+                            "optimistically building block on parent {} in slot {}",
+                            hash,
+                            first_slot_in_window - 1
+                        );
+                        break (first_slot_in_window - 1, h, false);
+                    }
+                    drop(blockstore);
+
+                    sleep(Duration::from_millis(1)).await;
                 };
             }
 
@@ -238,7 +258,9 @@ where
             let mut block = parent;
             let mut block_hash = parent_hash;
             for slot in first_slot_in_window..=last_slot_in_window {
-                self.produce_block(slot, (block, block_hash)).await?;
+                self.produce_block(slot, (block, block_hash), parent_ready)
+                    .await?;
+                parent_ready = true;
 
                 // build off own block next
                 let blockstore = self.blockstore.read().await;
@@ -250,7 +272,12 @@ where
         Ok(())
     }
 
-    async fn produce_block(&self, slot: Slot, parent: (Slot, Hash)) -> Result<()> {
+    async fn produce_block(
+        &self,
+        slot: Slot,
+        parent: (Slot, Hash),
+        parent_ready: bool,
+    ) -> Result<()> {
         let slot_span = Span::enter_with_local_parent(format!("slot {}", slot));
         let mut rng = SmallRng::seed_from_u64(slot);
         let hash = &hex::encode(parent.1)[..8];
@@ -258,6 +285,7 @@ where
             "validator {} producing block in slot {} with parent {} in slot {}",
             self.epoch_info.own_id, slot, hash, parent.0
         );
+
         // TODO: send actual data
         for slice_index in 0..10 {
             let start_time = Instant::now();
@@ -286,6 +314,16 @@ where
                 if let Some((slot, hash, parent_slot, parent_hash)) = block {
                     let mut pool = self.pool.write().await;
                     pool.add_block(slot, hash, parent_slot, parent_hash).await;
+                }
+            }
+
+            // switch parent if necessary (for optimistic handover)
+            if !parent_ready {
+                let pool = self.pool.read().await;
+                if let Some(p) = pool.parents_ready(slot).first() {
+                    if *p != parent {
+                        unimplemented!("have to switch parents");
+                    }
                 }
             }
 
