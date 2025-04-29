@@ -21,7 +21,7 @@ use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_ser
 use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
-use log::{debug, info, warn};
+use log::{info, warn};
 use logforth::append;
 use logforth::filter::EnvFilter;
 use rayon::prelude::*;
@@ -292,8 +292,9 @@ fn run_tests<
     });
 
     // latency experiments with fixed leaders
-    const CITIES: [&str; 9] = [
+    const CITIES: [&str; 10] = [
         "Westpoort",
+        "Frankfurt",
         "London",
         "Zurich",
         "New York City",

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 CITIES = [
     "Westpoort",
+    "Frankfurt",
     "London",
     "Zurich",
     "New York City",
@@ -102,3 +103,4 @@ for city in CITIES:
     plt.tight_layout()
     city_filename = cityname.lower().replace(" ", "_")
     plt.savefig(f"./data/output/simulations/latency/fancy_latency_histogram_{city_filename}.png", dpi=300)
+    plt.close()
