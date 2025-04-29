@@ -4,13 +4,18 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# Stake distribution to use in the underlying dataset.
+# Currently available: solana, sui, 5hubs
 STAKE_DISTRIBUTION = 'solana'
+# Sampling strategy to use in the underlying dataset.
+# Currently available: uniform, stake_weighted, fa1, turbine, decaying_acceptance
 SAMPLING = 'stake_weighted'
-DATA_SHREDS = 256
-TOTAL_SHREDS = 512
+# Number of data/total shreds to use in the underlying dataset.
+# Currently available combinations: 32/64, 32/80, 32/96, 32/320, 64/128, 128/256, 256/512
+DATA_SHREDS = 32
+TOTAL_SHREDS = 64
 
 CITIES = []
-
 if STAKE_DISTRIBUTION == 'solana':
     CITIES = [
         'Westpoort',
@@ -49,17 +54,21 @@ def city_name_to_print(city):
     else:
         return city
 
+# general plotting style settings
 plt.rc('axes', axisbelow=True)
+plt.rcParams.update({'font.size': 14, 'axes.titlesize': 18, 'axes.labelsize': 16})
+plt.style.use('dark_background')
 
 # load data frame from CSV
 file_path = f'./data/output/simulations/latency/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv'
 df = pd.read_csv(file_path)
 
-# average of averages (finalization types only)
-print(df['final'].mean())
-print(df['fast_final'].mean())
-print(df['slow_final'].mean())
+# print average finalization latencies
+print('final', df['final'].mean())
+print('fast final', df['fast_final'].mean())
+print('slow final', df['slow_final'].mean())
 
+# average of averages (finalization types only)
 plt.figure(figsize=(12, 7))
 metrics = ['final', 'slow_final', 'fast_final']
 for metric in reversed(metrics):
@@ -108,13 +117,11 @@ for city in CITIES:
     plt.savefig(f"./data/output/simulations/latency/latency_histogram_{city_filename}.png", dpi=300)
 
 # individual city plots (fancy)
-plt.rcParams.update({'font.size': 14, 'axes.titlesize': 18, 'axes.labelsize': 16})
 for city in CITIES:
     file_path = f'./data/output/simulations/latency/{city}/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv'
     df = pd.read_csv(file_path)
     df['percentile'] = df['percentile'] - 0.5
 
-    plt.style.use('dark_background')
     fig = plt.figure(figsize=(12, 7))
     fig.patch.set_alpha(0.0)
     plt.bar(df['percentile'], df['final'], label='Alpenglow Finalization', color='#00FFA3')
