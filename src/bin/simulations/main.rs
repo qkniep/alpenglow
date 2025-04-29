@@ -53,11 +53,22 @@ fn main() -> Result<()> {
         ("Shanghai".to_string(), 0.2),
         ("Tokyo".to_string(), 0.2),
     ]);
+    let validator_data_stock_exchanges = hub_validator_data(vec![
+        ("Toronto".to_string(), 0.1),
+        ("New York City".to_string(), 0.2),
+        ("Westpoort".to_string(), 0.1),
+        ("Taipei".to_string(), 0.1), // should maybe be Shenzhen (but we don't have ping data)
+        ("Pune".to_string(), 0.2),   // should maybe be Mumbai (but we don't have ping data)
+        ("Shanghai".to_string(), 0.1),
+        ("Hong Kong".to_string(), 0.1),
+        ("Tokyo".to_string(), 0.1),
+    ]);
 
     // run tests
     run_tests_for_stake_distribution("solana", validator_data_solana);
     run_tests_for_stake_distribution("sui", validator_data_sui);
     run_tests_for_stake_distribution("5hubs", &validator_data_5hubs);
+    run_tests_for_stake_distribution("stock_exchanges", &validator_data_stock_exchanges);
 
     Ok(())
 }
@@ -217,10 +228,8 @@ fn validators_from_validator_data(
             ping_server,
         ));
     }
-    warn!(
-        "discarding {:.2}% of validators w/o ping server",
-        100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64
-    );
+    let frac_wo_ping_server = 100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64;
+    warn!("discarding {frac_wo_ping_server:.2}% of validators w/o ping server");
 
     // determine pings of validator pairs
     let mut nodes_without_ping = HashSet::new();
@@ -234,24 +243,18 @@ fn validators_from_validator_data(
             }
         }
     }
-    warn!(
-        "discarding {:.2}% of nodes w/o ping",
-        nodes_without_ping.len() as f64 * 100.0 / validators_with_ping_data.len() as f64
-    );
+    let frac_wo_ping =
+        nodes_without_ping.len() as f64 * 100.0 / validators_with_ping_data.len() as f64;
+    warn!("discarding {frac_wo_ping:.2}% of nodes w/o ping");
     warn!("{} validators without ping data", nodes_without_ping.len());
     validators_with_ping_data.retain(|(v, _)| !nodes_without_ping.contains(&v.id));
-    info!(
-        "{} validators with ping data",
-        validators_with_ping_data.len()
-    );
+    let vals_left = validators_with_ping_data.len();
+    info!("{vals_left} validators with ping data",);
 
     // give validators with ping data consecutive IDs
-    validators_with_ping_data
-        .iter_mut()
-        .enumerate()
-        .for_each(|(i, v)| {
-            v.0.id = i as ValidatorId;
-        });
+    for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
+        v.0.id = i as ValidatorId;
+    }
 
     (validators, validators_with_ping_data)
 }
@@ -276,11 +279,10 @@ fn run_tests<
 
     // bandwidth experiment
     MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
-        for num_shreds in [64, 128, 256, 512] {
+        for shreds in [64, 128, 256, 512] {
             info!(
-                "{test_name} bandwidth test ({:.1} Gbps, {} shreds)",
+                "{test_name} bandwidth test ({:.1} Gbps, {shreds} shreds)",
                 max_bandwidth as f64 / 1e9,
-                num_shreds
             );
             let bandwidths = vec![max_bandwidth; validators.len()];
             let mut tester = BandwidthTest::new(
@@ -289,7 +291,7 @@ fn run_tests<
                 bandwidths,
                 leader_sampler.clone(),
                 rotor_sampler.clone(),
-                num_shreds,
+                shreds,
             );
             tester.run(1_000_000);
         }
@@ -352,6 +354,17 @@ fn run_tests<
             "Shanghai",
             "Tokyo",
         ]
+    } else if test_name.starts_with("stock_exchanges") {
+        vec![
+            "Toronto",
+            "New York City",
+            "Westpoort",
+            "Taipei",
+            "Pune",
+            "Shanghai",
+            "Hong Kong",
+            "Tokyo",
+        ]
     } else {
         unimplemented!()
     };
@@ -396,5 +409,5 @@ fn find_leader_in_city(
             return v.clone();
         }
     }
-    panic!("leader not found in {}", city);
+    panic!("leader not found in {city}");
 }

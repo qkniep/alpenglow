@@ -5,8 +5,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Stake distribution to use in the underlying dataset.
-# Currently available: solana, sui, 5hubs
-STAKE_DISTRIBUTION = 'solana'
+# Currently available: solana, sui, 5hubs, stock_exchanges
+STAKE_DISTRIBUTION = 'stock_exchanges'
 # Sampling strategy to use in the underlying dataset.
 # Currently available: uniform, stake_weighted, fa1, turbine, decaying_acceptance
 SAMPLING = 'stake_weighted'
