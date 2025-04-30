@@ -64,13 +64,13 @@ use rotor_safety::RotorSafetyTest;
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = false;
 const RUN_CRASH_SAFETY_TESTS: bool = true;
-const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
+const RUN_BYZANTINE_SAFETY_TESTS: bool = true;
 
-const SAMPLING_STRATEGIES: [&str; 5] = [
+const SAMPLING_STRATEGIES: [&str; 4] = [
     "uniform",
     "stake_weighted",
     "fa1",
-    "decaying_acceptance",
+    // "decaying_acceptance",
     "turbine",
 ];
 
@@ -80,10 +80,11 @@ const MAX_BANDWIDTHS: [u64; 3] = [
     100_000_000_000, // 100 Gbps
 ];
 
-const SHRED_COMBINATIONS: [(usize, usize); 7] = [
+const SHRED_COMBINATIONS: [(usize, usize); 8] = [
     (32, 64),
     (32, 80),
     (32, 96),
+    (32, 128),
     (32, 320),
     (64, 128),
     (128, 256),
@@ -102,27 +103,33 @@ fn main() -> Result<()> {
         })
         .apply();
 
-    // create bandwidth evaluation file
-    let filename = PathBuf::from("data")
-        .join("output")
-        .join("simulations")
-        .join("bandwidth")
-        .with_extension("csv");
-    if let Some(parent) = filename.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+    if RUN_BANDWIDTH_TESTS {
+        // create bandwidth evaluation file
+        let filename = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
+            .join("bandwidth")
+            .join("bandwidth")
+            .with_extension("csv");
+        if let Some(parent) = filename.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let _ = File::create(filename).unwrap();
     }
-    let _ = File::create(filename).unwrap();
 
-    // create saftey evaluation file
-    let filename = PathBuf::from("data")
-        .join("output")
-        .join("simulations")
-        .join("safety")
-        .with_extension("csv");
-    if let Some(parent) = filename.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+    if RUN_CRASH_SAFETY_TESTS || RUN_BYZANTINE_SAFETY_TESTS {
+        // create saftey evaluation file
+        let filename = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
+            .join("safety")
+            .join("safety")
+            .with_extension("csv");
+        if let Some(parent) = filename.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let _ = File::create(filename).unwrap();
     }
-    let _ = File::create(filename).unwrap();
 
     // run tests for different stake distributions
     run_tests_for_stake_distribution("solana", &VALIDATOR_DATA);
@@ -331,6 +338,7 @@ fn run_tests<
             .join("output")
             .join("simulations")
             .join("bandwidth")
+            .join("bandwidth")
             .with_extension("csv");
         let file = File::options().append(true).open(filename).unwrap();
         let writer = csv::Writer::from_writer(file);
@@ -370,7 +378,7 @@ fn run_tests<
                 k,
             );
             let test_name = format!("{}-{}-{}", test_name, n, k);
-            tester.run_many(&test_name, 100, LatencyTestStage::Final);
+            tester.run_many(&test_name, 1000, LatencyTestStage::Final);
         });
 
         // latency experiments with fixed leaders
@@ -435,7 +443,7 @@ fn run_tests<
                 let test_name = format!("{}-{}-{}", test_name, n, k);
                 tester.run_many_with_leader(
                     &test_name,
-                    100,
+                    1000,
                     LatencyTestStage::Final,
                     leader.clone(),
                 );
@@ -448,6 +456,7 @@ fn run_tests<
         let filename = PathBuf::from("data")
             .join("output")
             .join("simulations")
+            .join("safety")
             .join("safety")
             .with_extension("csv");
         let file = File::options().append(true).open(filename).unwrap();
@@ -469,9 +478,6 @@ fn run_tests<
         if RUN_BYZANTINE_SAFETY_TESTS {
             // safety experiments (Byzantine only, 20%)
             for (n, k) in &SHRED_COMBINATIONS {
-                if *k == 320 {
-                    continue;
-                }
                 info!("{test_name} safety test (n={n}, k={k})");
                 let tester =
                     RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
