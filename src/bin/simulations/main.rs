@@ -1,9 +1,34 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Simulations for Rotor and Alpenglow.
 //!
+//! This module provides a binary for simulating Rotor and Alpenglow.
 //!
+//! Currently three major simulations are implemented:
+//! 1. Bandwidth (Rotor, workload per node, maximum supported throughput)
+//! 2. Latency (all stages of Alpenglow)
+//! 3. Safety (Rotor, 40% crash, 20% byzantine)
 //!
+//! For parallelization of these simulations, [`rayon`] is used in most places.
+//!
+//! All of these simulations are evaluated on different stake distributions, namely:
+//! - Solana mainnet (real-world data)
+//! - Sui mainnet (real-world data)
+//! - 5 hubs (five major cities, globally distributed, equal stake each)
+//! - Stock exchanges (top 10 global stock exchange locations)
+//!
+//! Also, all simulations are evaluated for different sampling strategies, namely:
+//! - Uniform
+//! - Stake-weighted
+//! - Fait Accompli 1
+//! - Decaying acceptance (with 3.0 max samples)
+//! - Turbine
+//!
+//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`], and
+//! [`RUN_SAFETY_TESTS`] control which tests to run.
+//! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
+//! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
 mod bandwidth;
 mod latency;
@@ -38,7 +63,8 @@ use rotor_safety::RotorSafetyTest;
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = false;
-const RUN_SAFETY_TESTS: bool = true;
+const RUN_CRASH_SAFETY_TESTS: bool = true;
+const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
 
 const SAMPLING_STRATEGIES: [&str; 5] = [
     "uniform",
@@ -158,7 +184,7 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 64,
             );
             run_tests(
-                sampling_strat,
+                &test_name,
                 &validators,
                 &validators_and_ping_servers,
                 leader_sampler,
@@ -417,7 +443,7 @@ fn run_tests<
         }
     }
 
-    if RUN_SAFETY_TESTS {
+    if RUN_CRASH_SAFETY_TESTS || RUN_BYZANTINE_SAFETY_TESTS {
         // TODO: clean up code
         let filename = PathBuf::from("data")
             .join("output")
@@ -427,24 +453,30 @@ fn run_tests<
         let file = File::options().append(true).open(filename).unwrap();
         let mut writer = csv::Writer::from_writer(file);
 
-        // safety experiments (Crash + Byz., 40%)
-        for (n, k) in &SHRED_COMBINATIONS {
-            if *k == 320 {
-                continue;
+        if RUN_CRASH_SAFETY_TESTS {
+            // safety experiments (Crash + Byz., 40%)
+            for (n, k) in &SHRED_COMBINATIONS {
+                if *k == 320 {
+                    continue;
+                }
+                info!("{test_name} safety test (n={n}, k={k})");
+                let tester =
+                    RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+                tester.run(test_name, 0.4, &mut writer);
             }
-            info!("{test_name} safety test (n={n}, k={k})");
-            let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-            tester.run(test_name, 0.4, &mut writer);
         }
 
-        // safety experiments (Byzantine only, 20%)
-        for (n, k) in &SHRED_COMBINATIONS {
-            if *k == 320 {
-                continue;
+        if RUN_BYZANTINE_SAFETY_TESTS {
+            // safety experiments (Byzantine only, 20%)
+            for (n, k) in &SHRED_COMBINATIONS {
+                if *k == 320 {
+                    continue;
+                }
+                info!("{test_name} safety test (n={n}, k={k})");
+                let tester =
+                    RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+                tester.run(test_name, 0.2, &mut writer);
             }
-            info!("{test_name} safety test (n={n}, k={k})");
-            let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-            tester.run(test_name, 0.2, &mut writer);
         }
     }
 }
