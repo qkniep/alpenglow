@@ -224,11 +224,13 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 // events from Votor itself
                 VotorEvent::Timeout(slot) => {
                     trace!("timeout for slot {}", slot);
-                    self.try_skip_window(slot).await;
+                    if !self.voted.contains(&slot) {
+                        self.try_skip_window(slot).await;
+                    }
                 }
                 VotorEvent::TimeoutCrashedLeader(slot) => {
                     trace!("timeout (crashed leader) for slot {}", slot);
-                    if !self.received_shred.contains(&slot) {
+                    if !self.received_shred.contains(&slot) && !self.voted.contains(&slot) {
                         self.try_skip_window(slot).await;
                     }
                 }
