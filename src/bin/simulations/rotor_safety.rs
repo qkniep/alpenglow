@@ -6,11 +6,12 @@
 //!
 
 use std::collections::HashSet;
+use std::fs::File;
 use std::sync::{Mutex, RwLock};
 
 use alpenglow::ValidatorId;
 use alpenglow::{Stake, ValidatorInfo, disseminator::rotor::SamplingStrategy};
-use log::info;
+use log::{debug, info};
 use rand::prelude::*;
 use rayon::prelude::*;
 
@@ -51,7 +52,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
     }
 
     ///
-    pub fn run(&self, attack_frac: f64) {
+    pub fn run(&self, test_name: &str, attack_frac: f64, csv_file: &mut csv::Writer<File>) {
         let small_failure_rate = self.run_small(attack_frac);
         let large_failure_rate = self.run_large(attack_frac);
         let random_failure_rate = self.run_random(attack_frac);
@@ -59,14 +60,25 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             .min(large_failure_rate)
             .min(random_failure_rate);
 
-        info!(
-            "{:<3} shreds, attack prob [log2]: {:.3}",
-            self.num_shreds,
-            attack_prob.log2(),
-        );
+        let parts = test_name.split('-').collect::<Vec<_>>();
+        let stake_distribution = parts[0];
+        let sampling_strategy = parts[1];
+
+        csv_file
+            .write_record(&[
+                stake_distribution.to_string(),
+                sampling_strategy.to_string(),
+                attack_frac.to_string(),
+                self.num_data_shreds.to_string(),
+                self.num_shreds.to_string(),
+                attack_prob.log2().to_string(),
+            ])
+            .unwrap();
+        csv_file.flush().unwrap();
     }
 
     fn run_small(&self, attack_frac: f64) -> f64 {
+        debug!("running attack with small nodes corrupted");
         // corrupt `attack_frac` smallest validators
         let mut corrupted = HashSet::new();
         let mut validators_to_corrupt = self.validators.clone();
@@ -81,13 +93,14 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 break;
             }
         }
-        (0..100_000).into_par_iter().for_each(|_| {
+        (0..10_000).into_par_iter().for_each(|_| {
             self.run_with_corrupted(100_000, &corrupted);
         });
         *self.failures.read().unwrap() as f64 / *self.tests.lock().unwrap() as f64
     }
 
     fn run_large(&self, attack_frac: f64) -> f64 {
+        debug!("running attack with large nordes corrupted");
         // corrupt `attack_frac` largest validators
         let mut corrupted = HashSet::new();
         let mut validators_to_corrupt = self.validators.clone();
@@ -102,14 +115,15 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 break;
             }
         }
-        (0..100_000).into_par_iter().for_each(|_| {
+        (0..10_000).into_par_iter().for_each(|_| {
             self.run_with_corrupted(100_000, &corrupted);
         });
         *self.failures.read().unwrap() as f64 / *self.tests.lock().unwrap() as f64
     }
 
     fn run_random(&self, attack_frac: f64) -> f64 {
-        (0..100_000).into_par_iter().for_each(|_| {
+        debug!("running attack with random nordes corrupted");
+        (0..10_000).into_par_iter().for_each(|_| {
             // greedily corrupt less than `attack_frac` of validators
             let mut corrupted = HashSet::new();
             let mut validators_to_corrupt = self.validators.clone();
@@ -145,7 +159,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 let mut failures = self.failures.write().unwrap();
                 *failures += 1;
             }
-            if *self.failures.read().unwrap() >= 1 {
+            if *self.failures.read().unwrap() >= 10 {
                 return;
             }
         }

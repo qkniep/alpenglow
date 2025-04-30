@@ -142,6 +142,31 @@ pub struct SuiValidatorData {
 }
 
 ///
+pub static FIVE_HUBS_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
+    hub_validator_data(vec![
+        ("San Francisco".to_string(), 0.2),
+        ("New York City".to_string(), 0.2),
+        ("London".to_string(), 0.2),
+        ("Shanghai".to_string(), 0.2),
+        ("Tokyo".to_string(), 0.2),
+    ])
+});
+
+///
+pub static STOCK_EXCHANGES_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
+    hub_validator_data(vec![
+        ("Toronto".to_string(), 0.1),
+        ("New York City".to_string(), 0.2),
+        ("Westpoort".to_string(), 0.1),
+        ("Taipei".to_string(), 0.1), // should maybe be Shenzhen (but we don't have ping data)
+        ("Pune".to_string(), 0.2),   // should maybe be Mumbai (but we don't have ping data)
+        ("Shanghai".to_string(), 0.1),
+        ("Hong Kong".to_string(), 0.1),
+        ("Tokyo".to_string(), 0.1),
+    ])
+});
+
+///
 pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     let mut validators = Vec::new();
     for (city, frac_stake) in hubs {

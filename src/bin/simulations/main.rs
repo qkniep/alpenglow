@@ -10,6 +10,8 @@ mod latency;
 mod rotor_safety;
 
 use std::collections::HashSet;
+use std::fs::File;
+use std::path::PathBuf;
 
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
@@ -19,7 +21,8 @@ use alpenglow::disseminator::rotor::sampling_strategy::{
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_server, get_ping};
 use alpenglow::network::simulated::stake_distribution::{
-    SUI_VALIDATOR_DATA, VALIDATOR_DATA, ValidatorData, hub_validator_data,
+    FIVE_HUBS_VALIDATOR_DATA, STOCK_EXCHANGES_VALIDATOR_DATA, SUI_VALIDATOR_DATA, VALIDATOR_DATA,
+    ValidatorData,
 };
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
@@ -31,6 +34,34 @@ use rayon::prelude::*;
 use bandwidth::BandwidthTest;
 use latency::{LatencyTest, LatencyTestStage};
 use rotor_safety::RotorSafetyTest;
+
+const RUN_BANDWIDTH_TESTS: bool = false;
+const RUN_LATENCY_TESTS: bool = false;
+const RUN_SAFETY_TESTS: bool = true;
+
+const SAMPLING_STRATEGIES: [&str; 5] = [
+    "uniform",
+    "stake_weighted",
+    "fa1",
+    "decaying_acceptance",
+    "turbine",
+];
+
+const MAX_BANDWIDTHS: [u64; 3] = [
+    1_000_000_000,   // 1 Gbps
+    10_000_000_000,  // 10 Gbps
+    100_000_000_000, // 100 Gbps
+];
+
+const SHRED_COMBINATIONS: [(usize, usize); 7] = [
+    (32, 64),
+    (32, 80),
+    (32, 96),
+    (32, 320),
+    (64, 128),
+    (128, 256),
+    (256, 512),
+];
 
 fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
@@ -44,31 +75,33 @@ fn main() -> Result<()> {
         })
         .apply();
 
-    let validator_data_solana = &VALIDATOR_DATA;
-    let validator_data_sui = &SUI_VALIDATOR_DATA;
-    let validator_data_5hubs = hub_validator_data(vec![
-        ("San Francisco".to_string(), 0.2),
-        ("New York City".to_string(), 0.2),
-        ("London".to_string(), 0.2),
-        ("Shanghai".to_string(), 0.2),
-        ("Tokyo".to_string(), 0.2),
-    ]);
-    let validator_data_stock_exchanges = hub_validator_data(vec![
-        ("Toronto".to_string(), 0.1),
-        ("New York City".to_string(), 0.2),
-        ("Westpoort".to_string(), 0.1),
-        ("Taipei".to_string(), 0.1), // should maybe be Shenzhen (but we don't have ping data)
-        ("Pune".to_string(), 0.2),   // should maybe be Mumbai (but we don't have ping data)
-        ("Shanghai".to_string(), 0.1),
-        ("Hong Kong".to_string(), 0.1),
-        ("Tokyo".to_string(), 0.1),
-    ]);
+    // create bandwidth evaluation file
+    let filename = PathBuf::from("data")
+        .join("output")
+        .join("simulations")
+        .join("bandwidth")
+        .with_extension("csv");
+    if let Some(parent) = filename.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let _ = File::create(filename).unwrap();
 
-    // run tests
-    run_tests_for_stake_distribution("solana", validator_data_solana);
-    run_tests_for_stake_distribution("sui", validator_data_sui);
-    run_tests_for_stake_distribution("5hubs", &validator_data_5hubs);
-    run_tests_for_stake_distribution("stock_exchanges", &validator_data_stock_exchanges);
+    // create saftey evaluation file
+    let filename = PathBuf::from("data")
+        .join("output")
+        .join("simulations")
+        .join("safety")
+        .with_extension("csv");
+    if let Some(parent) = filename.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let _ = File::create(filename).unwrap();
+
+    // run tests for different stake distributions
+    run_tests_for_stake_distribution("solana", &VALIDATOR_DATA);
+    run_tests_for_stake_distribution("sui", &SUI_VALIDATOR_DATA);
+    run_tests_for_stake_distribution("5hubs", &FIVE_HUBS_VALIDATOR_DATA);
+    run_tests_for_stake_distribution("stock_exchanges", &STOCK_EXCHANGES_VALIDATOR_DATA);
 
     Ok(())
 }
@@ -84,13 +117,7 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
     // TODO: indicatif progress bar
 
     // run all tests for the different sampling strategies
-    for sampling_strat in [
-        "uniform",
-        "stake_weighted",
-        "fa1",
-        "decaying_acceptance",
-        "turbine",
-    ] {
+    for sampling_strat in SAMPLING_STRATEGIES {
         let test_name = format!("{}-{}", distribution_name, sampling_strat);
         if sampling_strat == "uniform" {
             let leader_sampler = UniformSampler::new(validators.clone());
@@ -271,132 +298,151 @@ fn run_tests<
     ping_leader_sampler: L,
     ping_rotor_sampler: R,
 ) {
-    const MAX_BANDWIDTHS: [u64; 3] = [
-        1_000_000_000,   // 1 Gbps
-        10_000_000_000,  // 10 Gbps
-        100_000_000_000, // 100 Gbps
-    ];
+    if RUN_BANDWIDTH_TESTS {
+        // TODO: clean up code
+        let filename = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
+            .join("bandwidth")
+            .with_extension("csv");
+        let file = File::options().append(true).open(filename).unwrap();
+        let mut writer = csv::Writer::from_writer(file);
 
-    // bandwidth experiment
-    MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
-        for shreds in [64, 128, 256, 512] {
-            info!(
-                "{test_name} bandwidth test ({:.1} Gbps, {shreds} shreds)",
-                max_bandwidth as f64 / 1e9,
-            );
-            let bandwidths = vec![max_bandwidth; validators.len()];
-            let mut tester = BandwidthTest::new(
-                validators,
-                max_bandwidth,
-                bandwidths,
-                leader_sampler.clone(),
-                rotor_sampler.clone(),
-                shreds,
-            );
-            tester.run(1_000_000);
-        }
-    });
+        // bandwidth experiment
+        MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
+            for shreds in [64, 128, 256, 512] {
+                info!(
+                    "{test_name} bandwidth test ({:.1} Gbps, {shreds} shreds)",
+                    max_bandwidth as f64 / 1e9,
+                );
+                let bandwidths = vec![max_bandwidth; validators.len()];
+                let mut tester = BandwidthTest::new(
+                    validators,
+                    max_bandwidth,
+                    bandwidths,
+                    leader_sampler.clone(),
+                    rotor_sampler.clone(),
+                    shreds,
+                );
+                tester.run(test_name, 1_000_000, &mut writer);
+            }
+        });
+    }
 
-    const SHRED_COMBINATIONS: [(usize, usize); 7] = [
-        (32, 64),
-        (32, 80),
-        (32, 96),
-        (32, 320),
-        (64, 128),
-        (128, 256),
-        (256, 512),
-    ];
-
-    // latency experiments with random leaders
-    SHRED_COMBINATIONS.into_par_iter().for_each(|(n, k)| {
-        info!("{test_name} latency tests (random leaders, n={n}, k={k})");
-        let mut tester = LatencyTest::new(
-            validators_with_ping_data,
-            ping_leader_sampler.clone(),
-            ping_rotor_sampler.clone(),
-            n,
-            k,
-        );
-        let test_name = format!("{}-{}-{}", test_name, n, k);
-        tester.run_many(&test_name, 100, LatencyTestStage::Final);
-    });
-
-    // latency experiments with fixed leaders
-    let cities = if test_name.starts_with("solana") {
-        vec![
-            "Westpoort",
-            "Frankfurt",
-            "London",
-            "Zurich",
-            "New York City",
-            "Los Angeles",
-            "Tokyo",
-            "Singapore",
-            "Cape Town",
-            "Buenos Aires",
-        ]
-    } else if test_name.starts_with("sui") {
-        vec![
-            "Los Angeles",
-            // "New Jersey",
-            "Dublin",
-            "London",
-            "Paris",
-            "Frankfurt",
-            "Singapore",
-            "Tokyo",
-        ]
-    } else if test_name.starts_with("5hubs") {
-        vec![
-            "San Francisco",
-            "New York City",
-            "London",
-            "Shanghai",
-            "Tokyo",
-        ]
-    } else if test_name.starts_with("stock_exchanges") {
-        vec![
-            "Toronto",
-            "New York City",
-            "Westpoort",
-            "Taipei",
-            "Pune",
-            "Shanghai",
-            "Hong Kong",
-            "Tokyo",
-        ]
-    } else {
-        unimplemented!()
-    };
-
-    for (n, k) in &SHRED_COMBINATIONS {
-        cities.par_iter().for_each(|city| {
-            info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
-            let leader = find_leader_in_city(validators_with_ping_data, city);
+    if RUN_LATENCY_TESTS {
+        // latency experiments with random leaders
+        SHRED_COMBINATIONS.into_par_iter().for_each(|(n, k)| {
+            info!("{test_name} latency tests (random leaders, n={n}, k={k})");
             let mut tester = LatencyTest::new(
                 validators_with_ping_data,
                 ping_leader_sampler.clone(),
                 ping_rotor_sampler.clone(),
-                *n,
-                *k,
+                n,
+                k,
             );
             let test_name = format!("{}-{}-{}", test_name, n, k);
-            tester.run_many_with_leader(&test_name, 100, LatencyTestStage::Final, leader.clone());
+            tester.run_many(&test_name, 100, LatencyTestStage::Final);
         });
+
+        // latency experiments with fixed leaders
+        let cities = if test_name.starts_with("solana") {
+            vec![
+                "Westpoort",
+                "Frankfurt",
+                "London",
+                "Zurich",
+                "New York City",
+                "Los Angeles",
+                "Tokyo",
+                "Singapore",
+                "Cape Town",
+                "Buenos Aires",
+            ]
+        } else if test_name.starts_with("sui") {
+            vec![
+                "Los Angeles",
+                // "New Jersey",
+                "Dublin",
+                "London",
+                "Paris",
+                "Frankfurt",
+                "Singapore",
+                "Tokyo",
+            ]
+        } else if test_name.starts_with("5hubs") {
+            vec![
+                "San Francisco",
+                "New York City",
+                "London",
+                "Shanghai",
+                "Tokyo",
+            ]
+        } else if test_name.starts_with("stock_exchanges") {
+            vec![
+                "Toronto",
+                "New York City",
+                "Westpoort",
+                "Taipei",
+                "Pune",
+                "Shanghai",
+                "Hong Kong",
+                "Tokyo",
+            ]
+        } else {
+            unimplemented!()
+        };
+
+        for (n, k) in &SHRED_COMBINATIONS {
+            cities.par_iter().for_each(|city| {
+                info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
+                let leader = find_leader_in_city(validators_with_ping_data, city);
+                let mut tester = LatencyTest::new(
+                    validators_with_ping_data,
+                    ping_leader_sampler.clone(),
+                    ping_rotor_sampler.clone(),
+                    *n,
+                    *k,
+                );
+                let test_name = format!("{}-{}-{}", test_name, n, k);
+                tester.run_many_with_leader(
+                    &test_name,
+                    100,
+                    LatencyTestStage::Final,
+                    leader.clone(),
+                );
+            });
+        }
     }
 
-    // safety experiments (Byzantine only, 20%)
-    for (n, k) in &SHRED_COMBINATIONS {
-        info!("{test_name} safety test (n={n}, k={k})");
-        let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-        tester.run(0.2);
-    }
+    if RUN_SAFETY_TESTS {
+        // TODO: clean up code
+        let filename = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
+            .join("safety")
+            .with_extension("csv");
+        let file = File::options().append(true).open(filename).unwrap();
+        let mut writer = csv::Writer::from_writer(file);
 
-    // safety experiments (Crash + Byz., 40%)
-    for (n, k) in &SHRED_COMBINATIONS {
-        info!("{test_name} safety test (n={n}, k={k})");
-        let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-        tester.run(0.4);
+        // safety experiments (Crash + Byz., 40%)
+        for (n, k) in &SHRED_COMBINATIONS {
+            if *k == 320 {
+                continue;
+            }
+            info!("{test_name} safety test (n={n}, k={k})");
+            let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+            tester.run(test_name, 0.4, &mut writer);
+        }
+
+        // safety experiments (Byzantine only, 20%)
+        for (n, k) in &SHRED_COMBINATIONS {
+            if *k == 320 {
+                continue;
+            }
+            info!("{test_name} safety test (n={n}, k={k})");
+            let tester = RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+            tester.run(test_name, 0.2, &mut writer);
+        }
     }
 }
 

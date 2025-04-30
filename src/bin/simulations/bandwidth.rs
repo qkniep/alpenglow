@@ -5,6 +5,8 @@
 //!
 //!
 
+use std::fs::File;
+
 use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use rand::prelude::*;
@@ -57,12 +59,12 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
     }
 
     ///
-    pub fn run(&mut self, slices: usize) {
+    pub fn run(&mut self, test_name: &str, slices: usize, csv_file: &mut csv::Writer<File>) {
         self.workload_test.run_multiple(slices);
-        self.evaluate();
+        self.evaluate(test_name, csv_file);
     }
 
-    fn evaluate(&self) {
+    fn evaluate(&self, test_name: &str, csv_file: &mut csv::Writer<File>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let seconds = (8 * 1500 * leader_workload) as f64 / self.leader_bandwidth as f64;
         let mut min_supported_bandwidth = self.leader_bandwidth as f64;
@@ -74,10 +76,21 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
                 min_supported_bandwidth = self.leader_bandwidth as f64 / ratio;
             }
         }
-        println!(
-            "min. supported bandwidth: {:.1} Mbit/s",
-            min_supported_bandwidth / 1e6 / 2.0,
-        );
+
+        let parts = test_name.split('-').collect::<Vec<_>>();
+        let stake_distribution = parts[0];
+        let sampling_strategy = parts[1];
+
+        csv_file
+            .write_record(&[
+                stake_distribution.to_string(),
+                sampling_strategy.to_string(),
+                self.leader_bandwidth.to_string(),
+                self.workload_test.num_shreds.to_string(),
+                (min_supported_bandwidth / 2.0).to_string(),
+            ])
+            .unwrap();
+        csv_file.flush().unwrap();
     }
 }
 
