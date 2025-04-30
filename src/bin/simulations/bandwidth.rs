@@ -6,6 +6,7 @@
 //!
 
 use std::fs::File;
+use std::sync::{Arc, Mutex};
 
 use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::SamplingStrategy;
@@ -59,12 +60,12 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
     }
 
     ///
-    pub fn run(&mut self, test_name: &str, slices: usize, csv_file: &mut csv::Writer<File>) {
+    pub fn run(&mut self, test_name: &str, slices: usize, csv_file: Arc<Mutex<csv::Writer<File>>>) {
         self.workload_test.run_multiple(slices);
         self.evaluate(test_name, csv_file);
     }
 
-    fn evaluate(&self, test_name: &str, csv_file: &mut csv::Writer<File>) {
+    fn evaluate(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let seconds = (8 * 1500 * leader_workload) as f64 / self.leader_bandwidth as f64;
         let mut min_supported_bandwidth = self.leader_bandwidth as f64;
@@ -81,6 +82,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
+        let mut csv_file = csv_file.lock().unwrap();
         csv_file
             .write_record(&[
                 stake_distribution.to_string(),

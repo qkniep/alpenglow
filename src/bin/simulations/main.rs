@@ -12,6 +12,7 @@ mod rotor_safety;
 use std::collections::HashSet;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
@@ -306,7 +307,9 @@ fn run_tests<
             .join("bandwidth")
             .with_extension("csv");
         let file = File::options().append(true).open(filename).unwrap();
-        let mut writer = csv::Writer::from_writer(file);
+        let writer = csv::Writer::from_writer(file);
+        let writer = Arc::new(Mutex::new(writer));
+        let writer_ref = &writer;
 
         // bandwidth experiment
         MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
@@ -324,7 +327,7 @@ fn run_tests<
                     rotor_sampler.clone(),
                     shreds,
                 );
-                tester.run(test_name, 1_000_000, &mut writer);
+                tester.run(test_name, 1_000_000, writer_ref.clone());
             }
         });
     }
