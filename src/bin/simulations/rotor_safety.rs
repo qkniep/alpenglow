@@ -57,8 +57,8 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         let large_failure_rate = self.run_large(attack_frac);
         let random_failure_rate = self.run_random(attack_frac);
         let attack_prob = small_failure_rate
-            .min(large_failure_rate)
-            .min(random_failure_rate);
+            .max(large_failure_rate)
+            .max(random_failure_rate);
 
         let parts = test_name.split('-').collect::<Vec<_>>();
         let stake_distribution = parts[0];
