@@ -122,7 +122,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
     ///
     /// Adds the workload from these iterations to the running totals.
     pub fn run_multiple(&mut self, slices: usize) {
-        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
         for _ in 0..slices {
             self.run_one(&mut rng);
         }
