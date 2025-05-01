@@ -162,7 +162,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             let sampled = sampler.sample_multiple(self.num_shreds, &mut rng);
             let mut corrupted_samples = 0;
             for v in sampled {
-                if corrupted[v.id as usize] {
+                if corrupted[v as usize] {
                     corrupted_samples += 1;
                 }
             }

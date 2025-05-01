@@ -209,7 +209,7 @@ impl<N: Network> Repair<N> {
     async fn send_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
         let repair = RepairMessage::Request(request);
         let msg = NetworkMessage::Repair(repair);
-        let to = &self.sampler.sample(&mut rand::rng()).repair_address;
+        let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
         self.network.send(&msg, to).await
     }
 
@@ -217,7 +217,7 @@ impl<N: Network> Repair<N> {
         let repair = RepairMessage::Response(response);
         let msg = NetworkMessage::Repair(repair);
         // TODO: send back to correct validator
-        let to = &self.sampler.sample(&mut rand::rng()).repair_address;
+        let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
         self.network.send(&msg, to).await
     }
 }

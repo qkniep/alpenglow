@@ -143,7 +143,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
             let relays = self
                 .rotor_sampler
                 .sample_multiple(self.num_shreds, &mut rng);
-            self.run_one_deterministic(up_to_stage, leader.clone(), relays);
+            self.run_one_deterministic(up_to_stage, leader.id, relays);
         }
 
         let leader_ping_server = self.ping_servers[leader.id as usize];
@@ -172,18 +172,18 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
     pub fn run_one_deterministic(
         &mut self,
         up_to_stage: LatencyTestStage,
-        leader: ValidatorInfo,
-        relays: Vec<ValidatorInfo>,
+        leader: ValidatorId,
+        relays: Vec<ValidatorId>,
     ) {
         // measure direct latencies
         for v in &self.validators {
-            let leader_ping_server = self.ping_servers[leader.id as usize].id;
+            let leader_ping_server = self.ping_servers[leader as usize].id;
             let v_ping_server = self.ping_servers[v.id as usize].id;
             let latency = get_ping(leader_ping_server, v_ping_server).unwrap();
             self.direct_latencies[v.id as usize] = (latency, v.id);
         }
         for (i, relay) in relays.iter().enumerate() {
-            self.relay_latencies[i] = self.direct_latencies[relay.id as usize].0;
+            self.relay_latencies[i] = self.direct_latencies[*relay as usize].0;
         }
 
         if up_to_stage == LatencyTestStage::Direct {
@@ -194,7 +194,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         for v in &self.validators {
             for (i, (relay, latency)) in relays.iter().zip(self.relay_latencies.iter()).enumerate()
             {
-                let relay_ping_server = self.ping_servers[relay.id as usize].id;
+                let relay_ping_server = self.ping_servers[*relay as usize].id;
                 let v_ping_server = self.ping_servers[v.id as usize].id;
                 let latency = latency + get_ping(relay_ping_server, v_ping_server).unwrap();
                 self.tmp_rotor_latencies[i] = latency;
