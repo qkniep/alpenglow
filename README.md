@@ -2,6 +2,8 @@
 
 Research reference implementation of the Alpenglow consensus protocol.
 
+![Latency Histogram for Random Leaders](./latency_histogram.png)
+
 ## Getting Started
 
 A local cluster example can be run with the following command:
