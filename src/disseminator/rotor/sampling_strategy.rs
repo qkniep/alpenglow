@@ -304,6 +304,7 @@ impl SamplingStrategy for TurbineSampler {
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
+    required_samples: Vec<ValidatorId>,
     fallback_sampler: F,
 }
 
@@ -312,6 +313,7 @@ impl<F: SamplingStrategy> FaitAccompli1Sampler<F> {
     pub const fn new(validators: Vec<ValidatorInfo>, fallback_sampler: F) -> Self {
         Self {
             validators,
+            required_samples: Vec::new(),
             fallback_sampler,
         }
     }
@@ -323,19 +325,22 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
     //       support running sample_multiple(...) on different k?
     pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let mut required_samples = Vec::new();
         let mut validators_truncated_stake = validators.clone();
         for v in &mut validators_truncated_stake {
             let frac_stake = v.stake as f64 / total_stake as f64;
             let samples = (frac_stake * k as f64).floor() as u64;
             v.stake -= samples * total_stake / k;
+            required_samples.extend((0..samples).map(|_| v.id));
         }
-        let not_all_zero = validators_truncated_stake.iter().any(|v| v.stake != 0);
-        let fallback_sampler = match not_all_zero {
-            true => StakeWeightedSampler::new(validators_truncated_stake),
-            false => StakeWeightedSampler::new(validators.clone()),
+        let all_zero = validators_truncated_stake.iter().all(|v| v.stake == 0);
+        let fallback_sampler = match all_zero {
+            true => StakeWeightedSampler::new(validators.clone()),
+            false => StakeWeightedSampler::new(validators_truncated_stake),
         };
         Self {
             validators,
+            required_samples,
             fallback_sampler,
         }
     }
@@ -353,14 +358,7 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
 
     fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         let mut validators = Vec::with_capacity(k);
-        let total_stake: Stake = self.validators.iter().map(|v| v.stake).sum();
-        for v in &self.validators {
-            let frac_stake = v.stake as f64 / total_stake as f64;
-            let samples = (frac_stake * k as f64).floor() as u64;
-            for _ in 0..samples {
-                validators.push(v.id);
-            }
-        }
+        validators.extend_from_slice(&self.required_samples);
         while validators.len() < k {
             validators.push(self.fallback_sampler.sample(rng));
         }
@@ -372,6 +370,7 @@ impl<F: SamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
     fn clone(&self) -> Self {
         Self {
             validators: self.validators.clone(),
+            required_samples: self.required_samples.clone(),
             fallback_sampler: self.fallback_sampler.clone(),
         }
     }
