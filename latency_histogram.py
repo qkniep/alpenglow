@@ -85,9 +85,12 @@ file_path = f'./data/output/simulations/latency/{STAKE_DISTRIBUTION}-{SAMPLING}-
 df = pd.read_csv(file_path)
 
 # print average finalization latencies
-print('final', df['final'].mean())
-print('fast final', df['fast_final'].mean())
-print('slow final', df['slow_final'].mean())
+print('Random Leader')
+print('avg. final', df['final'].mean())
+print('avg. fast final', df['fast_final'].mean())
+print('avg. slow final', df['slow_final'].mean())
+print('median final', df['final'].median())
+print('WC final', df['final'].max())
 
 # average of averages (finalization types only)
 plt.figure(figsize=(12, 7))
@@ -123,6 +126,15 @@ plt.savefig(f'./data/output/simulations/latency/latency_histogram.png', dpi=300)
 for city in CITIES:
     file_path = f'./data/output/simulations/latency/{city}/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv'
     df = pd.read_csv(file_path)
+
+    # print average finalization latencies
+    print()
+    print(f'Leader in {city}')
+    print('avg. final', df['final'].mean())
+    print('avg. fast final', df['fast_final'].mean())
+    print('avg. slow final', df['slow_final'].mean())
+    print('median final', df['final'].median())
+    print('WC final', df['final'].max())
 
     fig = plt.figure(figsize=(12, 7))
     fig.patch.set_facecolor('white')
