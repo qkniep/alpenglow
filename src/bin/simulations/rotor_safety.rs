@@ -54,8 +54,20 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
     ///
     pub fn run(&self, test_name: &str, attack_frac: f64, csv_file: &mut csv::Writer<File>) {
         let small_failure_rate = self.run_small(attack_frac);
+        debug!("small failure rate: {}", small_failure_rate);
+        *self.tests.write().unwrap() = 0;
+        *self.failures.write().unwrap() = 0;
+
         let large_failure_rate = self.run_large(attack_frac);
+        debug!("large failure rate: {}", large_failure_rate);
+        *self.tests.write().unwrap() = 0;
+        *self.failures.write().unwrap() = 0;
+
         let random_failure_rate = self.run_random(attack_frac);
+        debug!("random failure rate: {}", random_failure_rate);
+        *self.tests.write().unwrap() = 0;
+        *self.failures.write().unwrap() = 0;
+
         let attack_prob = small_failure_rate
             .max(large_failure_rate)
             .max(random_failure_rate);
@@ -80,14 +92,14 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
     fn run_small(&self, attack_frac: f64) -> f64 {
         debug!("running attack with small nodes corrupted");
         // corrupt `attack_frac` smallest validators
-        let mut corrupted = BTreeSet::new();
+        let mut corrupted = vec![false; self.validators.len()];
         let mut validators_to_corrupt = self.validators.clone();
         validators_to_corrupt.sort_by_key(|v| v.stake);
         let mut corrupted_stake = 0.0;
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
             if corrupted_stake + rel_stake < attack_frac {
-                corrupted.insert(v.id);
+                corrupted[v.id as usize] = true;
                 corrupted_stake += rel_stake;
             } else {
                 break;
@@ -102,14 +114,14 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
     fn run_large(&self, attack_frac: f64) -> f64 {
         debug!("running attack with large nodes corrupted");
         // corrupt `attack_frac` largest validators
-        let mut corrupted = BTreeSet::new();
+        let mut corrupted = vec![false; self.validators.len()];
         let mut validators_to_corrupt = self.validators.clone();
         validators_to_corrupt.sort_by_key(|v| -(v.stake as i64));
         let mut corrupted_stake = 0.0;
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
             if corrupted_stake + rel_stake < attack_frac {
-                corrupted.insert(v.id);
+                corrupted[v.id as usize] = true;
                 corrupted_stake += rel_stake;
             } else {
                 break;
@@ -125,7 +137,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         debug!("running attack with random nodes corrupted");
         (0..100_000).into_par_iter().for_each(|_| {
             // greedily corrupt less than `attack_frac` of validators
-            let mut corrupted = BTreeSet::new();
+            let mut corrupted = vec![false; self.validators.len()];
             let mut validators_to_corrupt = self.validators.clone();
             let mut corrupted_stake = 0.0;
             validators_to_corrupt.shuffle(&mut rand::rng());
@@ -133,7 +145,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             for v in &validators_to_corrupt {
                 let rel_stake = v.stake as f64 / self.total_stake as f64;
                 if corrupted_stake + rel_stake < attack_frac {
-                    corrupted.insert(v.id);
+                    corrupted[v.id as usize] = true;
                     corrupted_stake += rel_stake;
                 }
             }
@@ -143,14 +155,14 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
     }
 
-    fn run_with_corrupted(&self, n: usize, byzantine: bool, corrupted: &BTreeSet<ValidatorId>) {
+    fn run_with_corrupted(&self, n: usize, byzantine: bool, corrupted: &[bool]) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..n {
             let sampler = self.sampler.read().unwrap();
             let sampled = sampler.sample_multiple(self.num_shreds, &mut rng);
             let mut corrupted_samples = 0;
             for v in sampled {
-                if corrupted.contains(&v.id) {
+                if corrupted[v.id as usize] {
                     corrupted_samples += 1;
                 }
             }

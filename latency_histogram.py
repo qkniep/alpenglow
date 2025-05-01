@@ -16,6 +16,15 @@ SAMPLING = 'fa1'
 DATA_SHREDS = 32
 TOTAL_SHREDS = 64
 
+LABELS = {
+    'direct': 'Network latency',
+    'rotor': 'Rotor block dissemination',
+    'notar': 'Notarization',
+    'final': 'Finalization',
+    'fast_final': 'Fast-finalization',
+    'slow_final': 'Slow-finalization',
+}
+
 CITIES = []
 if STAKE_DISTRIBUTION == 'solana':
     CITIES = [
@@ -84,11 +93,11 @@ print('slow final', df['slow_final'].mean())
 plt.figure(figsize=(12, 7))
 metrics = ['final', 'slow_final', 'fast_final']
 for metric in reversed(metrics):
-    plt.bar(df['percentile'], df[metric], label=metric, alpha=0.5)
+    plt.bar(df['percentile'], df[metric], label=LABELS[metric], alpha=0.5)
 
 plt.title(f'Latency Histogram for Random Leaders')
-plt.xlabel('validators reached [% of stake]')
-plt.ylabel('latency [ms]')
+plt.xlabel('Validators reached [% of stake]')
+plt.ylabel('Latency [ms]')
 plt.legend()
 plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
@@ -100,11 +109,11 @@ fig.patch.set_facecolor('white')
 fig.gca().set_facecolor('white')
 metrics = ['direct', 'rotor', 'notar', 'final']
 for metric in reversed(metrics):
-    plt.bar(df['percentile'], df[metric], label=metric)
+    plt.bar(df['percentile'], df[metric], label=LABELS[metric])
 
 plt.title(f'Latency Histogram for Random Leaders')
-plt.xlabel('validators reached [% of stake]')
-plt.ylabel('latency [ms]')
+plt.xlabel('Validators reached [% of stake]')
+plt.ylabel('Latency [ms]')
 plt.legend()
 plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
@@ -120,12 +129,12 @@ for city in CITIES:
     fig.gca().set_facecolor('white')
     metrics = ['direct', 'rotor', 'notar', 'final']
     for metric in reversed(metrics):
-        plt.bar(df['percentile'], df[metric], label=metric)
+        plt.bar(df['percentile'], df[metric], label=LABELS[metric])
 
     cityname = city_name_to_print(city)
     plt.title(f'Latency Histogram for Leader in {cityname}')
-    plt.xlabel('validators reached [% of stake]')
-    plt.ylabel('latency [ms]')
+    plt.xlabel('Validators reached [% of stake]')
+    plt.ylabel('Latency [ms]')
     plt.legend()
     plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
@@ -147,8 +156,8 @@ for city in CITIES:
 
     cityname = city_name_to_print(city)
     # plt.title(f'Latency Histogram for Leader in {cityname}')
-    # plt.xlabel('validators reached [% of stake]')
-    # plt.ylabel('latency [ms]')
+    # plt.xlabel('Validators reached [% of stake]')
+    # plt.ylabel('Latency [ms]')
     # plt.legend()
     plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
