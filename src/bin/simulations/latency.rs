@@ -9,12 +9,14 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::RwLock;
 
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use log::info;
 use rand::prelude::*;
+use rayon::prelude::*;
 
 /// The sequential stages of the latency test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,26 +39,15 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     total_stake: Stake,
 
     // running aggregates (averages)
-    direct_stats: LatencyStats,
-    rotor_stats: LatencyStats,
-    notar_stats: LatencyStats,
-    fast_final_stats: LatencyStats,
-    slow_final_stats: LatencyStats,
-    final_stats: LatencyStats,
-
-    // temporary storage used during one iteration
-    relay_latencies: Vec<f64>,
-    direct_latencies: Vec<(f64, ValidatorId)>,
-    rotor_latencies: Vec<(f64, ValidatorId)>,
-    notar_latencies: Vec<(f64, ValidatorId)>,
-    fast_final_latencies: Vec<(f64, ValidatorId)>,
-    slow_final_latencies: Vec<(f64, ValidatorId)>,
-    final_latencies: Vec<(f64, ValidatorId)>,
-    tmp_rotor_latencies: Vec<f64>,
-    tmp_latencies: Vec<(f64, ValidatorId)>,
+    direct_stats: RwLock<LatencyStats>,
+    rotor_stats: RwLock<LatencyStats>,
+    notar_stats: RwLock<LatencyStats>,
+    fast_final_stats: RwLock<LatencyStats>,
+    slow_final_stats: RwLock<LatencyStats>,
+    final_stats: RwLock<LatencyStats>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
+impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> LatencyTest<L, R> {
     /// Creates a new latency test instance.
     ///
     /// Caller needs to make sure that `leader_sampler` and `rotor_smapler`
@@ -85,22 +76,12 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
             num_shreds,
             total_stake,
 
-            direct_stats: LatencyStats::new(),
-            rotor_stats: LatencyStats::new(),
-            notar_stats: LatencyStats::new(),
-            fast_final_stats: LatencyStats::new(),
-            slow_final_stats: LatencyStats::new(),
-            final_stats: LatencyStats::new(),
-
-            relay_latencies: vec![0.0; num_shreds],
-            direct_latencies: vec![(0.0, 0); num_val],
-            rotor_latencies: vec![(0.0, 0); num_val],
-            notar_latencies: vec![(0.0, 0); num_val],
-            fast_final_latencies: vec![(0.0, 0); num_val],
-            slow_final_latencies: vec![(0.0, 0); num_val],
-            final_latencies: vec![(0.0, 0); num_val],
-            tmp_rotor_latencies: vec![0.0; num_shreds],
-            tmp_latencies: vec![(0.0, 0); num_val],
+            direct_stats: RwLock::new(LatencyStats::new()),
+            rotor_stats: RwLock::new(LatencyStats::new()),
+            notar_stats: RwLock::new(LatencyStats::new()),
+            fast_final_stats: RwLock::new(LatencyStats::new()),
+            slow_final_stats: RwLock::new(LatencyStats::new()),
+            final_stats: RwLock::new(LatencyStats::new()),
         }
     }
 
@@ -109,11 +90,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
     /// In each iteration, a new leader and new relays are randomly selected.
     /// Each iteration runs only until `up_to_stage`, e.g., if `up_to_stage` is
     /// `LatencyTestStage::Direct`, only the direct latency will be measured.
-    pub fn run_many(&mut self, test_name: &str, iterations: usize, up_to_stage: LatencyTestStage) {
-        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
-        for _ in 0..iterations {
+    pub fn run_many(&self, test_name: &str, iterations: usize, up_to_stage: LatencyTestStage) {
+        (0..iterations).into_par_iter().for_each(|_| {
+            let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
             self.run_one(up_to_stage, &mut rng);
-        }
+        });
         let path = Path::new("data")
             .join("output")
             .join("simulations")
@@ -161,29 +142,40 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
     }
 
     /// Runs one iteration of the latency simulation with random leader and relays.
-    pub fn run_one(&mut self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
+    pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
         // sample leader and relays
         let leader = self.leader_sampler.sample(rng);
         let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
-        self.run_one_deterministic(up_to_stage, leader.clone(), relays);
+        self.run_one_deterministic(up_to_stage, leader, relays);
     }
 
     /// Runs one iteration of the latency simulation with given leader and relays.
     pub fn run_one_deterministic(
-        &mut self,
+        &self,
         up_to_stage: LatencyTestStage,
         leader: ValidatorId,
         relays: Vec<ValidatorId>,
     ) {
+        let num_val = self.validators.len();
+        let mut relay_latencies = vec![0.0; self.num_shreds];
+        let mut direct_latencies = vec![(0.0, 0); num_val];
+        let mut rotor_latencies = vec![(0.0, 0); num_val];
+        let mut notar_latencies = vec![(0.0, 0); num_val];
+        let mut fast_final_latencies = vec![(0.0, 0); num_val];
+        let mut slow_final_latencies = vec![(0.0, 0); num_val];
+        let mut final_latencies = vec![(0.0, 0); num_val];
+        let mut tmp_rotor_latencies = vec![0.0; self.num_shreds];
+        let mut tmp_latencies = vec![(0.0, 0); num_val];
+
         // measure direct latencies
         for v in &self.validators {
             let leader_ping_server = self.ping_servers[leader as usize].id;
             let v_ping_server = self.ping_servers[v.id as usize].id;
             let latency = get_ping(leader_ping_server, v_ping_server).unwrap();
-            self.direct_latencies[v.id as usize] = (latency, v.id);
+            direct_latencies[v.id as usize] = (latency, v.id);
         }
         for (i, relay) in relays.iter().enumerate() {
-            self.relay_latencies[i] = self.direct_latencies[*relay as usize].0;
+            relay_latencies[i] = direct_latencies[*relay as usize].0;
         }
 
         if up_to_stage == LatencyTestStage::Direct {
@@ -192,17 +184,15 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
 
         // measure Rotor block dissemination latencies
         for v in &self.validators {
-            for (i, (relay, latency)) in relays.iter().zip(self.relay_latencies.iter()).enumerate()
-            {
+            for (i, (relay, latency)) in relays.iter().zip(relay_latencies.iter()).enumerate() {
                 let relay_ping_server = self.ping_servers[*relay as usize].id;
                 let v_ping_server = self.ping_servers[v.id as usize].id;
                 let latency = latency + get_ping(relay_ping_server, v_ping_server).unwrap();
-                self.tmp_rotor_latencies[i] = latency;
+                tmp_rotor_latencies[i] = latency;
             }
-            self.tmp_rotor_latencies
-                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-            let threshold_latency = self.tmp_rotor_latencies[self.num_data_shreds - 1];
-            self.rotor_latencies[v.id as usize] = (threshold_latency, v.id);
+            tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+            let threshold_latency = tmp_rotor_latencies[self.num_data_shreds - 1];
+            rotor_latencies[v.id as usize] = (threshold_latency, v.id);
         }
 
         if up_to_stage == LatencyTestStage::Rotor {
@@ -210,21 +200,20 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         }
 
         // simulate notar vote propagation
-        for (v1_rotor_latency, v1) in &self.rotor_latencies {
-            for (v2_rotor_latency, v2) in &self.rotor_latencies {
+        for (v1_rotor_latency, v1) in &rotor_latencies {
+            for (v2_rotor_latency, v2) in &rotor_latencies {
                 let v1_ping_server = self.ping_servers[*v1 as usize].id;
                 let v2_ping_server = self.ping_servers[*v2 as usize].id;
                 let latency = v2_rotor_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                self.tmp_latencies[*v2 as usize] = (latency, *v2);
+                tmp_latencies[*v2 as usize] = (latency, *v2);
             }
-            self.tmp_latencies
-                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+            tmp_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
 
             // measure latency until notarization and fast-finalization
             let mut notar_latency = None;
             let mut fast_final_latency = None;
             let mut stake_so_far = 0;
-            for (latency, v) in &self.tmp_latencies {
+            for (latency, v) in &tmp_latencies {
                 stake_so_far += self.validators[*v as usize].stake;
                 if notar_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.6 {
                     notar_latency = Some(*latency);
@@ -237,51 +226,49 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
             let mut notar_latency = notar_latency.unwrap();
             let mut fast_final_latency = fast_final_latency.unwrap();
             notar_latency = notar_latency.max(*v1_rotor_latency);
-            self.notar_latencies[*v1 as usize] = (notar_latency, *v1);
+            notar_latencies[*v1 as usize] = (notar_latency, *v1);
             fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
-            self.fast_final_latencies[*v1 as usize] = (fast_final_latency, *v1);
-            self.final_latencies[*v1 as usize] = (fast_final_latency, *v1);
+            fast_final_latencies[*v1 as usize] = (fast_final_latency, *v1);
+            final_latencies[*v1 as usize] = (fast_final_latency, *v1);
         }
 
         // simulate notar cert propagation
-        for (v1_rotor_latency, v1) in &self.rotor_latencies {
-            for (v2_notar_latency, v2) in &self.notar_latencies {
+        for (v1_rotor_latency, v1) in &rotor_latencies {
+            for (v2_notar_latency, v2) in &notar_latencies {
                 let v1_ping_server = self.ping_servers[*v1 as usize].id;
                 let v2_ping_server = self.ping_servers[*v2 as usize].id;
                 let latency = v2_notar_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                self.tmp_latencies[*v2 as usize] = (latency, *v2);
+                tmp_latencies[*v2 as usize] = (latency, *v2);
             }
-            let mut notar_cert_latency = self
-                .tmp_latencies
+            let mut notar_cert_latency = tmp_latencies
                 .iter()
                 .map(|(l, _)| *l)
                 .min_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap();
             notar_cert_latency = notar_cert_latency.max(*v1_rotor_latency);
-            if notar_cert_latency < self.notar_latencies[*v1 as usize].0 {
-                self.notar_latencies[*v1 as usize] = (notar_cert_latency, *v1);
+            if notar_cert_latency < notar_latencies[*v1 as usize].0 {
+                notar_latencies[*v1 as usize] = (notar_cert_latency, *v1);
             }
         }
 
         // simulate fast-final cert propagation
-        for (v1_rotor_latency, v1) in &self.rotor_latencies {
-            for (v2_fast_final_latency, v2) in &self.fast_final_latencies {
+        for (v1_rotor_latency, v1) in &rotor_latencies {
+            for (v2_fast_final_latency, v2) in &fast_final_latencies {
                 let v1_ping_server = self.ping_servers[*v1 as usize].id;
                 let v2_ping_server = self.ping_servers[*v2 as usize].id;
                 let latency =
                     v2_fast_final_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                self.tmp_latencies[*v2 as usize] = (latency, *v2);
+                tmp_latencies[*v2 as usize] = (latency, *v2);
             }
-            let mut fast_final_cert_latency = self
-                .tmp_latencies
+            let mut fast_final_cert_latency = tmp_latencies
                 .iter()
                 .map(|(l, _)| *l)
                 .min_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap();
             fast_final_cert_latency = fast_final_cert_latency.max(*v1_rotor_latency);
-            if fast_final_cert_latency < self.fast_final_latencies[*v1 as usize].0 {
-                self.fast_final_latencies[*v1 as usize] = (fast_final_cert_latency, *v1);
-                self.final_latencies[*v1 as usize] = (fast_final_cert_latency, *v1);
+            if fast_final_cert_latency < fast_final_latencies[*v1 as usize].0 {
+                fast_final_latencies[*v1 as usize] = (fast_final_cert_latency, *v1);
+                final_latencies[*v1 as usize] = (fast_final_cert_latency, *v1);
             }
         }
 
@@ -290,18 +277,17 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         }
 
         // measure latency until (slow) finalization
-        for (v1_notar_latency, v1) in &self.notar_latencies {
-            for (v2_notar_latency, v2) in &self.notar_latencies {
+        for (v1_notar_latency, v1) in &notar_latencies {
+            for (v2_notar_latency, v2) in &notar_latencies {
                 let v1_ping_server = self.ping_servers[*v1 as usize].id;
                 let v2_ping_server = self.ping_servers[*v2 as usize].id;
                 let latency = v2_notar_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                self.tmp_latencies[*v2 as usize] = (latency, *v2);
+                tmp_latencies[*v2 as usize] = (latency, *v2);
             }
-            self.tmp_latencies
-                .sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+            tmp_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
             let mut slow_final_latency: f64 = 0.0;
             let mut stake_so_far = 0;
-            for (latency, v) in &self.tmp_latencies {
+            for (latency, v) in &tmp_latencies {
                 stake_so_far += self.validators[*v as usize].stake;
                 if stake_so_far as f64 > self.total_stake as f64 * 0.6 {
                     slow_final_latency = *latency;
@@ -309,63 +295,62 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
                 }
             }
             slow_final_latency = slow_final_latency.max(*v1_notar_latency);
-            self.slow_final_latencies[*v1 as usize] = (slow_final_latency, *v1);
-            if slow_final_latency < self.final_latencies[*v1 as usize].0 {
-                self.final_latencies[*v1 as usize] = (slow_final_latency, *v1);
+            slow_final_latencies[*v1 as usize] = (slow_final_latency, *v1);
+            if slow_final_latency < final_latencies[*v1 as usize].0 {
+                final_latencies[*v1 as usize] = (slow_final_latency, *v1);
             }
         }
 
         // simulate (slow) final cert propagation
-        for (v1_rotor_latency, v1) in &self.notar_latencies {
-            for (v2_slow_final_latency, v2) in &self.slow_final_latencies {
+        for (v1_rotor_latency, v1) in &notar_latencies {
+            for (v2_slow_final_latency, v2) in &slow_final_latencies {
                 let v1_ping_server = self.ping_servers[*v1 as usize].id;
                 let v2_ping_server = self.ping_servers[*v2 as usize].id;
                 let latency =
                     v2_slow_final_latency + get_ping(v2_ping_server, v1_ping_server).unwrap();
-                self.tmp_latencies[*v2 as usize] = (latency, *v2);
+                tmp_latencies[*v2 as usize] = (latency, *v2);
             }
-            let mut slow_final_cert_latency = self
-                .tmp_latencies
+            let mut slow_final_cert_latency = tmp_latencies
                 .iter()
                 .map(|(l, _)| *l)
                 .min_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap();
             slow_final_cert_latency = slow_final_cert_latency.max(*v1_rotor_latency);
-            if slow_final_cert_latency < self.slow_final_latencies[*v1 as usize].0 {
-                self.slow_final_latencies[*v1 as usize] = (slow_final_cert_latency, *v1);
-                if slow_final_cert_latency < self.final_latencies[*v1 as usize].0 {
-                    self.final_latencies[*v1 as usize] = (slow_final_cert_latency, *v1);
+            if slow_final_cert_latency < slow_final_latencies[*v1 as usize].0 {
+                slow_final_latencies[*v1 as usize] = (slow_final_cert_latency, *v1);
+                if slow_final_cert_latency < final_latencies[*v1 as usize].0 {
+                    final_latencies[*v1 as usize] = (slow_final_cert_latency, *v1);
                 }
             }
         }
 
-        self.direct_stats.record_latencies(
-            &mut self.direct_latencies,
+        self.direct_stats.write().unwrap().record_latencies(
+            &mut direct_latencies,
             &self.validators,
             &self.ping_servers,
         );
-        self.rotor_stats.record_latencies(
-            &mut self.rotor_latencies,
+        self.rotor_stats.write().unwrap().record_latencies(
+            &mut rotor_latencies,
             &self.validators,
             &self.ping_servers,
         );
-        self.notar_stats.record_latencies(
-            &mut self.notar_latencies,
+        self.notar_stats.write().unwrap().record_latencies(
+            &mut notar_latencies,
             &self.validators,
             &self.ping_servers,
         );
-        self.fast_final_stats.record_latencies(
-            &mut self.fast_final_latencies,
+        self.fast_final_stats.write().unwrap().record_latencies(
+            &mut fast_final_latencies,
             &self.validators,
             &self.ping_servers,
         );
-        self.slow_final_stats.record_latencies(
-            &mut self.slow_final_latencies,
+        self.slow_final_stats.write().unwrap().record_latencies(
+            &mut slow_final_latencies,
             &self.validators,
             &self.ping_servers,
         );
-        self.final_stats.record_latencies(
-            &mut self.final_latencies,
+        self.final_stats.write().unwrap().record_latencies(
+            &mut final_latencies,
             &self.validators,
             &self.ping_servers,
         );
@@ -383,12 +368,24 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
         )
         .unwrap();
         for percentile in 1..=100 {
-            let direct_latency = self.direct_stats.get_avg_percentile_latency(percentile);
-            let rotor_latency = self.rotor_stats.get_avg_percentile_latency(percentile);
-            let notar_latency = self.notar_stats.get_avg_percentile_latency(percentile);
-            let fast_final_latency = self.fast_final_stats.get_avg_percentile_latency(percentile);
-            let slow_final_latency = self.slow_final_stats.get_avg_percentile_latency(percentile);
-            let final_latency = self.final_stats.get_avg_percentile_latency(percentile);
+            let direct_stats = self.direct_stats.read().unwrap();
+            let direct_latency = direct_stats.get_avg_percentile_latency(percentile);
+
+            let rotor_stats = self.rotor_stats.read().unwrap();
+            let rotor_latency = rotor_stats.get_avg_percentile_latency(percentile);
+
+            let notar_stats = self.notar_stats.read().unwrap();
+            let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
+
+            let fast_final_stats = self.fast_final_stats.read().unwrap();
+            let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
+
+            let slow_final_stats = self.slow_final_stats.read().unwrap();
+            let slow_final_latency = slow_final_stats.get_avg_percentile_latency(percentile);
+
+            let final_stats = self.final_stats.read().unwrap();
+            let final_latency = final_stats.get_avg_percentile_latency(percentile);
+
             writeln!(
                 writer,
                 "{},{},{},{},{},{},{}",
