@@ -9,8 +9,8 @@ import pandas as pd
 # Currently available: solana, sui, 5hubs, stock_exchanges
 STAKE_DISTRIBUTION = 'solana'
 # Sampling strategy to use in the underlying dataset.
-# Currently available: uniform, stake_weighted, fa1, turbine, decaying_acceptance
-SAMPLING = 'fa1'
+# Currently available: uniform, stake_weighted, fa1_iid, fa1_bin_packing, turbine, decaying_acceptance
+SAMPLING = 'fa1_bin_packing'
 # Number of data/total shreds to use in the underlying dataset.
 # Currently available combinations: 32/64, 32/80, 32/96, 32/320, 64/128, 128/256, 256/512
 DATA_SHREDS = 32
@@ -18,7 +18,7 @@ TOTAL_SHREDS = 64
 
 LABELS = {
     'direct': 'Network latency',
-    'rotor': 'Rotor block dissemination',
+    'rotor': 'Rotor',
     'notar': 'Notarization',
     'final': 'Finalization',
     'fast_final': 'Fast-finalization',
@@ -98,9 +98,10 @@ metrics = ['final', 'slow_final', 'fast_final']
 for metric in reversed(metrics):
     plt.bar(df['percentile'], df[metric], label=LABELS[metric], alpha=0.5)
 
-plt.title(f'Latency Histogram for Random Leaders')
+plt.title(f'Alpenglow Latency Histogram for Random Leaders')
 plt.xlabel('Validators reached [% of stake]')
 plt.ylabel('Latency [ms]')
+plt.xlim(0, 101)
 plt.legend()
 plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
@@ -117,10 +118,28 @@ for metric in reversed(metrics):
 plt.title(f'Latency Histogram for Random Leaders')
 plt.xlabel('Validators reached [% of stake]')
 plt.ylabel('Latency [ms]')
+plt.xlim(0, 101)
 plt.legend()
 plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
 plt.savefig(f'./data/output/simulations/latency/latency_histogram.png', dpi=300)
+
+# average of averages (Rotor only)
+fig = plt.figure(figsize=(12, 7))
+fig.patch.set_facecolor('white')
+fig.gca().set_facecolor('white')
+metrics = ['direct', 'rotor']
+for metric in reversed(metrics):
+    plt.bar(df['percentile'], df[metric], label=LABELS[metric])
+
+plt.title(f'Rotor Latency Histogram for Random Leaders ($\\gamma = 32, \\Gamma = 64$)')
+plt.xlabel('Validators reached [% of stake]')
+plt.ylabel('Latency [ms]')
+plt.xlim(0, 101)
+plt.legend()
+plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.savefig(f'./data/output/simulations/latency/latency_histogram_rotor.png', dpi=300)
 
 # individual city plots
 for city in CITIES:
@@ -130,6 +149,9 @@ for city in CITIES:
     # print average finalization latencies
     print()
     print(f'Leader in {city}')
+    print('avg. Rotor', df['rotor'].mean())
+    print('median Rotor', df['rotor'].median())
+    print('WC Rotor', df['rotor'].max())
     print('avg. final', df['final'].mean())
     print('avg. fast final', df['fast_final'].mean())
     print('avg. slow final', df['slow_final'].mean())
@@ -144,9 +166,10 @@ for city in CITIES:
         plt.bar(df['percentile'], df[metric], label=LABELS[metric])
 
     cityname = city_name_to_print(city)
-    plt.title(f'Latency Histogram for Leader in {cityname}')
+    plt.title(f'Alpenglow Latency Histogram for Leader in {cityname}')
     plt.xlabel('Validators reached [% of stake]')
     plt.ylabel('Latency [ms]')
+    plt.xlim(0, 101)
     plt.legend()
     plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
