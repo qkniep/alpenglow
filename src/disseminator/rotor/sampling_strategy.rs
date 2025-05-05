@@ -93,7 +93,7 @@ pub struct StakeWeightedSampler {
 impl StakeWeightedSampler {
     /// Creates a new `StakeWeightedSampler` instance.
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
-        let stakes: Vec<u64> = validators.iter().map(|v| v.stake).collect();
+        let stakes: Vec<Stake> = validators.iter().map(|v| v.stake).collect();
         let stake_index = WeightedIndex::new(&stakes).unwrap();
         Self {
             validators,
@@ -290,6 +290,104 @@ impl SamplingStrategy for TurbineSampler {
     }
 }
 
+/// A sampler that samples proportional to stake with reduced variance.
+///
+/// This sampler operates on `k` bins of validators of equal stake.
+/// Within each bin a validator is sampled with probability proportional to its stake.
+/// To sample `k` validators then, one validator is drawn from each of the `k` bins.
+///
+/// Given that each validator has less stake than to fill one bins entirely,
+/// as is the case if this is used as the fallback sampler in [`FaitAccompli1Sampler`],
+/// each validator appears in at most two bins and is thus sampled at most twice.
+///
+/// In expectation each validator is sampled proportionally to its stake.
+/// However, this is done with lower variance than [`StakeWeightedSampler`] would.
+pub struct BinPackingSampler {
+    validators: Vec<ValidatorInfo>,
+    bins: Vec<WeightedIndex<u64>>,
+    pub bin_validators: Vec<Vec<ValidatorId>>,
+    pub bin_stakes: Vec<Vec<Stake>>,
+}
+
+impl BinPackingSampler {
+    /// Creates a new `BinPackingSampler` instance.
+    ///
+    /// Packs the given validators into `num_bins` bins of equal stake.
+    /// Packing is done deterministically by splitting the stake-sorted list of nodes.
+    pub fn new(validators: Vec<ValidatorInfo>, num_bins: usize) -> Self {
+        let mut bin_validators = vec![Vec::new(); num_bins];
+        let mut bin_stakes = vec![Vec::new(); num_bins];
+
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let stake_per_bin = total_stake.div_ceil(num_bins as Stake);
+        let mut validators_random = validators.clone();
+        validators_random.sort_by_key(|v| v.stake);
+
+        // pack bins
+        let mut current_bin = 0;
+        let mut current_bin_stake = 0;
+        for v in validators_random {
+            let mut stake = v.stake;
+            while stake > 0 {
+                bin_validators[current_bin].push(v.id);
+                let stake_to_take = stake.min(stake_per_bin - current_bin_stake);
+                current_bin_stake += stake_to_take;
+                bin_stakes[current_bin].push(stake_to_take);
+                stake -= stake_to_take;
+                if current_bin < num_bins - 1 && (stake > 0 || current_bin_stake == stake_per_bin) {
+                    current_bin += 1;
+                    current_bin_stake = 0;
+                }
+            }
+        }
+
+        // generate stake weighted indices for each bin
+        let mut bins = Vec::with_capacity(num_bins);
+        for stakes in &bin_stakes {
+            let bin = WeightedIndex::new(stakes).unwrap();
+            bins.push(bin);
+        }
+
+        Self {
+            validators,
+            bins,
+            bin_validators,
+            bin_stakes,
+        }
+    }
+}
+
+impl SamplingStrategy for BinPackingSampler {
+    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
+        unimplemented!()
+    }
+
+    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+        let index = self.sample(rng) as usize;
+        &self.validators[index]
+    }
+
+    fn sample_multiple<R: RngCore>(&self, _k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        let mut samples = Vec::new();
+        for (bin, validators) in self.bins.iter().zip(self.bin_validators.iter()) {
+            let i = bin.sample(rng);
+            samples.push(validators[i]);
+        }
+        samples
+    }
+}
+
+impl Clone for BinPackingSampler {
+    fn clone(&self) -> Self {
+        Self {
+            validators: self.validators.clone(),
+            bins: self.bins.clone(),
+            bin_validators: self.bin_validators.clone(),
+            bin_stakes: self.bin_stakes.clone(),
+        }
+    }
+}
+
 /// A sampler that uses the FA1-F committee sampling strategy.
 ///
 /// This is a strict improvement over performing IID stake-weighted sampling.
@@ -305,15 +403,34 @@ impl SamplingStrategy for TurbineSampler {
 pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     required_samples: Vec<ValidatorId>,
-    fallback_sampler: F,
+    pub fallback_sampler: F,
 }
 
-impl<F: SamplingStrategy> FaitAccompli1Sampler<F> {
-    /// Creates a new FA1-F sampler with the provided fallback sampler.
-    pub const fn new(validators: Vec<ValidatorInfo>, fallback_sampler: F) -> Self {
+impl FaitAccompli1Sampler<BinPackingSampler> {
+    /// Creates a new FA1-F sampler with a variance-reducing bin-packing fallback sampler.
+    ///
+    /// See [`BinPackingSampler`] for more details.
+    // TODO: how to handle initializing fallback sampler?
+    //       support running sample_multiple(...) on different k?
+    pub fn new_with_bin_packing_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let mut required_samples = Vec::new();
+        let mut validators_truncated_stake = validators.clone();
+        for v in &mut validators_truncated_stake {
+            let frac_stake = v.stake as f64 / total_stake as f64;
+            let samples = (frac_stake * k as f64).floor() as u64;
+            v.stake -= samples * total_stake / k;
+            required_samples.extend((0..samples).map(|_| v.id));
+        }
+        let all_zero = validators_truncated_stake.iter().all(|v| v.stake == 0);
+        let k_prime = k as usize - required_samples.len();
+        let fallback_sampler = match all_zero {
+            true => BinPackingSampler::new(validators.clone(), k_prime),
+            false => BinPackingSampler::new(validators_truncated_stake, k_prime),
+        };
         Self {
             validators,
-            required_samples: Vec::new(),
+            required_samples,
             fallback_sampler,
         }
     }
@@ -321,6 +438,8 @@ impl<F: SamplingStrategy> FaitAccompli1Sampler<F> {
 
 impl FaitAccompli1Sampler<StakeWeightedSampler> {
     /// Creates a new FA1-F sampler with an IID stake-weighted fallback sampler.
+    ///
+    /// See [`StakeWeightedSampler`] for more details.
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
     pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
@@ -359,8 +478,10 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
     fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         let mut validators = Vec::with_capacity(k);
         validators.extend_from_slice(&self.required_samples);
-        while validators.len() < k {
-            validators.push(self.fallback_sampler.sample(rng));
+        if validators.len() < k {
+            let k_prime = k - validators.len();
+            let additional_samples = self.fallback_sampler.sample_multiple(k_prime, rng);
+            validators.extend_from_slice(&additional_samples);
         }
         validators
     }
@@ -673,12 +794,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bin_packing_sampler() {
+        // TODO: add tests
+    }
+
     // FIXME: flaky test
     #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled: HashSet<_> = sampled.into_iter().collect();
@@ -689,7 +815,7 @@ mod tests {
 
         // with many low-stake nodes this becomes the underlying fallback distribution
         let validators = create_validator_info(1000);
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled_set: HashSet<_> = sampled.iter().collect();
@@ -705,7 +831,7 @@ mod tests {
         let mut validators = create_validator_info(1000);
         validators[0].stake = 52;
         validators[1].stake = 52;
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled0 = sampled.iter().filter(|v| **v == 0).count();

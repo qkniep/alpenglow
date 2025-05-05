@@ -64,12 +64,13 @@ use rotor_safety::RotorSafetyTest;
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = false;
 const RUN_CRASH_SAFETY_TESTS: bool = true;
-const RUN_BYZANTINE_SAFETY_TESTS: bool = true;
+const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
 
 const SAMPLING_STRATEGIES: [&str; 4] = [
-    "uniform",
+    // "uniform",
     "stake_weighted",
-    "fa1",
+    "fa1_iid",
+    "fa1_bin_packing",
     // "decaying_acceptance",
     "turbine",
 ];
@@ -80,15 +81,16 @@ const MAX_BANDWIDTHS: [u64; 3] = [
     100_000_000_000, // 100 Gbps
 ];
 
-const SHRED_COMBINATIONS: [(usize, usize); 8] = [
-    (32, 64),
-    (32, 80),
-    (32, 96),
-    (32, 128),
-    (32, 320),
+const TOTAL_SHREDS_FA1: u64 = 128;
+const SHRED_COMBINATIONS: [(usize, usize); 1] = [
+    // (32, 54),
+    // (32, 64),
+    // (32, 80),
+    // (32, 96),
+    // (32, 320),
     (64, 128),
-    (128, 256),
-    (256, 512),
+    // (128, 256),
+    // (256, 512),
 ];
 
 fn main() -> Result<()> {
@@ -181,14 +183,36 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 ping_leader_sampler,
                 ping_rotor_sampler,
             )
-        } else if sampling_strat == "fa1" {
+        } else if sampling_strat == "fa1_iid" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone());
-            let rotor_sampler =
-                FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 64);
+            let rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+                validators.clone(),
+                TOTAL_SHREDS_FA1,
+            );
             let ping_rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
                 validators_with_pings.clone(),
-                64,
+                TOTAL_SHREDS_FA1,
+            );
+            run_tests(
+                &test_name,
+                &validators,
+                &validators_and_ping_servers,
+                leader_sampler,
+                rotor_sampler,
+                ping_leader_sampler,
+                ping_rotor_sampler,
+            )
+        } else if sampling_strat == "fa1_bin_packing" {
+            let leader_sampler = StakeWeightedSampler::new(validators.clone());
+            let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone());
+            let rotor_sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(
+                validators.clone(),
+                TOTAL_SHREDS_FA1,
+            );
+            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(
+                validators_with_pings.clone(),
+                TOTAL_SHREDS_FA1,
             );
             run_tests(
                 &test_name,
@@ -368,7 +392,7 @@ fn run_tests<
 
     if RUN_LATENCY_TESTS {
         // latency experiments with random leaders
-        SHRED_COMBINATIONS.into_par_iter().for_each(|(n, k)| {
+        for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
             let mut tester = LatencyTest::new(
                 validators_with_ping_data,
@@ -378,8 +402,8 @@ fn run_tests<
                 k,
             );
             let test_name = format!("{}-{}-{}", test_name, n, k);
-            tester.run_many(&test_name, 1000, LatencyTestStage::Final);
-        });
+            tester.run_many(&test_name, 10_000, LatencyTestStage::Final);
+        }
 
         // latency experiments with fixed leaders
         let cities = if test_name.starts_with("solana") {
@@ -443,7 +467,7 @@ fn run_tests<
                 let test_name = format!("{}-{}-{}", test_name, n, k);
                 tester.run_many_with_leader(
                     &test_name,
-                    1000,
+                    10_000,
                     LatencyTestStage::Final,
                     leader.clone(),
                 );
@@ -468,7 +492,7 @@ fn run_tests<
                 if *k == 320 {
                     continue;
                 }
-                info!("{test_name} safety test (n={n}, k={k})");
+                info!("{test_name} safety test (crash=0.4, n={n}, k={k})");
                 let tester =
                     RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
                 tester.run(test_name, 0.4, &mut writer);
@@ -478,7 +502,7 @@ fn run_tests<
         if RUN_BYZANTINE_SAFETY_TESTS {
             // safety experiments (Byzantine only, 20%)
             for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} safety test (n={n}, k={k})");
+                info!("{test_name} safety test (byz=0.2, n={n}, k={k})");
                 let tester =
                     RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
                 tester.run(test_name, 0.2, &mut writer);

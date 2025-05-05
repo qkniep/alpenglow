@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use log::warn;
 use rand::prelude::*;
+use sampling_strategy::BinPackingSampler;
 
 use crate::consensus::EpochInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
@@ -44,14 +45,14 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     }
 }
 
-impl<N: Network> Rotor<N, FaitAccompli1Sampler<StakeWeightedSampler>> {
+impl<N: Network> Rotor<N, FaitAccompli1Sampler<BinPackingSampler>> {
     /// Creates a new Rotor instance with the FA1 sampling strategy.
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
     pub fn new_fa1(network: N, epoch_info: Arc<EpochInfo>) -> Self {
         let validators = epoch_info.validators.clone();
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
         Self {
             network,
             sampler,
