@@ -109,6 +109,35 @@ fn verify_ed25519(bencher: divan::Bencher) {
 }
 
 #[divan::bench]
+fn compress_bls(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut bytes = [0; 128];
+            rng.fill_bytes(&mut bytes);
+            let sk = aggsig::SecretKey::new(&mut rng);
+            sk.sign(&bytes)
+        })
+        .bench_values(|sig: IndividualSignature| sig.0.compress());
+}
+
+#[divan::bench]
+fn uncompress_bls(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut bytes = [0; 128];
+            rng.fill_bytes(&mut bytes);
+            let sk = aggsig::SecretKey::new(&mut rng);
+            let sig = sk.sign(&bytes);
+            sig.0.compress()
+        })
+        .bench_values(|comp: [u8; 48]| blst::min_sig::Signature::uncompress(&comp));
+}
+
+#[divan::bench]
 fn sign_bls(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
