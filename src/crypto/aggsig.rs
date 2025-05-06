@@ -53,7 +53,7 @@ pub struct PublicKey(BlstPublicKey);
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct IndividualSignature(BlstSignature);
+pub struct IndividualSignature(pub BlstSignature);
 
 /// An aggregated signature that contains a bitmask of signers.
 ///
