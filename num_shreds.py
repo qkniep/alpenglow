@@ -193,8 +193,6 @@ if LATENCY_TOTAL_SHREDS_PLOTS:
 EXPANSION_RATIO = [(32, 64), (32, 80), (32, 96)]
 
 if SAFETY_DATA_EXPANSION_PLOTS:
-
-if SAFETY_DATA_EXPANSION_PLOTS:
     # load safety test data from CSV
     file_path = './data/output/simulations/safety/safety_data_expansion.csv'
     df = pd.read_csv(file_path)
