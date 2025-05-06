@@ -8,8 +8,8 @@
 use std::fs::File;
 use std::sync::{Arc, Mutex};
 
-use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use rand::prelude::*;
 
 ///
@@ -60,12 +60,12 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
     }
 
     ///
-    pub fn run(&mut self, test_name: &str, slices: usize, csv_file: Arc<Mutex<csv::Writer<File>>>) {
+    pub fn run_multiple(&mut self, slices: usize) {
         self.workload_test.run_multiple(slices);
-        self.evaluate(test_name, csv_file);
     }
 
-    fn evaluate(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
+    ///
+    pub fn evaluate_supported(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let seconds = (8 * 1500 * leader_workload) as f64 / self.leader_bandwidth as f64;
         let mut min_supported_bandwidth = self.leader_bandwidth as f64;
@@ -92,6 +92,61 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
                 (min_supported_bandwidth / 2.0).to_string(),
             ])
             .unwrap();
+        csv_file.flush().unwrap();
+    }
+
+    ///
+    pub fn evaluate_usage(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
+        let (leader_workload, workload) = self.workload_test.get_workload();
+        let mut bandwidth_usage = vec![(0.0, 0); workload.len()];
+        for (i, shreds) in workload.iter().enumerate() {
+            let ratio = *shreds as f64 / leader_workload as f64;
+            bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i as ValidatorId);
+        }
+
+        let validators = &self.workload_test.validators;
+        bandwidth_usage.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let percentile_stake = total_stake as f64 / 100.0;
+        let mut percentile = 1;
+        let mut stake_so_far = 0.0;
+        let mut percentile_bandwidth_usage = vec![0.0; 100];
+        for (bandwidth, v) in &*bandwidth_usage {
+            let mut validator_stake = validators[*v as usize].stake as f64;
+            for _ in 0..100 {
+                let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
+                let abs_stake_contrib = validator_stake.min(percentile_stake_left);
+                let rel_stake_contrib = abs_stake_contrib / percentile_stake;
+                let bandwidth_contrib = rel_stake_contrib * *bandwidth;
+                percentile_bandwidth_usage[percentile as usize - 1] += bandwidth_contrib;
+                stake_so_far += abs_stake_contrib;
+                validator_stake -= abs_stake_contrib;
+                if percentile < 100 && stake_so_far >= percentile as f64 * percentile_stake {
+                    percentile += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let parts = test_name.split('-').collect::<Vec<_>>();
+        let stake_distribution = parts[0];
+        let sampling_strategy = parts[1];
+
+        let mut csv_file = csv_file.lock().unwrap();
+        for percentile in 1..=100 {
+            csv_file
+                .write_record(&[
+                    stake_distribution.to_string(),
+                    sampling_strategy.to_string(),
+                    self.leader_bandwidth.to_string(),
+                    self.workload_test.num_shreds.to_string(),
+                    percentile.to_string(),
+                    32_270_000.0.to_string(),
+                    percentile_bandwidth_usage[percentile - 1].to_string(),
+                ])
+                .unwrap();
+        }
         csv_file.flush().unwrap();
     }
 }

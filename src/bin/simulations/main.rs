@@ -21,7 +21,8 @@
 //! Also, all simulations are evaluated for different sampling strategies, namely:
 //! - Uniform
 //! - Stake-weighted
-//! - Fait Accompli 1
+//! - Fait Accompli 1 + Stake-weighted
+//! - Fait Accompli 1 + Bin-packing
 //! - Decaying acceptance (with 3.0 max samples)
 //! - Turbine
 //!
@@ -61,9 +62,9 @@ use bandwidth::BandwidthTest;
 use latency::{LatencyTest, LatencyTestStage};
 use rotor_safety::RotorSafetyTest;
 
-const RUN_BANDWIDTH_TESTS: bool = false;
+const RUN_BANDWIDTH_TESTS: bool = true;
 const RUN_LATENCY_TESTS: bool = false;
-const RUN_CRASH_SAFETY_TESTS: bool = true;
+const RUN_CRASH_SAFETY_TESTS: bool = false;
 const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
 
 const SAMPLING_STRATEGIES: [&str; 4] = [
@@ -75,21 +76,22 @@ const SAMPLING_STRATEGIES: [&str; 4] = [
     "turbine",
 ];
 
-const MAX_BANDWIDTHS: [u64; 3] = [
+const MAX_BANDWIDTHS: [u64; 4] = [
+    100_000_000,     // 100 Mbps
     1_000_000_000,   // 1 Gbps
     10_000_000_000,  // 10 Gbps
     100_000_000_000, // 100 Gbps
 ];
 
-const TOTAL_SHREDS_FA1: u64 = 128;
+const TOTAL_SHREDS_FA1: u64 = 256;
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
     // (32, 64),
     // (32, 80),
     // (32, 96),
     // (32, 320),
-    (64, 128),
-    // (128, 256),
+    // (64, 128),
+    (128, 256),
     // (256, 512),
 ];
 
@@ -106,12 +108,22 @@ fn main() -> Result<()> {
         .apply();
 
     if RUN_BANDWIDTH_TESTS {
-        // create bandwidth evaluation file
+        // create bandwidth evaluation files
         let filename = PathBuf::from("data")
             .join("output")
             .join("simulations")
             .join("bandwidth")
+            .join("bandwidth_supported")
+            .with_extension("csv");
+        if let Some(parent) = filename.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let _ = File::create(filename).unwrap();
+        let filename = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
             .join("bandwidth")
+            .join("bandwidth_usage")
             .with_extension("csv");
         if let Some(parent) = filename.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -362,12 +374,22 @@ fn run_tests<
             .join("output")
             .join("simulations")
             .join("bandwidth")
-            .join("bandwidth")
+            .join("bandwidth_supported")
             .with_extension("csv");
         let file = File::options().append(true).open(filename).unwrap();
         let writer = csv::Writer::from_writer(file);
         let writer = Arc::new(Mutex::new(writer));
-        let writer_ref = &writer;
+        let supported_writer_ref = &writer;
+        let filename = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
+            .join("bandwidth")
+            .join("bandwidth_usage")
+            .with_extension("csv");
+        let file = File::options().append(true).open(filename).unwrap();
+        let writer = csv::Writer::from_writer(file);
+        let writer = Arc::new(Mutex::new(writer));
+        let usage_writer_ref = &writer;
 
         // bandwidth experiment
         MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
@@ -385,7 +407,9 @@ fn run_tests<
                     rotor_sampler.clone(),
                     shreds,
                 );
-                tester.run(test_name, 1_000_000, writer_ref.clone());
+                tester.run_multiple(1_000_000);
+                tester.evaluate_supported(test_name, supported_writer_ref.clone());
+                tester.evaluate_usage(test_name, usage_writer_ref.clone());
             }
         });
     }
