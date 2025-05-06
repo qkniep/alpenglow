@@ -121,7 +121,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 if done {
                     break;
                 } else if *self.tests.read().unwrap() as f64
-                    > 10.0 * MAX_FAILURES as f64 / know_attack_prob
+                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }
@@ -151,7 +151,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 if done {
                     break;
                 } else if *self.tests.read().unwrap() as f64
-                    > 10.0 * MAX_FAILURES as f64 / know_attack_prob
+                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }
@@ -183,7 +183,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 if done {
                     break;
                 } else if *self.tests.read().unwrap() as f64
-                    > 10.0 * MAX_FAILURES as f64 / know_attack_prob
+                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }
@@ -242,7 +242,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
                 if done {
                     break;
                 } else if *self.tests.read().unwrap() as f64
-                    > 10.0 * MAX_FAILURES as f64 / know_attack_prob
+                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }
