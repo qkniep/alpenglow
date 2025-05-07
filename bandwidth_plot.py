@@ -10,12 +10,12 @@ import pandas as pd
 STAKE_DISTRIBUTION = 'solana'
 # Sampling strategy to use in the underlying dataset.
 # Currently available: uniform, stake_weighted, fa1_iid, fa1_bin_packing, turbine, decaying_acceptance
-SAMPLING_STRAT = 'fa1_iid'
+SAMPLING_STRAT = 'stake_weighted'
 # Number of total shreds to use.
 TOTAL_SHREDS = 64
 # Maximum bandwidth available (in bits per second).
 # Currently available: 100 Mbps, 1 Gbps, 10 Gbps, 100 Gbps
-MAX_BANDWIDTH = 100_000_000 # 100 Mbps
+MAX_BANDWIDTH = 1_000_000_000 # 1 Gbps
 
 goodput = MAX_BANDWIDTH / 2
 goodput_mbps = goodput / 1e6
@@ -45,6 +45,7 @@ df['voting'] = df['voting'] / 1e6
 df['avg_rotor'] = df['avg_rotor'] / 1e6
 df_turbine = df[df['sampling_strat'] == 'turbine']
 df = df[df['sampling_strat'] == SAMPLING_STRAT]
+# df['avg_rotor'] += df['voting']
 
 print(df['avg_rotor'].sum())
 
@@ -55,12 +56,17 @@ fig.gca().set_facecolor('white')
 metrics = ['voting', 'avg_rotor']
 for metric in reversed(metrics):
     metric_label = metric_word(metric)
-    plt.bar(df['percentile'], df[metric], label=metric_label)
+    if metric == 'voting':
+        plt.bar(df['validator'], df[metric], bottom=df['avg_rotor'], label=metric_label, width=10)
+    else:
+        plt.bar(df['validator'], df[metric], label=metric_label, width=10)
 
-plt.title(f'Bandwidth Usage Histogram for {goodput_mbps:.0f} Mbps Goodput')
-plt.xlabel('Validator percentile by stake')
+plt.title(f'Up-Bandwidth Usage Histogram for {goodput_mbps:.0f} Mbps Goodput')
+plt.xlabel('Validators')
 plt.ylabel('Bandwidth [Mbps]')
-plt.xlim(0, 101)
+plt.xlim(-10, 1292)
+plt.ylim(10, 40_000)
+plt.yscale('log')
 plt.legend()
 plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
@@ -70,13 +76,15 @@ plt.savefig(f'./data/output/simulations/bandwidth/bandwidth.png', dpi=300)
 fig = plt.figure(figsize=(12, 7))
 fig.patch.set_facecolor('white')
 fig.gca().set_facecolor('white')
-plt.bar(df['percentile'], df['avg_rotor'], label=SAMPLING_STRAT, alpha=0.5)
-plt.bar(df_turbine['percentile'], df_turbine['avg_rotor'], label='Turbine', alpha=0.5)
+plt.bar(df['validator'], df['avg_rotor'], label=SAMPLING_STRAT, alpha=0.5, width=10)
+plt.bar(df_turbine['validator'], df_turbine['avg_rotor'], label='Turbine', alpha=0.5, width=10)
 
-plt.title(f'Bandwidth Usage Histogram Compared to Turbine')
-plt.xlabel('Validator percentile by stake')
+plt.title(f'Up-Bandwidth Usage Histogram Compared to Turbine')
+plt.xlabel('Validators')
 plt.ylabel('Bandwidth [Mbps]')
-plt.xlim(0, 101)
+plt.xlim(-10, 1292)
+plt.ylim(10, 40_000)
+plt.yscale('log')
 plt.legend()
 plt.grid(True, axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
