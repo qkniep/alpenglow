@@ -104,29 +104,16 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
             bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i as ValidatorId);
         }
 
-        let validators = &self.workload_test.validators;
-        bandwidth_usage.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let percentile_stake = total_stake as f64 / 100.0;
-        let mut percentile = 1;
-        let mut stake_so_far = 0.0;
-        let mut percentile_bandwidth_usage = vec![0.0; 100];
-        for (bandwidth, v) in &*bandwidth_usage {
-            let mut validator_stake = validators[*v as usize].stake as f64;
-            for _ in 0..100 {
-                let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
-                let abs_stake_contrib = validator_stake.min(percentile_stake_left);
-                let rel_stake_contrib = abs_stake_contrib / percentile_stake;
-                let bandwidth_contrib = rel_stake_contrib * *bandwidth;
-                percentile_bandwidth_usage[percentile as usize - 1] += bandwidth_contrib;
-                stake_so_far += abs_stake_contrib;
-                validator_stake -= abs_stake_contrib;
-                if percentile < 100 && stake_so_far >= percentile as f64 * percentile_stake {
-                    percentile += 1;
-                } else {
-                    break;
-                }
+        bandwidth_usage.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut binned_bandwidth_usage = vec![(0.0, 0, 0); 99];
+        for (i, (bandwidth, _)) in bandwidth_usage.into_iter().enumerate() {
+            let bin = i / 13;
+            let (b, mut v, c) = binned_bandwidth_usage[bin];
+            if i % 13 == 0 {
+                v = i;
             }
+            let new_b = (b * c as f64 + bandwidth) / (c + 1) as f64;
+            binned_bandwidth_usage[bin] = (new_b, v, c + 1);
         }
 
         let parts = test_name.split('-').collect::<Vec<_>>();
@@ -134,16 +121,16 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         let sampling_strategy = parts[1];
 
         let mut csv_file = csv_file.lock().unwrap();
-        for percentile in 1..=100 {
+        for (bandwidth, validator, _) in binned_bandwidth_usage {
             csv_file
                 .write_record(&[
                     stake_distribution.to_string(),
                     sampling_strategy.to_string(),
                     self.leader_bandwidth.to_string(),
                     self.workload_test.num_shreds.to_string(),
-                    percentile.to_string(),
+                    validator.to_string(),
                     32_270_000.0.to_string(),
-                    percentile_bandwidth_usage[percentile - 1].to_string(),
+                    bandwidth.to_string(),
                 ])
                 .unwrap();
         }
