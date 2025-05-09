@@ -14,7 +14,9 @@ use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
-const MAX_FAILURES: usize = 1_000;
+const SLICES: usize = 64;
+
+const MAX_FAILURES: usize = 10;
 
 ///
 pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {
@@ -256,19 +258,22 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         let mut tests = 0;
         let sampler = self.sampler.read().unwrap();
         for _ in 0..n {
-            let sampled = sampler.sample_multiple(self.num_shreds, &mut rng);
-            let corrupted_samples = sampled
-                .into_iter()
-                .filter(|v| corrupted[*v as usize])
-                .count();
             tests += 1;
-            if (!byzantine && corrupted_samples > self.num_shreds - self.num_data_shreds)
-                || (byzantine && corrupted_samples >= self.num_data_shreds)
-            {
-                *self.failures.write().unwrap() += 1;
-            }
-            if *self.failures.read().unwrap() >= MAX_FAILURES {
-                return (tests, true);
+            for _ in 0..SLICES {
+                let sampled = sampler.sample_multiple(self.num_shreds, &mut rng);
+                let corrupted_samples = sampled
+                    .into_iter()
+                    .filter(|v| corrupted[*v as usize])
+                    .count();
+                if (!byzantine && corrupted_samples > self.num_shreds - self.num_data_shreds)
+                    || (byzantine && corrupted_samples >= self.num_data_shreds)
+                {
+                    *self.failures.write().unwrap() += 1;
+                    break;
+                }
+                if *self.failures.read().unwrap() >= MAX_FAILURES {
+                    return (tests, true);
+                }
             }
         }
         (tests, false)
