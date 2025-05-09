@@ -10,7 +10,7 @@ import pandas as pd
 STAKE_DISTRIBUTION = 'solana'
 # Sampling strategy to use in the underlying dataset.
 # Currently available: uniform, stake_weighted, fa1_iid, fa1_bin_packing, turbine, decaying_acceptance
-SAMPLING = 'fa1_bin_packing'
+SAMPLING = 'stake_weighted'
 # Number of data/total shreds to use in the underlying dataset.
 # Currently available combinations: 32/64, 32/80, 32/96, 32/320, 64/128, 128/256, 256/512
 DATA_SHREDS = 32

@@ -57,23 +57,23 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         let mut attack_prob = 0.0;
 
         // try three different adversary strategies
-        let bin_packing_failure_rate = self.run_bin_packing(attack_frac, attack_prob);
-        debug!("bin-packing failure rate: {}", bin_packing_failure_rate);
-        *self.tests.write().unwrap() = 0;
-        *self.failures.write().unwrap() = 0;
-        attack_prob = attack_prob.max(bin_packing_failure_rate);
-
-        let small_failure_rate = self.run_small(attack_frac, attack_prob);
-        debug!("small failure rate: {}", small_failure_rate);
-        *self.tests.write().unwrap() = 0;
-        *self.failures.write().unwrap() = 0;
-        attack_prob = small_failure_rate.max(attack_prob);
+        // let partition_failure_rate = self.run_bin_packing(attack_frac, attack_prob);
+        // debug!("bin-packing failure rate: {}", partition_failure_rate);
+        // *self.tests.write().unwrap() = 0;
+        // *self.failures.write().unwrap() = 0;
+        // attack_prob = attack_prob.max(parittion_failure_rate);
 
         let random_failure_rate = self.run_random(attack_frac, attack_prob);
         debug!("random failure rate: {}", random_failure_rate);
         *self.tests.write().unwrap() = 0;
         *self.failures.write().unwrap() = 0;
         attack_prob = attack_prob.max(random_failure_rate);
+
+        let small_failure_rate = self.run_small(attack_frac, attack_prob);
+        debug!("small failure rate: {}", small_failure_rate);
+        *self.tests.write().unwrap() = 0;
+        *self.failures.write().unwrap() = 0;
+        attack_prob = small_failure_rate.max(attack_prob);
 
         let large_failure_rate = self.run_large(attack_frac, attack_prob);
         debug!("large failure rate: {}", large_failure_rate);
@@ -194,7 +194,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
 
     fn run_bin_packing(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
         debug!("running attack with bin-packing attack");
-        let fa1_sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(
+        let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
             self.validators.clone(),
             self.num_shreds as u64,
         );

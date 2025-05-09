@@ -62,16 +62,16 @@ use bandwidth::BandwidthTest;
 use latency::{LatencyTest, LatencyTestStage};
 use rotor_safety::RotorSafetyTest;
 
-const RUN_BANDWIDTH_TESTS: bool = true;
+const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = false;
-const RUN_CRASH_SAFETY_TESTS: bool = false;
+const RUN_CRASH_SAFETY_TESTS: bool = true;
 const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
 
 const SAMPLING_STRATEGIES: [&str; 4] = [
     // "uniform",
     "stake_weighted",
     "fa1_iid",
-    "fa1_bin_packing",
+    "fa1_partition",
     // "decaying_acceptance",
     "turbine",
 ];
@@ -83,15 +83,15 @@ const MAX_BANDWIDTHS: [u64; 4] = [
     100_000_000_000, // 100 Gbps
 ];
 
-const TOTAL_SHREDS_FA1: u64 = 256;
+const TOTAL_SHREDS_FA1: u64 = 64;
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
-    // (32, 64),
+    (32, 64),
     // (32, 80),
     // (32, 96),
     // (32, 320),
     // (64, 128),
-    (128, 256),
+    // (128, 256),
     // (256, 512),
 ];
 
@@ -147,9 +147,9 @@ fn main() -> Result<()> {
 
     // run tests for different stake distributions
     run_tests_for_stake_distribution("solana", &VALIDATOR_DATA);
-    run_tests_for_stake_distribution("sui", &SUI_VALIDATOR_DATA);
-    run_tests_for_stake_distribution("5hubs", &FIVE_HUBS_VALIDATOR_DATA);
-    run_tests_for_stake_distribution("stock_exchanges", &STOCK_EXCHANGES_VALIDATOR_DATA);
+    // run_tests_for_stake_distribution("sui", &SUI_VALIDATOR_DATA);
+    // run_tests_for_stake_distribution("5hubs", &FIVE_HUBS_VALIDATOR_DATA);
+    // run_tests_for_stake_distribution("stock_exchanges", &STOCK_EXCHANGES_VALIDATOR_DATA);
 
     Ok(())
 }
@@ -215,14 +215,14 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 ping_leader_sampler,
                 ping_rotor_sampler,
             )
-        } else if sampling_strat == "fa1_bin_packing" {
+        } else if sampling_strat == "fa1_partition" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone());
-            let rotor_sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(
+            let rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
                 validators.clone(),
                 TOTAL_SHREDS_FA1,
             );
-            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(
+            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
                 validators_with_pings.clone(),
                 TOTAL_SHREDS_FA1,
             );

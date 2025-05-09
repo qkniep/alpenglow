@@ -302,18 +302,18 @@ impl SamplingStrategy for TurbineSampler {
 ///
 /// In expectation each validator is sampled proportionally to its stake.
 /// However, this is done with lower variance than [`StakeWeightedSampler`] would.
-pub struct BinPackingSampler {
+pub struct PartitionSampler {
     validators: Vec<ValidatorInfo>,
     bins: Vec<WeightedIndex<u64>>,
     pub bin_validators: Vec<Vec<ValidatorId>>,
     pub bin_stakes: Vec<Vec<Stake>>,
 }
 
-impl BinPackingSampler {
-    /// Creates a new `BinPackingSampler` instance.
+impl PartitionSampler {
+    /// Creates a new `ParitionSampler` instance.
     ///
-    /// Packs the given validators into `num_bins` bins of equal stake.
-    /// Packing is done deterministically by splitting the stake-sorted list of nodes.
+    /// Partitions the given validators into `num_bins` bins of equal stake.
+    /// Paritioning is done randomly by splitting a randomly permuted list of nodes.
     pub fn new(validators: Vec<ValidatorInfo>, num_bins: usize) -> Self {
         let mut bin_validators = vec![Vec::new(); num_bins];
         let mut bin_stakes = vec![Vec::new(); num_bins];
@@ -321,9 +321,9 @@ impl BinPackingSampler {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let stake_per_bin = total_stake.div_ceil(num_bins as Stake);
         let mut validators_random = validators.clone();
-        validators_random.sort_by_key(|v| v.stake);
+        validators_random.shuffle(&mut rand::rng());
 
-        // pack bins
+        // partition into bins
         let mut current_bin = 0;
         let mut current_bin_stake = 0;
         for v in validators_random {
@@ -357,7 +357,7 @@ impl BinPackingSampler {
     }
 }
 
-impl SamplingStrategy for BinPackingSampler {
+impl SamplingStrategy for PartitionSampler {
     fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
         unimplemented!()
     }
@@ -377,7 +377,7 @@ impl SamplingStrategy for BinPackingSampler {
     }
 }
 
-impl Clone for BinPackingSampler {
+impl Clone for PartitionSampler {
     fn clone(&self) -> Self {
         Self {
             validators: self.validators.clone(),
@@ -406,13 +406,13 @@ pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
     pub fallback_sampler: F,
 }
 
-impl FaitAccompli1Sampler<BinPackingSampler> {
+impl FaitAccompli1Sampler<PartitionSampler> {
     /// Creates a new FA1-F sampler with a variance-reducing bin-packing fallback sampler.
     ///
-    /// See [`BinPackingSampler`] for more details.
+    /// See [`ParitionSampler`] for more details.
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
-    pub fn new_with_bin_packing_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
+    pub fn new_with_partition_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let mut required_samples = Vec::new();
         let mut validators_truncated_stake = validators.clone();
@@ -425,8 +425,8 @@ impl FaitAccompli1Sampler<BinPackingSampler> {
         let all_zero = validators_truncated_stake.iter().all(|v| v.stake == 0);
         let k_prime = k as usize - required_samples.len();
         let fallback_sampler = match all_zero {
-            true => BinPackingSampler::new(validators.clone(), k_prime),
-            false => BinPackingSampler::new(validators_truncated_stake, k_prime),
+            true => PartitionSampler::new(validators.clone(), k_prime),
+            false => PartitionSampler::new(validators_truncated_stake, k_prime),
         };
         Self {
             validators,
@@ -804,7 +804,7 @@ mod tests {
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
-        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled: HashSet<_> = sampled.into_iter().collect();
@@ -815,7 +815,7 @@ mod tests {
 
         // with many low-stake nodes this becomes the underlying fallback distribution
         let validators = create_validator_info(1000);
-        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled_set: HashSet<_> = sampled.iter().collect();
@@ -831,7 +831,7 @@ mod tests {
         let mut validators = create_validator_info(1000);
         validators[0].stake = 52;
         validators[1].stake = 52;
-        let sampler = FaitAccompli1Sampler::new_with_bin_packing_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled0 = sampled.iter().filter(|v| **v == 0).count();
