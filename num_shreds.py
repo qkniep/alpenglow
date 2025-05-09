@@ -7,14 +7,15 @@ import pandas as pd
 
 LATENCY_DATA_EXPANSION_PLOTS = False
 LATENCY_TOTAL_SHREDS_PLOTS = False
-SAFETY_DATA_EXPANSION_PLOTS = False
-SAFETY_TOTAL_SHREDS_PLOTS = False
+SAFETY_DATA_EXPANSION_PLOTS = True
+SAFETY_TOTAL_SHREDS_PLOTS = True
+SAFETY_ADVERSARY_PLOTS = True
 
 # Stake distribution to use in the underlying dataset.
 # Currently available: solana, sui, 5hubs, stock_exchanges
 STAKE_DISTRIBUTION = 'solana'
 # Sampling strategy to use in the underlying dataset.
-SAMPLING_STRATS = ['uniform', 'stake_weighted', 'fa1_iid', 'fa1_bin_packing', 'turbine']
+SAMPLING_STRATS = ['uniform', 'stake_weighted', 'fa1_iid', 'fa1_partition', 'turbine']
 # Numbers of data/total shreds to use for data expansion ratio comparison.
 EXPANSION_RATIO = [(32, 64), (32, 80), (32, 96), (32, 320)]
 # Numbers of data/total shreds to use for total shreds comparison.
@@ -194,7 +195,7 @@ EXPANSION_RATIO = [(32, 64), (32, 80), (32, 96)]
 
 if SAFETY_DATA_EXPANSION_PLOTS:
     # load safety test data from CSV
-    file_path = './data/output/simulations/safety/safety_data_expansion.csv'
+    file_path = './data/output/simulations/safety/safety_data_expansion_2.csv'
     df = pd.read_csv(file_path)
     df = df[df['stake_distribution'] == STAKE_DISTRIBUTION]
     df = df[df['sampling_strat'] != 'uniform']
@@ -202,81 +203,89 @@ if SAFETY_DATA_EXPANSION_PLOTS:
     df_expansion_crash = df_expansion[df_expansion['adversary'] == 0.4]
     df_expansion_byz = df_expansion[df_expansion['adversary'] == 0.2]
 
-    # plot crash safety vs Byzantine attack safety for different data expansion ratios
+    # # plot crash safety vs Byzantine attack safety for different data expansion ratios
+    # fig = plt.figure(figsize=(6, 6))
+    # fig.patch.set_facecolor('white')
+    # fig.gca().set_facecolor('white')
+    # w, x = 0.4, np.arange(len(EXPANSION_RATIO))
+    # df = df_expansion
+    # df['failure_prob'] = df['safety'].apply(lambda x: 2**x)
+    # df_stake_weighted = df[df['sampling_strat'] == 'fa1']
+    # df_crash = df_stake_weighted[df_stake_weighted['adversary'] == 0.4]
+    # df_byz = df_stake_weighted[df_stake_weighted['adversary'] == 0.2]
+    # plt.bar(x - 0.5 * w, df_crash['failure_prob'], width=w, label='Crash Failure')
+    # plt.bar(x + 0.5 * w, df_byz['failure_prob'], width=w, label='Equivocation Attack')
+    #
+    # plt.gca().set_xticks(x)
+    # plt.gca().set_xticklabels([t for (d, t) in EXPANSION_RATIO])
+    # plt.title(f'Failure Probabilities ($\\gamma = 32$)')
+    # plt.xlabel('Total shreds ($\\Gamma$)')
+    # plt.ylabel('Failure probability')
+    # plt.yscale('log')
+    # plt.ylim(1e-10, 1)
+    # plt.legend(loc='lower left')
+    # plt.legend()
+    # plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    # plt.tight_layout()
+    # plt.savefig(f'./data/output/simulations/safety/data_expansion_crash_v_byz.png', dpi=300)
+    
+    # plot crash safety for different data expansion ratios (with 32 data shreds)
     fig = plt.figure(figsize=(6, 6))
     fig.patch.set_facecolor('white')
     fig.gca().set_facecolor('white')
-    w, x = 0.4, np.arange(len(EXPANSION_RATIO))
-    df = df_expansion
+    w, x = 0.225, np.arange(len(EXPANSION_RATIO))
+    df = df_expansion_crash
     df['failure_prob'] = df['safety'].apply(lambda x: 2**x)
-    df_stake_weighted = df[df['sampling_strat'] == 'fa1']
-    df_crash = df_stake_weighted[df_stake_weighted['adversary'] == 0.4]
-    df_byz = df_stake_weighted[df_stake_weighted['adversary'] == 0.2]
-    plt.bar(x - 0.5 * w, df_crash['failure_prob'], width=w, label='Crash Failure')
-    plt.bar(x + 0.5 * w, df_byz['failure_prob'], width=w, label='Equivocation Attack')
+    df_stake_weighted = df[df['sampling_strat'] == 'stake_weighted']
+    df_ours = df[df['sampling_strat'] == 'fa1_partition']
+    df_fa1 = df[df['sampling_strat'] == 'fa1_iid']
+    df_turbine = df[df['sampling_strat'] == 'turbine']
+    plt.bar(x - 1.5 * w, df_ours['failure_prob'], width=w, label='PS-P')
+    plt.bar(x - 0.5 * w, df_fa1['failure_prob'], width=w, label='FA1-IID')
+    plt.bar(x + 0.5 * w, df_stake_weighted['failure_prob'], width=w, label='Stake-weighted')
+    plt.bar(x + 1.5 * w, df_turbine['failure_prob'], width=w, label='Turbine')
     
     plt.gca().set_xticks(x)
     plt.gca().set_xticklabels([t for (d, t) in EXPANSION_RATIO])
-    plt.title(f'Failure Probabilities ($\\gamma = 32$)')
+    plt.title(f'40% Crashes ($\\gamma = 32$)')
     plt.xlabel('Total shreds ($\\Gamma$)')
     plt.ylabel('Failure probability')
     plt.yscale('log')
-    plt.ylim(1e-10, 1)
+    plt.ylim(1e-12, 1)
     plt.legend(loc='lower left')
-    plt.legend()
-    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
-    plt.tight_layout()
-    plt.savefig(f'./data/output/simulations/safety/data_expansion_crash_v_byz.png', dpi=300)
-    
-    # plot crash safety for different data expansion ratios (with 32 data shreds)
-    fig = plt.figure(figsize=(12, 7))
-    fig.patch.set_facecolor('white')
-    fig.gca().set_facecolor('white')
-    w, x = 0.2, np.arange(len(EXPANSION_RATIO))
-    df = df_expansion_crash
-    df_stake_weighted = df[df['sampling_strat'] == 'stake_weighted']
-    df_fa1 = df[df['sampling_strat'] == 'fa1']
-    df_turbine = df[df['sampling_strat'] == 'turbine']
-    plt.bar(x - w, df_stake_weighted['safety'], width=w, label='Stake-weighted')
-    plt.bar(x, df_fa1['safety'], width=w, label='FA1')
-    plt.bar(x + w, df_turbine['safety'], width=w, label='Turbine')
-    
-    plt.gca().set_xticks(x)
-    plt.gca().set_xticklabels([t for (d, t) in EXPANSION_RATIO])
-    plt.title(f'Failure Rate for 40% Crashes with 32 Data Shreds')
-    plt.xlabel('Total shreds ($\\Gamma$)')
-    plt.ylabel('Failure probability [$log_2$]')
-    plt.legend()
     plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
     plt.savefig(f'./data/output/simulations/safety/data_expansion_crash.png', dpi=300)
     
-    # plot Byzantine attack safety for different data expansion ratios (with 32 data shreds)
-    fig = plt.figure(figsize=(12, 7))
-    fig.patch.set_facecolor('white')
-    fig.gca().set_facecolor('white')
-    w, x = 0.2, np.arange(len(EXPANSION_RATIO))
-    df = df_expansion_byz
-    df_stake_weighted = df[df['sampling_strat'] == 'stake_weighted']
-    df_fa1 = df[df['sampling_strat'] == 'fa1']
-    df_turbine = df[df['sampling_strat'] == 'turbine']
-    plt.bar(x - w, df_stake_weighted['safety'], width=w, label='Stake-weighted')
-    plt.bar(x, df_fa1['safety'], width=w, label='FA1')
-    plt.bar(x + w, df_turbine['safety'], width=w, label='Turbine')
-    
-    plt.gca().set_xticks(x)
-    plt.gca().set_xticklabels([t for (d, t) in EXPANSION_RATIO])
-    plt.title(f'Equivocation Probability for 20% Byzantine with 32 Data Shreds')
-    plt.xlabel('Total shreds ($\\Gamma$)')
-    plt.ylabel('Attack success probability [$log_2$]')
-    plt.legend()
-    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
-    plt.tight_layout()
-    plt.savefig(f'./data/output/simulations/safety/data_expansion_byz.png', dpi=300)
+    # # plot Byzantine attack safety for different data expansion ratios (with 32 data shreds)
+    # fig = plt.figure(figsize=(12, 7))
+    # fig.patch.set_facecolor('white')
+    # fig.gca().set_facecolor('white')
+    # w, x = 0.225, np.arange(len(EXPANSION_RATIO))
+    # df = df_expansion_byz
+    # df['failure_prob'] = df['safety'].apply(lambda x: 2**x)
+    # df_stake_weighted = df[df['sampling_strat'] == 'stake_weighted']
+    # df_ours = df[df['sampling_strat'] == 'fa1_partition']
+    # df_fa1 = df[df['sampling_strat'] == 'fa1_iid']
+    # df_turbine = df[df['sampling_strat'] == 'turbine']
+    # plt.bar(x - 1.5 * w, df_ours['failure_prob'], width=w, label='PS-P')
+    # plt.bar(x - 0.5 * w, df_fa1['failure_prob'], width=w, label='FA1-IID')
+    # plt.bar(x + 0.5 * w, df_stake_weighted['failure_prob'], width=w, label='Stake-weighted')
+    # plt.bar(x + 1.5 * w, df_turbine['failure_prob'], width=w, label='Turbine')
+    #
+    # plt.gca().set_xticks(x)
+    # plt.gca().set_xticklabels([t for (d, t) in EXPANSION_RATIO])
+    # plt.title(f'Equivocation Probability for 20% Byzantine with 32 Data Shreds')
+    # plt.xlabel('Total shreds ($\\Gamma$)')
+    # plt.ylabel('Attack success probability [$log_2$]')
+    # plt.legend()
+    # plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    # plt.tight_layout()
+    # plt.savefig(f'./data/output/simulations/safety/data_expansion_byz.png', dpi=300)
 
 if SAFETY_TOTAL_SHREDS_PLOTS:
     # load safety test data from CSV
-    file_path = './data/output/simulations/safety/safety_total_shreds.csv'
+    file_path = './data/output/simulations/safety/safety_total_shreds_2.csv'
     df = pd.read_csv(file_path)
     df = df[df['stake_distribution'] == STAKE_DISTRIBUTION]
     df = df[df['sampling_strat'] != 'uniform']
@@ -288,14 +297,14 @@ if SAFETY_TOTAL_SHREDS_PLOTS:
     fig = plt.figure(figsize=(6, 6))
     fig.patch.set_facecolor('white')
     fig.gca().set_facecolor('white')
-    w, x = 0.3, np.arange(len(TOTAL_SHREDS))
+    w, x = 0.225, np.arange(len(TOTAL_SHREDS))
     df = df_total_crash
     df['failure_prob'] = df['safety'].apply(lambda x: 2**x)
-    df_ours = df[df['sampling_strat'] == 'fa1_bin_packing']
+    df_ours = df[df['sampling_strat'] == 'fa1_partition']
     df_fa1 = df[df['sampling_strat'] == 'fa1_iid']
     df_stake_weighted = df[df['sampling_strat'] == 'stake_weighted']
     df_turbine = df[df['sampling_strat'] == 'turbine']
-    plt.bar(x - 1.5 * w, df_ours['failure_prob'], width=w, label='Ours')
+    plt.bar(x - 1.5 * w, df_ours['failure_prob'], width=w, label='PS-P')
     plt.bar(x - 0.5 * w, df_fa1['failure_prob'], width=w, label='FA1-IID')
     plt.bar(x + 0.5 * w, df_stake_weighted['failure_prob'], width=w, label='Stake-weighted')
     plt.bar(x + 1.5 * w, df_turbine['failure_prob'], width=w, label='Turbine')
@@ -306,8 +315,41 @@ if SAFETY_TOTAL_SHREDS_PLOTS:
     plt.xlabel('Total shreds ($\\Gamma$)')
     plt.ylabel('Failure probability')
     plt.yscale('log')
-    plt.ylim(1e-10, 1)
+    plt.ylim(1e-12, 1)
     plt.legend(loc='lower left')
     plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
     plt.savefig(f'./data/output/simulations/safety/total_shreds.png', dpi=300)
+
+if SAFETY_ADVERSARY_PLOTS:
+    # load safety test data from CSV
+    file_path = './data/output/simulations/safety/safety_adversary.csv'
+    df = pd.read_csv(file_path)
+    df = df[df['stake_distribution'] == STAKE_DISTRIBUTION]
+
+    # plot crash safety for different total shreds (all with data expanision ratio 2)
+    fig = plt.figure(figsize=(6, 6))
+    fig.patch.set_facecolor('white')
+    fig.gca().set_facecolor('white')
+    w, x = 0.225, np.arange(3)
+    df['failure_prob'] = df['safety'].apply(lambda x: 2**x)
+    df_ours = df[df['sampling_strat'] == 'fa1_partition']
+    df_fa1 = df[df['sampling_strat'] == 'fa1_iid']
+    df_stake_weighted = df[df['sampling_strat'] == 'stake_weighted']
+    df_turbine = df[df['sampling_strat'] == 'turbine']
+    plt.bar(x - 1.5 * w, df_ours['failure_prob'], width=w, label='PS-P')
+    plt.bar(x - 0.5 * w, df_fa1['failure_prob'], width=w, label='FA1-IID')
+    plt.bar(x + 0.5 * w, df_stake_weighted['failure_prob'], width=w, label='Stake-weighted')
+    plt.bar(x + 1.5 * w, df_turbine['failure_prob'], width=w, label='Turbine')
+    
+    plt.gca().set_xticks(x)
+    plt.gca().set_xticklabels(['40%', '30%', '20%'])
+    plt.title(f'Crashes ($\\gamma = 32, \\Gamma = 64$)')
+    plt.xlabel('Crashed nodes (by stake)')
+    plt.ylabel('Failure probability')
+    plt.yscale('log')
+    plt.ylim(1e-12, 1)
+    plt.legend(loc='lower left')
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(f'./data/output/simulations/safety/adversary.png', dpi=300)
