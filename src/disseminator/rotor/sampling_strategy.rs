@@ -537,7 +537,7 @@ impl FaitAccompli2Sampler {
             .filter(|(i, v)| v.stake as f64 / total_stake as f64 > f[*i])
             .map(|(i, v)| v.stake as f64 / total_stake as f64 - f[i])
             .sum();
-        let new_stake_stribution: Vec<ValidatorInfo> = validators
+        let new_stake_distribution: Vec<ValidatorInfo> = validators
             .iter()
             .cloned()
             .enumerate()
@@ -553,7 +553,7 @@ impl FaitAccompli2Sampler {
             .collect();
         let fallback_sampler = match r == 0.0 {
             true => StakeWeightedSampler::new(validators.clone()),
-            false => StakeWeightedSampler::new(new_stake_stribution),
+            false => StakeWeightedSampler::new(new_stake_distribution),
         };
 
         Self {
