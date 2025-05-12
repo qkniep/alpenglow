@@ -602,6 +602,17 @@ impl SamplingStrategy for FaitAccompli2Sampler {
     }
 }
 
+impl Clone for FaitAccompli2Sampler {
+    fn clone(&self) -> Self {
+        Self {
+            validators: self.validators.clone(),
+            required_samples: self.required_samples.clone(),
+            medium_nodes: self.medium_nodes.clone(),
+            fallback_sampler: self.fallback_sampler.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

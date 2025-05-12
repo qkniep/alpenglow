@@ -43,7 +43,8 @@ use std::sync::{Arc, Mutex};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::rotor::sampling_strategy::{
-    DecayingAcceptanceSampler, FaitAccompli1Sampler, TurbineSampler, UniformSampler,
+    DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
+    UniformSampler,
 };
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_server, get_ping};
@@ -71,7 +72,8 @@ const SAMPLING_STRATEGIES: [&str; 4] = [
     // "uniform",
     "stake_weighted",
     "fa1_iid",
-    "fa1_partition",
+    "fa2",
+    // "fa1_partition",
     // "decaying_acceptance",
     "turbine",
 ];
@@ -206,6 +208,21 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 validators_with_pings.clone(),
                 TOTAL_SHREDS_FA1,
             );
+            run_tests(
+                &test_name,
+                &validators,
+                &validators_and_ping_servers,
+                leader_sampler,
+                rotor_sampler,
+                ping_leader_sampler,
+                ping_rotor_sampler,
+            )
+        } else if sampling_strat == "fa2" {
+            let leader_sampler = StakeWeightedSampler::new(validators.clone());
+            let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone());
+            let rotor_sampler = FaitAccompli2Sampler::new(validators.clone(), TOTAL_SHREDS_FA1);
+            let ping_rotor_sampler =
+                FaitAccompli2Sampler::new(validators_with_pings.clone(), TOTAL_SHREDS_FA1);
             run_tests(
                 &test_name,
                 &validators,
