@@ -502,11 +502,71 @@ impl<F: SamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli2Sampler {
     validators: Vec<ValidatorInfo>,
+    required_samples: Vec<ValidatorId>,
+    medium_nodes: Vec<(ValidatorId, f64)>,
+    fallback_sampler: StakeWeightedSampler,
 }
 
 impl FaitAccompli2Sampler {
-    pub const fn new(validators: Vec<ValidatorInfo>) -> Self {
-        unimplemented!()
+    ///
+    pub fn new(validators: Vec<ValidatorInfo>, k: u64) -> Self {
+        // FA1 step
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let mut required_samples = Vec::new();
+        for v in &validators {
+            let frac_stake = v.stake as f64 / total_stake as f64;
+            let samples = (frac_stake * k as f64).floor() as u64;
+            required_samples.extend((0..samples).map(|_| v.id));
+        }
+
+        // FA2 step
+        let f = Self::minimize_f(&validators, k);
+        let mut medium_nodes = Vec::new();
+        for (i, fi) in f.iter().enumerate() {
+            let stake = validators[i].stake as f64;
+            if *fi > stake {
+                let p = 1.0 - (fi - stake) * k as f64;
+                medium_nodes.push((i as ValidatorId, p));
+            }
+        }
+
+        // generate stake-weighted IID fallback sampler
+        let r: f64 = validators
+            .iter()
+            .enumerate()
+            .filter(|(i, v)| v.stake as f64 > f[*i])
+            .map(|(i, v)| v.stake as f64 / total_stake as f64 - f[i])
+            .sum();
+        let new_stake_stribution: Vec<ValidatorInfo> = validators
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter(|(i, v)| v.stake as f64 > f[*i])
+            .map(|(i, mut v)| {
+                v.stake = ((v.stake as f64 / total_stake as f64 - f[i]) / r * total_stake as f64)
+                    as Stake;
+                v
+            })
+            .collect();
+        let fallback_sampler = match r == 0.0 {
+            true => StakeWeightedSampler::new(validators.clone()),
+            false => StakeWeightedSampler::new(new_stake_stribution),
+        };
+
+        Self {
+            validators,
+            required_samples,
+            medium_nodes,
+            fallback_sampler,
+        }
+    }
+
+    fn minimize_f(validators: &[ValidatorInfo], k: u64) -> Vec<f64> {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        validators
+            .iter()
+            .map(|v| (v.stake as f64 / total_stake as f64 * k as f64).round() / k as f64)
+            .collect()
     }
 }
 
@@ -517,6 +577,28 @@ impl SamplingStrategy for FaitAccompli2Sampler {
 
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
         unimplemented!()
+    }
+
+    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        // add required FA1 samples
+        let mut validators = Vec::with_capacity(k);
+        validators.extend_from_slice(&self.required_samples);
+
+        // sample medium nodes (FA2 step)
+        for (validator, probability) in &self.medium_nodes {
+            if rng.random_bool(*probability) {
+                validators.push(*validator);
+            }
+        }
+
+        // sample remaining validators IID stake-weighted
+        if validators.len() < k {
+            let k_prime = k - validators.len();
+            let additional_samples = self.fallback_sampler.sample_multiple(k_prime, rng);
+            validators.extend_from_slice(&additional_samples);
+        }
+
+        validators
     }
 }
 
