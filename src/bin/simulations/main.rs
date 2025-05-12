@@ -68,12 +68,12 @@ const RUN_LATENCY_TESTS: bool = false;
 const RUN_CRASH_SAFETY_TESTS: bool = true;
 const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
 
-const SAMPLING_STRATEGIES: [&str; 4] = [
+const SAMPLING_STRATEGIES: [&str; 5] = [
     // "uniform",
     "stake_weighted",
     "fa1_iid",
     "fa2",
-    // "fa1_partition",
+    "fa1_partition",
     // "decaying_acceptance",
     "turbine",
 ];

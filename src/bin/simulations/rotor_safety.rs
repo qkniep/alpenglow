@@ -14,9 +14,9 @@ use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
-const SLICES: usize = 64;
+const SLICES: usize = 1;
 
-const MAX_FAILURES: usize = 10;
+const MAX_FAILURES: usize = 10_000;
 
 ///
 pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {

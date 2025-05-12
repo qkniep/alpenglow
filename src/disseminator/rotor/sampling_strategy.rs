@@ -523,9 +523,9 @@ impl FaitAccompli2Sampler {
         let f = Self::minimize_f(&validators, k);
         let mut medium_nodes = Vec::new();
         for (i, fi) in f.iter().enumerate() {
-            let stake = validators[i].stake as f64;
-            if *fi > stake {
-                let p = 1.0 - (fi - stake) * k as f64;
+            let rel_stake = validators[i].stake as f64 / total_stake as f64;
+            if *fi > rel_stake {
+                let p = 1.0 - (fi - rel_stake) * k as f64;
                 medium_nodes.push((i as ValidatorId, p));
             }
         }
@@ -534,17 +534,20 @@ impl FaitAccompli2Sampler {
         let r: f64 = validators
             .iter()
             .enumerate()
-            .filter(|(i, v)| v.stake as f64 > f[*i])
+            .filter(|(i, v)| v.stake as f64 / total_stake as f64 > f[*i])
             .map(|(i, v)| v.stake as f64 / total_stake as f64 - f[i])
             .sum();
         let new_stake_stribution: Vec<ValidatorInfo> = validators
             .iter()
             .cloned()
             .enumerate()
-            .filter(|(i, v)| v.stake as f64 > f[*i])
             .map(|(i, mut v)| {
-                v.stake = ((v.stake as f64 / total_stake as f64 - f[i]) / r * total_stake as f64)
-                    as Stake;
+                if v.stake as f64 / total_stake as f64 > f[i] {
+                    v.stake = ((v.stake as f64 / total_stake as f64 - f[i]) / r
+                        * total_stake as f64) as Stake;
+                } else {
+                    v.stake = 0;
+                }
                 v
             })
             .collect();
