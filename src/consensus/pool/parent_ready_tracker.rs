@@ -1,12 +1,19 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tracks if a condition holds for a block and all of its ancestors.
+//! Tracks the parent-ready condition.
 //!
-//! This can be used for any kind of chain validity property.
-//! Currently, in [`Alpenglow`] this is only used for tracking branch-certified.
+//! The parent-ready condition pertains to a slot `s` and a block hash `hash(b)`,
+//! where `s` is the first slot of a leader window and `s > slot(b)`.
+//! Specifically, it is defined as the following:
+//!   - Block `b` is notarized or notarized-fallback, and
+//!   - slots `slot(b) + 1` (inclusive) to `s` (non-inclusive) are skip-certified.
 //!
-//! [`Alpenglow`]: crate::consensus::Alpenglow
+//! Additional restriction on notarization votes ensure that the parent-ready
+//! condition holds for a block `b` only if it also holds for all ancestors of `b`.
+//! Together this ensures that the block `b` is a valid parent for block
+//! production, i.e., under good network conditions an honest leader proposing
+//! a block with parent `b` in slot `s` will have their block finalized.
 
 use std::collections::HashMap;
 
@@ -16,10 +23,10 @@ use crate::{Slot, consensus::SLOTS_PER_WINDOW, crypto::Hash};
 
 type BlockId = (u64, Hash);
 
-/// Tracks
+/// Keeps track of the parent-ready condition across slots.
 pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
 
-/// Holds ... state for a single block.
+/// Holds the relevant state for a single slot.
 #[derive(Clone, Default)]
 struct ParentReadyState {
     skip: bool,
@@ -34,7 +41,7 @@ struct ParentReadyState {
 impl ParentReadyTracker {
     /// Creates a new empty tracker.
     ///
-    /// Only the genesis block is considered a ready parent.
+    /// Only the genesis block is considered a valid parent for the first leader window.
     pub fn new() -> Self {
         let genesis = (0, [0; 32]);
         let mut map = HashMap::new();
@@ -51,7 +58,10 @@ impl ParentReadyTracker {
 
     /// Marks the given block as notar-fallback.
     ///
-    /// This should only ever be called once for every block ID.
+    /// Returns a list of any newly connected parents.
+    /// All of these will have the given block ID as the parent.
+    ///
+    /// This should only ever be called once for any specific block ID.
     pub fn mark_notar_fallback(&mut self, id: BlockId) -> Vec<(Slot, BlockId)> {
         let (slot, hash) = id;
         let state = self.0.entry(slot).or_default();
@@ -75,9 +85,11 @@ impl ParentReadyTracker {
         newly_certified
     }
 
-    /// Marka the given slot as skipped.
+    /// Marks the given slot as skipped.
     ///
-    /// This should only ever be called once for every slot.
+    /// Returns a list of any newly connected parents.
+    ///
+    /// This should only ever be called once for any specific slot.
     pub fn mark_skipped(&mut self, slot: Slot) -> Vec<(Slot, BlockId)> {
         let state = self.0.entry(slot).or_default();
         state.skip = true;
@@ -96,7 +108,8 @@ impl ParentReadyTracker {
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
-        for s in (0..=slot).rev() {
+        let start_of_window = slot.saturating_sub(slot % SLOTS_PER_WINDOW);
+        for s in (start_of_window..=slot).rev() {
             let state = self.0.entry(s).or_default();
             if s < slot {
                 for nf in &state.notar_fallbacks {
@@ -123,7 +136,7 @@ impl ParentReadyTracker {
         newly_certified
     }
 
-    ///
+    /// Returns list of all valid parents for the given slot, as of now.
     pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.0
             .get(&slot)
@@ -179,5 +192,19 @@ mod tests {
         assert!(tracker.mark_skipped(2).is_empty());
         assert_eq!(tracker.mark_notar_fallback(block), vec![(4, block)]);
         assert_eq!(tracker.mark_skipped(0), vec![(4, (0, [0; 32]))]);
+    }
+
+    #[test]
+    fn no_double_counting() {
+        let mut tracker = ParentReadyTracker::new();
+        let block = (0, [1; 32]);
+        assert!(tracker.mark_notar_fallback(block).is_empty());
+        assert!(tracker.mark_skipped(1).is_empty());
+        assert!(tracker.mark_skipped(2).is_empty());
+        assert_eq!(tracker.mark_skipped(3), vec![(4, block)]);
+        assert!(tracker.mark_skipped(4).is_empty());
+        assert!(tracker.mark_skipped(5).is_empty());
+        assert!(tracker.mark_skipped(6).is_empty());
+        assert_eq!(tracker.mark_skipped(7), vec![(8, block)]);
     }
 }
