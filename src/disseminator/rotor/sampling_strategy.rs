@@ -315,6 +315,15 @@ impl PartitionSampler {
     /// Partitions the given validators into `num_bins` bins of equal stake.
     /// Paritioning is done randomly by splitting a randomly permuted list of nodes.
     pub fn new(validators: Vec<ValidatorInfo>, num_bins: usize) -> Self {
+        if num_bins == 0 {
+            return Self {
+                validators,
+                bins: Vec::new(),
+                bin_validators: Vec::new(),
+                bin_stakes: Vec::new(),
+            };
+        }
+
         let mut bin_validators = vec![Vec::new(); num_bins];
         let mut bin_stakes = vec![Vec::new(); num_bins];
 
@@ -566,10 +575,12 @@ impl FaitAccompli2Sampler {
 
     fn minimize_f(validators: &[ValidatorInfo], k: u64) -> Vec<f64> {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        validators
+        let f: Vec<f64> = validators
             .iter()
             .map(|v| (v.stake as f64 / total_stake as f64 * k as f64).round() / k as f64)
-            .collect()
+            .collect();
+        assert!(f.iter().sum::<f64>() <= 1.0);
+        f
     }
 }
 
@@ -890,15 +901,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bin_packing_sampler() {
-        // TODO: add tests
-    }
-
     // FIXME: flaky test
     #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
+        let validators = create_validator_info(64);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled.len(), 64);
+        let sampled: HashSet<_> = sampled.into_iter().collect();
+        assert_eq!(sampled.len(), 64);
+        for id in 0..64 {
+            assert!(sampled.contains(&id));
+        }
+
+        // with k equal-weight nodes this deterministically selects all nodes
+        // (also for partitioning fallback sampler)
         let validators = create_validator_info(64);
         let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
@@ -911,7 +929,7 @@ mod tests {
 
         // with many low-stake nodes this becomes the underlying fallback distribution
         let validators = create_validator_info(1000);
-        let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled_set: HashSet<_> = sampled.iter().collect();
@@ -927,13 +945,18 @@ mod tests {
         let mut validators = create_validator_info(1000);
         validators[0].stake = 52;
         validators[1].stake = 52;
-        let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
+        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
         let sampled = sampler.sample_multiple(64, &mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled0 = sampled.iter().filter(|v| **v == 0).count();
         let sampled1 = sampled.iter().filter(|v| **v == 1).count();
         assert!(sampled0 >= 3);
         assert!(sampled1 >= 3);
+    }
+
+    #[test]
+    fn partition_sampler() {
+        // TODO: add tests
     }
 
     #[test]
