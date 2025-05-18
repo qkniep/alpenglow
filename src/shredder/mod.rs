@@ -41,6 +41,8 @@ pub enum ShredderError {
     NotEnoughShreds,
     #[error("more shreds than expected")]
     TooManyShreds,
+    #[error("shreds are part of invalid Merkle tree")]
+    InvalidMerkleTree,
 }
 
 /// A slice is the unit of data between block and shred.
@@ -304,7 +306,17 @@ impl Shredder for RegularShredder {
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
         let data = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        Ok(Slice::from_parts(data, &shreds[0]))
+        let slice = Slice::from_parts(data, &shreds[0]);
+
+        // additional Merkle tree validity check
+        let merkle_root = shreds[0].merkle_root();
+        let (data, coding) = shred_reed_solomon(&slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let tree = build_merkle_tree(&data, &coding);
+        if tree.get_root() != merkle_root {
+            return Err(ShredderError::InvalidMerkleTree);
+        }
+
+        Ok(slice)
     }
 }
 
@@ -318,7 +330,17 @@ impl Shredder for CodingOnlyShredder {
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
         let data = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS)?;
-        Ok(Slice::from_parts(data, &shreds[0]))
+        let slice = Slice::from_parts(data, &shreds[0]);
+
+        // additional Merkle tree validity check
+        let merkle_root = shreds[0].merkle_root();
+        let (_, coding) = shred_reed_solomon(&slice, DATA_SHREDS, TOTAL_SHREDS)?;
+        let tree = build_merkle_tree(&[], &coding);
+        if tree.get_root() != merkle_root {
+            return Err(ShredderError::InvalidMerkleTree);
+        }
+
+        Ok(slice)
     }
 }
 
@@ -362,6 +384,23 @@ impl Shredder for PetsShredder {
             return Err(ShredderError::BadEncoding);
         }
 
+        // additional Merkle tree validity check
+        let merkle_root = shreds[0].merkle_root();
+        let (mut data, coding) = shred_reed_solomon_raw(
+            shreds[0].slot(),
+            shreds[0].slice(),
+            shreds[0].is_last_slice(),
+            &buffer,
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS + 1,
+        )?;
+        data.pop();
+        let tree = build_merkle_tree(&data, &coding);
+        if tree.get_root() != merkle_root {
+            return Err(ShredderError::InvalidMerkleTree);
+        }
+
+        // decrypt slice
         let tail = buffer.split_off(buffer.len() - 16);
         let iv = Array::from([0u8; 16]);
         let key = Array::try_from(tail.as_slice()).expect("tail should have correct length");
@@ -411,6 +450,22 @@ impl Shredder for AontShredder {
             return Err(ShredderError::BadEncoding);
         }
 
+        // additional Merkle tree validity check
+        let merkle_root = shreds[0].merkle_root();
+        let (data, coding) = shred_reed_solomon_raw(
+            shreds[0].slot(),
+            shreds[0].slice(),
+            shreds[0].is_last_slice(),
+            &buffer,
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
+        let tree = build_merkle_tree(&data, &coding);
+        if tree.get_root() != merkle_root {
+            return Err(ShredderError::InvalidMerkleTree);
+        }
+
+        // decrypt slice
         let tail = buffer.split_off(buffer.len() - 16);
         let hash = hash(&buffer);
 
