@@ -14,7 +14,24 @@ A local cluster example can be run with the following command:
 
 This spawns a local cluster with 6 nodes.
 These nodes communicate via UDP on localhost.
-Console output from the `tracing` crate shows the progress of all nodes.
+Console output from the [`fastrace`](https://docs.rs/fastrace) crate shows the progress of all nodes.
+
+Further, we provide the `simulations` binary target.
+It provides various simulations of parts of the Alpenglow protocol,
+specifically resilience of Rotor, as well as latency and bandwidth requirements of Alpenglow as a whole.
+Currently, configuration is a bit cumbersome and is done via the `const` values in `src/bin/simulations/main.rs`.
+
+Some of the simulations, specifically the latency simulation, requires first downloading a public ping dataset via this script:
+
+```bash
+./download_data.sh
+```
+
+After that, the simulations can be run like this:
+
+```bash
+RUST_LOG="simulations=debug" cargo run --release --bin=simulations
+```
 
 ## Benchmarks
 
@@ -39,6 +56,11 @@ The more extensive test suite, including some slow tests, can be run like this:
 ```
 
 ## Security
+
+For security related issues, please do not file a public issue on GitHub,
+instead reach out directly via email to:
+
+qkniep (at) anza (dot) xyz
 
 ## License
 
