@@ -13,7 +13,7 @@ pub mod network;
 pub mod orchestrator;
 pub mod repair;
 pub mod shredder;
-pub mod tests;
+pub mod test_utils;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};

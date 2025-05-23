@@ -493,7 +493,7 @@ mod tests {
     use super::*;
 
     use crate::ValidatorId;
-    use crate::tests::generate_validators;
+    use crate::test_utils::generate_validators;
 
     #[tokio::test]
     async fn quorums() {

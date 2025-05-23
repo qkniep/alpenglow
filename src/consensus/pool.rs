@@ -351,7 +351,7 @@ mod tests {
     use crate::consensus::SLOTS_PER_WINDOW;
     use crate::consensus::cert::NotarCert;
     use crate::crypto::aggsig::SecretKey;
-    use crate::tests::generate_validators;
+    use crate::test_utils::generate_validators;
 
     use tokio::sync::mpsc;
 

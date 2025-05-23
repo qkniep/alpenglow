@@ -8,8 +8,7 @@
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use futures::{SinkExt, StreamExt};
-use log::warn;
+use futures::SinkExt;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
