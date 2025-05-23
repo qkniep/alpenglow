@@ -13,6 +13,7 @@ pub mod network;
 pub mod orchestrator;
 pub mod repair;
 pub mod shredder;
+#[cfg(test)]
 pub mod test_utils;
 pub mod validator;
 
