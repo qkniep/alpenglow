@@ -84,7 +84,7 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     bad_window: BTreeSet<Slot>,
     /// Blocks that have a notarization certificate (not notar-fallback).
     block_notarized: BTreeMap<Slot, Hash>,
-    ///
+    /// Indicates for which slots the given (slot, hash) pair is a valid parent.
     parents_ready: BTreeSet<(Slot, Slot, Hash)>,
     /// Indicates for which slots we received at least one shred.
     received_shred: BTreeSet<Slot>,

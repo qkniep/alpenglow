@@ -12,7 +12,7 @@ use futures::{SinkExt, StreamExt};
 use log::warn;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use super::{Network, NetworkError, NetworkMessage};
@@ -38,6 +38,7 @@ impl TcpNetwork {
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
         let listener = futures::executor::block_on(TcpListener::bind(addr)).unwrap();
+        let (tx, rx) = mpsc::channel::<NetworkMessage>(1024);
         Self {
             listener,
             readers: RwLock::new(Vec::new()),

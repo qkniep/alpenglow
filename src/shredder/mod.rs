@@ -3,7 +3,17 @@
 
 //! Shredding and deshredding of blocks.
 //!
+//! This module defines the [`Shredder`] trait for shredding blocks into shreds.
 //!
+//! It also provides several shredders implementing this trait:
+//! - [`RegularShredder`] augments data shreds with coding shreds.
+//! - [`CodingOnlyShredder`] only outputs coding shreds.
+//! - [`AontShredder`] uses the RAONT-RS all-or-nothing construction.
+//! - [`PetsShredder`] uses the PETS all-or-nothing construction.
+//!
+//! Finally, it defines some of the low-level data types representing a block:
+//! - [`Shred`] is a single part of the block that fits into a UDP datagram.
+//! - [`Slice`] corresponds to a fixed number of shreds we perform erasure coding on.
 // TODO: split this file up
 
 use aes::Aes128;
@@ -158,7 +168,7 @@ impl Shred {
         }
     }
 
-    ///
+    /// Returns the index of this shred within its slice.
     #[must_use]
     pub const fn index_in_slice(&self) -> usize {
         match self {
@@ -167,7 +177,7 @@ impl Shred {
         }
     }
 
-    ///
+    /// Returns the index of this shred within the entire slot.
     #[must_use]
     pub const fn index_in_slot(&self) -> usize {
         let (slice_index, index_in_slice) = match self {
@@ -205,7 +215,9 @@ impl Shred {
     }
 }
 
+/// A data shred with the Merkle proof.
 ///
+/// Includes, merkle path, root and the leaser's signature.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataShredWithPath {
     pub(crate) payload: DataShred,
@@ -214,7 +226,9 @@ pub struct DataShredWithPath {
     merkle_path: Vec<Hash>,
 }
 
+/// A coding shred with the Merkle proof.
 ///
+/// Includes, merkle path, root and the leaser's signature.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CodingShredWithPath {
     pub(crate) payload: CodingShred,
@@ -223,14 +237,14 @@ pub struct CodingShredWithPath {
     merkle_path: Vec<Hash>,
 }
 
-///
+/// A data shred without the Merkle proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataShred(ShredPayload);
-///
+/// A coding shred without the Merkle proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CodingShred(ShredPayload);
 
-///
+/// Base payload of a shred, regardless of its type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
     pub(crate) slot: Slot,
@@ -270,6 +284,10 @@ pub trait Shredder {
     ///   deshredding process fails for any implementation-specific reason.
     /// - Should always return [`ShredderError::TooMuchData`] if the reconstructed
     ///   slice is too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
+    /// - Any implementation of this needs to make sure to:
+    ///     1. Reconstruct all shreds (data and coding) under the Merkle tree.
+    ///     2. Verify the entire Merkle tree.
+    ///     3. Return [`ShredderError::InvalidMerkleTree`] if this fails.
     fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError>;
 }
 

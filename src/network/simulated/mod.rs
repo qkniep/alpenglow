@@ -21,17 +21,17 @@ pub mod ping_data;
 pub mod stake_distribution;
 mod token_bucket;
 
-pub use core::SimulatedNetworkCore;
-use log::warn;
-use token_bucket::TokenBucket;
-
 use std::sync::Arc;
 
+use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::ValidatorId;
 
 use super::{Network, NetworkError, NetworkMessage};
+
+pub use core::SimulatedNetworkCore;
+use token_bucket::TokenBucket;
 
 /// A simulated network interface for local testing and simulations.
 ///

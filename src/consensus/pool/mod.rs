@@ -59,9 +59,9 @@ pub enum SlashableOffence {
 pub struct Pool {
     /// State for each slot. Stores all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
-    /// Keeps track of which blocks are branch-certified.
+    /// Keeps track of which slots have a parent ready.
     parent_ready_tracker: ParentReadyTracker,
-    ///
+    /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
     s2n_waiting_parent_cert: BTreeMap<(Slot, Hash), (Slot, Hash)>,
 
     /// Highest slot that is at least notarized fallabck.

@@ -145,7 +145,6 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         if i % 3 == 2 {
             udp_networks.push_back(UdpNetwork::new_with_any_port());
         } else {
-            // networks.push_back(core.join(i, 1_000_000, 1_000_000).await);
             networks.push_back(core.join_unlimited(i).await);
         }
     }
@@ -180,7 +179,6 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let a2a_port = 3 * id;
         let dis_port = 3 * id + 1;
-        // let rep_port = 3 * id + 2;
         let rep_port = udp_networks[id as usize].port();
         validators.push(ValidatorInfo {
             id,
@@ -216,7 +214,6 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
 async fn latency_test(num_nodes: usize) {
     // start `num_nodes` nodes
     let nodes = create_test_nodes(num_nodes as u64).await;
-    // let mut node_tasks = Vec::new();
     let mut node_cancel_tokens = Vec::new();
     let mut pools = Vec::new();
     for node in nodes {

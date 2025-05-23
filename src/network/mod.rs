@@ -52,7 +52,6 @@ pub const MTU_BYTES: usize = 1500;
 pub enum NetworkMessage {
     Ping,
     Pong,
-    // Ack(usize),
     Shred(Shred),
     Vote(Vote),
     Cert(Cert),

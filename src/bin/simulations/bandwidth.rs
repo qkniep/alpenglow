@@ -3,23 +3,40 @@
 
 //! Rotor simulated workload and bandwidth testing.
 //!
+//! This module provides simulations about Rotor bandwidth usage.
+//! It simulates the dissemination of multiple slices via Rotor.
+//! It tracks the workload (number of shreds/datagrams sent) for each validator.
+//! The workload is then used to estimate the bandwidth requirements for each validator.
 //!
+//! Specifically, it provides the following:
+//!   - An analysis of Rotor workload distribution per validator,
+//!     that is the number of shreds/datagrams sent by each validator.
+//!   - An analysis of Rotor bandwidth usage (in bits/s) per validator to send
+//!     a given number of slices.
+//!   - The maximum goodput that can be achieved for a given bandwidth distribution.
 
 use std::fs::File;
 use std::sync::{Arc, Mutex};
 
 use alpenglow::disseminator::rotor::SamplingStrategy;
-use alpenglow::{Stake, ValidatorId, ValidatorInfo};
+use alpenglow::shredder::MAX_DATA_PER_SHRED;
+use alpenglow::{ValidatorId, ValidatorInfo};
 use rand::prelude::*;
 
+/// Instance of a bandwidth requirements test.
 ///
+/// This is a wrapper around [`WorkloadTest`].
+/// It augments the workload test with bandwidth information.
 pub struct BandwidthTest<L: SamplingStrategy, R: SamplingStrategy> {
     leader_bandwidth: u64,
     bandwidths: Vec<u64>,
     workload_test: WorkloadTest<L, R>,
 }
 
+/// Instance of a bandwidth workload test.
 ///
+/// This simulates the distribution of shreds via Rotor.
+/// It tracks the workload (number of shreds/datagrams sent) for each validator.
 pub struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     leader_sampler: L,
@@ -31,7 +48,7 @@ pub struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
-    ///
+    /// Creates a new instance with the given stake and bandwidth distribution.
     pub fn new(
         validators: &[ValidatorInfo],
         leader_bandwidth: u64,
@@ -59,18 +76,26 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         }
     }
 
+    /// Runs multiple iterations of the workload test.
     ///
+    /// Each iteration corresponds to distributing one slice, sampling leader
+    /// and relays. This only modifies the internal state of the workload test.
+    /// Calling `evaluate_supported` or `evaluate_usage` will output the results.
     pub fn run_multiple(&mut self, slices: usize) {
         self.workload_test.run_multiple(slices);
     }
 
+    /// Evaluates the maximum supported goodput.
     ///
+    /// Writes the results to the given CSV file.
+    /// This is only meaningful after `run_multiple` has been called.
     pub fn evaluate_supported(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
-        let seconds = (8 * 1500 * leader_workload) as f64 / self.leader_bandwidth as f64;
+        let seconds =
+            (8 * MAX_DATA_PER_SHRED as u64 * leader_workload) as f64 / self.leader_bandwidth as f64;
         let mut min_supported_bandwidth = self.leader_bandwidth as f64;
         for (i, shreds) in workload.iter().enumerate() {
-            let bytes = 1500 * shreds;
+            let bytes = MAX_DATA_PER_SHRED as u64 * shreds;
             let required_bandwidth = (bytes * 8) as f64 / seconds;
             let ratio = required_bandwidth / self.bandwidths[i] as f64;
             if self.leader_bandwidth as f64 / ratio < min_supported_bandwidth {
@@ -95,7 +120,10 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         csv_file.flush().unwrap();
     }
 
+    /// Evaluates the bandwidth usage.
     ///
+    /// Writes the results to the given CSV file.
+    /// This is only meaningful after `run_multiple` has been called.
     pub fn evaluate_usage(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let mut bandwidth_usage = vec![(0.0, 0); workload.len()];
@@ -136,12 +164,17 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         }
         csv_file.flush().unwrap();
     }
+
+    /// Resets the internal state.
+    ///
+    /// This is useful for running multiple independent tests.
+    pub fn reset(&mut self) {
+        self.workload_test.reset();
+    }
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
-    /// Creates a new workload test.
-    ///
-    ///
+    /// Creates a new instance with the given stake distribution.
     pub fn new(
         validators: &[ValidatorInfo],
         leader_sampler: L,

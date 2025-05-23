@@ -3,7 +3,19 @@
 
 //! Core consensus logic and data structures.
 //!
+//! The central structure of the consensus protocol is [`Alpenglow`].
+//! It contains all state for a single consensus instance and also has access
+//! to the different necessary network protocols.
 //!
+//! Most important component data structures defined in this module are:
+//! - [`Blockstore`] holds individual shreds and reconstructed blocks for each slot.
+//! - [`Pool`] holds votes and certificates for each slot.
+//! - [`Votor`] handles the main voting logic.
+//!
+//! Some other data types for consensus are also defined here:
+//! - [`Cert`] represents a certificate of votes of a specific type.
+//! - [`Vote`] represents a vote of a specific type.
+//! - [`EpochInfo`] holds information about the epoch and all validators.
 
 mod blockstore;
 mod cert;

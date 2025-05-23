@@ -141,7 +141,9 @@ pub struct SuiValidatorData {
     ping: f64,
 }
 
+/// Artificial stake distribution for 5 global hubs.
 ///
+/// Uses the same data format as [`VALIDATOR_DATA`].
 pub static FIVE_HUBS_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     hub_validator_data(vec![
         ("San Francisco".to_string(), 0.2),
@@ -152,7 +154,9 @@ pub static FIVE_HUBS_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::ne
     ])
 });
 
+/// Artificial stake distribution for location of top 10 global stock exchanges.
 ///
+/// Uses the same data format as [`VALIDATOR_DATA`].
 pub static STOCK_EXCHANGES_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     hub_validator_data(vec![
         ("Toronto".to_string(), 0.1),
@@ -166,7 +170,11 @@ pub static STOCK_EXCHANGES_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLo
     ])
 });
 
+/// Generates an artificial stake distribution.
 ///
+/// The input `hubs` contains a list of (city, fraction of total stake).
+/// Each city has to be in the ping dataset, i.e. supported by [`coordinates_for_city`].
+/// Outputs a stake distribution in the same data format as [`VALIDATOR_DATA`].
 pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     let mut validators = Vec::new();
     for (city, frac_stake) in hubs {

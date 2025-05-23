@@ -402,11 +402,11 @@ impl Clone for PartitionSampler {
 /// This is a strict improvement over performing IID stake-weighted sampling.
 /// It achieves lower variance by deterministically sampling high-stake validators.
 ///
-/// FA1-F is parameterized by a fallback sampler F and runs in two phases:
-/// 1. Any validator with more than 1/k fractional stake, is deterministically
-///    selected floor(fractional stake * k) times.
-/// 2. For the remaining k' samples, sample each validator from F, instantiated
-///    with modified stake weights: S'(v) = S(v) - floor(S(v) * k) / k
+/// FA1-F is parameterized by a fallback sampler `F` and runs in two phases:
+/// 1. Any validator with more than `1/k` fractional stake, is deterministically
+///    selected `floor(fractional stake * k)` times.
+/// 2. For the remaining `k'` samples, sample each validator from `F`, instantiated
+///    with modified stake weights: `S'(v) = S(v) - floor(S(v) * k) / k`
 ///
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
@@ -416,9 +416,9 @@ pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
 }
 
 impl FaitAccompli1Sampler<PartitionSampler> {
-    /// Creates a new FA1-F sampler with a variance-reducing bin-packing fallback sampler.
+    /// Creates a new FA1-F sampler with a variance-reducing partition fallback sampler.
     ///
-    /// See [`ParitionSampler`] for more details.
+    /// See [`PartitionSampler`] for more details.
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
     pub fn new_with_partition_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
@@ -517,7 +517,12 @@ pub struct FaitAccompli2Sampler {
 }
 
 impl FaitAccompli2Sampler {
+    /// Creates a new FA2 sampler instance.
     ///
+    /// This is instantiated for a fixed number of samples `k`.
+    /// To this end, the FA1 and FA2 pre-processing steps are applied,
+    /// and also a stake-weighted IID fallback sampler is generated.
+    // TODO: support running sample_multiple(...) on different k?
     pub fn new(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         // FA1 step
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
@@ -585,11 +590,13 @@ impl FaitAccompli2Sampler {
 }
 
 impl SamplingStrategy for FaitAccompli2Sampler {
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
+        // FA2 only supports multiple samples
         unimplemented!()
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
+        // FA2 only supports multiple samples
         unimplemented!()
     }
 
@@ -634,7 +641,7 @@ mod tests {
     use crate::ValidatorId;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::disseminator::turbine::{TurbineTree, WeightedShuffle};
+    use crate::disseminator::turbine::WeightedShuffle;
     use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
     use crate::shredder::TOTAL_SHREDS;
 
@@ -740,7 +747,7 @@ mod tests {
         let validators = create_validator_info(100);
         let sampler = DecayingAcceptanceSampler::new(validators, 1.0);
         let sampled = sampler.sample_multiple(100, &mut rand::rng());
-        let sampled_set: HashSet<_> = sampled.iter().map(|v| *v).collect();
+        let sampled_set: HashSet<_> = sampled.iter().copied().collect();
         assert_eq!(sampled_set.len(), 100);
 
         // heavy node sampled at most max_samples times

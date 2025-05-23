@@ -26,8 +26,9 @@
 //! - Decaying acceptance (with 3.0 max samples)
 //! - Turbine
 //!
-//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`], and
-//! [`RUN_SAFETY_TESTS`] control which tests to run.
+//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`],
+//! [`RUN_CRASH_SAFETY_TESTS`], and [`RUN_BYZANTINE_SAFETY_TESTS`]
+//! control which tests to run.
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
@@ -530,9 +531,6 @@ fn run_tests<
         if RUN_CRASH_SAFETY_TESTS {
             // safety experiments (Crash + Byz., 40%)
             for (n, k) in &SHRED_COMBINATIONS {
-                if *k == 320 {
-                    continue;
-                }
                 info!("{test_name} safety test (crash=0.4, n={n}, k={k})");
                 let tester =
                     RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);

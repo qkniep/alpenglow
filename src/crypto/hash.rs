@@ -8,12 +8,17 @@
 
 use sha2::{Digest, Sha256};
 
-/// Regular hash type that should be used almost always.
+/// Regular hash that should be used in most cases.
+///
+/// This provides 256-bit resistance against (second) preimage attacks
+/// and 128-bit resistance against collision attacks.
 pub type Hash = [u8; 32];
 
-/// A short hash that only provides 64 bit resistance against collision attacks.
+/// Short hash that should be used carefully.
 ///
-/// It should only ever be used if you are 100% certain that (second) preimage
+/// It provides 128-bit resistance agains (second) preimage attacks,
+/// but only provides 64-bit resistance against collision attacks.
+/// Only use this if you are 100% certain that (second) preimage
 /// resistance is enough for the use case. Otherwise, use `Hash`.
 pub type ShortHash = [u8; 16];
 
@@ -35,7 +40,7 @@ pub fn hash_all(data: &[&[u8]]) -> Hash {
     hasher.finalize().into()
 }
 
-/// Truncates the given hash to a shorter 128-bit hash.
+/// Truncates the given hash into a [`ShortHash`].
 #[must_use]
 pub fn truncate(hash: Hash) -> ShortHash {
     hash[..16].try_into().expect("wrong length")
