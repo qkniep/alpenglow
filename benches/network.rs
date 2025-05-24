@@ -1,17 +1,12 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::Slot;
 use alpenglow::consensus::Vote;
-use alpenglow::crypto::signature::SecretKey;
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::NetworkMessage;
-use alpenglow::shredder::{
-    MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice,
-};
+use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice};
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
 
 fn main() {
     // run registered benchmarks.
