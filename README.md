@@ -60,7 +60,7 @@ The more extensive test suite, including some slow tests, can be run like this:
 For security related issues, please do not file a public issue on GitHub,
 instead reach out directly via email to:
 
-qkniep (at) anza (dot) xyz
+quentin (at) anza (dot) xyz
 
 ## License
 
