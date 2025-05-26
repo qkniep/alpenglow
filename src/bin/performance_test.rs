@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,12 +12,10 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
-use alpenglow::network::simulated::ping_data::{find_closest_ping_server, get_ping};
-use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork};
-use alpenglow::{Alpenglow, Stake, ValidatorId, ValidatorInfo};
+use alpenglow::{Alpenglow, ValidatorInfo};
 use color_eyre::Result;
-use log::{info, warn};
+use log::info;
 use logforth::append;
 use logforth::filter::EnvFilter;
 
@@ -34,98 +32,7 @@ async fn main() -> Result<()> {
         })
         .apply();
 
-    // turn ValidatorData into ValidatorInfo
-    let mut validators = Vec::new();
-    for v in VALIDATOR_DATA.iter() {
-        if !(v.is_active && v.delinquent == Some(false)) {
-            continue;
-        }
-        let stake = v.active_stake.unwrap_or(0);
-        if stake > 0 {
-            let sk = SecretKey::new(&mut rand::rng());
-            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-            validators.push(ValidatorInfo {
-                id: validators.len() as ValidatorId,
-                stake,
-                pubkey: sk.to_pk(),
-                voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            });
-        }
-    }
-
-    // assign closest ping servers to validators
-    let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-    let mut validators_with_ping_data = Vec::new();
-    let mut stake_with_ping_server = 0;
-    for v in VALIDATOR_DATA.iter() {
-        let stake = v.active_stake.unwrap_or(0);
-        if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
-            continue;
-        }
-        let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
-            continue;
-        };
-        let ping_server = find_closest_ping_server(lat.parse().unwrap(), lon.parse().unwrap());
-        stake_with_ping_server += stake;
-        let sk = SecretKey::new(&mut rand::rng());
-        let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-        validators_with_ping_data.push((
-            ValidatorInfo {
-                id: validators_with_ping_data.len() as ValidatorId,
-                stake,
-                pubkey: sk.to_pk(),
-                voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            },
-            ping_server,
-        ));
-    }
-    warn!(
-        "discarding {:.2}% of validators w/o ping server",
-        100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64
-    );
-
-    // determine pings of validator pairs
-    let mut nodes_without_ping = HashSet::new();
-    for (v1, p1) in &validators_with_ping_data {
-        for (v2, p2) in &validators_with_ping_data {
-            if get_ping(p1.id, p2.id).is_none() {
-                nodes_without_ping.insert(v1.id);
-                nodes_without_ping.insert(v2.id);
-            }
-        }
-    }
-    warn!(
-        "discarding {:.2}% of nodes w/o ping",
-        nodes_without_ping.len() as f64 * 100.0 / validators_with_ping_data.len() as f64
-    );
-    warn!("{} validators without ping data", nodes_without_ping.len());
-    validators_with_ping_data.retain(|(v, _)| !nodes_without_ping.contains(&v.id));
-    info!(
-        "{} validators with ping data",
-        validators_with_ping_data.len()
-    );
-
-    validators_with_ping_data
-        .iter_mut()
-        .enumerate()
-        .for_each(|(i, v)| {
-            v.0.id = i as ValidatorId;
-        });
-    let mut validator_to_ping_server = HashMap::new();
-    for (v, p) in &validators_with_ping_data {
-        validator_to_ping_server.insert(v.id, *p);
-    }
-
-    let validators_with_ping_data: Vec<_> =
-        validators_with_ping_data.into_iter().map(|v| v.0).collect();
     latency_test(11).await;
-    // latency_test(validators_with_ping_data, validator_to_ping_server);
 
     Ok(())
 }

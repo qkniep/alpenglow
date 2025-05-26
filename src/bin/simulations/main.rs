@@ -36,26 +36,23 @@ mod bandwidth;
 mod latency;
 mod rotor_safety;
 
-use std::collections::HashSet;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alpenglow::crypto::aggsig;
-use alpenglow::crypto::signature::SecretKey;
+use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::sampling_strategy::{
     DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
     UniformSampler,
 };
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use alpenglow::network::simulated::ping_data::{PingServer, find_closest_ping_server, get_ping};
+use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::network::simulated::stake_distribution::{
     FIVE_HUBS_VALIDATOR_DATA, STOCK_EXCHANGES_VALIDATOR_DATA, SUI_VALIDATOR_DATA, VALIDATOR_DATA,
-    ValidatorData,
+    ValidatorData, validators_from_validator_data,
 };
-use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use color_eyre::Result;
-use log::{info, warn};
+use log::info;
 use logforth::append;
 use logforth::filter::EnvFilter;
 use rayon::prelude::*;
@@ -65,18 +62,18 @@ use latency::{LatencyTest, LatencyTestStage};
 use rotor_safety::RotorSafetyTest;
 
 const RUN_BANDWIDTH_TESTS: bool = false;
-const RUN_LATENCY_TESTS: bool = false;
-const RUN_CRASH_SAFETY_TESTS: bool = true;
+const RUN_LATENCY_TESTS: bool = true;
+const RUN_CRASH_SAFETY_TESTS: bool = false;
 const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
 
-const SAMPLING_STRATEGIES: [&str; 5] = [
+const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
     "stake_weighted",
-    "fa1_iid",
-    "fa2",
-    "fa1_partition",
+    // "fa1_iid",
+    // "fa2",
+    // "fa1_partition",
     // "decaying_acceptance",
-    "turbine",
+    // "turbine",
 ];
 
 const MAX_BANDWIDTHS: [u64; 4] = [
@@ -89,11 +86,11 @@ const MAX_BANDWIDTHS: [u64; 4] = [
 const TOTAL_SHREDS_FA1: u64 = 64;
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
-    (32, 64),
+    // (32, 64),
     // (32, 80),
     // (32, 96),
     // (32, 320),
-    // (64, 128),
+    (64, 128),
     // (128, 256),
     // (256, 512),
 ];
@@ -286,94 +283,6 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
     }
 }
 
-fn validators_from_validator_data(
-    validator_data: &[ValidatorData],
-) -> (
-    Vec<ValidatorInfo>,
-    Vec<(ValidatorInfo, &'static PingServer)>,
-) {
-    let mut validators = Vec::new();
-    for v in validator_data.iter() {
-        if !(v.is_active && v.delinquent == Some(false)) {
-            continue;
-        }
-        let stake = v.active_stake.unwrap_or(0);
-        if stake > 0 {
-            let id = validators.len() as ValidatorId;
-            let sk = SecretKey::new(&mut rand::rng());
-            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-            validators.push(ValidatorInfo {
-                id,
-                stake,
-                pubkey: sk.to_pk(),
-                voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            });
-        }
-    }
-
-    // assign closest ping servers to validators
-    let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-    let mut validators_with_ping_data = Vec::new();
-    let mut stake_with_ping_server = 0;
-    for v in validator_data.iter() {
-        let stake = v.active_stake.unwrap_or(0);
-        if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
-            continue;
-        }
-        let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
-            continue;
-        };
-        let ping_server = find_closest_ping_server(lat.parse().unwrap(), lon.parse().unwrap());
-        stake_with_ping_server += stake;
-        let sk = SecretKey::new(&mut rand::rng());
-        let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-        validators_with_ping_data.push((
-            ValidatorInfo {
-                id: validators_with_ping_data.len() as ValidatorId,
-                stake,
-                pubkey: sk.to_pk(),
-                voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            },
-            ping_server,
-        ));
-    }
-    let frac_wo_ping_server = 100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64;
-    warn!("discarding {frac_wo_ping_server:.2}% of validators w/o ping server");
-
-    // determine pings of validator pairs
-    let mut nodes_without_ping = HashSet::new();
-    for (v1, p1) in &validators_with_ping_data {
-        for (v2, p2) in &validators_with_ping_data {
-            if get_ping(p1.id, p2.id).is_none()
-                || (get_ping(p2.id, p1.id) == Some(0.0) && p2.id != p1.id)
-            {
-                nodes_without_ping.insert(v1.id);
-                nodes_without_ping.insert(v2.id);
-            }
-        }
-    }
-    let frac_wo_ping =
-        nodes_without_ping.len() as f64 * 100.0 / validators_with_ping_data.len() as f64;
-    warn!("discarding {frac_wo_ping:.2}% of nodes w/o ping");
-    warn!("{} validators without ping data", nodes_without_ping.len());
-    validators_with_ping_data.retain(|(v, _)| !nodes_without_ping.contains(&v.id));
-    let vals_left = validators_with_ping_data.len();
-    info!("{vals_left} validators with ping data",);
-
-    // give validators with ping data consecutive IDs
-    for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
-        v.0.id = i as ValidatorId;
-    }
-
-    (validators, validators_with_ping_data)
-}
-
 fn run_tests<
     L: SamplingStrategy + Sync + Send + Clone,
     R: SamplingStrategy + Sync + Send + Clone,
@@ -436,7 +345,7 @@ fn run_tests<
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
-            let mut tester = LatencyTest::new(
+            let tester = LatencyTest::new(
                 validators_with_ping_data,
                 ping_leader_sampler.clone(),
                 ping_rotor_sampler.clone(),
@@ -444,7 +353,7 @@ fn run_tests<
                 k,
             );
             let test_name = format!("{}-{}-{}", test_name, n, k);
-            tester.run_many(&test_name, 10_000, LatencyTestStage::Final);
+            tester.run_many(&test_name, 1000, LatencyTestStage::Final);
         }
 
         // latency experiments with fixed leaders
@@ -509,7 +418,7 @@ fn run_tests<
                 let test_name = format!("{}-{}-{}", test_name, n, k);
                 tester.run_many_with_leader(
                     &test_name,
-                    10_000,
+                    1000,
                     LatencyTestStage::Final,
                     leader.clone(),
                 );

@@ -20,14 +20,18 @@
 //! }
 //! ```
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::sync::LazyLock;
 
+use log::{info, warn};
 use serde::Deserialize;
 
-use crate::Stake;
+use crate::crypto::aggsig;
+use crate::crypto::signature::SecretKey;
+use crate::{Stake, ValidatorId, ValidatorInfo};
 
-use super::ping_data::coordinates_for_city;
+use super::ping_data::{PingServer, coordinates_for_city, find_closest_ping_server, get_ping};
 
 /// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
@@ -169,6 +173,100 @@ pub static STOCK_EXCHANGES_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLo
         ("Tokyo".to_string(), 0.1),
     ])
 });
+
+/// Loads and converts a list of [`ValidatorData`], augmenting it with ping data.
+///
+/// Returns a tuple `(all_val, val_with_ping)`, where:
+///   - `all_val` is a list [`ValidatorInfo`] for all validators
+///   - `val_with_ping` is a list of tuples of [`ValidatorInfo`] and [`PingServer`]
+///     for validators for which we find ping data in the dataset
+pub fn validators_from_validator_data(
+    validator_data: &[ValidatorData],
+) -> (
+    Vec<ValidatorInfo>,
+    Vec<(ValidatorInfo, &'static PingServer)>,
+) {
+    let mut validators = Vec::new();
+    for v in validator_data.iter() {
+        if !(v.is_active && v.delinquent == Some(false)) {
+            continue;
+        }
+        let stake = v.active_stake.unwrap_or(0);
+        if stake > 0 {
+            let id = validators.len() as ValidatorId;
+            let sk = SecretKey::new(&mut rand::rng());
+            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+            validators.push(ValidatorInfo {
+                id,
+                stake,
+                pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
+                all2all_address: String::new(),
+                disseminator_address: String::new(),
+                repair_address: String::new(),
+            });
+        }
+    }
+
+    // assign closest ping servers to validators
+    let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+    let mut validators_with_ping_data = Vec::new();
+    let mut stake_with_ping_server = 0;
+    for v in validator_data.iter() {
+        let stake = v.active_stake.unwrap_or(0);
+        if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
+            continue;
+        }
+        let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
+            continue;
+        };
+        let ping_server = find_closest_ping_server(lat.parse().unwrap(), lon.parse().unwrap());
+        stake_with_ping_server += stake;
+        let sk = SecretKey::new(&mut rand::rng());
+        let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+        validators_with_ping_data.push((
+            ValidatorInfo {
+                id: validators_with_ping_data.len() as ValidatorId,
+                stake,
+                pubkey: sk.to_pk(),
+                voting_pubkey: voting_sk.to_pk(),
+                all2all_address: String::new(),
+                disseminator_address: String::new(),
+                repair_address: String::new(),
+            },
+            ping_server,
+        ));
+    }
+    let frac_wo_ping_server = 100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64;
+    warn!("discarding {frac_wo_ping_server:.2}% of validators w/o ping server");
+
+    // determine pings of validator pairs
+    let mut nodes_without_ping = HashSet::new();
+    for (v1, p1) in &validators_with_ping_data {
+        for (v2, p2) in &validators_with_ping_data {
+            if get_ping(p1.id, p2.id).is_none()
+                || (get_ping(p2.id, p1.id) == Some(0.0) && p2.id != p1.id)
+            {
+                nodes_without_ping.insert(v1.id);
+                nodes_without_ping.insert(v2.id);
+            }
+        }
+    }
+    let frac_wo_ping =
+        nodes_without_ping.len() as f64 * 100.0 / validators_with_ping_data.len() as f64;
+    warn!("discarding {frac_wo_ping:.2}% of nodes w/o ping");
+    warn!("{} validators without ping data", nodes_without_ping.len());
+    validators_with_ping_data.retain(|(v, _)| !nodes_without_ping.contains(&v.id));
+    let vals_left = validators_with_ping_data.len();
+    info!("{vals_left} validators with ping data",);
+
+    // give validators with ping data consecutive IDs
+    for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
+        v.0.id = i as ValidatorId;
+    }
+
+    (validators, validators_with_ping_data)
+}
 
 /// Generates an artificial stake distribution.
 ///
