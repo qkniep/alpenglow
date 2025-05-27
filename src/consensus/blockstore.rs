@@ -42,6 +42,8 @@ pub struct Blockstore {
     first_shred_seen: BTreeSet<Slot>,
     /// Stores double-Merkle tree for each canonical block.
     double_merkle_trees: BTreeMap<Slot, MerkleTree>,
+    /// Stores last slice index for each slot.
+    last_slices: BTreeMap<Slot, usize>,
 
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
@@ -65,6 +67,7 @@ impl Blockstore {
             alternatives: BTreeMap::new(),
             first_shred_seen: BTreeSet::new(),
             double_merkle_trees: BTreeMap::new(),
+            last_slices: BTreeMap::new(),
             votor_channel,
             epoch_info,
             merkle_root_cache: HashMap::new(),
@@ -94,11 +97,17 @@ impl Blockstore {
                 .insert((slot, slice), shred.merkle_root());
         }
 
-        // store and handle shred only if we don't already have it
+        // store and handle this shred if and only if:
+        //   - we don't already have it in the blockstore
+        //   - it is not (known to be) after the last slice
         let exists = slice_shreds
             .iter()
             .any(|s| s.index_in_slice() == index && shred.is_data() == s.is_data());
-        if exists {
+        let after_last = match self.last_slices.get(&slot) {
+            Some(last_slice) => slice > *last_slice,
+            None => false,
+        };
+        if exists || after_last {
             return None;
         }
         slice_shreds.push(shred);
@@ -121,13 +130,29 @@ impl Blockstore {
     /// Returns `true` if a slice was reconstructed, `false` otherwise.
     fn try_reconstruct_slice(&mut self, slot: Slot, slice: usize) -> bool {
         let slice_shreds = self.shreds.get(&(slot, slice)).unwrap();
-        if slice_shreds.len() >= shredder::DATA_SHREDS && self.get_slice(slot, slice).is_none() {
-            let reconstructed_slice = RegularShredder::deshred(slice_shreds).unwrap();
-            self.slices.insert((slot, slice), reconstructed_slice);
-            trace!("reconstructed slice {slice} in slot {slot}");
-            return true;
+        if slice_shreds.len() < shredder::DATA_SHREDS || self.get_slice(slot, slice).is_some() {
+            return false;
         }
-        false
+
+        let reconstructed_slice = RegularShredder::deshred(slice_shreds).unwrap();
+        if reconstructed_slice.is_last {
+            self.last_slices.insert(slot, slice);
+
+            // delete shreds after last, if there are any
+            let keys_to_delete: Vec<_> = self
+                .shreds
+                .range(&(slot, slice + 1)..&(slot + 1, 0))
+                .map(|(k, _)| k)
+                .copied()
+                .collect();
+            for key in keys_to_delete {
+                self.shreds.remove(&key);
+            }
+        }
+
+        self.slices.insert((slot, slice), reconstructed_slice);
+        trace!("reconstructed slice {slice} in slot {slot}");
+        true
     }
 
     /// Reconstructs the block if the blockstore contains all slices.
@@ -138,66 +163,55 @@ impl Blockstore {
         if self.canonical_block_hash(slot).is_some() {
             return None;
         }
-        if let Some(last_slice) = self.last_slice_index(slot) {
-            if self.stored_slices_for_slot(slot) == last_slice + 1 {
-                // calculate double-Merkle tree & block hash
-                let merkle_roots: Vec<_> = self
-                    .slices
-                    .range(&(slot, 0)..)
-                    .take_while(|(key, _)| key.0 == slot)
-                    .map(|(_, s)| s.merkle_root.unwrap())
-                    .collect();
-                let tree = MerkleTree::new(&merkle_roots);
-                let block_hash = tree.get_root();
-                self.double_merkle_trees.insert(slot, tree);
-
-                // reconstruct block header
-                let first_slice = self.slices.get(&(slot, 0)).unwrap();
-                let parent_slot = u64::from_be_bytes(first_slice.data[0..8].try_into().unwrap());
-                let parent_hash = first_slice.data[8..40].try_into().unwrap();
-                self.canonical.insert(slot, block_hash);
-                // TODO: reconstruct actual block content
-                let block = Block {
-                    slot,
-                    block_hash,
-                    parent: parent_slot,
-                    parent_hash,
-                    transactions: vec![],
-                };
-                self.blocks.insert((slot, block_hash), block);
-
-                // clean up raw slices
-                for slice_index in 0..=last_slice {
-                    self.slices.remove(&(slot, slice_index));
-                }
-
-                // delete shreds after last, if there are any
-                let keys_to_delete: Vec<_> = self
-                    .shreds
-                    .range(&(slot, last_slice + 1)..&(slot + 1, 0))
-                    .map(|(k, _)| k)
-                    .copied()
-                    .collect();
-                for key in keys_to_delete {
-                    self.shreds.remove(&key);
-                }
-
-                let block_info = BlockInfo {
-                    hash: block_hash,
-                    parent_slot,
-                    parent_hash,
-                };
-                let event = VotorEvent::Block { slot, block_info };
-                self.votor_channel.send(event).await.unwrap();
-                let hash = &hex::encode(block_hash)[..8];
-                let phash = &hex::encode(parent_hash)[..8];
-                debug!(
-                    "reconstructed block {hash} in slot {slot} with parent {phash} in slot {parent_slot}"
-                );
-                return Some((slot, block_info));
-            }
+        let last_slice = self.last_slices.get(&slot)?;
+        if self.stored_slices_for_slot(slot) != last_slice + 1 {
+            return None;
         }
-        None
+
+        // calculate double-Merkle tree & block hash
+        let merkle_roots: Vec<_> = self
+            .slices
+            .range(&(slot, 0)..)
+            .take_while(|(key, _)| key.0 == slot)
+            .map(|(_, s)| s.merkle_root.unwrap())
+            .collect();
+        let tree = MerkleTree::new(&merkle_roots);
+        let block_hash = tree.get_root();
+        self.double_merkle_trees.insert(slot, tree);
+
+        // reconstruct block header
+        let first_slice = self.slices.get(&(slot, 0)).unwrap();
+        let parent_slot = u64::from_be_bytes(first_slice.data[0..8].try_into().unwrap());
+        let parent_hash = first_slice.data[8..40].try_into().unwrap();
+        self.canonical.insert(slot, block_hash);
+        // TODO: reconstruct actual block content
+        let block = Block {
+            slot,
+            block_hash,
+            parent: parent_slot,
+            parent_hash,
+            transactions: vec![],
+        };
+        self.blocks.insert((slot, block_hash), block);
+
+        // clean up raw slices
+        for slice_index in 0..=*last_slice {
+            self.slices.remove(&(slot, slice_index));
+        }
+
+        let block_info = BlockInfo {
+            hash: block_hash,
+            parent_slot,
+            parent_hash,
+        };
+        let event = VotorEvent::Block { slot, block_info };
+        self.votor_channel.send(event).await.unwrap();
+        let hash = &hex::encode(block_hash)[..8];
+        let phash = &hex::encode(parent_hash)[..8];
+        debug!(
+            "reconstructed block {hash} in slot {slot} with parent {phash} in slot {parent_slot}"
+        );
+        return Some((slot, block_info));
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
@@ -209,9 +223,9 @@ impl Blockstore {
         self.alternatives = self.alternatives.split_off(&slot);
     }
 
-    /// Gives the block hash of the canonical block we hold for a slot, if any.
+    /// Gives the canonical block hash for a given `slot`, if any.
     ///
-    /// This is usually the first version of the block we received.
+    /// This is usually the first version of the block stored in the blockstore.
     /// Returns `None` if blockstore does not hold any version of the block yet.
     pub fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
         self.canonical.get(&slot).copied()
@@ -245,14 +259,6 @@ impl Blockstore {
             .and_then(|v| v.iter().find(|s| s.index_in_slice() == shred))
     }
 
-    /// Gives index of last slice (i.e. marked as `is_last`) for a given `slot`, if any.
-    ///
-    /// Returns `None` if blockstore does not hold the last slice yet.
-    pub fn last_slice_index(&self, slot: Slot) -> Option<usize> {
-        let mut slot_slices = self.slices.range((slot, 0)..=(slot, usize::MAX));
-        slot_slices.find(|(_, s)| s.is_last).map(|(k, _)| k.1)
-    }
-
     /// Gives the number of stored slices for a given `slot`.
     pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
         self.slices
@@ -261,7 +267,7 @@ impl Blockstore {
             .count()
     }
 
-    /// Gives the number of stored shreds for a given slot (across all slice).
+    /// Gives the number of stored shreds for a given `slot` (across all slices).
     pub fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
         self.shreds
             .range(&(slot, 0)..)
