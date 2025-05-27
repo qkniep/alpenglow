@@ -323,9 +323,9 @@ where
                 // PERF: move expensive add_shred() call out of block production
                 let mut blockstore = self.blockstore.write().await;
                 let block = blockstore.add_shred(s).await;
-                if let Some((slot, hash, parent_slot, parent_hash)) = block {
+                if let Some((slot, block_info)) = block {
                     let mut pool = self.pool.write().await;
-                    pool.add_block(slot, hash, parent_slot, parent_hash).await;
+                    pool.add_block(slot, block_info).await;
                 }
             }
 
@@ -370,9 +370,9 @@ where
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
         self.disseminator.forward(&shred).await?;
         let b = self.blockstore.write().await.add_shred(shred).await;
-        if let Some((slot, hash, parent_slot, parent_hash)) = b {
+        if let Some((slot, block_info)) = b {
             let mut guard = self.pool.write().await;
-            guard.add_block(slot, hash, parent_slot, parent_hash).await;
+            guard.add_block(slot, block_info).await;
         }
         Ok(())
     }

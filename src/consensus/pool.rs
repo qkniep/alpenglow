@@ -20,6 +20,7 @@ use crate::consensus::SLOTS_PER_WINDOW;
 use crate::crypto::Hash;
 use crate::{Slot, ValidatorId};
 
+use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, Vote};
 
@@ -249,13 +250,12 @@ impl Pool {
     ///
     /// This should be called once for every valid block (e.g. directly by blockstore).
     /// Ensures that the parent information is available for safe-to-notar checks.
-    pub async fn add_block(
-        &mut self,
-        slot: Slot,
-        block_hash: Hash,
-        parent_slot: Slot,
-        parent_hash: Hash,
-    ) {
+    pub async fn add_block(&mut self, slot: Slot, block_info: BlockInfo) {
+        let BlockInfo {
+            hash: block_hash,
+            parent_slot,
+            parent_hash,
+        } = block_info;
         if let Some(parent_state) = self.slot_states.get(&parent_slot) {
             if parent_state.is_notar_fallback(&parent_hash) {
                 if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
