@@ -18,6 +18,7 @@ use crate::{Block, Slot};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
 
+/// Information about a block within a slot.
 #[derive(Clone, Copy, Debug)]
 pub struct BlockInfo {
     pub(crate) hash: Hash,
@@ -77,6 +78,8 @@ impl Blockstore {
     /// Stores a new shred in the blockstore.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
+    /// If the added shred belongs to the last slice, all later shreds are deleted.
+    ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
@@ -84,6 +87,7 @@ impl Blockstore {
         let slot = shred.slot();
         let slice = shred.slice();
         let index = shred.index_in_slice();
+        let is_last_slice = shred.is_last_slice();
         let slice_shreds = self.shreds.entry((slot, slice)).or_default();
 
         // check Merkle root and signature
@@ -98,7 +102,7 @@ impl Blockstore {
         }
 
         // store and handle this shred if and only if:
-        //   - we don't already have it in the blockstore
+        //   - it is not yet stored in the blockstore
         //   - it is not (known to be) after the last slice
         let exists = slice_shreds
             .iter()
@@ -112,12 +116,29 @@ impl Blockstore {
         }
         slice_shreds.push(shred);
 
-        if self.first_shred_seen.contains(&slot) {
-            self.first_shred_seen.insert(slot);
+        // store last slice index, delete later shreds
+        if is_last_slice && !self.last_slices.contains_key(&slot) {
+            self.last_slices.insert(slot, slice);
+
+            // delete shreds after last slice, if there are any
+            let keys_to_delete: Vec<_> = self
+                .shreds
+                .range(&(slot, slice + 1)..&(slot + 1, 0))
+                .map(|(k, _)| k)
+                .copied()
+                .collect();
+            for key in keys_to_delete {
+                self.shreds.remove(&key);
+            }
+        }
+
+        // maybe send first shred notification
+        if self.first_shred_seen.insert(slot) {
             let event = VotorEvent::FirstShred(slot);
             self.votor_channel.send(event).await.unwrap();
         }
 
+        // maybe reconstruct slice and block
         if self.try_reconstruct_slice(slot, slice) {
             self.try_reconstruct_block(slot).await
         } else {
@@ -135,21 +156,6 @@ impl Blockstore {
         }
 
         let reconstructed_slice = RegularShredder::deshred(slice_shreds).unwrap();
-        if reconstructed_slice.is_last {
-            self.last_slices.insert(slot, slice);
-
-            // delete shreds after last, if there are any
-            let keys_to_delete: Vec<_> = self
-                .shreds
-                .range(&(slot, slice + 1)..&(slot + 1, 0))
-                .map(|(k, _)| k)
-                .copied()
-                .collect();
-            for key in keys_to_delete {
-                self.shreds.remove(&key);
-            }
-        }
-
         self.slices.insert((slot, slice), reconstructed_slice);
         trace!("reconstructed slice {slice} in slot {slot}");
         true
@@ -211,7 +217,7 @@ impl Blockstore {
         debug!(
             "reconstructed block {hash} in slot {slot} with parent {phash} in slot {parent_slot}"
         );
-        return Some((slot, block_info));
+        Some((slot, block_info))
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
