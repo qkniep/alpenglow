@@ -18,6 +18,13 @@ use crate::{Block, Slot};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
 
+#[derive(Clone, Copy, Debug)]
+pub struct BlockInfo {
+    pub(crate) hash: Hash,
+    pub(crate) parent_slot: Slot,
+    pub(crate) parent_hash: Hash,
+}
+
 /// Blockstore is the fundamental data structure holding block data per slot.
 // TODO: extract state for each slot into struct?
 pub struct Blockstore {
@@ -165,12 +172,12 @@ impl Blockstore {
                     self.shreds.remove(&key);
                 }
 
-                let event = VotorEvent::Block {
-                    slot,
+                let block_info = BlockInfo {
                     hash: block_hash,
                     parent_slot,
                     parent_hash,
                 };
+                let event = VotorEvent::Block { slot, block_info };
                 self.votor_channel.send(event).await.unwrap();
                 let hash = &hex::encode(block_hash)[..8];
                 let phash = &hex::encode(parent_hash)[..8];

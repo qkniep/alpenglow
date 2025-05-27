@@ -22,14 +22,8 @@ use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
 
+use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_EARLY_TIMEOUT, SLOTS_PER_WINDOW, Vote};
-
-#[derive(Clone, Copy, Debug)]
-struct BlockInfo {
-    hash: Hash,
-    parent_slot: Slot,
-    parent_hash: Hash,
-}
 
 /// Events that Votor is interested in.
 /// These are emitted by [`super::Pool`], [`super::Blockstore`] and [`Votor`] itself.
@@ -54,12 +48,7 @@ pub enum VotorEvent {
     /// First valid shred of the leader's block was received for the block.
     FirstShred(Slot),
     /// New (complete) block was received in blockstore.
-    Block {
-        slot: Slot,
-        hash: Hash,
-        parent_slot: Slot,
-        parent_hash: Hash,
-    },
+    Block { slot: Slot, block_info: BlockInfo },
 
     /// Regular timeout for the given slot has fired.
     Timeout(Slot),
@@ -198,25 +187,15 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 VotorEvent::FirstShred(slot) => {
                     self.received_shred.insert(slot);
                 }
-                VotorEvent::Block {
-                    slot,
-                    hash,
-                    parent_slot,
-                    parent_hash,
-                } => {
+                VotorEvent::Block { slot, block_info } => {
                     if self.voted.contains(&slot) {
-                        let h = &hex::encode(hash)[..8];
+                        let h = &hex::encode(block_info.hash)[..8];
                         warn!("not voting for block {h} in slot {slot}, already voted");
                         continue;
                     }
-                    if self.try_notar(slot, hash, parent_slot, parent_hash).await {
+                    if self.try_notar(slot, block_info).await {
                         self.check_pending_blocks().await;
                     } else {
-                        let block_info = BlockInfo {
-                            hash,
-                            parent_slot,
-                            parent_hash,
-                        };
                         self.pending_blocks.insert(slot, block_info);
                     }
                 }
@@ -264,13 +243,12 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     /// Sends a notarization vote for the given block if the conditions are met.
     ///
     /// Returns `true` iff we decided to send a notarization vote for the block.
-    async fn try_notar(
-        &mut self,
-        slot: Slot,
-        hash: Hash,
-        parent_slot: Slot,
-        parent_hash: Hash,
-    ) -> bool {
+    async fn try_notar(&mut self, slot: Slot, block_info: BlockInfo) -> bool {
+        let BlockInfo {
+            hash,
+            parent_slot,
+            parent_hash,
+        } = block_info;
         let first_slot = slot / SLOTS_PER_WINDOW * SLOTS_PER_WINDOW;
         if slot == first_slot {
             let valid_parent = self
@@ -333,13 +311,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         let slots: Vec<_> = self.pending_blocks.keys().copied().collect();
         for slot in &slots {
             if let Some(block_info) = self.pending_blocks.get(slot) {
-                let BlockInfo {
-                    hash,
-                    parent_slot,
-                    parent_hash,
-                } = block_info;
-                self.try_notar(*slot, *hash, *parent_slot, *parent_hash)
-                    .await;
+                self.try_notar(*slot, *block_info).await;
             }
         }
     }
