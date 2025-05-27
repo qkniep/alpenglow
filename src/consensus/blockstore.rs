@@ -53,6 +53,9 @@ pub struct Blockstore {
 
 impl Blockstore {
     /// Initializes a new empty blockstore.
+    ///
+    /// For each later reconstructed block this blockstore will send a
+    /// [`VotorEvent::Block`] to the provided `votor_channel`.
     pub fn new(epoch_info: Arc<EpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
         Self {
             shreds: BTreeMap::new(),
@@ -69,9 +72,12 @@ impl Blockstore {
     }
 
     /// Stores a new shred in the blockstore.
-    /// Reconstructs the corresponding slice and block if possible.
+    ///
+    /// Reconstructs the corresponding slice and block if possible and necessary.
+    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
+    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    pub async fn add_shred(&mut self, shred: Shred) -> Option<(Slot, Hash, Slot, Hash)> {
+    pub async fn add_shred(&mut self, shred: Shred) -> Option<(Slot, BlockInfo)> {
         let slot = shred.slot();
         let slice = shred.slice();
         let index = shred.index_in_slice();
@@ -93,7 +99,6 @@ impl Blockstore {
             .iter()
             .any(|s| s.index_in_slice() == index && shred.is_data() == s.is_data());
         if exists {
-            // trace!(slot, slice, index, "dropping duplicate shred");
             return None;
         }
         slice_shreds.push(shred);
@@ -111,7 +116,9 @@ impl Blockstore {
         }
     }
 
-    // Reconstructs the slice if the blockstore contains enough shreds.
+    /// Reconstructs the slice if the blockstore contains enough shreds.
+    ///
+    /// Returns `true` if a slice was reconstructed, `false` otherwise.
     fn try_reconstruct_slice(&mut self, slot: Slot, slice: usize) -> bool {
         let slice_shreds = self.shreds.get(&(slot, slice)).unwrap();
         if slice_shreds.len() >= shredder::DATA_SHREDS && self.get_slice(slot, slice).is_none() {
@@ -123,8 +130,11 @@ impl Blockstore {
         false
     }
 
-    // Reconstructs the block if the blockstore contains all slices.
-    async fn try_reconstruct_block(&mut self, slot: Slot) -> Option<(Slot, Hash, Slot, Hash)> {
+    /// Reconstructs the block if the blockstore contains all slices.
+    ///
+    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
+    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    async fn try_reconstruct_block(&mut self, slot: Slot) -> Option<(Slot, BlockInfo)> {
         if self.canonical_block_hash(slot).is_some() {
             return None;
         }
@@ -184,7 +194,7 @@ impl Blockstore {
                 debug!(
                     "reconstructed block {hash} in slot {slot} with parent {phash} in slot {parent_slot}"
                 );
-                return Some((slot, block_hash, parent_slot, parent_hash));
+                return Some((slot, block_info));
             }
         }
         None
@@ -199,42 +209,51 @@ impl Blockstore {
         self.alternatives = self.alternatives.split_off(&slot);
     }
 
-    /// Gives the block hash of the canonical block we hold for a slot.
+    /// Gives the block hash of the canonical block we hold for a slot, if any.
+    ///
     /// This is usually the first version of the block we received.
     /// Returns `None` if blockstore does not hold any version of the block yet.
     pub fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
         self.canonical.get(&slot).copied()
     }
 
-    /// Gives any relevant alternative block hashes for a given slot.
+    /// Gives any relevant alternative block hashes for a given slot, if any.
     pub fn alternative_block_hashes(&self, slot: Slot) -> Option<&[Hash]> {
         self.alternatives.get(&slot).map(|v| v.as_ref())
     }
 
-    /// Returns reference to stored block for the given `slot` and `hash`.
+    /// Gives reference to stored block for the given `slot` and `hash`.
+    ///
+    /// Returns `None` if blockstore does not hold that block yet.
     pub fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
         self.blocks.get(&(slot, hash))
     }
 
-    /// Returns reference to stored slice for the given `slot` and `slice` index.
+    /// Gives reference to stored slice for the given `slot` and `slice` index.
+    ///
+    /// Returns `None` if blockstore does not hold that slice yet.
     pub fn get_slice(&self, slot: Slot, slice: usize) -> Option<&Slice> {
         self.slices.get(&(slot, slice))
     }
 
-    /// Returns reference to stored shred for the given `slot`, `slice` and `shred` index.
+    /// Gives reference to stored shred for the given `slot`, `slice` and `shred` index.
+    ///
+    /// Returns `None` if blockstore does not hold that shred yet.
     pub fn get_shred(&self, slot: Slot, slice: usize, shred: usize) -> Option<&Shred> {
         self.shreds
             .get(&(slot, slice))
             .and_then(|v| v.iter().find(|s| s.index_in_slice() == shred))
     }
 
-    /// Gives the index of the last stored slice for a given slot.
+    /// Gives index of last slice (i.e. marked as `is_last`) for a given `slot`, if any.
+    ///
+    /// Returns `None` if blockstore does not hold the last slice yet.
     pub fn last_slice_index(&self, slot: Slot) -> Option<usize> {
         let mut slot_slices = self.slices.range((slot, 0)..=(slot, usize::MAX));
         slot_slices.find(|(_, s)| s.is_last).map(|(k, _)| k.1)
     }
 
-    /// Gives the number of stored slices for a given slot.
+    /// Gives the number of stored slices for a given `slot`.
     pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
         self.slices
             .range(&(slot, 0)..)
@@ -256,6 +275,11 @@ impl Blockstore {
         self.shreds.get(&(slot, slice)).map_or(0, |s| s.len())
     }
 
+    /// Generates a Merkle proof for the given `slice` within the given `slot`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the double-Merkle tree for the given `slot` does not exist.
     pub fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash> {
         let tree = self.double_merkle_trees.get(&slot).unwrap();
         tree.create_proof(slice)
