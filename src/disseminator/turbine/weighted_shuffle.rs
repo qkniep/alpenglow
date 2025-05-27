@@ -146,43 +146,6 @@ impl WeightedShuffle {
         }
     }
 
-    pub fn remove_index(&mut self, k: usize) {
-        let index = self.num_nodes + k; // leaf node
-        let offset = (index - 1) & BIT_MASK;
-        let index = (index - 1) >> BIT_SHIFT; // parent node
-        let Some(weight) = self.tree.get(index).map(|node| node[offset]) else {
-            // error!("WeightedShuffle::remove_index: Invalid index {k}");
-            return;
-        };
-        if weight == 0 {
-            self.remove_zero(k);
-        } else {
-            self.remove(k, weight);
-        }
-    }
-
-    fn remove_zero(&mut self, k: usize) {
-        if let Some(index) = self.zeros.iter().position(|&ix| ix == k) {
-            self.zeros.remove(index);
-        }
-    }
-
-    // Equivalent to weighted_shuffle.shuffle(&mut rng).next()
-    pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
-        if self.weight > 0 {
-            let sample =
-                <Stake as SampleUniform>::Sampler::sample_single(0, self.weight, rng).unwrap();
-            let (index, _) = self.search(sample);
-            return Some(index);
-        }
-        if self.zeros.is_empty() {
-            return None;
-        }
-        let index = <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng)
-            .unwrap();
-        self.zeros.get(index).copied()
-    }
-
     pub fn shuffle<'a, R: Rng>(&'a mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
             if self.weight > 0 {
