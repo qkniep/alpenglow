@@ -42,8 +42,8 @@ pub enum RepairRequest {
 
 /// Response messages for the repair sub-protocol.
 ///
-/// Each response type corresponds to a specific request type.
-/// Each response contains the request that it is a response to.
+/// Each response type corresponds to a specific request message type.
+/// Each response contains the request message that it is a response to.
 /// If well-formed, it thus contains the corresponding variant of [`RepairRequest`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairResponse {
@@ -62,13 +62,13 @@ pub struct Repair<N: Network> {
     sampler: StakeWeightedSampler,
     slice_counts: BTreeMap<(Slot, Hash), usize>,
     slice_roots: BTreeMap<(Slot, Hash, usize), Hash>,
-    epoch_info: Arc<EpochInfo>,
 }
 
 impl<N: Network> Repair<N> {
     /// Creates a new repair instance.
     ///
-    /// Given `network` will be used for sending and receiving requests and responses.
+    /// Given `network` will be used for sending and receiving repair messages.
+    /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
         blockstore: Arc<RwLock<Blockstore>>,
         network: N,
@@ -82,11 +82,10 @@ impl<N: Network> Repair<N> {
             sampler,
             slice_counts: BTreeMap::new(),
             slice_roots: BTreeMap::new(),
-            epoch_info,
         }
     }
 
-    ///
+    /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
         unimplemented!()
     }
@@ -97,7 +96,7 @@ impl<N: Network> Repair<N> {
     /// Otherwise, the correct response is sent back to the sender of the request.
     pub async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
         let slot = request.slot();
-        let hash = request.hash();
+        let hash = request.block_hash();
         let blockstore = self.blockstore.read().await;
         if blockstore.canonical_block_hash(slot) != Some(hash) {
             return Ok(());
@@ -127,10 +126,10 @@ impl<N: Network> Repair<N> {
     ///
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
-    /// Does nothing if the response is not well-formed.
+    /// Does nothing if the provided `response` is not well-formed.
     pub async fn handle_response(&mut self, response: RepairResponse) {
         let slot = response.slot();
-        let block_hash = response.hash();
+        let block_hash = response.block_hash();
         match response {
             RepairResponse::SliceCount(req, count) => {
                 let RepairRequest::SliceCount(_, _) = req else {
@@ -166,11 +165,13 @@ impl<N: Network> Repair<N> {
     }
 
     /// Tries to receive and deserialize messages from the underlying network.
+    ///
     /// Resolves to the next successfully deserialized [`RepairMessage`].
+    /// Ignores any potentially received [`NetworkMessage`] of a different type.
     ///
     /// # Errors
     ///
-    /// Returns `NetworkError` if the underlying network fails.
+    /// Returns [`NetworkError`] if the underlying network fails.
     pub async fn receive(&self) -> Result<RepairMessage, NetworkError> {
         loop {
             match self.network.receive().await? {
@@ -223,7 +224,8 @@ impl<N: Network> Repair<N> {
 }
 
 impl RepairRequest {
-    fn slot(&self) -> Slot {
+    /// Returns the slot number this request refers to.
+    pub fn slot(&self) -> Slot {
         match self {
             Self::SliceCount(slot, _)
             | Self::SliceRoot(slot, _, _)
@@ -231,7 +233,8 @@ impl RepairRequest {
         }
     }
 
-    fn hash(&self) -> Hash {
+    /// Returns the block hash this response refers to.
+    pub fn block_hash(&self) -> Hash {
         match self {
             Self::SliceCount(_, hash)
             | Self::SliceRoot(_, hash, _)
@@ -241,18 +244,21 @@ impl RepairRequest {
 }
 
 impl RepairResponse {
-    fn request(&self) -> &RepairRequest {
+    /// Returns a reference to the [`RepairRequest`] that this response corresponds to.
+    pub fn request(&self) -> &RepairRequest {
         match self {
             Self::SliceCount(req, _) | Self::SliceRoot(req, _, _) | Self::Shred(req, _) => req,
         }
     }
 
-    fn slot(&self) -> Slot {
+    /// Returns the slot number this response refers to.
+    pub fn slot(&self) -> Slot {
         self.request().slot()
     }
 
-    fn hash(&self) -> Hash {
-        self.request().hash()
+    /// Returns the block hash this response refers to.
+    pub fn block_hash(&self) -> Hash {
+        self.request().block_hash()
     }
 }
 

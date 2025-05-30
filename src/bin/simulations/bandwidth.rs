@@ -76,6 +76,13 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         }
     }
 
+    /// Sets the number of shreds per slice to `num_shreds`.
+    ///
+    /// Should usually call [`BandwidthTest::reset`] after this.
+    pub fn set_num_shreds(&mut self, num_shreds: usize) {
+        self.workload_test.set_num_shreds(num_shreds);
+    }
+
     /// Runs multiple iterations of the workload test.
     ///
     /// Each iteration corresponds to distributing one slice, sampling leader
@@ -191,6 +198,13 @@ impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
             leader_workload: 0,
             workload: vec![0; num_val],
         }
+    }
+
+    /// Sets the number of shreds per slice to `num_shreds`.
+    ///
+    /// Should usually call [`WorkloadTest::reset`] after this.
+    pub fn set_num_shreds(&mut self, num_shreds: usize) {
+        self.num_shreds = num_shreds;
     }
 
     /// Simulates distribution of `slices` slices via Rotor.

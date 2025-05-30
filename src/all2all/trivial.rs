@@ -4,8 +4,8 @@
 //! A trivial implementation of an all-to-all broadcast protocol.
 //!
 //! Broadcasts each message once over the underlying [`Network`].
-//! After that, the message is forgotten. The protocol is thus completely stateless.
-//! If the underlying [`Network`] is not reliable, the message might be lost.
+//! After that, the message is forgotten. The protocol is completely stateless.
+//! If the underlying [`Network`] is not reliable, the message might thus be lost.
 
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
@@ -22,6 +22,7 @@ impl<N: Network> TrivialAll2All<N> {
     /// Creates a new `TrivialAll2All` instance.
     ///
     /// Messages will be broadcast to all `validators` over the provided `network`.
+    /// For each, [`ValidatorInfo::all2all_address`] will serve as recipient.
     pub const fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
         Self {
             validators,

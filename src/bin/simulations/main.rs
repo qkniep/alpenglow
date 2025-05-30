@@ -86,11 +86,11 @@ const MAX_BANDWIDTHS: [u64; 4] = [
 const TOTAL_SHREDS_FA1: u64 = 64;
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
-    // (32, 64),
+    (32, 64),
     // (32, 80),
     // (32, 96),
     // (32, 320),
-    (64, 128),
+    // (64, 128),
     // (128, 256),
     // (256, 512),
 ];
@@ -320,20 +320,22 @@ fn run_tests<
 
         // bandwidth experiment
         MAX_BANDWIDTHS.into_par_iter().for_each(|max_bandwidth| {
+            let bandwidths = vec![max_bandwidth; validators.len()];
+            let mut tester = BandwidthTest::new(
+                validators,
+                max_bandwidth,
+                bandwidths,
+                leader_sampler.clone(),
+                rotor_sampler.clone(),
+                64,
+            );
             for shreds in [64, 128, 256, 512] {
                 info!(
                     "{test_name} bandwidth test ({:.1} Gbps, {shreds} shreds)",
                     max_bandwidth as f64 / 1e9,
                 );
-                let bandwidths = vec![max_bandwidth; validators.len()];
-                let mut tester = BandwidthTest::new(
-                    validators,
-                    max_bandwidth,
-                    bandwidths,
-                    leader_sampler.clone(),
-                    rotor_sampler.clone(),
-                    shreds,
-                );
+                tester.set_num_shreds(shreds);
+                tester.reset();
                 tester.run_multiple(1_000_000);
                 tester.evaluate_supported(test_name, supported_writer_ref.clone());
                 tester.evaluate_usage(test_name, usage_writer_ref.clone());

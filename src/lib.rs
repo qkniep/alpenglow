@@ -3,7 +3,7 @@
 
 //! Alpenglow: Global High-Performance Proof-of-Stake Blockchain with Erasure Coding
 //!
-//! Implementation of the Alpenglow consensus protocol.
+//! Research reference implementation of the Alpenglow consensus protocol.
 
 pub mod all2all;
 pub mod consensus;
@@ -32,7 +32,7 @@ pub type ValidatorId = u64;
 /// Validator stake type.
 pub type Stake = u64;
 
-///
+/// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     slot: Slot,
@@ -42,11 +42,11 @@ pub struct Block {
     transactions: Vec<Transaction>,
 }
 
-///
+/// Dummy transaction containing payload bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction(Vec<u8>);
 
-///
+/// Validator information as known about other validators.
 #[derive(Clone, Debug)]
 pub struct ValidatorInfo {
     pub id: ValidatorId,
