@@ -52,6 +52,7 @@ impl Layout for MinimalLogforthLayout {
 struct ConfigFile {
     id: u64,
     identity_key: SecretKey,
+    #[serde(deserialize_with = "aggsig::SecretKey::from_array_of_bytes")]
     voting_key: aggsig::SecretKey,
     port: u16,
     gossip: Vec<ValidatorInfo>,

@@ -55,6 +55,37 @@ The more extensive test suite, including some slow tests, can be run like this:
 ./test.sh slow
 ```
 
+## Standalone node
+
+There is a rudimentary implementation of a standalone node in the `node` binary. To use it, please do the folowing.
+
+### Define the cluster
+Since there is no gossip and stake manipulation in this prototype, you need to define all peers manually in advance. To do that, prepare a text file defining the socket addresses of the nodes that will be used in the test, e.g.
+```csv
+127.0.0.1:3000
+127.0.0.1:3003
+127.0.0.1:3006
+127.0.0.1:3009
+```
+Obviously, you can use any IP addresses here, as long as they are reachable. Only first out of 3 needed ports is specified, the others are port+1 and port+2.
+
+### Generate config files for the nodes
+
+```► cargo run --release --bin node -- --generate-config-files ip_list --config-name ag_node```
+
+will produce a config file starting with ```ag_node``` for each socket address found in ```ip_list``` file.
+
+### Run the nodes
+You may want to use multiple terminals or a script to start the nodes:
+``` bash
+cargo run --release --bin node -- --config-name ag_node_0.toml &
+cargo run --release --bin node -- --config-name ag_node_1.toml &
+cargo run --release --bin node -- --config-name ag_node_2.toml &
+cargo run --release --bin node -- --config-name ag_node_3.toml
+```
+
+You should be able to take one node offline and bring it back up at will without cluster stopping.
+
 ## Security
 
 For security related issues, please do not file a public issue on GitHub,

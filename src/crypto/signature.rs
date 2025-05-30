@@ -54,6 +54,9 @@ impl SecretKey {
         let sig = self.0.sign(msg);
         Signature(sig)
     }
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
+    }
 }
 
 impl AsRef<VerificationKey> for PublicKey {

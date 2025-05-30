@@ -26,11 +26,13 @@
 //! ```
 
 use bitvec::vec::BitVec;
+use blst::BLST_ERROR;
 use blst::min_sig::AggregateSignature as BlstAggSig;
 use blst::min_sig::PublicKey as BlstPublicKey;
 use blst::min_sig::SecretKey as BlstSecretKey;
 use blst::min_sig::Signature as BlstSignature;
 use rand::prelude::*;
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 
 use crate::ValidatorId;
@@ -49,6 +51,20 @@ pub struct SecretKey(BlstSecretKey);
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PublicKey(BlstPublicKey);
 
+impl PublicKey {
+    pub fn try_from_bytes(pk_in: &[u8]) -> Result<Self, BLST_ERROR> {
+        Ok(Self(BlstPublicKey::from_bytes(pk_in)?))
+    }
+    pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+
+        Self::try_from_bytes(&buf)
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {:?}", e)))
+    }
+}
 /// An individual signature as part of the aggregate signature scheme.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
@@ -77,6 +93,9 @@ impl SecretKey {
         Self(sk)
     }
 
+    pub fn try_from_bytes(sk_in: &[u8]) -> Result<Self, BLST_ERROR> {
+        Ok(Self(blst::min_sig::SecretKey::from_bytes(sk_in)?))
+    }
     /// Converts this secret key into the corresponding public key.
     #[must_use]
     pub fn to_pk(&self) -> PublicKey {
@@ -90,6 +109,16 @@ impl SecretKey {
     pub fn sign(&self, msg: &[u8]) -> IndividualSignature {
         let sig = self.0.sign(msg, DST, &[]);
         IndividualSignature(sig)
+    }
+
+    pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+
+        Self::try_from_bytes(&buf)
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {:?}", e)))
     }
 }
 
