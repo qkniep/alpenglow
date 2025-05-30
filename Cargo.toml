@@ -54,6 +54,7 @@ thiserror = "2"
 time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
+toml = "0.8.22"
 
 [dev-dependencies]
 criterion = "0.6"

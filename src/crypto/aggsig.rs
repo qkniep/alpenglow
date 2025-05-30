@@ -40,7 +40,7 @@ const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 /// A secret key for the aggregate signature scheme.
 ///
 /// This is a wrapper around [`blst::min_sig::SecretKey`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SecretKey(BlstSecretKey);
 
 /// A public key for the aggregate signature scheme.
