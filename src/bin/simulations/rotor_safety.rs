@@ -66,19 +66,19 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         // attack_prob = attack_prob.max(parittion_failure_rate);
 
         let random_failure_rate = self.run_random(attack_frac, attack_prob);
-        debug!("random failure rate: {}", random_failure_rate);
+        debug!("random failure rate: {random_failure_rate}");
         *self.tests.write().unwrap() = 0;
         *self.failures.write().unwrap() = 0;
         attack_prob = attack_prob.max(random_failure_rate);
 
         let small_failure_rate = self.run_small(attack_frac, attack_prob);
-        debug!("small failure rate: {}", small_failure_rate);
+        debug!("small failure rate: {small_failure_rate}");
         *self.tests.write().unwrap() = 0;
         *self.failures.write().unwrap() = 0;
         attack_prob = small_failure_rate.max(attack_prob);
 
         let large_failure_rate = self.run_large(attack_frac, attack_prob);
-        debug!("large failure rate: {}", large_failure_rate);
+        debug!("large failure rate: {large_failure_rate}");
         *self.tests.write().unwrap() = 0;
         *self.failures.write().unwrap() = 0;
         attack_prob = attack_prob.max(large_failure_rate);
@@ -241,11 +241,9 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             for _ in 0..100_000 {
                 let (tests, done) = self.run_with_corrupted(1000, attack_frac == 0.2, &corrupted);
                 *self.tests.write().unwrap() += tests;
-                if done {
-                    break;
-                } else if *self.tests.read().unwrap() as f64
-                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
-                {
+                let better_attack_known = *self.tests.read().unwrap() as f64
+                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob;
+                if done || better_attack_known {
                     break;
                 }
             }

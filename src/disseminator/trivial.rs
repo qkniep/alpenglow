@@ -43,7 +43,7 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for disseminator: {:?}", m),
+                m => warn!("unexpected message type for disseminator: {m:?}"),
             }
         }
     }

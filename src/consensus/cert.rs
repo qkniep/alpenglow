@@ -107,13 +107,13 @@ impl Cert {
             Self::NotarFallback(n) => Box::new(
                 n.agg_sig_notar
                     .as_ref()
-                    .map(|s| s.signers())
+                    .map(AggregateSignature::signers)
                     .into_iter()
                     .flatten()
                     .chain(
                         n.agg_sig_notar_fallback
                             .as_ref()
-                            .map(|s| s.signers())
+                            .map(AggregateSignature::signers)
                             .into_iter()
                             .flatten(),
                     ),
@@ -121,13 +121,13 @@ impl Cert {
             Self::Skip(s) => Box::new(
                 s.agg_sig_skip
                     .as_ref()
-                    .map(|s| s.signers())
+                    .map(AggregateSignature::signers)
                     .into_iter()
                     .flatten()
                     .chain(
                         s.agg_sig_skip_fallback
                             .as_ref()
-                            .map(|s| s.signers())
+                            .map(AggregateSignature::signers)
                             .into_iter()
                             .flatten(),
                     ),
@@ -170,7 +170,7 @@ impl NotarCert {
     pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         if !votes[0].is_notar() {
             return Err(CertError::WrongVoteType);
-        };
+        }
         let slot = votes[0].slot();
         let block_hash = votes[0].block_hash().unwrap();
 
@@ -309,7 +309,7 @@ impl NotarFallbackCert {
         sig1_valid && sig2_valid
     }
 
-    pub fn block_hash(&self) -> &Hash {
+    pub const fn block_hash(&self) -> &Hash {
         &self.block_hash
     }
 }
@@ -333,7 +333,7 @@ impl SkipCert {
     pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         if !votes[0].is_skip() && !votes[0].is_skip_fallback() {
             return Err(CertError::WrongVoteType);
-        };
+        }
         let slot = votes[0].slot();
 
         for vote in votes {
@@ -422,7 +422,7 @@ impl FastFinalCert {
     pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         if !votes[0].is_notar() {
             return Err(CertError::WrongVoteType);
-        };
+        }
         let slot = votes[0].slot();
         let block_hash = votes[0].block_hash().unwrap();
 
@@ -486,7 +486,7 @@ impl FinalCert {
     pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         if !votes[0].is_final() {
             return Err(CertError::WrongVoteType);
-        };
+        }
         let slot = votes[0].slot();
 
         for vote in votes {

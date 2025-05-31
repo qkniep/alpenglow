@@ -98,9 +98,9 @@ mod tests {
                 stake: 1,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: format!("{}", i),
-                disseminator_address: "".to_owned(),
-                repair_address: "".to_owned(),
+                all2all_address: i.to_string(),
+                disseminator_address: String::new(),
+                repair_address: String::new(),
             });
         }
 

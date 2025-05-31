@@ -108,13 +108,17 @@ impl<N: Network> Repair<N> {
             }
             RepairRequest::SliceRoot(_, _, slice) => {
                 let shred_index = slice * TOTAL_SHREDS;
-                let shred = blockstore.get_shred(slot, slice, shred_index).unwrap();
+                let Some(shred) = blockstore.get_shred(slot, slice, shred_index) else {
+                    return Ok(());
+                };
                 let root = shred.merkle_root();
                 let proof = blockstore.create_double_merkle_proof(slot, slice);
                 RepairResponse::SliceRoot(request, root, proof)
             }
             RepairRequest::Shred(_, _, slice, shred) => {
-                let shred = blockstore.get_shred(slot, slice, shred).unwrap().clone();
+                let Some(shred) = blockstore.get_shred(slot, slice, shred).cloned() else {
+                    return Ok(());
+                };
                 RepairResponse::Shred(request, shred)
             }
         };
@@ -161,7 +165,7 @@ impl<N: Network> Repair<N> {
                 /* if !shred.merkle_root ... { return; } */
                 self.blockstore.write().await.add_shred(shred).await;
             }
-        };
+        }
     }
 
     /// Tries to receive and deserialize messages from the underlying network.
@@ -225,7 +229,8 @@ impl<N: Network> Repair<N> {
 
 impl RepairRequest {
     /// Returns the slot number this request refers to.
-    pub fn slot(&self) -> Slot {
+    #[must_use]
+    pub const fn slot(&self) -> Slot {
         match self {
             Self::SliceCount(slot, _)
             | Self::SliceRoot(slot, _, _)
@@ -234,7 +239,8 @@ impl RepairRequest {
     }
 
     /// Returns the block hash this response refers to.
-    pub fn block_hash(&self) -> Hash {
+    #[must_use]
+    pub const fn block_hash(&self) -> Hash {
         match self {
             Self::SliceCount(_, hash)
             | Self::SliceRoot(_, hash, _)
@@ -245,19 +251,22 @@ impl RepairRequest {
 
 impl RepairResponse {
     /// Returns a reference to the [`RepairRequest`] that this response corresponds to.
-    pub fn request(&self) -> &RepairRequest {
+    #[must_use]
+    pub const fn request(&self) -> &RepairRequest {
         match self {
             Self::SliceCount(req, _) | Self::SliceRoot(req, _, _) | Self::Shred(req, _) => req,
         }
     }
 
     /// Returns the slot number this response refers to.
-    pub fn slot(&self) -> Slot {
+    #[must_use]
+    pub const fn slot(&self) -> Slot {
         self.request().slot()
     }
 
     /// Returns the block hash this response refers to.
-    pub fn block_hash(&self) -> Hash {
+    #[must_use]
+    pub const fn block_hash(&self) -> Hash {
         self.request().block_hash()
     }
 }

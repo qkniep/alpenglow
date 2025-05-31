@@ -48,12 +48,11 @@ impl TokenBucket {
             if self.bucket >= tokens {
                 self.bucket -= tokens;
                 break;
-            } else {
-                let wait_time = Duration::from_secs_f64(
-                    (tokens - self.bucket) as f64 / self.refill_rate as f64,
-                );
-                sleep(wait_time).await;
             }
+
+            let wait_time =
+                Duration::from_secs_f64((tokens - self.bucket) as f64 / self.refill_rate as f64);
+            sleep(wait_time).await;
         }
     }
 }

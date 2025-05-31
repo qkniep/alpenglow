@@ -233,11 +233,13 @@ impl Blockstore {
     ///
     /// This is usually the first version of the block stored in the blockstore.
     /// Returns `None` if blockstore does not hold any version of the block yet.
+    #[must_use]
     pub fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
         self.canonical.get(&slot).copied()
     }
 
     /// Gives any relevant alternative block hashes for a given slot, if any.
+    #[must_use]
     pub fn alternative_block_hashes(&self, slot: Slot) -> Option<&[Hash]> {
         self.alternatives.get(&slot).map(|v| v.as_ref())
     }
@@ -284,7 +286,7 @@ impl Blockstore {
 
     /// Gives the number of stored shreds for a given slot and slice.
     pub fn stored_shreds_for_slice(&self, slot: Slot, slice: usize) -> usize {
-        self.shreds.get(&(slot, slice)).map_or(0, |s| s.len())
+        self.shreds.get(&(slot, slice)).map_or(0, Vec::len)
     }
 
     /// Generates a Merkle proof for the given `slice` within the given `slot`.
@@ -292,6 +294,7 @@ impl Blockstore {
     /// # Panics
     ///
     /// Panics if the double-Merkle tree for the given `slot` does not exist.
+    #[must_use]
     pub fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash> {
         let tree = self.double_merkle_trees.get(&slot).unwrap();
         tree.create_proof(slice)
@@ -319,9 +322,9 @@ mod tests {
             stake: 1,
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
-            all2all_address: "".to_owned(),
-            disseminator_address: "".to_owned(),
-            repair_address: "".to_owned(),
+            all2all_address: String::new(),
+            disseminator_address: String::new(),
+            repair_address: String::new(),
         };
         let validators = vec![info];
         let epoch_info = EpochInfo::new(0, validators);

@@ -469,22 +469,19 @@ impl SlotVotes {
     /// Returns all skip votes for this slot.
     // PERF: return iterators here (to avoid memory allocation)?
     pub fn skip_votes(&self) -> Vec<Vote> {
-        self.skip.iter().filter_map(|o| o.clone()).collect()
+        self.skip.iter().filter_map(Clone::clone).collect()
     }
 
     /// Returns all skip-fallback votes for this slot.
     // PERF: return iterators here (to avoid memory allocation)?
     pub fn skip_fallback_votes(&self) -> Vec<Vote> {
-        self.skip_fallback
-            .iter()
-            .filter_map(|o| o.clone())
-            .collect()
+        self.skip_fallback.iter().filter_map(Clone::clone).collect()
     }
 
     /// Returns all finalization votes for this slot.
     // PERF: return iterators here (to avoid memory allocation)?
     pub fn final_votes(&self) -> Vec<Vote> {
-        self.finalize.iter().filter_map(|x| x.clone()).collect()
+        self.finalize.iter().filter_map(Clone::clone).collect()
     }
 }
 

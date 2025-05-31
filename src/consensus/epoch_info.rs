@@ -14,7 +14,7 @@ pub struct EpochInfo {
 
 impl EpochInfo {
     /// Creates a new `EpochInfo` instance with the given validators.
-    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+    pub const fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
         Self { own_id, validators }
     }
 
@@ -23,12 +23,14 @@ impl EpochInfo {
     /// # Panics
     ///
     /// Panics if the validator ID is out of range.
+    #[must_use]
     pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
         &self.validators[id as usize]
     }
 
     /// Gives the validator info for the leader for the given slot.
     // TODO: actual stake-based pseudorandom leader schedule
+    #[must_use]
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
@@ -36,6 +38,7 @@ impl EpochInfo {
     }
 
     /// Gives the total stake over all validators.
+    #[must_use]
     pub fn total_stake(&self) -> Stake {
         self.validators.iter().map(|v| v.stake).sum()
     }

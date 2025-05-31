@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
         let mut node_tasks = Vec::new();
         let mut cancel_tokens = Vec::new();
         for (i, node) in nodes.into_iter().enumerate() {
-            let span_name = format!("node {}", i);
+            let span_name = format!("node {i}");
             let span = Span::root(span_name, parent);
             cancel_tokens.push(node.get_cancel_token());
             node_tasks.push(tokio::spawn(node.run().in_span(span)));
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
 
         tokio::signal::ctrl_c().await.unwrap();
         warn!("shutting down all nodes");
-        for token in cancel_tokens.iter() {
+        for token in &cancel_tokens {
             token.cancel();
         }
         futures::future::join_all(node_tasks).await;

@@ -195,8 +195,8 @@ impl Machine {
                                 OffsetDateTime::from_unix_timestamp_nanos(timestamp).unwrap();
                             let rcv_time = OffsetDateTime::now_utc();
                             let delay = (rcv_time - vote_time).as_seconds_f64() * 1000.0;
-                            debug!("vote arrived with delay {:.1} ms", delay);
-                            debug!("{} bytes received from {}", len, addr);
+                            debug!("vote arrived with delay {delay:.1} ms");
+                            debug!("{len} bytes received from {addr}");
                             pr.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                             let block_timestamp = vote.block_timestamp;
@@ -215,7 +215,7 @@ impl Machine {
 
                         Message::Block(block) => {
                             // assert_eq!(block.round, round);
-                            debug!("received block for round {}", round);
+                            debug!("received block for round {round}");
 
                             // print stats for this round
                             if node == 0 {
@@ -275,7 +275,7 @@ impl Machine {
                                         )
                                         .unwrap();
                                         let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
-                                        debug!("vote of {} bytes sent", len);
+                                        debug!("vote of {len} bytes sent");
                                     }
                                 }
                                 tokio::time::sleep(Duration::from_millis(1)).await;
@@ -315,7 +315,7 @@ impl Machine {
                                 let port = BASE_PORT + d_port as u16;
                                 let ip = get_machine_ip(self_id, id);
                                 let rcv_addr = format!("{ip}:{port}");
-                                debug!("sending block to {}", rcv_addr);
+                                debug!("sending block to {rcv_addr}");
                                 let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
                             }
                         }
@@ -421,7 +421,7 @@ impl Machine {
                     if round > 10 && machines_missing == 0 {
                         break;
                     }
-                    info!("{} machines missing", machines_missing);
+                    info!("{machines_missing} machines missing");
                 }
                 tokio::time::sleep(Duration::from_millis(2000)).await;
             })
@@ -436,7 +436,7 @@ impl Machine {
         for id in 0..MACHINES {
             let ping = pings.read().await[id];
             let ip = get_machine_ip(self.id, id);
-            info!("Ping to {}: {:.1} ms", ip, ping);
+            info!("Ping to {ip}: {ping:.1} ms");
         }
 
         pings.read().await.clone()

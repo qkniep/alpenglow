@@ -132,7 +132,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 trace!("ignoring event for retired slot {}", event.slot());
                 continue;
             }
-            trace!("votor event: {:?}", event);
+            trace!("votor event: {event:?}");
             match event {
                 // events from Pool
                 VotorEvent::ParentReady {
@@ -161,7 +161,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     self.bad_window.insert(slot);
                 }
                 VotorEvent::SafeToSkip(slot) => {
-                    trace!("safe to skip slot {}", slot);
+                    trace!("safe to skip slot {slot}");
                     let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_id);
                     self.all2all.broadcast(&vote.into()).await.unwrap();
                     self.try_skip_window(slot).await;
@@ -202,13 +202,13 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
 
                 // events from Votor itself
                 VotorEvent::Timeout(slot) => {
-                    trace!("timeout for slot {}", slot);
+                    trace!("timeout for slot {slot}");
                     if !self.voted.contains(&slot) {
                         self.try_skip_window(slot).await;
                     }
                 }
                 VotorEvent::TimeoutCrashedLeader(slot) => {
-                    trace!("timeout (crashed leader) for slot {}", slot);
+                    trace!("timeout (crashed leader) for slot {slot}");
                     if !self.received_shred.contains(&slot) && !self.voted.contains(&slot) {
                         self.try_skip_window(slot).await;
                     }
@@ -294,7 +294,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
 
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
     async fn try_skip_window(&mut self, slot: Slot) {
-        trace!("try skip window of slot {}", slot);
+        trace!("try skip window of slot {slot}");
         let first_slot = slot / SLOTS_PER_WINDOW * SLOTS_PER_WINDOW;
         for s in first_slot..first_slot + SLOTS_PER_WINDOW {
             if self.voted.insert(s) {

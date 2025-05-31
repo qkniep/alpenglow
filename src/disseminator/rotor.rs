@@ -120,7 +120,7 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for Rotor: {:?}", m),
+                m => warn!("unexpected message type for Rotor: {m:?}"),
             }
         }
     }

@@ -194,7 +194,7 @@ impl Pool {
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                 self.prune();
             }
-        };
+        }
 
         // send to votor for broadcasting
         let event = VotorEvent::CertCreated(Box::new(cert));
@@ -280,11 +280,9 @@ impl Pool {
 
     /// Returns `true` iff the pool contains a (fast) finalization certificate for the slot.
     pub fn is_finalized(&self, slot: Slot) -> bool {
-        if let Some(state) = self.slot_states.get(&slot) {
+        self.slot_states.get(&slot).is_some_and(|state| {
             state.certificates.fast_finalize.is_some() || state.certificates.finalize.is_some()
-        } else {
-            false
-        }
+        })
     }
 
     /// Returns `true` iff the pool contains a notarization certificate for the slot.
@@ -296,11 +294,9 @@ impl Pool {
 
     /// Returns `true` iff the pool contains a notar(-fallback) certificate for the slot.
     pub fn is_notarized_fallback(&self, slot: Slot) -> bool {
-        if let Some(state) = self.slot_states.get(&slot) {
+        self.slot_states.get(&slot).is_some_and(|state| {
             state.certificates.notar.is_some() || !state.certificates.notar_fallback.is_empty()
-        } else {
-            false
-        }
+        })
     }
 
     /// Returns `true` iff the given parent is ready for the given slot.

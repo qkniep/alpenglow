@@ -166,7 +166,7 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
 
     // run all tests for the different sampling strategies
     for sampling_strat in SAMPLING_STRATEGIES {
-        let test_name = format!("{}-{}", distribution_name, sampling_strat);
+        let test_name = format!("{distribution_name}-{sampling_strat}");
         if sampling_strat == "uniform" {
             let leader_sampler = UniformSampler::new(validators.clone());
             let ping_leader_sampler = UniformSampler::new(validators_with_pings.clone());
@@ -176,10 +176,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             );
         } else if sampling_strat == "stake_weighted" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
@@ -190,10 +190,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             )
         } else if sampling_strat == "fa1_iid" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
@@ -210,10 +210,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             )
         } else if sampling_strat == "fa2" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
@@ -225,10 +225,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             )
         } else if sampling_strat == "fa1_partition" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
@@ -245,10 +245,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             )
         } else if sampling_strat == "decaying_acceptance" {
             let leader_sampler = StakeWeightedSampler::new(validators.clone());
@@ -260,10 +260,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             )
         } else if sampling_strat == "turbine" {
             let leader_sampler = TurbineSampler::new(validators.clone());
@@ -274,10 +274,10 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
                 &test_name,
                 &validators,
                 &validators_and_ping_servers,
-                leader_sampler,
-                rotor_sampler,
-                ping_leader_sampler,
-                ping_rotor_sampler,
+                &leader_sampler,
+                &rotor_sampler,
+                &ping_leader_sampler,
+                &ping_rotor_sampler,
             )
         }
     }
@@ -290,10 +290,10 @@ fn run_tests<
     test_name: &str,
     validators: &[ValidatorInfo],
     validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
-    leader_sampler: L,
-    rotor_sampler: R,
-    ping_leader_sampler: L,
-    ping_rotor_sampler: R,
+    leader_sampler: &L,
+    rotor_sampler: &R,
+    ping_leader_sampler: &L,
+    ping_rotor_sampler: &R,
 ) {
     if RUN_BANDWIDTH_TESTS {
         // TODO: clean up code
@@ -354,7 +354,7 @@ fn run_tests<
                 n,
                 k,
             );
-            let test_name = format!("{}-{}-{}", test_name, n, k);
+            let test_name = format!("{test_name}-{n}-{k}");
             tester.run_many(&test_name, 1000, LatencyTestStage::Final);
         }
 
@@ -410,20 +410,15 @@ fn run_tests<
             cities.par_iter().for_each(|city| {
                 info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
                 let leader = find_leader_in_city(validators_with_ping_data, city);
-                let mut tester = LatencyTest::new(
+                let tester = LatencyTest::new(
                     validators_with_ping_data,
                     ping_leader_sampler.clone(),
                     ping_rotor_sampler.clone(),
                     *n,
                     *k,
                 );
-                let test_name = format!("{}-{}-{}", test_name, n, k);
-                tester.run_many_with_leader(
-                    &test_name,
-                    1000,
-                    LatencyTestStage::Final,
-                    leader.clone(),
-                );
+                let test_name = format!("{test_name}-{n}-{k}");
+                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final, leader);
             });
         }
     }

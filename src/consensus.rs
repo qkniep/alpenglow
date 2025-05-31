@@ -208,7 +208,7 @@ where
                 // handle repair requests
                 res = self.repair.receive() => self.handle_repair_message(res?).await?,
 
-                _ = self.cancel_token.cancelled() => return Ok(()),
+                () = self.cancel_token.cancelled() => return Ok(()),
             };
         }
     }
@@ -290,7 +290,7 @@ where
         parent: (Slot, Hash),
         parent_ready: bool,
     ) -> Result<()> {
-        let slot_span = Span::enter_with_local_parent(format!("slot {}", slot));
+        let slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let mut rng = SmallRng::seed_from_u64(slot);
         let hash = &hex::encode(parent.1)[..8];
         info!(
@@ -348,12 +348,12 @@ where
 
     #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
-        trace!("received all2all msg: {:?}", msg);
+        trace!("received all2all msg: {msg:?}");
         match msg {
             NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
                 Ok(()) => {}
                 Err(PoolError::Slashable(offence)) => {
-                    warn!("slashable offence detected: {offence}")
+                    warn!("slashable offence detected: {offence}");
                 }
                 Err(err) => trace!("ignoring invalid vote: {err}"),
             },
@@ -361,7 +361,7 @@ where
                 Ok(()) => {}
                 Err(err) => trace!("ignoring invalid cert: {err}"),
             },
-            msg => warn!("unexpected message on all2all port: {:?}", msg),
+            msg => warn!("unexpected message on all2all port: {msg:?}"),
         }
         Ok(())
     }

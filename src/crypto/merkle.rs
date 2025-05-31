@@ -99,7 +99,7 @@ impl MerkleTree {
     #[must_use]
     pub fn check_proof(data: &[u8], index: usize, root: Hash, proof: &[Hash]) -> bool {
         let hash = hash_leaf(data);
-        MerkleTree::check_hash_proof(hash, index, root, proof)
+        Self::check_hash_proof(hash, index, root, proof)
     }
 
     /// Checks a Merkle path against a leaf hash.

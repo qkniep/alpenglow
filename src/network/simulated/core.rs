@@ -96,19 +96,19 @@ impl SimulatedNetworkCore {
     }
 
     /// Turns this instance into a new instance with a different default latency.
-    pub fn with_default_latency(mut self, latency: Duration) -> Self {
+    pub const fn with_default_latency(mut self, latency: Duration) -> Self {
         self.default_latency = latency;
         self
     }
 
-    ///
-    pub fn with_jitter(mut self, jitter: f64) -> Self {
+    /// Turns this instance into a new instance with a different latency jitter.
+    pub const fn with_jitter(mut self, jitter: f64) -> Self {
         self.per_packet_jitter_ms = jitter;
         self
     }
 
-    ///
-    pub fn with_packet_loss(mut self, probability: f64) -> Self {
+    /// Turns this instance into a new instance with a different packet loss rate.
+    pub const fn with_packet_loss(mut self, probability: f64) -> Self {
         self.per_packet_loss_probability = probability;
         self
     }

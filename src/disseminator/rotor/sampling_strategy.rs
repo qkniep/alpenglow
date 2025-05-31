@@ -214,6 +214,7 @@ impl TurbineSampler {
     /// Creates a new `TurbineSampler` instance simulating the given fanout.
     // FIXME: slow and still somewhat incaccurate
     // TODO: support more than 2 levels of Turbine?
+    #[must_use]
     pub fn new_with_fanout(mut validators: Vec<ValidatorInfo>, turbine_fanout: usize) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
 
@@ -421,6 +422,7 @@ impl FaitAccompli1Sampler<PartitionSampler> {
     /// See [`PartitionSampler`] for more details.
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
+    #[must_use]
     pub fn new_with_partition_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let mut required_samples = Vec::new();
@@ -433,9 +435,10 @@ impl FaitAccompli1Sampler<PartitionSampler> {
         }
         let all_zero = validators_truncated_stake.iter().all(|v| v.stake == 0);
         let k_prime = k as usize - required_samples.len();
-        let fallback_sampler = match all_zero {
-            true => PartitionSampler::new(validators.clone(), k_prime),
-            false => PartitionSampler::new(validators_truncated_stake, k_prime),
+        let fallback_sampler = if all_zero {
+            PartitionSampler::new(validators.clone(), k_prime)
+        } else {
+            PartitionSampler::new(validators_truncated_stake, k_prime)
         };
         Self {
             validators,
@@ -451,6 +454,7 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
     /// See [`StakeWeightedSampler`] for more details.
     // TODO: how to handle initializing fallback sampler?
     //       support running sample_multiple(...) on different k?
+    #[must_use]
     pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let mut required_samples = Vec::new();
@@ -462,9 +466,10 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
             required_samples.extend((0..samples).map(|_| v.id));
         }
         let all_zero = validators_truncated_stake.iter().all(|v| v.stake == 0);
-        let fallback_sampler = match all_zero {
-            true => StakeWeightedSampler::new(validators.clone()),
-            false => StakeWeightedSampler::new(validators_truncated_stake),
+        let fallback_sampler = if all_zero {
+            StakeWeightedSampler::new(validators.clone())
+        } else {
+            StakeWeightedSampler::new(validators_truncated_stake)
         };
         Self {
             validators,

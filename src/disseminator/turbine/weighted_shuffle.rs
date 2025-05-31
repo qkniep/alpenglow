@@ -14,11 +14,11 @@ use rand::prelude::*;
 use crate::Stake;
 
 // Each internal tree node has FANOUT many child nodes with indices:
-//     (index << BIT_SHIFT) + 1 ..= (index << BIT_SHIFT) + FANOUT
+//     `(index << BIT_SHIFT) + 1 ..= (index << BIT_SHIFT) + FANOUT`
 // Conversely, for each node, the parent node is obtained by:
-//     parent: (index - 1) >> BIT_SHIFT
+//     `parent: (index - 1) >> BIT_SHIFT`
 // and the subtree weight is stored at
-//     offset: (index - 1) & BIT_MASK
+//     `offset: (index - 1) & BIT_MASK`
 // of its parent node.
 const BIT_SHIFT: usize = 4;
 const FANOUT: usize = 1 << BIT_SHIFT;
@@ -26,7 +26,7 @@ const BIT_MASK: usize = FANOUT - 1;
 
 /// Implements an iterator where indices are shuffled according to their
 /// weights:
-///   - Returned indices are unique in the range [0, weights.len()).
+///   - Returned indices are unique in the range `[0, weights.len())`.
 ///   - Higher weighted indices tend to appear earlier proportional to their
 ///     weight.
 ///   - Zero weighted indices are shuffled and appear only at the end, after
@@ -37,7 +37,7 @@ pub struct WeightedShuffle {
     num_nodes: usize,
     /// Underlying array implementing the tree.
     /// Nodes without children are never accessed and don't need to be
-    /// allocated, so tree.len() < num_nodes.
+    /// allocated, so `tree.len() < num_nodes`.
     /// tree[i][j] is the sum of all weights in the j'th sub-tree of node i.
     tree: Vec<[Stake; FANOUT]>,
     /// Current sum of all weights, excluding already sampled ones.
@@ -81,9 +81,9 @@ impl WeightedShuffle {
                 index = (index - 1) >> BIT_SHIFT; // parent node
                 debug_assert!(index < tree.len());
                 // SAFETY: Index is updated to a lesser value towards zero.
-                // The bitwise AND operation with BIT_MASK ensures that offset
-                // is always less than FANOUT, which is the size of the inner
-                // arrays. As a result, tree[index][offset] never goes out of
+                // The bitwise AND operation with `BIT_MASK` ensures that offset
+                // is always less than `FANOUT`, which is the size of the inner
+                // arrays. As a result, `tree[index][offset]` never goes out of
                 // bounds.
                 unsafe { tree.get_unchecked_mut(index).get_unchecked_mut(offset) }
                     .add_assign(weight);

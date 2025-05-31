@@ -40,7 +40,7 @@ pub async fn generate_all2all_instances(
 ) -> Vec<TrivialAll2All<SimulatedNetwork>> {
     let core = Arc::new(SimulatedNetworkCore::new().with_jitter(0.0));
     for (i, val) in validators.iter_mut().enumerate() {
-        val.all2all_address = format!("{}", i);
+        val.all2all_address = i.to_string();
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {

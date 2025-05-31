@@ -96,8 +96,9 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     // read CSV
     let file = File::open("data/sui_validators.csv").unwrap();
     let reader = csv::Reader::from_reader(file);
-    let sui_validators: Vec<SuiValidatorData> =
-        reader.into_deserialize().map(Result::unwrap).collect();
+    let sui_validators = reader
+        .into_deserialize::<SuiValidatorData>()
+        .map(Result::unwrap);
 
     // map from SuiValidatorData to ValidatorData
     let validators: Vec<ValidatorData> = sui_validators
@@ -109,7 +110,7 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
                 is_active: true,
                 active_stake: Some((v.stake.round() * 100.0) as Stake),
                 delinquent: Some(false),
-                ip: v.ip.unwrap_or(v.address.clone()),
+                ip: v.ip.unwrap_or_else(|| v.address.clone()),
                 data_center_key: Some(format!(
                     "{}-{}-{}",
                     v.country.unwrap_or_default(),
@@ -180,6 +181,7 @@ pub static STOCK_EXCHANGES_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLo
 ///   - `all_val` is a list [`ValidatorInfo`] for all validators
 ///   - `val_with_ping` is a list of tuples of [`ValidatorInfo`] and [`PingServer`]
 ///     for validators for which we find ping data in the dataset
+#[must_use]
 pub fn validators_from_validator_data(
     validator_data: &[ValidatorData],
 ) -> (
@@ -187,7 +189,7 @@ pub fn validators_from_validator_data(
     Vec<(ValidatorInfo, &'static PingServer)>,
 ) {
     let mut validators = Vec::new();
-    for v in validator_data.iter() {
+    for v in validator_data {
         if !(v.is_active && v.delinquent == Some(false)) {
             continue;
         }
@@ -212,7 +214,7 @@ pub fn validators_from_validator_data(
     let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
     let mut validators_with_ping_data = Vec::new();
     let mut stake_with_ping_server = 0;
-    for v in validator_data.iter() {
+    for v in validator_data {
         let stake = v.active_stake.unwrap_or(0);
         if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
             continue;
