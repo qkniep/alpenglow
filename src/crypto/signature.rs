@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// A secret key for the digital signature scheme.
 ///
 /// This is a wrapper around [`ed25519_consensus::SigningKey`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SecretKey(SigningKey);
 
 /// A public key for the digital signature scheme.
@@ -53,6 +53,9 @@ impl SecretKey {
     pub fn sign(&self, msg: &[u8]) -> Signature {
         let sig = self.0.sign(msg);
         Signature(sig)
+    }
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
     }
 }
 

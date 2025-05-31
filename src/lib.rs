@@ -47,11 +47,12 @@ pub struct Block {
 pub struct Transaction(Vec<u8>);
 
 /// Validator information as known about other validators.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidatorInfo {
     pub id: ValidatorId,
     pub stake: Stake,
     pub pubkey: signature::PublicKey,
+    #[serde(deserialize_with = "aggsig::PublicKey::from_array_of_bytes")]
     pub voting_pubkey: aggsig::PublicKey,
     pub all2all_address: String,
     pub disseminator_address: String,

@@ -1,0 +1,204 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+use std::borrow::Cow;
+use std::io::{Read, Write};
+use std::net::SocketAddrV4;
+use std::sync::Arc;
+
+use alpenglow::ValidatorInfo;
+use alpenglow::all2all::TrivialAll2All;
+use alpenglow::consensus::{Alpenglow, EpochInfo};
+use alpenglow::crypto::aggsig;
+use alpenglow::crypto::signature::SecretKey;
+use alpenglow::disseminator::Rotor;
+use alpenglow::disseminator::rotor::StakeWeightedSampler;
+use alpenglow::network::UdpNetwork;
+use clap::Parser;
+use color_eyre::Result;
+use color_eyre::eyre::Context;
+use fastrace::collector::Config;
+use fastrace::prelude::*;
+use fastrace_opentelemetry::OpenTelemetryReporter;
+use log::warn;
+use logforth::color::LevelColor;
+use logforth::filter::EnvFilter;
+use logforth::{Layout, append};
+use opentelemetry::trace::SpanKind;
+use opentelemetry::{InstrumentationScope, KeyValue};
+use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use opentelemetry_sdk::Resource;
+use rand::rng;
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+#[derive(Debug, Clone, Copy)]
+struct MinimalLogforthLayout;
+
+impl Layout for MinimalLogforthLayout {
+    fn format(
+        &self,
+        record: &log::Record,
+        _: &[Box<dyn logforth::Diagnostic>],
+    ) -> anyhow::Result<Vec<u8>> {
+        let colors = LevelColor::default();
+        let level = colors.colorize_record_level(false, record.level());
+        let message = record.args();
+        Ok(format!("{level:>5} {message}").into_bytes())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ConfigFile {
+    id: u64,
+    identity_key: SecretKey,
+    #[serde(deserialize_with = "aggsig::SecretKey::from_array_of_bytes")]
+    voting_key: aggsig::SecretKey,
+    port: u16,
+    gossip: Vec<ValidatorInfo>,
+}
+
+/// A standalone alpenglow node
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Geenrates configs for a cluster from a file with SocketAddrs (one per line)
+    #[arg(long)]
+    generate_config_files: Option<String>,
+    /// Config file name to use
+    #[arg(long)]
+    config_name: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // enable fancy `color_eyre` error messages
+    color_eyre::install()?;
+    let args = Args::parse();
+    if let Some(ip_list) = args.generate_config_files {
+        create_node_configs(ip_list, args.config_name).await?;
+        return Ok(());
+    }
+    let mut config = std::fs::File::open(&args.config_name).context("Config file is required")?;
+    let mut config_string = String::new();
+    config.read_to_string(&mut config_string)?;
+    let config: ConfigFile = toml::from_str(&config_string).context("Can not parse config")?;
+
+    // enable `fastrace` tracing
+    let reporter = OpenTelemetryReporter::new(
+        SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint("http://127.0.0.1:4317".to_string())
+            .with_protocol(opentelemetry_otlp::Protocol::Grpc)
+            .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
+            .build()
+            .expect("initialize oltp exporter"),
+        SpanKind::Server,
+        Cow::Owned(
+            Resource::builder()
+                .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
+                .build(),
+        ),
+        InstrumentationScope::builder("alpenglow")
+            .with_version(env!("CARGO_PKG_VERSION"))
+            .build(),
+    );
+    fastrace::set_reporter(reporter, Config::default());
+
+    // enable `logforth` logging
+    logforth::builder()
+        .dispatch(|d| {
+            d.filter(EnvFilter::from_default_env())
+                .append(append::Stderr::default().with_layout(MinimalLogforthLayout))
+        })
+        .apply();
+
+    let span_context = SpanContext::random();
+    let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
+
+    // spawn local cluster
+    let node = create_node(config)?;
+    let cancel_token = node.get_cancel_token();
+    let node_task = tokio::spawn(node.run().in_span(root_span));
+
+    tokio::signal::ctrl_c().await.unwrap();
+    warn!("shutting down node");
+    cancel_token.cancel();
+    node_task.await??;
+
+    fastrace::flush();
+
+    Ok(())
+}
+
+type Node =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+
+fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
+    // prepare validator info for all nodes
+    // turn validator info into actual nodes
+    let epoch_info = Arc::new(EpochInfo::new(config.id, config.gossip.clone()));
+    let start_port = config.port;
+    let network = UdpNetwork::new(start_port as u16);
+    let all2all = TrivialAll2All::new(config.gossip, network);
+    let network = UdpNetwork::new(start_port as u16 + 1);
+    let disseminator = Rotor::new(network, epoch_info.clone());
+    let repair_network = UdpNetwork::new(start_port as u16 + 2);
+    Ok(Alpenglow::new(
+        config.identity_key,
+        config.voting_key,
+        all2all,
+        disseminator,
+        repair_network,
+        epoch_info,
+    ))
+}
+
+async fn create_node_configs(
+    socket_list_filename: String,
+    config_base_filename: String,
+) -> color_eyre::Result<()> {
+    // prepare validator info for all nodes
+    let mut rng = rng();
+    let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
+    let mut ports = Vec::new();
+    let mut validators = Vec::new();
+    let mut socket_list =
+        tokio::io::BufReader::new(tokio::fs::File::open(socket_list_filename).await?).lines();
+    for id in 0.. {
+        let Some(line) = socket_list.next_line().await? else {
+            break;
+        };
+        let sockaddr: SocketAddrV4 = line.parse().context("Can not parse socket list")?;
+        sks.push(SecretKey::new(&mut rng));
+        let port = sockaddr.port();
+        ports.push(port);
+        voting_sks.push(aggsig::SecretKey::new(&mut rng));
+        validators.push(ValidatorInfo {
+            id,
+            stake: 1,
+            pubkey: sks[id as usize].to_pk(),
+            voting_pubkey: voting_sks[id as usize].to_pk(),
+            all2all_address: format!("{}:{}", sockaddr.ip(), port),
+            disseminator_address: format!("{}:{}", sockaddr.ip(), port + 1),
+            repair_address: format!("{}:{}", sockaddr.ip(), port + 2),
+        });
+    }
+    for id in 0..sks.len() as u64 {
+        let mut file = tokio::fs::File::create(format!("{config_base_filename}_{id}.toml")).await?;
+        let conf = ConfigFile {
+            id: id,
+            port: ports[id as usize],
+            identity_key: sks[id as usize].clone(),
+            voting_key: voting_sks[id as usize].clone(),
+            gossip: validators.clone(),
+        };
+
+        let serialized = toml::to_string(&conf)?;
+
+        file.write_all(serialized.as_bytes()).await?;
+        file.sync_data().await?;
+    }
+    Ok(())
+}
