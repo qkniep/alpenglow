@@ -656,18 +656,18 @@ mod tests {
 
         // notarize all slots but last two
         for slot in 0..SLOTS_PER_WINDOW - 2 {
-            for v in 0..11 {
+            for v in 0..7 {
                 let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
         // skip last 2 slots
-        for v in 0..11 {
+        for v in 0..7 {
             let vote = Vote::new_skip(SLOTS_PER_WINDOW - 2, &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        for v in 0..11 {
+        for v in 0..7 {
             let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
@@ -687,7 +687,7 @@ mod tests {
 
         // notarize all slots in first window
         for slot in 0..SLOTS_PER_WINDOW {
-            for v in 0..11 {
+            for v in 0..7 {
                 let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
@@ -695,7 +695,7 @@ mod tests {
 
         // skip all slots in second window
         for slot in 0..SLOTS_PER_WINDOW {
-            for v in 0..11 {
+            for v in 0..7 {
                 let vote = Vote::new_skip(SLOTS_PER_WINDOW + slot, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }

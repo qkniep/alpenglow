@@ -140,8 +140,7 @@ impl ParentReadyTracker {
     pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.0
             .get(&slot)
-            .map(|state| state.parents_ready.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |state| state.parents_ready.as_slice())
     }
 }
 

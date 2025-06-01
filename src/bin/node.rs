@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 
@@ -139,11 +139,11 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     // turn validator info into actual nodes
     let epoch_info = Arc::new(EpochInfo::new(config.id, config.gossip.clone()));
     let start_port = config.port;
-    let network = UdpNetwork::new(start_port as u16);
+    let network = UdpNetwork::new(start_port);
     let all2all = TrivialAll2All::new(config.gossip, network);
-    let network = UdpNetwork::new(start_port as u16 + 1);
+    let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
-    let repair_network = UdpNetwork::new(start_port as u16 + 2);
+    let repair_network = UdpNetwork::new(start_port + 2);
     Ok(Alpenglow::new(
         config.identity_key,
         config.voting_key,
@@ -188,7 +188,7 @@ async fn create_node_configs(
     for id in 0..sks.len() as u64 {
         let mut file = tokio::fs::File::create(format!("{config_base_filename}_{id}.toml")).await?;
         let conf = ConfigFile {
-            id: id,
+            id,
             port: ports[id as usize],
             identity_key: sks[id as usize].clone(),
             voting_key: voting_sks[id as usize].clone(),

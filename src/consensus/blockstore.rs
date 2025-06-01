@@ -107,10 +107,10 @@ impl Blockstore {
         let exists = slice_shreds
             .iter()
             .any(|s| s.index_in_slice() == index && shred.is_data() == s.is_data());
-        let after_last = match self.last_slices.get(&slot) {
-            Some(last_slice) => slice > *last_slice,
-            None => false,
-        };
+        let after_last = self
+            .last_slices
+            .get(&slot)
+            .is_some_and(|last_slice| slice > *last_slice);
         if exists || after_last {
             return None;
         }

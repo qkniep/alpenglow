@@ -180,7 +180,7 @@ impl<N: Network> Repair<N> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Repair(r) => return Ok(r),
-                m => warn!("unexpected message type for repair: {:?}", m),
+                m => warn!("unexpected message type for repair: {m:?}"),
             }
         }
     }

@@ -37,7 +37,7 @@ pub struct SlotState {
     /// Indicates if safe-to-skip has already been sent for this slot.
     sent_safe_to_skip: bool,
 
-    ///
+    /// The slot this state is for.
     slot: Slot,
     /// Information about all validators active in this slot.
     pub(super) epoch_info: Arc<EpochInfo>,

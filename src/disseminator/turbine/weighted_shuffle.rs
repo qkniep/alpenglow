@@ -66,12 +66,11 @@ impl WeightedShuffle {
                 zeros.push(k);
                 continue;
             }
-            sum = match sum.checked_add(weight) {
-                Some(val) => val,
-                None => {
-                    zeros.push(k);
-                    continue;
-                }
+            sum = if let Some(val) = sum.checked_add(weight) {
+                val
+            } else {
+                zeros.push(k);
+                continue;
             };
             // Traverse the tree from the leaf node upwards to the root,
             // updating the sub-tree sums along the way.

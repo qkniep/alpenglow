@@ -63,6 +63,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
 
 impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     /// Turns this instance into a new instance with a different sampling strategy.
+    #[must_use]
     pub fn with_sampler(self, sampler: S) -> Self {
         Self { sampler, ..self }
     }
