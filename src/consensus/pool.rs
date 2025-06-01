@@ -555,6 +555,8 @@ mod tests {
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
+        // no blocks are valid parents yet
+        assert!(pool.parents_ready(SLOTS_PER_WINDOW).is_empty());
 
         // then see notarization votes for slot 1
         for v in 0..7 {
@@ -564,7 +566,7 @@ mod tests {
 
         // branch can only be certified once we saw votes other slots in window
         assert!(pool.is_parent_ready(SLOTS_PER_WINDOW, (1, [1; 32])));
-        // not other blocks are valid parents
+        // no other blocks are valid parents
         assert_eq!(pool.parents_ready(SLOTS_PER_WINDOW).len(), 1);
         drop(rx);
     }
@@ -582,6 +584,7 @@ mod tests {
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
+        // no blocks are valid parents yet
         assert!(pool.parents_ready(SLOTS_PER_WINDOW).is_empty());
 
         // then receive notarization cert for slot 1
@@ -597,154 +600,113 @@ mod tests {
         drop(rx);
     }
 
-    // #[tokio::test]
-    // async fn regular_handover() {
-    //     let (sks, epoch_info) = generate_validators(11);
-    //     let (tx, rx) = mpsc::channel(1024);
-    //     let mut pool = Pool::new(epoch_info, tx);
-    //
-    //     for slot in 0..SLOTS_PER_WINDOW {
-    //         for v in 0..11 {
-    //             let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
-    //             assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //         }
-    //     }
-    //
-    //     assert!(!pool.is_notarized(SLOTS_PER_WINDOW));
-    //     for v in 0..11 {
-    //         let vote = Vote::new_notar(
-    //             SLOTS_PER_WINDOW,
-    //             [SLOTS_PER_WINDOW as u8; 32],
-    //             &sks[v as usize],
-    //             v,
-    //         );
-    //         assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //     }
-    //     assert!(pool.is_notarized(SLOTS_PER_WINDOW));
-    //     assert!(pool.is_valid_parent(
-    //         SLOTS_PER_WINDOW + 1,
-    //         (SLOTS_PER_WINDOW, [SLOTS_PER_WINDOW as u8; 32])
-    //     ));
-    //     drop(rx);
-    // }
-    //
-    // #[tokio::test]
-    // async fn one_skip_handover() {
-    //     let (sks, epoch_info) = generate_validators(11);
-    //     let (tx, rx) = mpsc::channel(1024);
-    //     let mut pool = Pool::new(epoch_info, tx);
-    //
-    //     // notarize all slots but last one
-    //     for slot in 0..SLOTS_PER_WINDOW - 1 {
-    //         for v in 0..11 {
-    //             let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
-    //             assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //         }
-    //     }
-    //
-    //     // skip last slot
-    //     for v in 0..11 {
-    //         let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
-    //         assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //     }
-    //
-    //     // notarize all slots of next window
-    //     for slot in SLOTS_PER_WINDOW..2 * SLOTS_PER_WINDOW {
-    //         assert!(!pool.is_notarized(slot));
-    //         for v in 0..11 {
-    //             let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
-    //             assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //         }
-    //         assert!(pool.is_notarized(slot));
-    //     }
-    //     let last_slot = 2 * SLOTS_PER_WINDOW - 1;
-    //     assert!(pool.is_valid_parent(2 * SLOTS_PER_WINDOW, (last_slot, [last_slot as u8; 32])));
-    //     drop(rx);
-    // }
-    //
-    // #[tokio::test]
-    // async fn two_skip_handover() {
-    //     let (sks, epoch_info) = generate_validators(11);
-    //     let (tx, rx) = mpsc::channel(1024);
-    //     let mut pool = Pool::new(epoch_info, tx);
-    //
-    //     // notarize all slots but last two
-    //     for slot in 0..SLOTS_PER_WINDOW - 2 {
-    //         for v in 0..11 {
-    //             let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
-    //             assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //         }
-    //     }
-    //
-    //     // skip last 2 slots
-    //     for v in 0..11 {
-    //         let vote = Vote::new_skip(SLOTS_PER_WINDOW - 2, &sks[v as usize], v);
-    //         assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //     }
-    //     for v in 0..11 {
-    //         let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
-    //         assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //     }
-    //
-    //     // notarize first slot of next window
-    //     assert!(!pool.is_notarized(SLOTS_PER_WINDOW));
-    //     for v in 0..11 {
-    //         let vote = Vote::new_notar(
-    //             SLOTS_PER_WINDOW,
-    //             [SLOTS_PER_WINDOW as u8; 32],
-    //             &sks[v as usize],
-    //             v,
-    //         );
-    //         assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //     }
-    //     assert!(pool.is_notarized(SLOTS_PER_WINDOW));
-    //     assert!(pool.is_valid_parent(
-    //         SLOTS_PER_WINDOW + 1,
-    //         (SLOTS_PER_WINDOW, [SLOTS_PER_WINDOW as u8; 32])
-    //     ));
-    //     drop(rx);
-    // }
-    //
-    // #[tokio::test]
-    // async fn skip_window_handover() {
-    //     let (sks, epoch_info) = generate_validators(11);
-    //     let (tx, rx) = mpsc::channel(1024);
-    //     let mut pool = Pool::new(epoch_info, tx);
-    //
-    //     // notarize all slots in first window
-    //     for slot in 0..SLOTS_PER_WINDOW {
-    //         for v in 0..11 {
-    //             let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
-    //             assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //         }
-    //     }
-    //
-    //     // skip all slots in second window
-    //     for slot in 0..SLOTS_PER_WINDOW {
-    //         for v in 0..11 {
-    //             let vote = Vote::new_skip(SLOTS_PER_WINDOW + slot, &sks[v as usize], v);
-    //             assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //         }
-    //     }
-    //
-    //     // notarize first slot of third window
-    //     assert!(!pool.is_notarized(2 * SLOTS_PER_WINDOW));
-    //     for v in 0..11 {
-    //         let vote = Vote::new_notar(
-    //             2 * SLOTS_PER_WINDOW,
-    //             [2 * SLOTS_PER_WINDOW as u8; 32],
-    //             &sks[v as usize],
-    //             v,
-    //         );
-    //         assert_eq!(pool.add_vote(vote).await, Ok(()));
-    //     }
-    //     assert!(pool.is_notarized(2 * SLOTS_PER_WINDOW));
-    //     assert!(pool.is_valid_parent(
-    //         2 * SLOTS_PER_WINDOW + 1,
-    //         (2 * SLOTS_PER_WINDOW, [2 * SLOTS_PER_WINDOW as u8; 32])
-    //     ));
-    //     drop(rx);
-    // }
+    #[tokio::test]
+    async fn regular_handover() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (tx, rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, tx);
+
+        // notarize all slots of first window
+        for slot in 0..SLOTS_PER_WINDOW {
+            for v in 0..7 {
+                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+        }
+
+        assert!(pool.is_parent_ready(
+            SLOTS_PER_WINDOW,
+            (SLOTS_PER_WINDOW - 1, [(SLOTS_PER_WINDOW - 1) as u8; 32])
+        ));
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn one_skip_handover() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (tx, rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, tx);
+
+        // notarize all slots but last one
+        for slot in 0..SLOTS_PER_WINDOW - 1 {
+            for v in 0..7 {
+                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+        }
+
+        // skip last slot
+        for v in 0..7 {
+            let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+
+        assert!(pool.is_parent_ready(
+            SLOTS_PER_WINDOW,
+            (SLOTS_PER_WINDOW - 2, [(SLOTS_PER_WINDOW - 2) as u8; 32])
+        ));
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn two_skip_handover() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (tx, rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, tx);
+
+        // notarize all slots but last two
+        for slot in 0..SLOTS_PER_WINDOW - 2 {
+            for v in 0..11 {
+                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+        }
+
+        // skip last 2 slots
+        for v in 0..11 {
+            let vote = Vote::new_skip(SLOTS_PER_WINDOW - 2, &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        for v in 0..11 {
+            let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+
+        assert!(pool.is_parent_ready(
+            SLOTS_PER_WINDOW,
+            (SLOTS_PER_WINDOW - 3, [(SLOTS_PER_WINDOW - 3) as u8; 32])
+        ));
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn skip_window_handover() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (tx, rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, tx);
+
+        // notarize all slots in first window
+        for slot in 0..SLOTS_PER_WINDOW {
+            for v in 0..11 {
+                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+        }
+
+        // skip all slots in second window
+        for slot in 0..SLOTS_PER_WINDOW {
+            for v in 0..11 {
+                let vote = Vote::new_skip(SLOTS_PER_WINDOW + slot, &sks[v as usize], v);
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
+            }
+        }
+
+        assert!(pool.is_parent_ready(
+            2 * SLOTS_PER_WINDOW,
+            (SLOTS_PER_WINDOW - 1, [(SLOTS_PER_WINDOW - 1) as u8; 32])
+        ));
+        drop(rx);
+    }
 
     #[tokio::test]
     async fn pruning() {
