@@ -26,6 +26,16 @@ pub struct BlockInfo {
     pub(crate) parent_hash: Hash,
 }
 
+impl From<&Block> for BlockInfo {
+    fn from(block: &Block) -> Self {
+        BlockInfo {
+            hash: block.block_hash,
+            parent_slot: block.parent,
+            parent_hash: block.parent_hash,
+        }
+    }
+}
+
 /// Blockstore is the fundamental data structure holding block data per slot.
 // TODO: extract state for each slot into struct?
 pub struct Blockstore {
@@ -179,7 +189,7 @@ impl Blockstore {
             .slices
             .range(&(slot, 0)..)
             .take_while(|(key, _)| key.0 == slot)
-            .map(|(_, s)| s.merkle_root.unwrap())
+            .map(|(_, s)| s.merkle_root.as_ref().unwrap())
             .collect();
         let tree = MerkleTree::new(&merkle_roots);
         let block_hash = tree.get_root();
@@ -198,6 +208,7 @@ impl Blockstore {
             parent_hash,
             transactions: vec![],
         };
+        let block_info = BlockInfo::from(&block);
         self.blocks.insert((slot, block_hash), block);
 
         // clean up raw slices
@@ -205,11 +216,7 @@ impl Blockstore {
             self.slices.remove(&(slot, slice_index));
         }
 
-        let block_info = BlockInfo {
-            hash: block_hash,
-            parent_slot,
-            parent_hash,
-        };
+        // notify Votor of block and print block info
         let event = VotorEvent::Block { slot, block_info };
         self.votor_channel.send(event).await.unwrap();
         let hash = &hex::encode(block_hash)[..8];

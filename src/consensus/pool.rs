@@ -16,17 +16,17 @@ use log::{info, trace};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
-use crate::consensus::SLOTS_PER_WINDOW;
 use crate::crypto::Hash;
 use crate::{Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
-use super::{Cert, EpochInfo, Vote};
+use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Vote};
 
 use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
 
+// TODO: remove this?
 const PRUNING_OFFSET: Slot = 64;
 
 /// Errors the Pool may throw when adding a vote or certificate.
@@ -79,9 +79,9 @@ pub struct Pool {
 }
 
 impl Pool {
-    /// Creates a new empty pool with no votes.
+    /// Creates a new empty pool containing no votes or certificates.
     ///
-    /// Any events will later be sent on [`Pool::votor_event_channel`].
+    /// Any later emitted events will be sent on provided `votor_event_channel`.
     pub fn new(epoch_info: Arc<EpochInfo>, votor_event_channel: Sender<VotorEvent>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
@@ -105,8 +105,11 @@ impl Pool {
     pub async fn add_cert(&mut self, cert: Cert) -> Result<(), PoolError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: put epoch length in here
-        if slot < self.highest_finalized_slot || slot == self.highest_finalized_slot + 2 * 100_000 {
+        // TODO: set bounds exactly correctly,
+        //       use correct validator set & stake distribution
+        if slot < self.highest_finalized_slot
+            || slot == self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
+        {
             return Err(PoolError::SlotOutOfBounds);
         }
 
@@ -212,8 +215,11 @@ impl Pool {
     pub async fn add_vote(&mut self, vote: Vote) -> Result<(), PoolError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: put epoch length in here
-        if slot < self.highest_finalized_slot || slot == self.highest_finalized_slot + 2 * 100_000 {
+        // TODO: set bounds exactly correctly,
+        //       use correct validator set & stake distribution
+        if slot < self.highest_finalized_slot
+            || slot == self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
+        {
             return Err(PoolError::SlotOutOfBounds);
         }
 
@@ -266,6 +272,18 @@ impl Pool {
                     .insert((parent_slot, parent_hash), (slot, block_hash));
             }
         }
+    }
+
+    /// Triggers a recovery from a standstill.
+    ///
+    /// Should be called after not seeing any progress for the standstill duration.
+    pub async fn recover_from_standstill(&self) {
+        let slot = self.highest_finalized_slot;
+        let certs = self.get_certs(slot);
+        let votes = self.get_own_votes(slot + 1);
+
+        let event = VotorEvent::Standstill(slot, certs, votes);
+        self.votor_event_channel.send(event).await.unwrap();
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.
@@ -331,6 +349,51 @@ impl Pool {
             .highest_slow_finalized_slot
             .saturating_sub(PRUNING_OFFSET - 1);
         self.slot_states = self.slot_states.split_off(&last_slot);
+    }
+
+    fn get_certs(&self, slot: Slot) -> Vec<Cert> {
+        let mut certs = Vec::new();
+        for (_, slot_state) in self.slot_states.range(slot..) {
+            if let Some(cert) = slot_state.certificates.finalize.clone() {
+                certs.push(Cert::Final(cert));
+            }
+            if let Some(cert) = slot_state.certificates.fast_finalize.clone() {
+                certs.push(Cert::FastFinal(cert));
+            }
+            if let Some(cert) = slot_state.certificates.notar.clone() {
+                certs.push(Cert::Notar(cert));
+            }
+            for cert in slot_state.certificates.notar_fallback.iter().cloned() {
+                certs.push(Cert::NotarFallback(cert));
+            }
+            if let Some(cert) = slot_state.certificates.skip.clone() {
+                certs.push(Cert::Skip(cert));
+            }
+        }
+        certs
+    }
+
+    fn get_own_votes(&self, slot: Slot) -> Vec<Vote> {
+        let mut votes = Vec::new();
+        let own_id = self.epoch_info.own_id;
+        for (_, slot_state) in self.slot_states.range(slot..) {
+            if let Some(vote) = &slot_state.votes.finalize[own_id as usize] {
+                votes.push(vote.clone());
+            }
+            if let Some((_, vote)) = &slot_state.votes.notar[own_id as usize] {
+                votes.push(vote.clone());
+            }
+            for (_, vote) in &slot_state.votes.notar_fallback[own_id as usize] {
+                votes.push(vote.clone());
+            }
+            if let Some(vote) = &slot_state.votes.skip[own_id as usize] {
+                votes.push(vote.clone());
+            }
+            if let Some(vote) = &slot_state.votes.skip_fallback[own_id as usize] {
+                votes.push(vote.clone());
+            }
+        }
+        votes
     }
 
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {

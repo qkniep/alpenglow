@@ -26,7 +26,9 @@ use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_EARLY_TIMEOUT, SLOTS_PER_WINDOW, Vote};
 
 /// Events that Votor is interested in.
+///
 /// These are emitted by [`super::Pool`], [`super::Blockstore`] and [`Votor`] itself.
+/// They are the inputs that drive the voting loop of Votor.
 #[derive(Clone, Debug)]
 pub enum VotorEvent {
     /// The pool has newly marked the given block as a ready parent for `slot`.
@@ -44,6 +46,11 @@ pub enum VotorEvent {
     SafeToSkip(Slot),
     /// New certificated created in pool (should then be broadcast by Votor).
     CertCreated(Box<Cert>),
+    /// Standstill timeout has fired.
+    ///
+    /// The provided slot indicates the highest finalized slot as seen by Pool.
+    /// The provided certificates and votes should be re-broadcast.
+    Standstill(Slot, Vec<Cert>, Vec<Vote>),
 
     /// First valid shred of the leader's block was received for the block.
     FirstShred(Slot),
@@ -104,6 +111,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         all2all: Arc<A>,
     ) -> Self {
         let mut parents_ready = BTreeSet::new();
+        // add dummy genesis block
         parents_ready.insert((0, 0, Hash::default()));
         Self {
             voted: BTreeSet::new(),
@@ -181,6 +189,14 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                         _ => {}
                     }
                     self.all2all.broadcast(&(*cert).into()).await.unwrap();
+                }
+                VotorEvent::Standstill(_, certs, votes) => {
+                    for cert in certs {
+                        self.all2all.broadcast(&cert.into()).await.unwrap();
+                    }
+                    for vote in votes {
+                        self.all2all.broadcast(&vote.into()).await.unwrap();
+                    }
                 }
 
                 // events from Blockstore
@@ -323,6 +339,7 @@ impl VotorEvent {
             Self::ParentReady { slot, .. }
             | Self::SafeToNotar(slot, _)
             | Self::SafeToSkip(slot)
+            | Self::Standstill(slot, _, _)
             | Self::FirstShred(slot)
             | Self::Block { slot, .. }
             | Self::Timeout(slot)

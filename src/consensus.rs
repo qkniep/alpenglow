@@ -53,6 +53,8 @@ use votor::Votor;
 
 /// Number of slots in each leader window.
 pub const SLOTS_PER_WINDOW: u64 = 4;
+/// Number of slots in each epoch.
+pub const SLOTS_PER_EPOCH: u64 = 18_000;
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the block.
@@ -62,6 +64,8 @@ const DELTA_BLOCK: Duration = Duration::from_millis(400);
 const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
 /// Timeout to use when we have seen at least one shred from the leader's block.
 const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
+/// Timeout for standstill detection mechanism.
+const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
@@ -152,6 +156,11 @@ where
         let nn = node.clone();
         let msg_loop = tokio::spawn(async move { nn.message_loop().await }.in_span(msg_loop_span));
 
+        let standstill_loop_span = Span::enter_with_local_parent("standstill detection loop");
+        let nn = node.clone();
+        let standstill_loop =
+            tokio::spawn(async move { nn.standstill_loop().await }.in_span(standstill_loop_span));
+
         let block_production_span = Span::enter_with_local_parent("block production");
         let nn = node.clone();
         let prod_loop = tokio::spawn(
@@ -161,6 +170,7 @@ where
         node.cancel_token.cancelled().await;
         node.votor_handle.abort();
         msg_loop.abort();
+        standstill_loop.abort();
         prod_loop.abort();
 
         let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
@@ -210,6 +220,25 @@ where
 
                 () = self.cancel_token.cancelled() => return Ok(()),
             };
+        }
+    }
+
+    /// Handles standstill detection and triggers recovery.
+    ///
+    /// Keeps track of when consensus progresses, i.e., [`Pool`] finalizes new blocks.
+    /// Triggers standstill recovery if no progress was detected for a long time.
+    async fn standstill_loop(self: &Arc<Self>) -> Result<()> {
+        let mut finalized_slot = 0;
+        let mut last_progress = Instant::now();
+        loop {
+            let slot = self.pool.read().await.finalized_slot();
+            if slot > finalized_slot {
+                finalized_slot = slot;
+                last_progress = Instant::now();
+            } else if last_progress.elapsed() > DELTA_STANDSTILL {
+                self.pool.read().await.recover_from_standstill().await;
+            }
+            tokio::time::sleep(Duration::from_millis(400)).await;
         }
     }
 
