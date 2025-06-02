@@ -200,21 +200,9 @@ where
         loop {
             tokio::select! {
                 // handle incoming votes and certificates
-                // res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
-                res = self.all2all.receive() => {
-                    let alpenglow = self.clone();
-                    // tokio::spawn(async move {
-                        alpenglow.handle_all2all_message(res.unwrap()).await.unwrap();
-                    // });
-                }
+                res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
                 // handle shreds received by block dissemination protocol
-                // res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
-                res = self.disseminator.receive() => {
-                    let alpenglow = self.clone();
-                    // tokio::spawn(async move {
-                        alpenglow.handle_disseminator_shred(res.unwrap()).await.unwrap();
-                    // });
-                }
+                res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
                 // handle repair requests
                 res = self.repair.receive() => self.handle_repair_message(res?).await?,
 

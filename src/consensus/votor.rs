@@ -351,90 +351,96 @@ impl VotorEvent {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
-    //
-    // use crate::all2all::TrivialAll2All;
-    // use crate::network::{NetworkMessage, SimulatedNetwork};
-    // use crate::tests::{generate_all2all_instances, generate_validators};
-    //
-    // use tokio::sync::mpsc;
-    //
-    // type A2A = TrivialAll2All<SimulatedNetwork>;
-    //
-    // async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>) {
-    //     let (sks, epoch_info) = generate_validators(2);
-    //     let mut a2a = generate_all2all_instances(epoch_info.validators.clone()).await;
-    //     let (tx, rx) = mpsc::channel(100);
-    //     let other_a2a = a2a.pop().unwrap();
-    //     let votor_a2a = a2a.pop().unwrap();
-    //     let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
-    //     tokio::spawn(async move {
-    //         votor.voting_loop().await.unwrap();
-    //     });
-    //     (other_a2a, tx)
-    // }
-    //
-    // // FIXME: sometimes waits forever
-    // #[tokio::test]
-    // async fn skips() {
-    //     let (other_a2a, tx) = start_votor().await;
-    //     for i in 0..SLOTS_PER_WINDOW {
-    //         tx.send(VotorEvent::SkipCertified(i)).await.unwrap();
-    //     }
-    //
-    //     // only receive first shred of first block, no full block for the next window
-    //     let event = VotorEvent::FirstShred(SLOTS_PER_WINDOW);
-    //     tx.send(event).await.unwrap();
-    //
-    //     // should vote skip for all slots
-    //     for i in 0..SLOTS_PER_WINDOW {
-    //         if let Ok(msg) = other_a2a.receive().await {
-    //             match msg {
-    //                 NetworkMessage::Vote(v) => {
-    //                     assert!(v.is_skip());
-    //                     assert_eq!(v.slot(), SLOTS_PER_WINDOW + i);
-    //                 }
-    //                 _ => unreachable!(),
-    //             }
-    //         }
-    //     }
-    // }
-    //
-    // #[tokio::test]
-    // async fn notar_and_final() {
-    //     let (other_a2a, tx) = start_votor().await;
-    //
-    //     // vote notar after seeing block
-    //     let event = VotorEvent::FirstShred(0);
-    //     tx.send(event).await.unwrap();
-    //     let event = VotorEvent::Block {
-    //         slot: 0,
-    //         hash: [1u8; 32],
-    //         parent_slot: 0,
-    //         parent_hash: Hash::default(),
-    //     };
-    //     tx.send(event).await.unwrap();
-    //     if let Ok(msg) = other_a2a.receive().await {
-    //         match msg {
-    //             NetworkMessage::Vote(v) => {
-    //                 assert!(v.is_notar());
-    //                 assert_eq!(v.slot(), 0);
-    //             }
-    //             _ => unreachable!(),
-    //         }
-    //     }
-    //
-    //     // vote finalize after seeing branch-certified
-    //     let event = VotorEvent::BranchCertified(0, [1u8; 32]);
-    //     tx.send(event).await.unwrap();
-    //     if let Ok(msg) = other_a2a.receive().await {
-    //         match msg {
-    //             NetworkMessage::Vote(v) => {
-    //                 assert!(v.is_final());
-    //                 assert_eq!(v.slot(), 0);
-    //             }
-    //             _ => unreachable!(),
-    //         }
-    //     }
-    // }
+    use super::*;
+
+    use crate::all2all::TrivialAll2All;
+    use crate::consensus::EpochInfo;
+    use crate::consensus::cert::NotarCert;
+    use crate::network::{NetworkMessage, SimulatedNetwork};
+    use crate::test_utils::{generate_all2all_instances, generate_validators};
+
+    use tokio::sync::mpsc;
+
+    type A2A = TrivialAll2All<SimulatedNetwork>;
+
+    async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, Arc<EpochInfo>) {
+        let (sks, epoch_info) = generate_validators(2);
+        let mut a2a = generate_all2all_instances(epoch_info.validators.clone()).await;
+        let (tx, rx) = mpsc::channel(100);
+        let other_a2a = a2a.pop().unwrap();
+        let votor_a2a = a2a.pop().unwrap();
+        let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
+        tokio::spawn(async move {
+            votor.voting_loop().await.unwrap();
+        });
+        (other_a2a, tx, epoch_info)
+    }
+
+    #[tokio::test]
+    async fn timeouts() {
+        let (other_a2a, tx, _) = start_votor().await;
+
+        // explicitly send parent ready for genesis
+        tx.send(VotorEvent::ParentReady {
+            slot: 0,
+            parent_slot: 0,
+            parent_hash: Hash::default(),
+        })
+        .await
+        .unwrap();
+
+        // only receive first shred of first block, no full block for the window
+        let event = VotorEvent::FirstShred(0);
+        tx.send(event).await.unwrap();
+
+        // should vote skip for all slots
+        for i in 0..SLOTS_PER_WINDOW {
+            if let Ok(msg) = other_a2a.receive().await {
+                match msg {
+                    NetworkMessage::Vote(v) => {
+                        assert!(v.is_skip());
+                        assert_eq!(v.slot(), i);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn notar_and_final() {
+        let (other_a2a, tx, epoch_info) = start_votor().await;
+
+        // vote notar after seeing block
+        let event = VotorEvent::FirstShred(0);
+        tx.send(event).await.unwrap();
+        let block_info = BlockInfo {
+            hash: [1u8; 32],
+            parent_slot: 0,
+            parent_hash: Hash::default(),
+        };
+        let event = VotorEvent::Block {
+            slot: 0,
+            block_info,
+        };
+        tx.send(event).await.unwrap();
+        let vote = match other_a2a.receive().await.unwrap() {
+            NetworkMessage::Vote(v) => v,
+            _ => unreachable!(),
+        };
+        assert!(vote.is_notar());
+        assert_eq!(vote.slot(), 0);
+
+        // vote finalize after seeing branch-certified
+        let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], &epoch_info.validators));
+        let event = VotorEvent::CertCreated(Box::new(cert));
+        tx.send(event).await.unwrap();
+        match other_a2a.receive().await.unwrap() {
+            NetworkMessage::Vote(v) => {
+                assert!(v.is_final());
+                assert_eq!(v.slot(), 0);
+            }
+            _ => unreachable!(),
+        }
+    }
 }
