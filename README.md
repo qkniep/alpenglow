@@ -99,7 +99,9 @@ Copyright (c) Anza Technology, Inc.
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
 
-## Literature
+## References
 
 - [Alpenglow Whitepaper](https://drive.google.com/file/d/1y_7ddr8oNOknTQYHzXeeMD2ProQ0WjMs/view?usp=sharing)
 - [Anza Blog Post](https://www.anza.xyz/blog/alpenglow-a-new-consensus-for-solana)
+- [Helius Blog Post](https://www.helius.dev/blog/alpenglow)
+- [Agave + Alpenglow Prototype](https://github.com/anza-xyz/alpenglow)
