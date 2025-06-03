@@ -188,6 +188,10 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                             self.try_final(cert.slot(), cert.block_hash().unwrap())
                                 .await;
                         }
+                        Cert::Final(_) | Cert::FastFinal(_) => {
+                            let slot = cert.slot() - cert.slot() % SLOTS_PER_WINDOW;
+                            self.set_timeouts(slot);
+                        }
                         _ => {}
                     }
                     self.all2all.broadcast(&(*cert).into()).await.unwrap();

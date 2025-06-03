@@ -285,7 +285,11 @@ impl Pool {
             votes.len()
         );
 
-        let event = VotorEvent::Standstill(slot, certs, votes);
+        // NOTE: This event corresponds to the slot after the last finalized one,
+        //       this way it is ignored by `Votor` iff a new slot was finalized.
+        let event = VotorEvent::Standstill(slot + 1, certs, votes);
+
+        // send to votor for broadcasting
         self.votor_event_channel.send(event).await.unwrap();
     }
 

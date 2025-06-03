@@ -248,13 +248,17 @@ where
             let first_slot_in_window = window * SLOTS_PER_WINDOW;
             let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
 
-            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
-                continue;
-            }
-
             // don't do anything if we are not the leader
             let leader = self.epoch_info.leader(first_slot_in_window);
             if leader.id != self.epoch_info.own_id {
+                continue;
+            }
+
+            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
+                warn!(
+                    "ignoring window {}..{} for block production",
+                    first_slot_in_window, last_slot_in_window
+                );
                 continue;
             }
 
@@ -264,27 +268,28 @@ where
                 (parent, parent_hash, parent_ready) = loop {
                     // build on ready parent, if any
                     let pool = self.pool.read().await;
-                    if let Some((s, h)) = pool.parents_ready(first_slot_in_window).first() {
-                        let hash = &hex::encode(h)[..8];
-                        debug!("building block on ready parent {hash} in slot {s}");
-                        break (*s, *h, true);
+                    if let Some((slot, hash)) = pool.parents_ready(first_slot_in_window).first() {
+                        let h = &hex::encode(hash)[..8];
+                        debug!("building block on ready parent {h} in slot {slot}");
+                        break (*slot, *hash, true);
                     }
                     drop(pool);
 
                     // optimisitically build on block in previous slot, if any
                     let blockstore = self.blockstore.read().await;
-                    if let Some(h) = blockstore.canonical_block_hash(first_slot_in_window - 1) {
-                        let hash = &hex::encode(h)[..8];
-                        debug!(
-                            "optimistically building block on parent {} in slot {}",
-                            hash,
-                            first_slot_in_window - 1
-                        );
-                        break (first_slot_in_window - 1, h, false);
+                    if let Some(hash) = blockstore.canonical_block_hash(first_slot_in_window - 1) {
+                        let slot = first_slot_in_window - 1;
+                        let h = &hex::encode(hash)[..8];
+                        debug!("optimistically building block on parent {h} in slot {slot}",);
+                        break (slot, hash, false);
                     }
                     drop(blockstore);
 
                     if self.pool.read().await.finalized_slot() >= last_slot_in_window {
+                        warn!(
+                            "ignoring window {}..{} for block production",
+                            first_slot_in_window, last_slot_in_window
+                        );
                         continue 'outer;
                     }
 
