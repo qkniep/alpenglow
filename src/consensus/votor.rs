@@ -285,10 +285,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         {
             return false;
         }
-        debug!(
-            "validator {} voted notar for slot {}",
-            self.validator_id, slot
-        );
+        debug!("voted notar for slot {slot}");
         let vote = Vote::new_notar(slot, hash, &self.voting_key, self.validator_id);
         self.all2all.broadcast(&vote.into()).await.unwrap();
         self.voted.insert(slot);
@@ -319,7 +316,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 let vote = Vote::new_skip(s, &self.voting_key, self.validator_id);
                 self.all2all.broadcast(&vote.into()).await.unwrap();
                 self.bad_window.insert(s);
-                debug!("validator {} voted skip for slot {}", self.validator_id, s);
+                debug!("voted skip for slot {s}");
             }
         }
     }

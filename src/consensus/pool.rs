@@ -12,7 +12,7 @@ mod slot_state;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
@@ -160,7 +160,6 @@ impl Pool {
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
                 for (slot, (parent_slot, parent_hash)) in new_parents_ready {
-                    assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -279,6 +278,13 @@ impl Pool {
         let certs = self.get_certs(slot);
         let votes = self.get_own_votes(slot + 1);
 
+        warn!("recovering from standstill at slot {slot}");
+        debug!(
+            "re-broadcasting {} certificates and {} votes",
+            certs.len(),
+            votes.len()
+        );
+
         let event = VotorEvent::Standstill(slot, certs, votes);
         self.votor_event_channel.send(event).await.unwrap();
     }
@@ -318,7 +324,7 @@ impl Pool {
     ///
     /// This requires that the parent is at least notarized-fallback.
     /// Also, if the parent is in a slot before `slot-1`, then all slots in
-    /// `parent+1..slot-1` must be skip-certified.
+    /// `parent+1..slot-1` (inclusive) must be skip-certified.
     pub fn is_parent_ready(&self, slot: Slot, parent: (Slot, Hash)) -> bool {
         self.parent_ready_tracker
             .parents_ready(slot)

@@ -316,13 +316,11 @@ where
         parent: (Slot, Hash),
         parent_ready: bool,
     ) -> Result<()> {
+        let (parent_slot, parent_hash) = parent;
         let slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let mut rng = SmallRng::seed_from_u64(slot);
-        let hash = &hex::encode(parent.1)[..8];
-        info!(
-            "validator {} producing block in slot {} with parent {} in slot {}",
-            self.epoch_info.own_id, slot, hash, parent.0
-        );
+        let ph = &hex::encode(parent_hash)[..8];
+        info!("producing block in slot {slot} with parent {ph} in slot {parent_slot}",);
 
         // TODO: send actual data
         for slice_index in 0..1 {
@@ -331,8 +329,8 @@ where
             rng.fill_bytes(&mut data);
             // pack parent information in first slice
             if slice_index == 0 {
-                data[0..8].copy_from_slice(&parent.0.to_be_bytes());
-                data[8..40].copy_from_slice(&parent.1);
+                data[0..8].copy_from_slice(&parent_slot.to_be_bytes());
+                data[8..40].copy_from_slice(&parent_hash);
             }
             let slice = Slice {
                 slot,
@@ -360,6 +358,7 @@ where
                 let pool = self.pool.read().await;
                 if let Some(p) = pool.parents_ready(slot).first() {
                     if *p != parent {
+                        warn!("switching block production parent");
                         unimplemented!("have to switch parents");
                     }
                 }
