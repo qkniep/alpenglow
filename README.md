@@ -101,7 +101,19 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 
 ## References
 
+### Literature
+
 - [Alpenglow Whitepaper](https://drive.google.com/file/d/1y_7ddr8oNOknTQYHzXeeMD2ProQ0WjMs/view?usp=sharing)
+- [Kudzu](https://arxiv.org/pdf/2505.08771)
+- [DispersedSimplex](https://iacr.steepath.eu/2023/1916-DispersedSimplexsimpleandefficientatomicbroadcast.pdf)
+- [Simplex](https://eprint.iacr.org/2023/463.pdf)
+- [Banyan](https://arxiv.org/pdf/2312.05869v3)
+- [Solana (TowerBFT) Whitepaper](https://solana.com/solana-whitepaper.pdf)
+
+### Other Resources
+
+- [Alpenglow Presentation (YouTube)](https://www.youtube.com/watch?v=x1sxtm-dvyE)
+- [Alpenglow Presentation (Slides)](https://disco.ethz.ch/members/wroger/AlpenglowPresentation.pdf)
 - [Anza Blog Post](https://www.anza.xyz/blog/alpenglow-a-new-consensus-for-solana)
 - [Helius Blog Post](https://www.helius.dev/blog/alpenglow)
 - [Agave + Alpenglow Prototype](https://github.com/anza-xyz/alpenglow)
