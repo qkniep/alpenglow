@@ -177,10 +177,12 @@ impl Blockstore {
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     async fn try_reconstruct_block(&mut self, slot: Slot) -> Option<(Slot, BlockInfo)> {
         if self.canonical_block_hash(slot).is_some() {
+            trace!("already hase block for slot {slot}");
             return None;
         }
         let last_slice = self.last_slices.get(&slot)?;
         if self.stored_slices_for_slot(slot) != last_slice + 1 {
+            trace!("don't have all slices for slot {slot} yet");
             return None;
         }
 
@@ -219,11 +221,9 @@ impl Blockstore {
         // notify Votor of block and print block info
         let event = VotorEvent::Block { slot, block_info };
         self.votor_channel.send(event).await.unwrap();
-        let hash = &hex::encode(block_hash)[..8];
-        let phash = &hex::encode(parent_hash)[..8];
-        debug!(
-            "reconstructed block {hash} in slot {slot} with parent {phash} in slot {parent_slot}"
-        );
+        let h = &hex::encode(block_hash)[..8];
+        let ph = &hex::encode(parent_hash)[..8];
+        debug!("reconstructed block {h} in slot {slot} with parent {ph} in slot {parent_slot}");
         Some((slot, block_info))
     }
 
@@ -440,7 +440,7 @@ mod tests {
         for (_, shred) in shreds
             .into_iter()
             .enumerate()
-            .filter(|(i, _)| i % DATA_SHREDS < DATA_SHREDS / 2)
+            .filter(|(i, _)| *i < DATA_SHREDS / 2 || *i >= TOTAL_SHREDS - DATA_SHREDS / 2)
         {
             blockstore.add_shred(shred).await;
         }

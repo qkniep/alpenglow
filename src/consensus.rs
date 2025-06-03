@@ -225,6 +225,7 @@ where
                 last_progress = Instant::now();
             } else if last_progress.elapsed() > DELTA_STANDSTILL {
                 self.pool.read().await.recover_from_standstill().await;
+                last_progress = Instant::now();
             }
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
@@ -239,16 +240,20 @@ where
         let mut parent_hash = Hash::default();
         let mut parent_ready = true;
 
-        for window in 0.. {
+        'outer: for window in 0.. {
             if self.cancel_token.is_cancelled() {
                 break;
             }
 
             let first_slot_in_window = window * SLOTS_PER_WINDOW;
             let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
-            let leader = self.epoch_info.leader(first_slot_in_window);
+
+            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
+                continue;
+            }
 
             // don't do anything if we are not the leader
+            let leader = self.epoch_info.leader(first_slot_in_window);
             if leader.id != self.epoch_info.own_id {
                 continue;
             }
@@ -278,6 +283,10 @@ where
                         break (first_slot_in_window - 1, h, false);
                     }
                     drop(blockstore);
+
+                    if self.pool.read().await.finalized_slot() >= last_slot_in_window {
+                        continue 'outer;
+                    }
 
                     sleep(Duration::from_millis(1)).await;
                 };
@@ -316,7 +325,7 @@ where
         );
 
         // TODO: send actual data
-        for slice_index in 0..10 {
+        for slice_index in 0..1 {
             let start_time = Instant::now();
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
@@ -328,7 +337,7 @@ where
             let slice = Slice {
                 slot,
                 slice_index,
-                is_last: slice_index == 9,
+                is_last: slice_index == 0,
                 merkle_root: None,
                 data,
             };
@@ -357,7 +366,7 @@ where
             }
 
             // artificially ensure block time close to 400 ms
-            sleep(Duration::from_millis(38).saturating_sub(start_time.elapsed())).await;
+            sleep(DELTA_BLOCK.saturating_sub(start_time.elapsed())).await;
         }
 
         Ok(())

@@ -113,7 +113,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         let mut parents_ready = BTreeSet::new();
         // add dummy genesis block
         parents_ready.insert((0, 0, Hash::default()));
-        Self {
+        let votor = Self {
             voted: BTreeSet::new(),
             voted_notar: BTreeMap::new(),
             bad_window: BTreeSet::new(),
@@ -127,7 +127,9 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             event_receiver,
             event_sender,
             all2all,
-        }
+        };
+        votor.set_timeouts(0);
+        votor
     }
 
     /// Handles the voting (leader and non-leader) side of consensus protocol.
@@ -389,21 +391,21 @@ mod tests {
         .await
         .unwrap();
 
-        // only receive first shred of first block, no full block for the window
-        let event = VotorEvent::FirstShred(0);
-        tx.send(event).await.unwrap();
-
         // should vote skip for all slots
-        for i in 0..SLOTS_PER_WINDOW {
+        let mut skip_votes = Vec::new();
+        for _ in 0..SLOTS_PER_WINDOW {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     NetworkMessage::Vote(v) => {
                         assert!(v.is_skip());
-                        assert_eq!(v.slot(), i);
+                        skip_votes.push(v);
                     }
                     _ => unreachable!(),
                 }
             }
+        }
+        for i in 0..SLOTS_PER_WINDOW {
+            assert!(skip_votes.iter().any(|v| v.slot() == i));
         }
     }
 

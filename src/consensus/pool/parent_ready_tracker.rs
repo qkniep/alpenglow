@@ -170,6 +170,16 @@ mod tests {
     }
 
     #[test]
+    fn genesis() {
+        let mut tracker = ParentReadyTracker::new();
+        assert!(tracker.mark_skipped(0).is_empty());
+        assert!(tracker.mark_skipped(1).is_empty());
+        assert!(tracker.mark_skipped(2).is_empty());
+        let new_valid_parents = tracker.mark_skipped(3);
+        assert!(new_valid_parents.contains(&(4, (0, [0; 32]))));
+    }
+
+    #[test]
     fn skips() {
         let mut tracker = ParentReadyTracker::new();
         let block = (0, [1; 32]);
@@ -183,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn out_of_order() {
+    fn out_of_order_skips() {
         let mut tracker = ParentReadyTracker::new();
         let block = (0, [1; 32]);
         assert!(tracker.mark_skipped(3).is_empty());
@@ -191,6 +201,19 @@ mod tests {
         assert!(tracker.mark_skipped(2).is_empty());
         assert_eq!(tracker.mark_notar_fallback(block), vec![(4, block)]);
         assert_eq!(tracker.mark_skipped(0), vec![(4, (0, [0; 32]))]);
+    }
+
+    #[test]
+    fn out_of_order_notars() {
+        let mut tracker = ParentReadyTracker::new();
+        let block0 = (0, [1; 32]);
+        let block1 = (1, [2; 32]);
+        let block2 = (2, [3; 32]);
+        let block3 = (3, [4; 32]);
+        assert!(tracker.mark_notar_fallback(block2).is_empty());
+        assert_eq!(tracker.mark_notar_fallback(block3), vec![(4, block3)]);
+        assert!(tracker.mark_notar_fallback(block0).is_empty());
+        assert!(tracker.mark_notar_fallback(block1).is_empty());
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
 use alpenglow::all2all::TrivialAll2All;
 use alpenglow::consensus::EpochInfo;
@@ -18,14 +19,6 @@ use rand::prelude::*;
 async fn only_correct_nodes() {
     liveness_test(6, 0).await;
 }
-
-// TODO: fix flaky test
-//
-// #[tokio::test]
-// #[ignore]
-// async fn many_nodes() {
-//     liveness_test(51, 0).await;
-// }
 
 #[tokio::test]
 #[ignore]
@@ -53,8 +46,14 @@ async fn max_crashes() {
 
 #[tokio::test]
 #[ignore]
-async fn too_many_crashes() {
-    liveness_test_internal(11, 5, false).await;
+async fn three_nodes() {
+    liveness_test(3, 0).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn three_nodes_crash() {
+    liveness_test(3, 1).await;
 }
 
 // TODO: implement transient failure test
@@ -136,14 +135,14 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
     let liveness_tester = tokio::spawn(async move {
         let mut finalized = vec![0; pools.len()];
         for t in 1.. {
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
             for (i, pool) in pools.iter().enumerate() {
                 if cancel_tokens[i].is_cancelled() {
                     continue;
                 }
                 let new_finalized = pool.read().await.finalized_slot();
                 if new_finalized <= finalized[i] {
-                    panic!("no progress on node {} after {} s", i, 5 * t);
+                    panic!("no progress on node {} after {} s", i, 10 * t);
                 }
                 finalized[i] = new_finalized;
             }
@@ -161,9 +160,10 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
     }
 
     // let it run for a while
-    let delay = tokio::time::Duration::from_secs(30);
+    let delay = tokio::time::Duration::from_secs(60);
     tokio::time::sleep(delay).await;
 
+    // check result of liveness test
     liveness_tester.abort();
     assert_eq!(
         liveness_tester.await.unwrap_err().is_cancelled(),

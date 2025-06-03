@@ -16,7 +16,9 @@ if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 		max_fast_crashes \
 		too_many_fast_crashes \
 		max_crashes \
-		too_many_crashes && \
+		too_many_crashes \
+		three_nodes \
+		three_nodes_crash && \
 	RUST_BACKTRACE=1 cargo test
 else
 	echo "🚀 Running fast tests only!"

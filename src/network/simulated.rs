@@ -107,7 +107,9 @@ mod tests {
     use super::*;
 
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
+    use crate::shredder::{
+        DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS,
+    };
 
     use rand::RngCore;
 
@@ -165,8 +167,9 @@ mod tests {
 
         let t_latency = 2.0 * MAX_DATA_PER_SLICE as f64 / 32_768.0;
         let p_latency = 0.1;
-        let min = p_latency + t_latency * 2.0; // 2x for erasure coding
-        let max = p_latency + t_latency * 2.865; // +36% metadata overhead, +5% margin
+        let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
+        let min = p_latency + t_latency * expansion_ratio; // accoutn for erasure coding
+        let max = p_latency + t_latency * expansion_ratio * 1.41; // +36% metadata overhead, +5% margin
 
         // background task: receive shreds and measure latency
         let receiver = tokio::spawn(async move {
@@ -225,8 +228,9 @@ mod tests {
 
         let t_latency = 1000.0 * MAX_DATA_PER_SLICE as f64 / 100.0 / 1024.0 / 1024.0;
         let p_latency = 0.1;
-        let min = p_latency + t_latency * 2.0; // 2x for erasure coding
-        let max = p_latency + t_latency * 2.865; // +36% metadata overhead, +5% margin
+        let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
+        let min = p_latency + t_latency * expansion_ratio; // account for erasure coding
+        let max = p_latency + t_latency * expansion_ratio * 1.41; // +36% metadata overhead, +5% margin
 
         // background task: receive shreds and measure latency
         let receiver = tokio::spawn(async move {
@@ -265,7 +269,7 @@ mod tests {
         let net1 = core.join_unlimited(0).await;
         let net2 = core.join_unlimited(1).await;
 
-        // create 1000 slices
+        // create 10,000 slices
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -286,7 +290,8 @@ mod tests {
         // achieving at least 256 MiB/s
         let t_latency = 10_000.0 * MAX_DATA_PER_SLICE as f64 / 256.0 / 1024.0 / 1024.0;
         let p_latency = 0.1;
-        let max = p_latency + t_latency * 2.865; // 2x for erasure coding + 36% metadata overhead + 5% margin
+        let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
+        let max = p_latency + t_latency * expansion_ratio * 1.41; // account for erasure coding + 36% metadata overhead + 5% margin
 
         // background task: receive shreds and measure latency
         let receiver = tokio::spawn(async move {
