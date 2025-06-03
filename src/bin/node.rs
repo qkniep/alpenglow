@@ -50,7 +50,7 @@ impl Layout for MinimalLogforthLayout {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConfigFile {
     id: u64,
     identity_key: SecretKey,
@@ -61,7 +61,7 @@ struct ConfigFile {
 }
 
 /// Standalone Alpenglow node.
-#[derive(Parser, Debug)]
+#[derive(Debug, Clone, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Generates configs for a cluster from a file with IPs (one per line).
