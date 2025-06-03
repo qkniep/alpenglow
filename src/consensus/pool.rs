@@ -12,7 +12,7 @@ mod slot_state;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use log::{info, trace};
+use log::{info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
@@ -67,10 +67,8 @@ pub struct Pool {
 
     /// Highest slot that is at least notarized fallabck.
     highest_notarized_fallback_slot: Slot,
-    /// Highest slot that was finalized or fast-finalized.
+    /// Highest slot that was finalized (slow or fast).
     highest_finalized_slot: Slot,
-    /// Highest slot that has a finalization certificate (not fast-finalized).
-    highest_slow_finalized_slot: Slot,
 
     /// Information about all active validators.
     epoch_info: Arc<EpochInfo>,
@@ -89,7 +87,6 @@ impl Pool {
             s2n_waiting_parent_cert: BTreeMap::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
-            highest_slow_finalized_slot: 0,
             epoch_info,
             votor_event_channel,
         }
@@ -157,6 +154,8 @@ impl Pool {
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
                 let block_hash = cert.block_hash().unwrap();
+                let h = &hex::encode(block_hash)[..8];
+                info!("notarized(-fallback) block {h} in slot {slot}");
                 if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
                     self.votor_event_channel.send(event).await.unwrap();
                 }
@@ -176,6 +175,7 @@ impl Pool {
                     slot.max(self.highest_notarized_fallback_slot);
             }
             Cert::Skip(_) => {
+                warn!("skipped slot {slot}");
                 let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
                     assert_eq!(slot % SLOTS_PER_WINDOW, 0);
@@ -190,10 +190,10 @@ impl Pool {
             Cert::FastFinal(_) => {
                 info!("fast finalized slot {slot}");
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
+                self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
-                self.highest_slow_finalized_slot = slot.max(self.highest_slow_finalized_slot);
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                 self.prune();
             }
@@ -343,10 +343,10 @@ impl Pool {
     /// Cleans up old finalized slots from the pool.
     ///
     /// After this, [`Self::slot_states`] will only contain entries for slots
-    /// >= [`Self::highest_slow_finalized_slot`] - [`PRUNING_OFFSET`].
+    /// >= [`Self::highest_finalized_slot`].
     pub fn prune(&mut self) {
         let last_slot = self
-            .highest_slow_finalized_slot
+            .highest_finalized_slot
             .saturating_sub(PRUNING_OFFSET - 1);
         self.slot_states = self.slot_states.split_off(&last_slot);
     }
@@ -503,7 +503,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(0));
-        assert!(pool.highest_slow_finalized_slot == 0);
+        assert!(pool.highest_finalized_slot == 0);
 
         // just enough nodes vote finalize on slot 1
         assert!(!pool.is_finalized(1));
@@ -512,7 +512,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(1));
-        assert!(pool.highest_slow_finalized_slot == 1);
+        assert!(pool.highest_finalized_slot == 1);
 
         // just NOT enough nodes vote finalize on slot 2
         assert!(!pool.is_finalized(2));
@@ -521,7 +521,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(!pool.is_finalized(2));
-        assert!(pool.highest_slow_finalized_slot == 1);
+        assert!(pool.highest_finalized_slot == 1);
         drop(rx);
     }
 
@@ -786,7 +786,7 @@ mod tests {
             }
             assert!(pool.is_finalized(slot));
         }
-        assert_eq!(pool.highest_slow_finalized_slot, PRUNING_OFFSET - 1);
+        assert_eq!(pool.highest_finalized_slot, PRUNING_OFFSET - 1);
 
         // after pruning all slots should still be there
         pool.prune();
@@ -804,7 +804,7 @@ mod tests {
             }
             assert!(!pool.is_finalized(slot));
         }
-        assert_eq!(pool.highest_slow_finalized_slot, PRUNING_OFFSET - 1);
+        assert_eq!(pool.highest_finalized_slot, PRUNING_OFFSET - 1);
 
         // first 10 slots should still be there
         for slot in 0..10 {
@@ -818,7 +818,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
             assert!(pool.is_finalized(slot));
         }
-        assert_eq!(pool.highest_slow_finalized_slot, PRUNING_OFFSET + 9);
+        assert_eq!(pool.highest_finalized_slot, PRUNING_OFFSET + 9);
 
         // NOW first 10 slots should be gone
         for slot in 0..10 {
