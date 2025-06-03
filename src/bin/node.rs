@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
+use std::fs::File;
 use std::io::Read;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
@@ -32,6 +33,7 @@ use rand::rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
+// TODO: remove this duplicate definition
 #[derive(Debug, Clone, Copy)]
 struct MinimalLogforthLayout;
 
@@ -58,14 +60,14 @@ struct ConfigFile {
     gossip: Vec<ValidatorInfo>,
 }
 
-/// A standalone alpenglow node
+/// Standalone Alpenglow node.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Geenrates configs for a cluster from a file with SocketAddrs (one per line)
+    /// Generates configs for a cluster from a file with IPs (one per line).
     #[arg(long)]
     generate_config_files: Option<String>,
-    /// Config file name to use
+    /// Config file name to use.
     #[arg(long)]
     config_name: String,
 }
@@ -74,12 +76,14 @@ struct Args {
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
+
+    // parse args & load config from file
     let args = Args::parse();
     if let Some(ip_list) = args.generate_config_files {
         create_node_configs(ip_list, args.config_name).await?;
         return Ok(());
     }
-    let mut config = std::fs::File::open(&args.config_name).context("Config file is required")?;
+    let mut config = File::open(&args.config_name).context("Config file is required")?;
     let mut config_string = String::new();
     config.read_to_string(&mut config_string)?;
     let config: ConfigFile = toml::from_str(&config_string).context("Can not parse config")?;
@@ -116,12 +120,13 @@ async fn main() -> Result<()> {
     let span_context = SpanContext::random();
     let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
 
-    // spawn local cluster
+    // start the node with the provided config
     let node = create_node(config)?;
     let cancel_token = node.get_cancel_token();
     let node_task = tokio::spawn(node.run().in_span(root_span));
 
-    tokio::signal::ctrl_c().await.unwrap();
+    // wait for shutdown signal (Ctrl + C)
+    tokio::signal::ctrl_c().await?;
     warn!("shutting down node");
     cancel_token.cancel();
     node_task.await??;
@@ -135,8 +140,7 @@ type Node =
     Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
 fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
-    // prepare validator info for all nodes
-    // turn validator info into actual nodes
+    // turn ConfigFile into an actual node
     let epoch_info = Arc::new(EpochInfo::new(config.id, config.gossip.clone()));
     let start_port = config.port;
     let network = UdpNetwork::new(start_port);
@@ -158,7 +162,7 @@ async fn create_node_configs(
     socket_list_filename: String,
     config_base_filename: String,
 ) -> color_eyre::Result<()> {
-    // prepare validator info for all nodes
+    // prepare ValidatorInfo for all nodes
     let mut rng = rng();
     let mut sks = Vec::new();
     let mut voting_sks = Vec::new();
@@ -185,6 +189,8 @@ async fn create_node_configs(
             repair_address: format!("{}:{}", sockaddr.ip(), port + 2),
         });
     }
+
+    // write config files
     for id in 0..sks.len() as u64 {
         let mut file = tokio::fs::File::create(format!("{config_base_filename}_{id}.toml")).await?;
         let conf = ConfigFile {
