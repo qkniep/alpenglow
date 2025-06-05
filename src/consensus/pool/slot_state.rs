@@ -233,6 +233,17 @@ impl SlotState {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
+        let nf_stake = *self
+            .voted_stakes
+            .notar_fallback
+            .get(block_hash)
+            .unwrap_or(&0);
+        if self.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash) {
+            let mut votes = self.votes.notar_votes(block_hash);
+            votes.extend(self.votes.notar_fallback_votes(block_hash));
+            let cert = NotarFallbackCert::new_unchecked(&votes, &self.epoch_info.validators);
+            new_certs.push(Cert::NotarFallback(cert));
+        }
         if self.is_quorum(notar_stake) && self.certificates.notar.is_none() {
             let votes = self.votes.notar_votes(block_hash);
             let cert = NotarCert::new_unchecked(&votes, &self.epoch_info.validators);
@@ -396,9 +407,7 @@ impl SlotState {
     }
 
     fn check_safe_to_notar(&mut self, block_hash: &Hash) -> bool {
-        if !self.certified_parent.contains(block_hash) {
-            return false;
-        }
+        // check general voted stake conditions
         let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
         let skip_stake = self.voted_stakes.skip;
         if !self.is_weakest_quorum(notar_stake) {
@@ -408,6 +417,11 @@ impl SlotState {
             self.pending_safe_to_notar.insert(*block_hash);
             return false;
         }
+        if !self.certified_parent.contains(block_hash) {
+            return false;
+        }
+
+        // check own vote
         let own_id = self.epoch_info.own_id;
         let skip = &self.votes.skip[own_id as usize];
         let notar = &self.votes.notar[own_id as usize];
@@ -423,6 +437,7 @@ impl SlotState {
         }
     }
 
+    /// Checks whether the given block hash has a notar-fallback cert in this slot.
     pub fn is_notar_fallback(&self, block_hash: &Hash) -> bool {
         self.certificates
             .notar_fallback
@@ -537,10 +552,41 @@ mod tests {
             slot_state.add_vote(vote.clone(), voter_stake);
             let notar_vote = &slot_state.votes.notar[i];
             assert!(notar_vote.is_some());
-            assert_eq!(notar_vote.clone().unwrap().0, [1; 32]);
-            assert!(notar_vote.clone().unwrap().1.is_notar());
-            assert_eq!(notar_vote.clone().unwrap().1.slot(), 1);
-            assert_eq!(notar_vote.clone().unwrap().1.signer(), i as ValidatorId);
+            assert_eq!(
+                slot_state.voted_stakes.notar.get(&[1; 32]),
+                Some(&((i + 1) as Stake))
+            );
+            assert_eq!(slot_state.voted_stakes.notar_or_skip, (i + 1) as Stake);
+        }
+    }
+
+    #[tokio::test]
+    async fn safe_to_notar() {
+        let (sks, epoch_info) = generate_validators(3);
+        let mut slot_state = SlotState::new(1, epoch_info.clone());
+
+        // mark parent as notarized(-fallback)
+        slot_state.notify_parent_certified([1; 32]);
+
+        // 33% notar alone has no effect
+        let vote = Vote::new_notar(1, [1; 32], &sks[1], 1);
+        let voter_stake = epoch_info.validator(1).stake;
+        let (certs, events) = slot_state.add_vote(vote.clone(), voter_stake);
+        assert!(certs.is_empty());
+        assert!(events.is_empty());
+
+        // additional 33% skip should lead to safe-to-notar
+        let vote = Vote::new_skip(1, &sks[0], 0);
+        let voter_stake = epoch_info.validator(0).stake;
+        let (certs, events) = slot_state.add_vote(vote.clone(), voter_stake);
+        assert!(certs.is_empty());
+        assert_eq!(events.len(), 1);
+        match events[0] {
+            VotorEvent::SafeToNotar(s, h) => {
+                assert_eq!(s, 1);
+                assert_eq!(h, [1; 32]);
+            }
+            _ => unreachable!(),
         }
     }
 }
