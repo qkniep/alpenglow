@@ -60,8 +60,6 @@ impl ParentReadyTracker {
     ///
     /// Returns a list of any newly connected parents.
     /// All of these will have the given block ID as the parent.
-    ///
-    /// This should only ever be called once for any specific block ID.
     pub fn mark_notar_fallback(&mut self, id: BlockId) -> Vec<(Slot, BlockId)> {
         let (slot, hash) = id;
         let state = self.0.entry(slot).or_default();

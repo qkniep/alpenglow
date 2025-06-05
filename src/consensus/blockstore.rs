@@ -177,7 +177,7 @@ impl Blockstore {
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     async fn try_reconstruct_block(&mut self, slot: Slot) -> Option<(Slot, BlockInfo)> {
         if self.canonical_block_hash(slot).is_some() {
-            trace!("already hase block for slot {slot}");
+            trace!("already have block for slot {slot}");
             return None;
         }
         let last_slice = self.last_slices.get(&slot)?;

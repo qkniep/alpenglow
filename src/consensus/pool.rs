@@ -153,8 +153,15 @@ impl Pool {
                 let block_hash = cert.block_hash().unwrap();
                 let h = &hex::encode(block_hash)[..8];
                 info!("notarized(-fallback) block {h} in slot {slot}");
-                if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
-                    self.votor_event_channel.send(event).await.unwrap();
+                if let Some((child_slot, child_hash)) =
+                    self.s2n_waiting_parent_cert.remove(&(slot, block_hash))
+                {
+                    if let Some(event) = self
+                        .slot_state(child_slot)
+                        .notify_parent_certified(child_hash)
+                    {
+                        self.votor_event_channel.send(event).await.unwrap();
+                    }
                 }
                 let new_parents_ready = self
                     .parent_ready_tracker
@@ -219,6 +226,11 @@ impl Pool {
             return Err(PoolError::SlotOutOfBounds);
         }
 
+        if let Some(hash) = vote.block_hash() {
+            let event = VotorEvent::RepairBlock(slot, hash);
+            self.votor_event_channel.send(event).await.unwrap();
+        }
+
         // verify signature
         let pk = &self.epoch_info.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
@@ -262,16 +274,18 @@ impl Pool {
             if parent_state.is_notar_fallback(&parent_hash) {
                 if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
                     self.votor_event_channel.send(event).await.unwrap();
+                    return;
                 }
-            } else {
-                self.s2n_waiting_parent_cert
-                    .insert((parent_slot, parent_hash), (slot, block_hash));
             }
         }
+        self.s2n_waiting_parent_cert
+            .insert((parent_slot, parent_hash), (slot, block_hash));
     }
 
     /// Triggers a recovery from a standstill.
     ///
+    /// Determines which certificates and votes need to be re-broadcast.
+    /// Emits the corresponding [`VotorEvent::Standstill`] event for Votor.
     /// Should be called after not seeing any progress for the standstill duration.
     pub async fn recover_from_standstill(&self) {
         let slot = self.highest_finalized_slot;
