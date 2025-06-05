@@ -44,10 +44,10 @@ use crate::repair::{Repair, RepairMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
-pub use blockstore::Blockstore;
+pub use blockstore::{BlockInfo, Blockstore};
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
-use pool::{Pool, PoolError};
+pub use pool::{Pool, PoolError};
 pub use vote::Vote;
 use votor::Votor;
 
@@ -85,7 +85,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
     /// Block repair protocol.
-    repair: Repair<R>,
+    repair: Arc<Repair<R>>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -110,32 +110,51 @@ where
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
         let cancel_token = CancellationToken::new();
-        let (tx, rx) = mpsc::channel(1024);
+        let (votor_tx, votor_rx) = mpsc::channel(1024);
+        let (repair_tx, mut repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
+
+        let blockstore = Blockstore::new(epoch_info.clone(), votor_tx.clone());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx.clone());
+        let pool = Arc::new(RwLock::new(pool));
+        let repair = Repair::new(
+            Arc::clone(&blockstore),
+            Arc::clone(&pool),
+            repair_network,
+            epoch_info.clone(),
+        );
+        let repair = Arc::new(repair);
+
+        let r = Arc::clone(&repair);
+        let repair_handle = tokio::spawn(
+            async move {
+                while let Some((slot, hash)) = repair_rx.recv().await {
+                    r.repair_block(slot, hash).await;
+                }
+            }
+            .in_span(Span::enter_with_local_parent("repair loop")),
+        );
 
         // let cancel = cancel_token.clone();
         let mut votor = Votor::new(
             epoch_info.own_id,
             voting_secret_key,
-            tx.clone(),
-            rx,
+            votor_tx.clone(),
+            votor_rx,
             all2all.clone(),
+            repair_tx,
         );
         let votor_handle = tokio::spawn(
             async move { votor.voting_loop().await.unwrap() }
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
-        let blockstore = Blockstore::new(epoch_info.clone(), tx.clone());
-        let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool = Pool::new(epoch_info.clone(), tx);
-        let repair = Repair::new(Arc::clone(&blockstore), repair_network, epoch_info.clone());
-
         Self {
             secret_key,
             epoch_info,
             blockstore,
-            pool: Arc::new(RwLock::new(pool)),
+            pool,
             all2all,
             disseminator: Arc::new(disseminator),
             repair,
@@ -412,7 +431,9 @@ where
             RepairMessage::Request(request) => {
                 self.repair.answer_request(request).await?;
             }
-            RepairMessage::Response(_) => unimplemented!(),
+            RepairMessage::Response(resposne) => {
+                self.repair.handle_response(resposne).await;
+            }
         }
         Ok(())
     }

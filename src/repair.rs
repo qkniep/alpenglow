@@ -9,12 +9,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use log::warn;
+use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::Slot;
-use crate::consensus::{Blockstore, EpochInfo};
+use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
@@ -38,6 +38,8 @@ pub enum RepairRequest {
     SliceRoot(Slot, Hash, usize),
     /// Request for shred, identified by block hash, slice index and shred index.
     Shred(Slot, Hash, usize, usize),
+    ///
+    Parent(Slot, Hash),
 }
 
 /// Response messages for the repair sub-protocol.
@@ -53,11 +55,14 @@ pub enum RepairResponse {
     SliceRoot(RepairRequest, Hash, Vec<Hash>),
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
+    ///
+    Parent(RepairRequest, Slot, Hash),
 }
 
 /// Instance of double-Merkle based block repair protocol.
 pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Blockstore>>,
+    pool: Arc<RwLock<Pool>>,
     network: N,
     sampler: StakeWeightedSampler,
     slice_counts: BTreeMap<(Slot, Hash), usize>,
@@ -71,6 +76,7 @@ impl<N: Network> Repair<N> {
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
         blockstore: Arc<RwLock<Blockstore>>,
+        pool: Arc<RwLock<Pool>>,
         network: N,
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
@@ -78,6 +84,7 @@ impl<N: Network> Repair<N> {
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,
+            pool,
             network,
             sampler,
             slice_counts: BTreeMap::new(),
@@ -87,7 +94,18 @@ impl<N: Network> Repair<N> {
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
-        unimplemented!()
+        let blockstore = self.blockstore.read().await;
+        if blockstore.get_block(slot, block_hash).is_some() {
+            return;
+        }
+        drop(blockstore);
+
+        let h = &hex::encode(block_hash)[..8];
+        debug!("repairing block {h} in slot {slot}");
+        // TODO: perform actual repair
+        for _ in 0..10 {
+            self.request_parent(slot, block_hash).await.unwrap();
+        }
     }
 
     /// Tries to answer the given repair request.
@@ -95,6 +113,7 @@ impl<N: Network> Repair<N> {
     /// If we do not have the block the request refers to, the request is ignored.
     /// Otherwise, the correct response is sent back to the sender of the request.
     pub async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
+        trace!("answering repair request: {request:?}");
         let slot = request.slot();
         let hash = request.block_hash();
         let blockstore = self.blockstore.read().await;
@@ -121,6 +140,12 @@ impl<N: Network> Repair<N> {
                 };
                 RepairResponse::Shred(request, shred)
             }
+            RepairRequest::Parent(slot, hash) => {
+                let Some(block) = blockstore.get_block(slot, hash) else {
+                    return Ok(());
+                };
+                RepairResponse::Parent(request, block.parent, block.parent_hash)
+            }
         };
         drop(blockstore);
         self.send_response(response).await
@@ -131,7 +156,8 @@ impl<N: Network> Repair<N> {
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
-    pub async fn handle_response(&mut self, response: RepairResponse) {
+    pub async fn handle_response(&self, response: RepairResponse) {
+        trace!("handling repair response: {response:?}");
         let slot = response.slot();
         let block_hash = response.block_hash();
         match response {
@@ -140,7 +166,7 @@ impl<N: Network> Repair<N> {
                     return;
                 };
                 // TODO: include & check proof
-                self.slice_counts.insert((slot, block_hash), count);
+                // self.slice_counts.insert((slot, block_hash), count);
             }
             RepairResponse::SliceRoot(req, slice_root, proof) => {
                 let RepairRequest::SliceRoot(_, _, slice) = req else {
@@ -149,8 +175,8 @@ impl<N: Network> Repair<N> {
                 if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
                     return;
                 }
-                self.slice_roots
-                    .insert((slot, block_hash, slice), slice_root);
+                // self.slice_roots
+                //     .insert((slot, block_hash, slice), slice_root);
             }
             RepairResponse::Shred(req, shred) => {
                 let RepairRequest::Shred(_, _, slice, index) = req else {
@@ -164,6 +190,14 @@ impl<N: Network> Repair<N> {
                 //
                 /* if !shred.merkle_root ... { return; } */
                 self.blockstore.write().await.add_shred(shred).await;
+            }
+            RepairResponse::Parent(_, parent_slot, parent_hash) => {
+                let block_info = BlockInfo {
+                    hash: block_hash,
+                    parent_slot,
+                    parent_hash,
+                };
+                self.pool.write().await.add_block(slot, block_info).await;
             }
         }
     }
@@ -211,6 +245,11 @@ impl<N: Network> Repair<N> {
         self.send_request(req).await
     }
 
+    async fn request_parent(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
+        let req = RepairRequest::Parent(slot, hash);
+        self.send_request(req).await
+    }
+
     async fn send_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
         let repair = RepairMessage::Request(request);
         let msg = NetworkMessage::Repair(repair);
@@ -234,7 +273,8 @@ impl RepairRequest {
         match self {
             Self::SliceCount(slot, _)
             | Self::SliceRoot(slot, _, _)
-            | Self::Shred(slot, _, _, _) => *slot,
+            | Self::Shred(slot, _, _, _)
+            | Self::Parent(slot, _) => *slot,
         }
     }
 
@@ -244,7 +284,8 @@ impl RepairRequest {
         match self {
             Self::SliceCount(_, hash)
             | Self::SliceRoot(_, hash, _)
-            | Self::Shred(_, hash, _, _) => *hash,
+            | Self::Shred(_, hash, _, _)
+            | Self::Parent(_, hash) => *hash,
         }
     }
 }
@@ -254,7 +295,10 @@ impl RepairResponse {
     #[must_use]
     pub const fn request(&self) -> &RepairRequest {
         match self {
-            Self::SliceCount(req, _) | Self::SliceRoot(req, _, _) | Self::Shred(req, _) => req,
+            Self::SliceCount(req, _)
+            | Self::SliceRoot(req, _, _)
+            | Self::Shred(req, _)
+            | Self::Parent(req, _, _) => req,
         }
     }
 

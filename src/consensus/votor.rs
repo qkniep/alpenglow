@@ -99,6 +99,8 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     event_sender: Sender<VotorEvent>,
     /// [`All2All`] instance used to broadcast votes.
     all2all: Arc<A>,
+    ///
+    repair_sender: Sender<(Slot, Hash)>,
 }
 
 impl<A: All2All + Sync + Send + 'static> Votor<A> {
@@ -109,6 +111,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         event_sender: Sender<VotorEvent>,
         event_receiver: Receiver<VotorEvent>,
         all2all: Arc<A>,
+        repair_sender: Sender<(Slot, Hash)>,
     ) -> Self {
         let mut parents_ready = BTreeSet::new();
         // add dummy genesis block
@@ -127,6 +130,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             event_receiver,
             event_sender,
             all2all,
+            repair_sender,
         };
         votor.set_timeouts(0);
         votor
@@ -163,7 +167,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     self.set_timeouts(slot);
                 }
                 VotorEvent::SafeToNotar(slot, hash) => {
-                    trace!("safe to notar slot {}", slot);
+                    debug!("voted notar-fallback in slot {slot}");
                     let vote =
                         Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_id);
                     self.all2all.broadcast(&vote.into()).await.unwrap();
@@ -171,7 +175,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     self.bad_window.insert(slot);
                 }
                 VotorEvent::SafeToSkip(slot) => {
-                    trace!("safe to skip slot {slot}");
+                    debug!("voted skip-fallback in slot {slot}");
                     let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_id);
                     self.all2all.broadcast(&vote.into()).await.unwrap();
                     self.try_skip_window(slot).await;
@@ -180,7 +184,9 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 VotorEvent::CertCreated(cert) => {
                     match cert.as_ref() {
                         Cert::NotarFallback(_) => {
-                            // TODO: start repair
+                            self.repair_sender
+                                .send((cert.slot(), cert.block_hash().unwrap()))
+                                .await?;
                         }
                         Cert::Notar(_) => {
                             self.block_notarized
@@ -372,7 +378,15 @@ mod tests {
         let (tx, rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
+        let (repair_tx, _) = mpsc::channel(100);
+        let mut votor = Votor::new(
+            0,
+            sks[0].clone(),
+            tx.clone(),
+            rx,
+            Arc::new(votor_a2a),
+            repair_tx,
+        );
         tokio::spawn(async move {
             votor.voting_loop().await.unwrap();
         });
