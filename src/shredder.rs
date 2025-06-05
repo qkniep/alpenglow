@@ -34,7 +34,7 @@ pub const DATA_SHREDS: usize = 32;
 ///
 /// Generally, includes both data and coding shreds.
 /// How many are data and coding depends on the specific shredder.
-pub const TOTAL_SHREDS: usize = 96;
+pub const TOTAL_SHREDS: usize = 64;
 /// Maximum number of payload bytes a single shred can hold.
 pub const MAX_DATA_PER_SHRED: usize = 1024;
 /// Maximum number of payload bytes an entire slice can hold.
