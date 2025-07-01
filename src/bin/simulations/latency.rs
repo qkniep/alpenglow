@@ -41,7 +41,9 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     // running aggregates (averages)
     direct_stats: RwLock<LatencyStats>,
     rotor_stats: RwLock<LatencyStats>,
+    shreds95_stats: RwLock<LatencyStats>,
     notar_stats: RwLock<LatencyStats>,
+    notar65_stats: RwLock<LatencyStats>,
     fast_final_stats: RwLock<LatencyStats>,
     slow_final_stats: RwLock<LatencyStats>,
     final_stats: RwLock<LatencyStats>,
@@ -65,7 +67,6 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             .collect();
         let ping_servers: Vec<&'static PingServer> =
             validators_with_ping_data.iter().map(|(_, p)| *p).collect();
-        let num_val = validators.len();
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         Self {
             validators,
@@ -78,7 +79,9 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
             direct_stats: RwLock::new(LatencyStats::new()),
             rotor_stats: RwLock::new(LatencyStats::new()),
+            shreds95_stats: RwLock::new(LatencyStats::new()),
             notar_stats: RwLock::new(LatencyStats::new()),
+            notar65_stats: RwLock::new(LatencyStats::new()),
             fast_final_stats: RwLock::new(LatencyStats::new()),
             slow_final_stats: RwLock::new(LatencyStats::new()),
             final_stats: RwLock::new(LatencyStats::new()),
@@ -113,7 +116,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     /// Each iteration runs only until `up_to_stage`, e.g., if `up_to_stage` is
     /// `LatencyTestStage::Direct`, only the direct latency will be measured.
     pub fn run_many_with_leader(
-        &mut self,
+        &self,
         test_name: &str,
         iterations: usize,
         up_to_stage: LatencyTestStage,
@@ -160,7 +163,9 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         let mut relay_latencies = vec![0.0; self.num_shreds];
         let mut direct_latencies = vec![(0.0, 0); num_val];
         let mut rotor_latencies = vec![(0.0, 0); num_val];
+        let mut shreds95_latencies = vec![(0.0, 0); num_val];
         let mut notar_latencies = vec![(0.0, 0); num_val];
+        let mut notar65_latencies = vec![(0.0, 0); num_val];
         let mut fast_final_latencies = vec![(0.0, 0); num_val];
         let mut slow_final_latencies = vec![(0.0, 0); num_val];
         let mut final_latencies = vec![(0.0, 0); num_val];
@@ -193,6 +198,8 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
             let threshold_latency = tmp_rotor_latencies[self.num_data_shreds - 1];
             rotor_latencies[v.id as usize] = (threshold_latency, v.id);
+            let threshold_latency = tmp_rotor_latencies[61 - 1];
+            shreds95_latencies[v.id as usize] = (threshold_latency, v.id);
         }
 
         if up_to_stage == LatencyTestStage::Rotor {
@@ -211,6 +218,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
             // measure latency until notarization and fast-finalization
             let mut notar_latency = None;
+            let mut notar65_latency = None;
             let mut fast_final_latency = None;
             let mut stake_so_far = 0;
             for (latency, v) in &tmp_latencies {
@@ -218,15 +226,21 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
                 if notar_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.6 {
                     notar_latency = Some(*latency);
                 }
+                if notar65_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.65
+                {
+                    notar65_latency = Some(*latency);
+                }
                 if stake_so_far as f64 > self.total_stake as f64 * 0.8 {
                     fast_final_latency = Some(*latency);
                     break;
                 }
             }
             let mut notar_latency = notar_latency.unwrap();
+            let notar65_latency = notar65_latency.unwrap();
             let mut fast_final_latency = fast_final_latency.unwrap();
             notar_latency = notar_latency.max(*v1_rotor_latency);
             notar_latencies[*v1 as usize] = (notar_latency, *v1);
+            notar65_latencies[*v1 as usize] = (notar65_latency, *v1);
             fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
             fast_final_latencies[*v1 as usize] = (fast_final_latency, *v1);
             final_latencies[*v1 as usize] = (fast_final_latency, *v1);
@@ -334,8 +348,18 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             &self.validators,
             &self.ping_servers,
         );
+        self.shreds95_stats.write().unwrap().record_latencies(
+            &mut shreds95_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
         self.notar_stats.write().unwrap().record_latencies(
             &mut notar_latencies,
+            &self.validators,
+            &self.ping_servers,
+        );
+        self.notar65_stats.write().unwrap().record_latencies(
+            &mut notar65_latencies,
             &self.validators,
             &self.ping_servers,
         );
@@ -364,7 +388,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
         writeln!(
             writer,
-            "percentile,direct,rotor,notar,fast_final,slow_final,final"
+            "percentile,direct,rotor,shreds95,notar,notar65,fast_final,slow_final,final"
         )
         .unwrap();
         for percentile in 1..=100 {
@@ -374,8 +398,14 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             let rotor_stats = self.rotor_stats.read().unwrap();
             let rotor_latency = rotor_stats.get_avg_percentile_latency(percentile);
 
+            let shreds95_stats = self.shreds95_stats.read().unwrap();
+            let shreds95_latency = shreds95_stats.get_avg_percentile_latency(percentile);
+
             let notar_stats = self.notar_stats.read().unwrap();
             let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
+
+            let notar65_stats = self.notar65_stats.read().unwrap();
+            let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
 
             let fast_final_stats = self.fast_final_stats.read().unwrap();
             let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
@@ -388,11 +418,13 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
             writeln!(
                 writer,
-                "{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{}",
                 percentile,
                 direct_latency,
                 rotor_latency,
+                shreds95_latency,
                 notar_latency,
+                notar65_latency,
                 fast_final_latency,
                 slow_final_latency,
                 final_latency,
@@ -458,18 +490,18 @@ impl LatencyStats {
 
     fn print(&self) {
         let avg_p60_latency = self.get_avg_percentile_latency(60);
-        info!("avg p60 latency: {:.2}", avg_p60_latency);
+        info!("avg p60 latency: {avg_p60_latency:.2}");
         let avg_p80_latency = self.get_avg_percentile_latency(80);
-        info!("avg p80 latency: {:.2}", avg_p80_latency);
+        info!("avg p80 latency: {avg_p80_latency:.2}");
         let avg_max_latency = self.get_avg_percentile_latency(100);
-        info!("avg max latency: {:.2}", avg_max_latency);
+        info!("avg max latency: {avg_max_latency:.2}");
 
         for percentile in 1..=100 {
             println!("percentile: {percentile}");
             let total_count: f64 = self.percentile_location[percentile - 1].values().sum();
             for (location, count) in &self.percentile_location[percentile - 1] {
                 let frac = *count * 100.0 / total_count;
-                println!("    location: {}, frac: {:.2}%", location, frac);
+                println!("    location: {location}, frac: {frac:.2}%");
             }
         }
     }
