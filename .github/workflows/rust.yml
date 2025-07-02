@@ -15,8 +15,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+
+      - name: Cache downloaded data
+          id: cache-data
+          uses: actions/cache@v4
+          with:
+            path: ./data
+            key: data-v1  # Change this if the dataset version changes
+
+        - name: Download data if needed
+          run: |
+            if [ ! -f data/dataset.ok ]; then
+              ./download_data.sh
+              touch data/dataset.ok
+            fi
+
+      - name: Build
+        run: cargo build --all-targets --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
