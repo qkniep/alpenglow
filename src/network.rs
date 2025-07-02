@@ -71,6 +71,7 @@ impl NetworkMessage {
                 bincode::error::DecodeError::LimitExceeded,
             ));
         }
+        // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
         let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
         Ok(msg)
     }
