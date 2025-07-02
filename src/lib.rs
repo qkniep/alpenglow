@@ -10,7 +10,6 @@ pub mod consensus;
 pub mod crypto;
 pub mod disseminator;
 pub mod network;
-pub mod orchestrator;
 pub mod repair;
 pub mod shredder;
 #[cfg(test)]

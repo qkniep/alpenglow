@@ -37,7 +37,7 @@ impl TcpNetwork {
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
         let listener = futures::executor::block_on(TcpListener::bind(addr)).unwrap();
-        let (tx, rx) = mpsc::channel::<NetworkMessage>(1024);
+        let (_tx, _rx) = mpsc::channel::<NetworkMessage>(1024);
         Self {
             listener,
             readers: RwLock::new(Vec::new()),
@@ -76,7 +76,7 @@ impl Network for TcpNetwork {
     async fn send_serialized(
         &self,
         bytes: &[u8],
-        to: impl AsRef<str> + Send,
+        _to: impl AsRef<str> + Send,
     ) -> Result<(), NetworkError> {
         // TODO: use correct socket
         let writer = &self.writers.read().await[0];
@@ -85,7 +85,6 @@ impl Network for TcpNetwork {
     }
 
     async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
-        let mut readers = self.readers.read().await;
         loop {
             tokio::select! {
                 // accept new incoming connections
@@ -120,20 +119,4 @@ impl Network for TcpNetwork {
             }
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // #[tokio::test]
-    // async fn ping() {
-    //     let socket1 = TcpNetwork::new(12345);
-    //     let socket2 = TcpNetwork::new(23456);
-    //     let addr1 = format!("127.0.0.1:{}", 12345);
-    //     socket2.send(&NetworkMessage::Ping, addr1).await.unwrap();
-    //     if !matches!(socket1.receive().await, Ok(NetworkMessage::Ping)) {
-    //         panic!("received wrong message");
-    //     }
-    // }
 }
