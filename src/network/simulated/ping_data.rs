@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::sync::LazyLock;
 
+use csv::ReaderBuilder;
 use geo::{Distance, Haversine, Point};
 use serde::Deserialize;
 
@@ -33,8 +34,10 @@ const MAX_PING_SERVERS: usize = 300;
 
 static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
     let mut output = Vec::with_capacity(MAX_PING_SERVERS);
-    let file = File::open("data/servers-2020-07-19.csv").unwrap();
-    let mut rdr = csv::Reader::from_reader(file);
+    let mut rdr = ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .from_path("data/servers-2020-07-19.csv")
+        .unwrap();
     for result in rdr.deserialize() {
         let record: PingServer = result.unwrap();
         output.push(record);
