@@ -312,8 +312,14 @@ mod tests {
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
-        assert!(latency > min);
-        assert!(latency < max);
+        assert!(
+            latency > min,
+            "latency {latency} should be greater than {min}"
+        );
+        assert!(
+            latency < max,
+            "latency {latency} should be less than max {max}"
+        );
 
         // other direction
         net2.send(&msg, "0").await.unwrap();
