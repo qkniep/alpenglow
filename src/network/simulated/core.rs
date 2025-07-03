@@ -14,7 +14,7 @@ use super::SimulatedNetwork;
 use super::token_bucket::TokenBucket;
 
 struct SimulatedPacket {
-    from: ValidatorId,
+    _from: ValidatorId,
     to: ValidatorId,
     payload: Vec<u8>,
     deliver_at: Instant,
@@ -145,8 +145,6 @@ impl SimulatedNetworkCore {
             id,
             network_core,
             receiver,
-            up_bandwidth: usize::MAX,
-            down_bandwidth: usize::MAX,
             limiter: None,
         }
     }
@@ -190,8 +188,6 @@ impl SimulatedNetworkCore {
             id,
             network_core,
             receiver,
-            up_bandwidth,
-            down_bandwidth,
             limiter: Some(limiter),
         }
     }
@@ -239,7 +235,7 @@ impl SimulatedNetworkCore {
 
         let packet = SimulatedPacket {
             deliver_at: now + latency,
-            from,
+            _from: from,
             to,
             payload,
         };
@@ -316,8 +312,14 @@ mod tests {
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
-        assert!(latency > min);
-        assert!(latency < max);
+        assert!(
+            latency > min,
+            "latency {latency} should be greater than {min}"
+        );
+        assert!(
+            latency < max,
+            "latency {latency} should be less than max {max}"
+        );
 
         // other direction
         net2.send(&msg, "0").await.unwrap();

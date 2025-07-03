@@ -142,12 +142,6 @@ impl ParentReadyTracker {
     }
 }
 
-impl ParentReadyState {
-    fn new() -> Self {
-        Self::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -61,9 +61,9 @@ const DELTA: Duration = Duration::from_millis(400);
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Timeout to use when we haven't seen any shred from the leader's block.
 /// This is used to skip honest but crashed leaders faster.
-const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
+const DELTA_EARLY_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
 /// Timeout to use when we have seen at least one shred from the leader's block.
-const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
+const DELTA_TIMEOUT: Duration = DELTA_EARLY_TIMEOUT.checked_add(DELTA_BLOCK).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
@@ -127,7 +127,7 @@ where
         let repair = Arc::new(repair);
 
         let r = Arc::clone(&repair);
-        let repair_handle = tokio::spawn(
+        let _repair_handle = tokio::spawn(
             async move {
                 while let Some((slot, hash)) = repair_rx.recv().await {
                     r.repair_block(slot, hash).await;
@@ -341,7 +341,7 @@ where
         parent_ready: bool,
     ) -> Result<()> {
         let (parent_slot, parent_hash) = parent;
-        let slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+        let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let mut rng = SmallRng::seed_from_u64(slot);
         let ph = &hex::encode(parent_hash)[..8];
         info!("producing block in slot {slot} with parent {ph} in slot {parent_slot}",);
@@ -437,12 +437,4 @@ where
         }
         Ok(())
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn basic() {}
 }
