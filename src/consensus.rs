@@ -63,7 +63,7 @@ const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// This is used to skip honest but crashed leaders faster.
 const DELTA_EARLY_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
 /// Timeout to use when we have seen at least one shred from the leader's block.
-const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
+const DELTA_TIMEOUT: Duration = DELTA_EARLY_TIMEOUT.checked_add(DELTA_BLOCK).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
