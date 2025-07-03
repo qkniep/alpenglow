@@ -55,11 +55,15 @@ use votor::Votor;
 pub const SLOTS_PER_WINDOW: u64 = 4;
 /// Number of slots in each epoch.
 pub const SLOTS_PER_EPOCH: u64 = 18_000;
+/// Time bound assumed on network transmission delays during periods of synchrony.
+const DELTA: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the block.
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Timeout to use when we haven't seen any shred from the leader's block.
 /// This is used to skip honest but crashed leaders faster.
-const DELTA_EARLY_TIMEOUT: Duration = Duration::from_millis(800);
+const DELTA_EARLY_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
+/// Timeout to use when we have seen at least one shred from the leader's block.
+const DELTA_TIMEOUT: Duration = Duration::from_millis(1200);
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
