@@ -125,7 +125,7 @@ impl<N: Network> Repair<N> {
                 let Some(shred) = blockstore.get_shred(slot, slice, shred_index) else {
                     return Ok(());
                 };
-                let root = shred.merkle_root();
+                let root = shred.merkle_root;
                 let proof = blockstore.create_double_merkle_proof(slot, slice);
                 RepairResponse::SliceRoot(request, root, proof)
             }
@@ -177,7 +177,9 @@ impl<N: Network> Repair<N> {
                 let RepairRequest::Shred(_, _, slice, index) = req else {
                     return;
                 };
-                if shred.slot() != slot || shred.slice() == slice || shred.index_in_slice() == index
+                if shred.payload().slot != slot
+                    || shred.payload().slice_index == slice
+                    || shred.payload().index_in_slice == index
                 {
                     return;
                 }

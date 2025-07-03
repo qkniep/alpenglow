@@ -70,7 +70,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
 
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let relay = self.sample_relay(shred.slot(), shred.index_in_slot());
+        let relay = self.sample_relay(shred.payload().slot, shred.index_in_slot());
         let msg = NetworkMessage::Shred(shred.clone());
         let v = &self.epoch_info.validator(relay);
         self.network.send(&msg, &v.disseminator_address).await
@@ -79,10 +79,10 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
     async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let leader = self.epoch_info.leader(shred.slot()).id;
+        let leader = self.epoch_info.leader(shred.payload().slot).id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred.slot(), shred.index_in_slot());
+        let relay = self.sample_relay(shred.payload().slot, shred.index_in_slot());
         if self.epoch_info.own_id != relay {
             return Ok(());
         }
@@ -135,7 +135,9 @@ mod tests {
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
+    use crate::shredder::{
+        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, Slice, TOTAL_SHREDS,
+    };
 
     use tokio::sync::Mutex;
     use tokio::task;
@@ -200,12 +202,12 @@ mod tests {
                     match rotor_non_leader.receive().await {
                         Ok(shred) => {
                             rotor_non_leader.forward(&shred).await.unwrap();
-                            let mut guard = match shred {
-                                Shred::Data(_) => dsr.lock().await,
-                                Shred::Coding(_) => csr.lock().await,
+                            let mut guard = match shred.payload_type {
+                                ShredPayloadType::Data(_) => dsr.lock().await,
+                                ShredPayloadType::Coding(_) => csr.lock().await,
                             };
-                            assert!(!guard.contains(&shred.index_in_slice()));
-                            guard.insert(shred.index_in_slice());
+                            assert!(!guard.contains(&shred.payload().index_in_slice));
+                            guard.insert(shred.payload().index_in_slice);
                         }
                         _ => continue,
                     }
@@ -275,12 +277,12 @@ mod tests {
                     match rotor_non_leader.receive().await {
                         Ok(shred) => {
                             rotor_non_leader.forward(&shred).await.unwrap();
-                            let mut guard = match shred {
-                                Shred::Data(_) => dsr.lock().await,
-                                Shred::Coding(_) => csr.lock().await,
+                            let mut guard = match shred.payload_type {
+                                ShredPayloadType::Data(_) => dsr.lock().await,
+                                ShredPayloadType::Coding(_) => csr.lock().await,
                             };
-                            assert!(!guard.contains(&shred.index_in_slice()));
-                            guard.insert(shred.index_in_slice());
+                            assert!(!guard.contains(&shred.payload().index_in_slice));
+                            guard.insert(shred.payload().index_in_slice);
                         }
                         _ => continue,
                     }
