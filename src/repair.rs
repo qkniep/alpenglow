@@ -184,7 +184,7 @@ impl<N: Network> Repair<N> {
                 // TODO: make sure shred is checked against correct merkle_root
                 //
                 /* if !shred.merkle_root ... { return; } */
-                self.blockstore.write().await.add_shred(shred).await;
+                self.blockstore.write().await.add_shred(shred, false).await;
             }
             RepairResponse::Parent(_, parent_slot, parent_hash) => {
                 let block_info = BlockInfo {

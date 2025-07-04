@@ -103,7 +103,7 @@ impl Slice {
 impl Shred {
     /// Verifies the proof and signature of this shred.
     #[must_use]
-    pub fn verify(&self, pk: &PublicKey, existing_merkle_root: Option<&Hash>) -> bool {
+    pub fn verify(&self, pk: &PublicKey, cached_merkle_root: Option<&Hash>) -> bool {
         let root = self.merkle_root();
         let proof = self.merkle_path();
         // FIX: make this work for all shredders
@@ -114,8 +114,8 @@ impl Shred {
         if !MerkleTree::check_proof(self.data(), index, root, proof) {
             return false;
         }
-        if let Some(prev_root) = existing_merkle_root {
-            return &root == prev_root;
+        if Some(&root) == cached_merkle_root {
+            return true;
         }
         self.merkle_root_sig().verify(&root, pk)
     }
