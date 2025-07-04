@@ -90,8 +90,9 @@ impl Blockstore {
 
     /// Stores a new shred in the blockstore.
     ///
-    /// Shreds received by Rotor should set check_equivocation to true. If check_equivocation is true and
-    /// the leader was observed to equivocate (produced conflicting blocks/slices), the shred is dropped.
+    /// Shreds received by Rotor should set `check_equivocation` to `true`.
+    /// If `check_equivocation` is `true` and the leader was observed to equivocate,
+    /// i.e., produced conflicting blocks/slices, the shred is dropped.
     /// 
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
