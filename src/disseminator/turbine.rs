@@ -378,6 +378,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // non-leaders should have received all shreds via Turbine
+        // TODO: flaky
         assert_eq!(*shreds_received.lock().await, 9 * TOTAL_SHREDS);
         task_leader.abort();
         for task in tasks {
