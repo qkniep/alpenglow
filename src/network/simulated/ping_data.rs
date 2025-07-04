@@ -73,13 +73,19 @@ static PING_DATA: LazyLock<Vec<f64>> = LazyLock::new(|| {
 pub struct PingServer {
     /// Server ID, to be used as `source` or `destination` in ping measurements.
     pub id: usize,
+    #[serde(rename = "name")]
     _name: String,
+    #[serde(rename = "title")]
     _title: String,
     /// City of the server.
     pub location: String,
+    #[serde(rename = "state")]
     _state: String,
+    #[serde(rename = "country")]
     _country: String,
+    #[serde(rename = "state_abbv")]
     _state_abbv: String,
+    #[serde(rename = "continent")]
     _contintent: Option<u8>,
     latitude: f64,
     longitude: f64,
@@ -90,10 +96,14 @@ pub struct PingServer {
 struct PingMeasurement {
     source: usize,
     destination: usize,
+    #[serde(rename = "timestamp")]
     _timestamp: String,
+    #[serde(rename = "min")]
     _min: f64,
     avg: f64,
+    #[serde(rename = "max")]
     _max: f64,
+    #[serde(rename = "mdev")]
     _mdev: f64,
 }
 
