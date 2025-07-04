@@ -70,7 +70,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
 
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let relay = self.sample_relay(shred.payload().slot, shred.index_in_slot());
+        let relay = self.sample_relay(shred.payload().slot, shred.payload().index_in_slot());
         let msg = NetworkMessage::Shred(shred.clone());
         let v = &self.epoch_info.validator(relay);
         self.network.send(&msg, &v.disseminator_address).await
@@ -82,7 +82,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
         let leader = self.epoch_info.leader(shred.payload().slot).id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred.payload().slot, shred.index_in_slot());
+        let relay = self.sample_relay(shred.payload().slot, shred.payload().index_in_slot());
         if self.epoch_info.own_id != relay {
             return Ok(());
         }

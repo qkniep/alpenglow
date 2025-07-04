@@ -148,13 +148,6 @@ impl Shred {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => &p,
         }
     }
-
-    /// Returns the index of this shred within the entire slot.
-    #[must_use]
-    pub const fn index_in_slot(&self) -> usize {
-        let payload = self.payload();
-        payload.slice_index * DATA_SHREDS + payload.index_in_slice
-    }
 }
 
 /// A data shred without the Merkle proof.
@@ -172,6 +165,14 @@ pub struct ShredPayload {
     pub(crate) index_in_slice: usize,
     pub(crate) is_last_slice: bool,
     pub(crate) data: bytes::Bytes,
+}
+
+impl ShredPayload {
+    /// Returns the index of this shred within the entire slot.
+    #[must_use]
+    pub const fn index_in_slot(&self) -> usize {
+        self.slice_index * DATA_SHREDS + self.index_in_slice
+    }
 }
 
 /// A trait for shredding and deshredding.
