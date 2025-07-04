@@ -74,22 +74,14 @@ pub struct Slice {
     pub data: Vec<u8>,
 }
 
-/// A shred is the smallest unit of data that is used when disseminating blocks.
-/// Shreds are crafted to fit into an MTU size packet.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Shred {
-    Data(DataShredWithPath),
-    Coding(CodingShredWithPath),
-}
-
 impl Slice {
     /// Creates a slice from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
     pub const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
-        let slot = any_shred.slot();
-        let slice_index = any_shred.slice();
-        let is_last = any_shred.is_last_slice();
-        let merkle_root = Some(any_shred.merkle_root());
+        let slot = any_shred.payload().slot;
+        let slice_index = any_shred.payload().slice_index;
+        let is_last = any_shred.payload().is_last_slice;
+        let merkle_root = Some(any_shred.merkle_root);
         Self {
             slot,
             slice_index,
@@ -100,141 +92,62 @@ impl Slice {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ShredPayloadType {
+    Data(ShredPayload),
+    Coding(ShredPayload),
+}
+
+impl ShredPayloadType {
+    /// Returns `true` if the payload is of data type.
+    pub const fn is_data(&self) -> bool {
+        matches!(self, ShredPayloadType::Data(_))
+    }
+
+    /// Returns `true` if the payload is of coding type.
+    pub const fn is_coding(&self) -> bool {
+        matches!(self, ShredPayloadType::Coding(_))
+    }
+}
+
+/// A shred is the smallest unit of data that is used when disseminating blocks.
+/// Shreds are crafted to fit into an MTU size packet.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Shred {
+    pub(crate) payload_type: ShredPayloadType,
+    pub(crate) merkle_root: Hash,
+    merkle_root_sig: Signature,
+    merkle_path: Vec<Hash>,
+}
+
 impl Shred {
     /// Verifies the proof and signature of this shred.
     #[must_use]
     pub fn verify(&self, pk: &PublicKey, existing_merkle_root: Option<&Hash>) -> bool {
-        let root = self.merkle_root();
-        let proof = self.merkle_path();
         // FIX: make this work for all shredders
-        let index = match self {
-            Self::Data(_) => self.index_in_slice(),
-            Self::Coding(_) => DATA_SHREDS + self.index_in_slice(),
+        let index = match self.payload_type {
+            ShredPayloadType::Coding(_) => DATA_SHREDS + self.payload().index_in_slice,
+            ShredPayloadType::Data(_) => self.payload().index_in_slice,
         };
-        if !MerkleTree::check_proof(self.data(), index, root, proof) {
+        if !MerkleTree::check_proof(
+            &self.payload().data,
+            index,
+            self.merkle_root,
+            &self.merkle_path,
+        ) {
             return false;
         }
         if let Some(prev_root) = existing_merkle_root {
-            return &root == prev_root;
+            return &self.merkle_root == prev_root;
         }
-        self.merkle_root_sig().verify(&root, pk)
+        self.merkle_root_sig.verify(&self.merkle_root, pk)
     }
 
-    /// Gives the slot number this shred is for.
-    #[must_use]
-    pub fn data(&self) -> &[u8] {
-        match self {
-            Self::Data(s) => &s.payload.0.data,
-            Self::Coding(s) => &s.payload.0.data,
+    pub const fn payload(&self) -> &ShredPayload {
+        match &self.payload_type {
+            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => &p,
         }
     }
-
-    /// Gives the slot number this shred is for.
-    #[must_use]
-    pub const fn slot(&self) -> Slot {
-        match self {
-            Self::Data(s) => s.payload.0.slot,
-            Self::Coding(s) => s.payload.0.slot,
-        }
-    }
-
-    /// Gives the slice number (within the slot) this shred is for.
-    #[must_use]
-    pub const fn slice(&self) -> usize {
-        match self {
-            Self::Data(s) => s.payload.0.slice_index,
-            Self::Coding(s) => s.payload.0.slice_index,
-        }
-    }
-
-    /// Returns `true` if the shred is a data shred.
-    #[must_use]
-    pub const fn is_data(&self) -> bool {
-        matches!(self, Self::Data(_))
-    }
-
-    /// Returns `true` if the shred is a coding shred.
-    #[must_use]
-    pub const fn is_coding(&self) -> bool {
-        matches!(self, Self::Coding(_))
-    }
-
-    /// Returns `true` if the shreds has the last-slice bit set.
-    #[must_use]
-    pub const fn is_last_slice(&self) -> bool {
-        match self {
-            Self::Data(s) => s.payload.0.is_last_slice,
-            Self::Coding(s) => s.payload.0.is_last_slice,
-        }
-    }
-
-    /// Returns the index of this shred within its slice.
-    #[must_use]
-    pub const fn index_in_slice(&self) -> usize {
-        match self {
-            Self::Data(s) => s.payload.0.index_in_slice,
-            Self::Coding(s) => s.payload.0.index_in_slice,
-        }
-    }
-
-    /// Returns the index of this shred within the entire slot.
-    #[must_use]
-    pub const fn index_in_slot(&self) -> usize {
-        let (slice_index, index_in_slice) = match self {
-            Self::Data(s) => (s.payload.0.slice_index, s.payload.0.index_in_slice),
-            Self::Coding(s) => (s.payload.0.slice_index, s.payload.0.index_in_slice),
-        };
-        slice_index * DATA_SHREDS + index_in_slice
-    }
-
-    /// Gives the merkle root of the shred.
-    #[must_use]
-    pub const fn merkle_root(&self) -> Hash {
-        match self {
-            Self::Data(s) => s.merkle_root,
-            Self::Coding(s) => s.merkle_root,
-        }
-    }
-
-    /// Gives the merkle root signature of the shred.
-    #[must_use]
-    pub const fn merkle_root_sig(&self) -> &Signature {
-        match self {
-            Self::Data(s) => &s.merkle_root_sig,
-            Self::Coding(s) => &s.merkle_root_sig,
-        }
-    }
-
-    /// Gives the merkle path of the shred.
-    #[must_use]
-    pub fn merkle_path(&self) -> &[Hash] {
-        match self {
-            Self::Data(s) => &s.merkle_path,
-            Self::Coding(s) => &s.merkle_path,
-        }
-    }
-}
-
-/// A data shred with the Merkle proof.
-///
-/// Includes, merkle path, root and the leaser's signature.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DataShredWithPath {
-    pub(crate) payload: DataShred,
-    pub(crate) merkle_root: Hash,
-    pub(crate) merkle_root_sig: Signature,
-    merkle_path: Vec<Hash>,
-}
-
-/// A coding shred with the Merkle proof.
-///
-/// Includes, merkle path, root and the leaser's signature.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CodingShredWithPath {
-    pub(crate) payload: CodingShred,
-    pub(crate) merkle_root: Hash,
-    pub(crate) merkle_root_sig: Signature,
-    merkle_path: Vec<Hash>,
 }
 
 /// A data shred without the Merkle proof.
@@ -252,6 +165,14 @@ pub struct ShredPayload {
     pub(crate) index_in_slice: usize,
     pub(crate) is_last_slice: bool,
     pub(crate) data: bytes::Bytes,
+}
+
+impl ShredPayload {
+    /// Returns the index of this shred within the entire slot.
+    #[must_use]
+    pub const fn index_in_slot(&self) -> usize {
+        self.slice_index * DATA_SHREDS + self.index_in_slice
+    }
 }
 
 /// A trait for shredding and deshredding.
@@ -327,7 +248,7 @@ impl Shredder for RegularShredder {
         let slice = Slice::from_parts(data, &shreds[0]);
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root();
+        let merkle_root = shreds[0].merkle_root;
         let (data, coding) = shred_reed_solomon(&slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
@@ -351,7 +272,7 @@ impl Shredder for CodingOnlyShredder {
         let slice = Slice::from_parts(data, &shreds[0]);
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root();
+        let merkle_root = shreds[0].merkle_root;
         let (_, coding) = shred_reed_solomon(&slice, DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
         if tree.get_root() != merkle_root {
@@ -403,11 +324,11 @@ impl Shredder for PetsShredder {
         }
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root();
+        let merkle_root = shreds[0].merkle_root;
         let (mut data, coding) = shred_reed_solomon_raw(
-            shreds[0].slot(),
-            shreds[0].slice(),
-            shreds[0].is_last_slice(),
+            shreds[0].payload().slot,
+            shreds[0].payload().slice_index,
+            shreds[0].payload().is_last_slice,
             &buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
@@ -469,11 +390,11 @@ impl Shredder for AontShredder {
         }
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root();
+        let merkle_root = shreds[0].merkle_root;
         let (data, coding) = shred_reed_solomon_raw(
-            shreds[0].slot(),
-            shreds[0].slice(),
-            shreds[0].is_last_slice(),
+            shreds[0].payload().slot,
+            shreds[0].payload().slice_index,
+            shreds[0].payload().is_last_slice,
             &buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
@@ -586,13 +507,13 @@ fn deshred_reed_solomon(
     }
 
     // filter to split data and coding shreds
-    let data = shreds.iter().filter_map(|s| match s {
-        Shred::Data(d) => Some((d.payload.0.index_in_slice, &d.payload.0.data)),
-        Shred::Coding(_) => None,
+    let data = shreds.iter().filter_map(|s| match &s.payload_type {
+        ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
+        ShredPayloadType::Coding(_) => None,
     });
-    let coding = shreds.iter().filter_map(|s| match s {
-        Shred::Coding(c) => Some((c.payload.0.index_in_slice, &c.payload.0.data)),
-        Shred::Data(_) => None,
+    let coding = shreds.iter().filter_map(|s| match &s.payload_type {
+        ShredPayloadType::Coding(c) => Some((c.index_in_slice, &c.data)),
+        ShredPayloadType::Data(_) => None,
     });
 
     let restored = rs::decode(num_data, num_coding, data.clone(), coding).unwrap();
@@ -633,20 +554,20 @@ fn data_and_coding_to_output_shreds(
     let sig = sk.sign(&merkle_root);
 
     for (i, d) in data.into_iter().enumerate() {
-        shreds.push(Shred::Data(DataShredWithPath {
-            payload: d,
+        shreds.push(Shred {
+            payload_type: ShredPayloadType::Data(d.0),
             merkle_root,
             merkle_root_sig: sig,
             merkle_path: tree.create_proof(i),
-        }));
+        });
     }
     for (i, c) in coding.into_iter().enumerate() {
-        shreds.push(Shred::Coding(CodingShredWithPath {
-            payload: c,
+        shreds.push(Shred {
+            payload_type: ShredPayloadType::Coding(c.0),
             merkle_root,
             merkle_root_sig: sig,
             merkle_path: tree.create_proof(num_data_shreds + i),
-        }));
+        });
     }
 
     shreds

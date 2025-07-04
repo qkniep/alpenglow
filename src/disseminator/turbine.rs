@@ -84,7 +84,9 @@ impl<N: Network> Turbine<N> {
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkError> {
         // TODO: fix duplicate use indices between data and coding shreds
-        let tree = self.get_tree(shred.slot(), shred.index_in_slot()).await;
+        let tree = self
+            .get_tree(shred.payload().slot, shred.payload().index_in_slot())
+            .await;
         let root = tree.get_root();
         let msg = NetworkMessage::Shred(shred.clone());
         let addr = &self.validators[root as usize].disseminator_address;
@@ -98,7 +100,9 @@ impl<N: Network> Turbine<N> {
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let tree = self.get_tree(shred.slot(), shred.index_in_slot()).await;
+        let tree = self
+            .get_tree(shred.payload().slot, shred.payload().index_in_slot())
+            .await;
         let msg = NetworkMessage::Shred(shred.clone());
         for child in tree.get_children() {
             let addr = &self.validators[*child as usize].disseminator_address;

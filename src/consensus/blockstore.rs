@@ -94,10 +94,10 @@ impl Blockstore {
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
     pub async fn add_shred(&mut self, shred: Shred) -> Option<(Slot, BlockInfo)> {
-        let slot = shred.slot();
-        let slice = shred.slice();
-        let index = shred.index_in_slice();
-        let is_last_slice = shred.is_last_slice();
+        let slot = shred.payload().slot;
+        let slice = shred.payload().slice_index;
+        let index = shred.payload().index_in_slice;
+        let is_last_slice = shred.payload().is_last_slice;
         let slice_shreds = self.shreds.entry((slot, slice)).or_default();
 
         // check Merkle root and signature
@@ -108,15 +108,16 @@ impl Blockstore {
             return None;
         } else if merkle_root.is_none() {
             self.merkle_root_cache
-                .insert((slot, slice), shred.merkle_root());
+                .insert((slot, slice), shred.merkle_root);
         }
 
         // store and handle this shred if and only if:
         //   - it is not yet stored in the blockstore
         //   - it is not (known to be) after the last slice
-        let exists = slice_shreds
-            .iter()
-            .any(|s| s.index_in_slice() == index && shred.is_data() == s.is_data());
+        let exists = slice_shreds.iter().any(|s| {
+            s.payload().index_in_slice == index
+                && shred.payload_type.is_data() == s.payload_type.is_data()
+        });
         let after_last = self
             .last_slices
             .get(&slot)
@@ -271,7 +272,7 @@ impl Blockstore {
     pub fn get_shred(&self, slot: Slot, slice: usize, shred: usize) -> Option<&Shred> {
         self.shreds
             .get(&(slot, slice))
-            .and_then(|v| v.iter().find(|s| s.index_in_slice() == shred))
+            .and_then(|v| v.iter().find(|s| s.payload().index_in_slice == shred))
     }
 
     /// Gives the number of stored slices for a given `slot`.
