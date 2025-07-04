@@ -102,7 +102,7 @@ impl Blockstore {
     #[fastrace::trace(short_name = true)]
     pub async fn add_shred(&mut self, shred: Shred, check_equivocation: bool) -> Option<(Slot, BlockInfo)> {
         if check_equivocation && self.equivocated_slots.contains(&shred.payload().slot) {
-            debug!("Recevied shred from equivocating leader. Not adding to blockstore.");
+            debug!("recevied shred from equivocating leader, not adding to blockstore");
             return None;
         }
         let slot = shred.payload().slot;
@@ -121,7 +121,7 @@ impl Blockstore {
             self.merkle_root_cache
                 .insert((slot, slice), shred.merkle_root);
         } else if cached_merkle_root != Some(&shred.merkle_root) {
-            debug!("Shreds show leader equivocation");
+            debug!("shreds show leader equivocation");
             self.equivocated_slots.insert(slot);
             if check_equivocation {
                 return None;
