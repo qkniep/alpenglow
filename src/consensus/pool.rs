@@ -160,6 +160,10 @@ impl Pool {
                 let block_hash = cert.block_hash().unwrap();
                 let h = &hex::encode(block_hash)[..8];
                 info!("notarized(-fallback) block {h} in slot {slot}");
+                self.highest_notarized_fallback_slot =
+                    slot.max(self.highest_notarized_fallback_slot);
+
+                // potentially notify child waiting for safe-to-notar
                 if let Some((child_slot, child_hash)) =
                     self.s2n_waiting_parent_cert.remove(&(slot, block_hash))
                 {
@@ -170,10 +174,13 @@ impl Pool {
                         self.votor_event_channel.send(event).await.unwrap();
                     }
                 }
+
+                // add block to parent-ready tracker, send any new parents to Votor.
                 let new_parents_ready = self
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
                 for (slot, (parent_slot, parent_hash)) in new_parents_ready {
+                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -181,14 +188,15 @@ impl Pool {
                     };
                     self.votor_event_channel.send(event).await.unwrap();
                 }
-                self.highest_notarized_fallback_slot =
-                    slot.max(self.highest_notarized_fallback_slot);
+
+                // repair this block, if necessary
+                self.repair_channel.send((slot, block_hash)).await.unwrap();
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
                 let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
-                    assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
