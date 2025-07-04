@@ -99,12 +99,12 @@ pub enum ShredPayloadType {
 }
 
 impl ShredPayloadType {
-    /// Returns `true` if the payload is of data type
+    /// Returns `true` if the payload is of data type.
     pub const fn is_data(&self) -> bool {
         matches!(self, ShredPayloadType::Data(_))
     }
 
-    /// Returns `true` if the payload is of coding type
+    /// Returns `true` if the payload is of coding type.
     pub const fn is_coding(&self) -> bool {
         matches!(self, ShredPayloadType::Coding(_))
     }
