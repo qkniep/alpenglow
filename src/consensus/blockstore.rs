@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use tokio::sync::mpsc::Sender;
 
 use crate::crypto::{Hash, MerkleTree};
@@ -121,8 +121,9 @@ impl Blockstore {
             self.merkle_root_cache
                 .insert((slot, slice), shred.merkle_root);
         } else if cached_merkle_root != Some(&shred.merkle_root) {
-            debug!("shreds show leader equivocation");
-            self.equivocated_slots.insert(slot);
+            if self.equivocated_slots.insert(slot) {
+                warn!("shreds show leader equivocation in slot {slot}");
+            }
             if check_equivocation {
                 return None;
             }
