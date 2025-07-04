@@ -4,7 +4,7 @@
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
-use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
+use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice};
 use divan::counter::ItemsCount;
 use rand::RngCore;
 
@@ -40,9 +40,7 @@ fn turbine_tree(bencher: divan::Bencher) {
 
             (shred, turbine1, turbine2)
         })
-        .bench_values(
-            |(shred, turbine1, turbine2): (Shred, Turbine<UdpNetwork>, Turbine<UdpNetwork>)| {
-                futures::executor::block_on(turbine1.send_shred_to_root(&shred)).unwrap()
-            },
-        );
+        .bench_values(|(shred, turbine1, _turbine2)| {
+            futures::executor::block_on(turbine1.send_shred_to_root(&shred)).unwrap()
+        });
 }

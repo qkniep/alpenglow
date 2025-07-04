@@ -194,7 +194,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
     }
 
-    fn run_bin_packing(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
+    fn _run_bin_packing(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
         debug!("running attack with bin-packing attack");
         let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
             self.validators.clone(),

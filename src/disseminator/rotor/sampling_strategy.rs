@@ -198,8 +198,6 @@ impl Clone for DecayingAcceptanceSampler {
 #[derive(Clone)]
 pub struct TurbineSampler {
     stake_weighted: StakeWeightedSampler,
-    /// Specific fanout of the Turbine tree we want to simulate.
-    turbine_fanout: usize,
 }
 
 impl TurbineSampler {
@@ -259,7 +257,6 @@ impl TurbineSampler {
 
         Self {
             stake_weighted: StakeWeightedSampler::new(validators),
-            turbine_fanout,
         }
     }
 }

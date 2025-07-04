@@ -6,7 +6,6 @@
 //!
 // WARN: this is incomplete!
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use log::{debug, trace, warn};
@@ -65,8 +64,6 @@ pub struct Repair<N: Network> {
     pool: Arc<RwLock<Pool>>,
     network: N,
     sampler: StakeWeightedSampler,
-    slice_counts: BTreeMap<(Slot, Hash), usize>,
-    slice_roots: BTreeMap<(Slot, Hash, usize), Hash>,
 }
 
 impl<N: Network> Repair<N> {
@@ -87,8 +84,6 @@ impl<N: Network> Repair<N> {
             pool,
             network,
             sampler,
-            slice_counts: BTreeMap::new(),
-            slice_roots: BTreeMap::new(),
         }
     }
 
@@ -161,7 +156,7 @@ impl<N: Network> Repair<N> {
         let slot = response.slot();
         let block_hash = response.block_hash();
         match response {
-            RepairResponse::SliceCount(req, count) => {
+            RepairResponse::SliceCount(req, _count) => {
                 let RepairRequest::SliceCount(_, _) = req else {
                     return;
                 };
@@ -219,12 +214,12 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    async fn request_slice_count(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
+    async fn _request_slice_count(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
         let req = RepairRequest::SliceCount(slot, hash);
         self.send_request(req).await
     }
 
-    async fn request_slice_root(
+    async fn _request_slice_root(
         &self,
         slot: Slot,
         hash: Hash,
@@ -234,7 +229,7 @@ impl<N: Network> Repair<N> {
         self.send_request(req).await
     }
 
-    async fn request_shred(
+    async fn _request_shred(
         &self,
         slot: Slot,
         hash: Hash,
@@ -313,12 +308,4 @@ impl RepairResponse {
     pub const fn block_hash(&self) -> Hash {
         self.request().block_hash()
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn basic() {}
 }

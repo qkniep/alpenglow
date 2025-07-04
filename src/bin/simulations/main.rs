@@ -48,8 +48,7 @@ use alpenglow::disseminator::rotor::sampling_strategy::{
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::network::simulated::stake_distribution::{
-    FIVE_HUBS_VALIDATOR_DATA, STOCK_EXCHANGES_VALIDATOR_DATA, SUI_VALIDATOR_DATA, VALIDATOR_DATA,
-    ValidatorData, validators_from_validator_data,
+    VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
 use color_eyre::Result;
 use log::info;

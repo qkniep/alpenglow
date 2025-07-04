@@ -488,7 +488,7 @@ impl LatencyStats {
         sum / self.count as f64
     }
 
-    fn print(&self) {
+    fn _print(&self) {
         let avg_p60_latency = self.get_avg_percentile_latency(60);
         info!("avg p60 latency: {avg_p60_latency:.2}");
         let avg_p80_latency = self.get_avg_percentile_latency(80);

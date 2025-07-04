@@ -22,7 +22,6 @@
 //! let ping_b2z = get_ping(berlin.id, zurich.id);
 //! ```
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::sync::LazyLock;
 
@@ -69,32 +68,19 @@ static PING_DATA: LazyLock<Vec<f64>> = LazyLock::new(|| {
     output
 });
 
-static COUNTRY_TO_CONTINENT: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
-    let mut map = HashMap::new();
-    let file = File::open("data/countries_iso3166.csv").unwrap();
-    let mut rdr = csv::Reader::from_reader(file);
-    for result in rdr.records() {
-        let record = result.unwrap();
-        let alpha2 = record[1].to_owned();
-        let region = record[5].to_owned();
-        map.insert(alpha2, region);
-    }
-    map
-});
-
 /// A ping server from the dataset.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PingServer {
     /// Server ID, to be used as `source` or `destination` in ping measurements.
     pub id: usize,
-    name: String,
-    title: String,
+    _name: String,
+    _title: String,
     /// City of the server.
     pub location: String,
-    state: String,
-    country: String,
-    state_abbv: String,
-    contintent: Option<u8>,
+    _state: String,
+    _country: String,
+    _state_abbv: String,
+    _contintent: Option<u8>,
     latitude: f64,
     longitude: f64,
 }
@@ -104,11 +90,11 @@ pub struct PingServer {
 struct PingMeasurement {
     source: usize,
     destination: usize,
-    timestamp: String,
-    min: f64,
+    _timestamp: String,
+    _min: f64,
     avg: f64,
-    max: f64,
-    mdev: f64,
+    _max: f64,
+    _mdev: f64,
 }
 
 /// Gives the coordinates for a city from the ping dataset.

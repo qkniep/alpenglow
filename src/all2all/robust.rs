@@ -6,8 +6,6 @@
 //! Broadcasts each message over the underlying instance of [`Network`].
 //! The message may be retransmitted multiple times.
 
-use std::collections::VecDeque;
-
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
 
@@ -17,7 +15,6 @@ use super::All2All;
 // TODO: acutally make more robust (retransmits, ...)
 pub struct RobustAll2All<N: Network> {
     validators: Vec<ValidatorInfo>,
-    queues: Vec<VecDeque<(usize, NetworkMessage, bool)>>,
     network: N,
 }
 
@@ -27,10 +24,8 @@ impl<N: Network> RobustAll2All<N> {
     /// Messages will be broadcast to all `validators` over the provided `network`.
     /// Potential retransmits will be handled automatically, also over the `network`.
     pub fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
-        let queues = vec![VecDeque::new(); validators.len()];
         Self {
             validators,
-            queues,
             network,
         }
     }

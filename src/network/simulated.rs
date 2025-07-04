@@ -44,10 +44,6 @@ pub struct SimulatedNetwork {
     network_core: Arc<SimulatedNetworkCore>,
     /// Receiver for incoming messages.
     receiver: Mutex<mpsc::Receiver<Vec<u8>>>,
-    /// Upload bandwidth limit in bits per second.
-    up_bandwidth: usize,
-    /// Download bandwidth limit in bits per second.
-    down_bandwidth: usize,
     /// Optional rate limiter.
     limiter: Option<RwLock<TokenBucket>>,
 }
