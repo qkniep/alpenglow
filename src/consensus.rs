@@ -370,7 +370,7 @@ where
                 self.disseminator.send(&s).await?;
                 // PERF: move expensive add_shred() call out of block production
                 let mut blockstore = self.blockstore.write().await;
-                let block = blockstore.add_shred(s).await;
+                let block = blockstore.add_shred(s, true).await;
                 if let Some((slot, block_info)) = block {
                     let mut pool = self.pool.write().await;
                     pool.add_block(slot, block_info).await;
@@ -418,7 +418,7 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
         self.disseminator.forward(&shred).await?;
-        let b = self.blockstore.write().await.add_shred(shred).await;
+        let b = self.blockstore.write().await.add_shred(shred, true).await;
         if let Some((slot, block_info)) = b {
             let mut guard = self.pool.write().await;
             guard.add_block(slot, block_info).await;
