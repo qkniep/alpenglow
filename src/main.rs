@@ -103,8 +103,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-type TestNode =
-    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+type TestNode = Alpenglow<
+    TrivialAll2All<UdpNetwork>,
+    Rotor<UdpNetwork, StakeWeightedSampler>,
+    UdpNetwork,
+    UdpNetwork,
+>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // prepare validator info for all nodes
@@ -133,12 +137,13 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .iter()
         .map(|v| {
             let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
-            let start_port = 3000 + v.id * 3;
-            let network = UdpNetwork::new(start_port as u16);
+            let start_port = 3000 + (v.id * 3) as u16;
+            let network = UdpNetwork::new(start_port);
             let all2all = TrivialAll2All::new(validators.clone(), network);
-            let network = UdpNetwork::new(start_port as u16 + 1);
+            let network = UdpNetwork::new(start_port + 1);
             let disseminator = Rotor::new(network, epoch_info.clone());
-            let repair_network = UdpNetwork::new(start_port as u16 + 2);
+            let repair_network = UdpNetwork::new(start_port + 2);
+            let txs_recver = UdpNetwork::new(start_port + 3);
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
@@ -146,6 +151,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator,
                 repair_network,
                 epoch_info,
+                txs_recver,
             )
         })
         .collect()

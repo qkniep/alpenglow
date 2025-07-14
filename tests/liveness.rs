@@ -63,8 +63,12 @@ async fn three_nodes_crash() {
 //     liveness_test(11, 1).await;
 // }
 
-type TestNode =
-    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+type TestNode = Alpenglow<
+    TrivialAll2All<UdpNetwork>,
+    Rotor<UdpNetwork, StakeWeightedSampler>,
+    UdpNetwork,
+    UdpNetwork,
+>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
@@ -103,6 +107,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
             let repair_network = networks.pop_front().unwrap();
+            let txs_recver = networks.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
@@ -110,6 +115,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator,
                 repair_network,
                 epoch_info,
+                txs_recver,
             )
         })
         .collect()
