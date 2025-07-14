@@ -255,10 +255,6 @@ where
     /// Once all previous blocks have been notarized or skipped and the next
     /// slot belongs to our leader window, we will produce a block.
     async fn block_production_loop(&self) -> Result<()> {
-        let mut parent: Slot = 0;
-        let mut parent_hash = Hash::default();
-        let mut parent_ready = true;
-
         'outer: for window in 0.. {
             if self.cancel_token.is_cancelled() {
                 break;
@@ -282,27 +278,42 @@ where
             }
 
             // wait for potential parent of first slot (except if first window)
-            if window > 0 {
+            let (parent, parent_hash, parent_ready) = if window == 0 {
+                (0, Hash::default(), false)
+            } else {
                 // PERF: maybe replace busy loop with events
-                (parent, parent_hash, parent_ready) = loop {
+                loop {
                     // build on ready parent, if any
-                    let pool = self.pool.read().await;
-                    if let Some((slot, hash)) = pool.parents_ready(first_slot_in_window).first() {
-                        let h = &hex::encode(hash)[..8];
-                        debug!("building block on ready parent {h} in slot {slot}");
+                    if let Some((slot, hash)) = self
+                        .pool
+                        .read()
+                        .await
+                        .parents_ready(first_slot_in_window)
+                        .first()
+                    {
+                        debug!(
+                            "building block on ready parent {} in slot {}",
+                            &hex::encode(hash)[..8],
+                            slot
+                        );
                         break (*slot, *hash, true);
                     }
-                    drop(pool);
 
                     // optimisitically build on block in previous slot, if any
-                    let blockstore = self.blockstore.read().await;
-                    if let Some(hash) = blockstore.canonical_block_hash(first_slot_in_window - 1) {
+                    if let Some(hash) = self
+                        .blockstore
+                        .read()
+                        .await
+                        .canonical_block_hash(first_slot_in_window - 1)
+                    {
                         let slot = first_slot_in_window - 1;
-                        let h = &hex::encode(hash)[..8];
-                        debug!("optimistically building block on parent {h} in slot {slot}",);
+                        debug!(
+                            "optimistically building block on parent {} in slot {}",
+                            &hex::encode(hash)[..8],
+                            slot
+                        );
                         break (slot, hash, false);
                     }
-                    drop(blockstore);
 
                     if self.pool.read().await.finalized_slot() >= last_slot_in_window {
                         warn!(
@@ -313,8 +324,8 @@ where
                     }
 
                     sleep(Duration::from_millis(1)).await;
-                };
-            }
+                }
+            };
 
             // produce blocks for all slots in window
             let mut block = parent;
@@ -322,12 +333,15 @@ where
             for slot in first_slot_in_window..=last_slot_in_window {
                 self.produce_block(slot, (block, block_hash), parent_ready)
                     .await?;
-                parent_ready = true;
 
                 // build off own block next
-                let blockstore = self.blockstore.read().await;
                 block = slot;
-                block_hash = blockstore.canonical_block_hash(slot).unwrap();
+                block_hash = self
+                    .blockstore
+                    .read()
+                    .await
+                    .canonical_block_hash(slot)
+                    .unwrap();
             }
         }
 
