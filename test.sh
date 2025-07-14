@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ $# -gt 0 ] && [ $1 == "slow" ]; then
+slow_tests () {
 	echo "🐌 Running slow tests can take up to 10 minutes!"
 	echo "Starting in 3 seconds..."
 	sleep 3
@@ -20,8 +20,29 @@ if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 		three_nodes \
 		three_nodes_crash && \
 	RUST_BACKTRACE=1 cargo test
-else
-	echo "🚀 Running fast tests only!"
+}
+
+fast_tests () {
+	echo "🚀 Running fast tests!"
 	sleep 1
 	RUST_BACKTRACE=1 cargo nextest run
+}
+
+sequential_tests () {
+	echo "Running sequential tests!"
+	sleep 1
+	RUST_BACKTRACE=1 cargo test --release -- test-threads=1 --ignored \
+		network::simulated::core::tests::asymmetric \
+		network::simulated::core::tests::symmetric
+}
+
+if [ $# -gt 0 ] && [ $1 == "slow" ]; then
+	slow_tests
+elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
+	fast_tests && \
+		sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
+	sequential_tests
+else
+	fast_tests
 fi
