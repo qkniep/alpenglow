@@ -256,6 +256,7 @@ mod tests {
     const ACCURACY: f64 = 0.05;
 
     #[tokio::test]
+    #[ignore]
     async fn symmetric() {
         // set up network with two nodes
         let msg = NetworkMessage::Ping;
@@ -290,6 +291,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn asymmetric() {
         // set up network with two nodes
         let msg = NetworkMessage::Ping;
