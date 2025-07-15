@@ -188,12 +188,12 @@ impl SlotState {
         (certs_created, votor_events)
     }
 
-    ///
+    /// Mark the parent of the block given by `hash` as known (in Blokstor).
     pub fn notify_parent_known(&mut self, hash: Hash) {
         self.known_parent.insert(hash);
     }
 
-    ///
+    /// Mark the parent of the block given by `hash` as notarized-fallback.
     pub async fn notify_parent_certified(&mut self, hash: Hash) -> Option<VotorEvent> {
         self.certified_parent.insert(hash);
         if !self.sent_safe_to_notar.contains(&hash) && self.check_safe_to_notar(&hash).await {
