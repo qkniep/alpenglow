@@ -71,7 +71,7 @@ pub struct Pool {
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
-    ///
+    /// Channel for sending repair requests to the repair loop.
     repair_channel: Sender<(Slot, Hash)>,
 }
 
@@ -170,6 +170,7 @@ impl Pool {
                     if let Some(event) = self
                         .slot_state(child_slot)
                         .notify_parent_certified(child_hash)
+                        .await
                     {
                         self.votor_event_channel.send(event).await.unwrap();
                     }
@@ -241,11 +242,6 @@ impl Pool {
             return Err(PoolError::SlotOutOfBounds);
         }
 
-        // FIXME: overly aggressive repair
-        if let Some(hash) = vote.block_hash() {
-            self.repair_channel.send((slot, hash)).await.unwrap();
-        }
-
         // verify signature
         let pk = &self.epoch_info.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
@@ -263,7 +259,7 @@ impl Pool {
 
         // actually add the vote
         trace!("adding vote to pool: {vote:?}");
-        let (new_certs, votor_events) = self.slot_state(slot).add_vote(vote, voter_stake);
+        let (new_certs, votor_events) = self.slot_state(slot).add_vote(vote, voter_stake).await;
 
         // handle any resulting events
         for cert in new_certs {
@@ -285,9 +281,14 @@ impl Pool {
             parent_slot,
             parent_hash,
         } = block_info;
+        self.slot_state(slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(&parent_slot) {
             if parent_state.is_notar_fallback(&parent_hash) {
-                if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
+                if let Some(event) = self
+                    .slot_state(slot)
+                    .notify_parent_certified(block_hash)
+                    .await
+                {
                     self.votor_event_channel.send(event).await.unwrap();
                     return;
                 }
@@ -431,9 +432,13 @@ impl Pool {
     }
 
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
-        self.slot_states
-            .entry(slot)
-            .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
+        self.slot_states.entry(slot).or_insert_with(|| {
+            SlotState::new(
+                slot,
+                Arc::clone(&self.epoch_info),
+                self.repair_channel.clone(),
+            )
+        })
     }
 }
 
