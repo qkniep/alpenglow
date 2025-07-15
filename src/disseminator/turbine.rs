@@ -380,6 +380,8 @@ mod tests {
             }
         });
 
+        // wait for shreds to arrive
+        // needs to be longer than the latency of the simulated network
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // non-leaders should have received all shreds via Turbine

@@ -447,7 +447,6 @@ mod tests {
             NetworkMessage::Vote(v) => v,
             _ => unreachable!(),
         };
-        println!("vote 1: {vote:?}");
         assert!(vote.is_notar());
         assert_eq!(vote.slot(), 0);
 
@@ -457,14 +456,10 @@ mod tests {
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => {
-                println!("vote 2: {v:?}");
                 assert!(v.is_final());
                 assert_eq!(v.slot(), 0);
             }
-            m => {
-                println!("other msg: {m:?}");
-                unreachable!();
-            } // _ => unreachable!(),
+            m => panic!("other msg: {m:?}"),
         }
     }
 }
