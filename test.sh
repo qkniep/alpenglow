@@ -43,6 +43,17 @@ elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
 		sequential_tests
 elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
 	sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "many" ]; then
+	echo "🔁 Running tests for 50 iterations to detect flaky tests..."
+	for i in $(seq 1 50); do
+		echo "Iteration $i/50:"
+		fast_tests && \
+			sequential_tests
+		if [ $? -ne 0 ]; then
+            echo "❌ Test failed in one iteration, maybe some tests are flaky."
+            break
+        fi
+    done
 else
 	fast_tests
 fi
