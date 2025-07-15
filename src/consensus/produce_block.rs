@@ -109,8 +109,14 @@ where
 
         let mut sleep_duration = DELTA_BLOCK;
         for slice_index in 0.. {
-            let (slice, cont_prod) =
-                produce_slice(&self.txs_recver, slot, slice_index, parent, sleep_duration).await;
+            let (slice, cont_prod) = produce_slice(
+                &self.txs_receiver,
+                slot,
+                slice_index,
+                parent,
+                sleep_duration,
+            )
+            .await;
             // shred and disseminate slice
             let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
             for s in shreds {

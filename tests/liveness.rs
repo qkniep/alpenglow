@@ -107,7 +107,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
             let repair_network = networks.pop_front().unwrap();
-            let txs_recver = networks.pop_front().unwrap();
+            let txs_receiver = networks.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
@@ -115,7 +115,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator,
                 repair_network,
                 epoch_info,
-                txs_recver,
+                txs_receiver,
             )
         })
         .collect()

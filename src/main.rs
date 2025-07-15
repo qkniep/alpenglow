@@ -137,7 +137,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .iter()
         .map(|v| {
             let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
-            let start_port = 3000 + (v.id * 3) as u16;
+            let start_port = 3000 + (v.id * 4) as u16;
             let network = UdpNetwork::new(start_port);
             let all2all = TrivialAll2All::new(validators.clone(), network);
             let network = UdpNetwork::new(start_port + 1);

@@ -86,7 +86,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     /// Block repair protocol.
     repair: Arc<Repair<R>>,
     /// network connection to receive transactions from users / rpc nodes, etc.
-    txs_recver: T,
+    txs_receiver: T,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -110,7 +110,7 @@ where
         disseminator: D,
         repair_network: R,
         epoch_info: Arc<EpochInfo>,
-        txs_recver: T,
+        txs_receiver: T,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
@@ -163,7 +163,7 @@ where
             repair,
             cancel_token,
             votor_handle,
-            txs_recver,
+            txs_receiver,
         }
     }
 
