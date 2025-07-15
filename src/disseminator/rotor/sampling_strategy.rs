@@ -942,7 +942,7 @@ mod tests {
             let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
             let sampled = sampler.sample_multiple(64, &mut rand::rng());
             assert_eq!(sampled.len(), 64);
-            let sampled_set: HashSet<_> = sampled.iter().collect();
+            let sampled_set = sampled.iter().collect::<HashSet<_>>();
             let max_appearances = sampled_set
                 .iter()
                 .map(|i| sampled.iter().filter(|v| *v == *i).count())
