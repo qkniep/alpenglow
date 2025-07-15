@@ -910,7 +910,6 @@ mod tests {
         }
     }
 
-    // FIXME: flaky test
     #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
@@ -937,18 +936,22 @@ mod tests {
         }
 
         // with many low-stake nodes this becomes the underlying fallback distribution
-        let validators = create_validator_info(1000);
-        let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
-        let sampled = sampler.sample_multiple(64, &mut rand::rng());
-        assert_eq!(sampled.len(), 64);
-        let sampled_set: HashSet<_> = sampled.iter().collect();
-        let max_appearances = sampled_set
-            .iter()
-            .map(|i| sampled.iter().filter(|v| *v == *i).count())
-            .max()
-            .unwrap();
-        assert!(max_appearances >= 1);
-        assert!(max_appearances < 3);
+        let mut avg_max_appearances = 0.0;
+        for _ in 0..20 {
+            let validators = create_validator_info(1000);
+            let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
+            let sampled = sampler.sample_multiple(64, &mut rand::rng());
+            assert_eq!(sampled.len(), 64);
+            let sampled_set: HashSet<_> = sampled.iter().collect();
+            let max_appearances = sampled_set
+                .iter()
+                .map(|i| sampled.iter().filter(|v| *v == *i).count())
+                .max()
+                .unwrap();
+            avg_max_appearances += max_appearances as f64 / 20.0;
+        }
+        assert!(avg_max_appearances >= 1.0);
+        assert!(avg_max_appearances < 3.0);
 
         // with a mix, high stake nodes appear at least `floor(stake * k)` times
         let mut validators = create_validator_info(1000);
