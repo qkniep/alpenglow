@@ -18,7 +18,7 @@ enum Continue {
 }
 
 async fn produce_slice<T>(
-    txs_recver: &T,
+    txs_receiver: &T,
     slot: Slot,
     slice_index: usize,
     parent: (Slot, Hash),
@@ -46,7 +46,7 @@ where
                 break Continue::Stop;
             }
 
-            val = txs_recver.receive() => {
+            val = txs_receiver.receive() => {
                 match val {
                     Err(_e) => unimplemented!(),
                     Ok(msg) => match msg {

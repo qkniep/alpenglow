@@ -152,7 +152,7 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
     let repair_network = UdpNetwork::new(start_port + 2);
-    let txs_recver = UdpNetwork::new(start_port + 3);
+    let txs_receiver = UdpNetwork::new(start_port + 3);
     Ok(Alpenglow::new(
         config.identity_key,
         config.voting_key,
@@ -160,7 +160,7 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
         disseminator,
         repair_network,
         epoch_info,
-        txs_recver,
+        txs_receiver,
     ))
 }
 

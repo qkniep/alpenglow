@@ -143,7 +143,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let network = UdpNetwork::new(start_port + 1);
             let disseminator = Rotor::new(network, epoch_info.clone());
             let repair_network = UdpNetwork::new(start_port + 2);
-            let txs_recver = UdpNetwork::new(start_port + 3);
+            let txs_receiver = UdpNetwork::new(start_port + 3);
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
@@ -151,7 +151,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator,
                 repair_network,
                 epoch_info,
-                txs_recver,
+                txs_receiver,
             )
         })
         .collect()
