@@ -38,7 +38,11 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
 ) -> Vec<TrivialAll2All<SimulatedNetwork>> {
-    let core = Arc::new(SimulatedNetworkCore::new().with_jitter(0.0));
+    let core = Arc::new(
+        SimulatedNetworkCore::new()
+            .with_jitter(0.0)
+            .with_packet_loss(0.0),
+    );
     for (i, val) in validators.iter_mut().enumerate() {
         val.all2all_address = i.to_string();
     }

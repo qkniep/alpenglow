@@ -394,13 +394,11 @@ mod tests {
         (other_a2a, tx, epoch_info)
     }
 
-    // FIXME: sometimes loops infinitely
     #[tokio::test]
     async fn timeouts() {
         let (other_a2a, votor_channel, _) = start_votor().await;
 
         // explicitly send parent ready for genesis
-        println!("sending parent-ready...");
         votor_channel
             .send(VotorEvent::ParentReady {
                 slot: 0,
@@ -409,24 +407,22 @@ mod tests {
             })
             .await
             .unwrap();
-        println!("sent parent-ready...");
 
         // should vote skip for all slots
-        let mut skip_votes = Vec::new();
-        for i in 0..SLOTS_PER_WINDOW {
+        let mut skipped_slots = Vec::new();
+        for _ in 0..SLOTS_PER_WINDOW {
             if let Ok(msg) = other_a2a.receive().await {
-                println!("receiving msg for slot {i}: {msg:?}");
                 match msg {
                     NetworkMessage::Vote(v) => {
                         assert!(v.is_skip());
-                        skip_votes.push(v);
+                        skipped_slots.push(v.slot());
                     }
                     _ => unreachable!(),
                 }
             }
         }
         for i in 0..SLOTS_PER_WINDOW {
-            assert!(skip_votes.iter().any(|v| v.slot() == i));
+            assert!(skipped_slots.contains(&i));
         }
     }
 
@@ -467,6 +463,7 @@ mod tests {
             }
             m => {
                 println!("other msg: {m:?}");
+                unreachable!();
             } // _ => unreachable!(),
         }
     }
