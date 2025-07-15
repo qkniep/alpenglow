@@ -48,7 +48,7 @@ where
 
             val = txs_receiver.receive() => {
                 match val {
-                    Err(_e) => unimplemented!(),
+                    Err(err) => panic!("Unexpected error {err}"),
                     Ok(msg) => match msg {
                         NetworkMessage::Transaction(tx) => {
                             let mut bytes = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
