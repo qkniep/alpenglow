@@ -142,7 +142,7 @@ impl<N: Network> Disseminator for Turbine<N> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for Turbine: {:?}", m),
+                m => warn!("unexpected message type for Turbine: {m:?}"),
             }
         }
     }
@@ -225,7 +225,8 @@ mod tests {
 
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::UdpNetwork;
+    use crate::network::SimulatedNetwork;
+    use crate::network::simulated::SimulatedNetworkCore;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
 
     use tokio::{sync::Mutex, task};
@@ -252,16 +253,20 @@ mod tests {
         (sks, validators)
     }
 
-    fn create_turbine_instances(
+    async fn create_turbine_instances(
         validators: &mut [ValidatorInfo],
-        base_port: u16,
-    ) -> Vec<Turbine<UdpNetwork>> {
+    ) -> Vec<Turbine<SimulatedNetwork>> {
+        let core = Arc::new(
+            SimulatedNetworkCore::new()
+                .with_jitter(0.0)
+                .with_packet_loss(0.0),
+        );
         for (i, v) in validators.iter_mut().enumerate() {
-            v.disseminator_address = format!("127.0.0.1:{}", base_port + i as u16);
+            v.disseminator_address = i.to_string();
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
-            let network = UdpNetwork::new(base_port + i as u16);
+            let network = core.join_unlimited(i as ValidatorId).await;
             let turbine = Turbine::new(i as ValidatorId, validators.to_vec(), network);
             disseminators.push(turbine);
         }
@@ -326,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn dissemination() {
         let (sks, mut validators) = create_validator_info(10);
-        let mut disseminators = create_turbine_instances(&mut validators, 4000);
+        let mut disseminators = create_turbine_instances(&mut validators).await;
         let slice = Slice {
             slot: 0,
             slice_index: 0,
@@ -375,10 +380,9 @@ mod tests {
             }
         });
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // non-leaders should have received all shreds via Turbine
-        // TODO: flaky
         assert_eq!(*shreds_received.lock().await, 9 * TOTAL_SHREDS);
         task_leader.abort();
         for task in tasks {
