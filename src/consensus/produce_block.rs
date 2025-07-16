@@ -1,6 +1,8 @@
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use color_eyre::Result;
+use either::Either;
 use fastrace::Span;
 use log::{info, warn};
 
@@ -20,23 +22,25 @@ enum Continue {
 async fn produce_slice<T>(
     txs_receiver: &T,
     slot: Slot,
-    slice_index: usize,
-    parent: (Slot, Hash),
+    slice_index: Either<(Slot, Hash), NonZeroUsize>,
     sleep_duration: Duration,
 ) -> (Slice, Continue)
 where
     T: Network + Sync + Send + 'static,
 {
-    let (parent_slot, parent_hash) = parent;
     debug_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
-    let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
-    // pack parent information in first slice
-    if slice_index == 0 {
-        data.extend_from_slice(&parent_slot.to_be_bytes());
-        data.extend_from_slice(&parent_hash);
-        let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
-        assert!(slice_capacity_left >= MAX_TRANSACTION_SIZE);
-    }
+    let (mut data, slice_index) = match slice_index {
+        Either::Left((parent_slot, parent_hash)) => {
+            let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
+            // pack parent information in first slice
+            data.extend_from_slice(&parent_slot.to_be_bytes());
+            data.extend_from_slice(&parent_hash);
+            let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
+            assert!(slice_capacity_left >= MAX_TRANSACTION_SIZE);
+            (data, 0)
+        }
+        Either::Right(ind) => (Vec::with_capacity(MAX_DATA_PER_SLICE), ind.get()),
+    };
     let mut left = sleep_duration;
 
     let cont_prod = loop {
@@ -109,14 +113,12 @@ where
 
         let mut sleep_duration = DELTA_BLOCK;
         for slice_index in 0.. {
-            let (slice, cont_prod) = produce_slice(
-                &self.txs_receiver,
-                slot,
-                slice_index,
-                parent,
-                sleep_duration,
-            )
-            .await;
+            let slice_index = match NonZeroUsize::new(slice_index) {
+                None => Either::Left(parent),
+                Some(ind) => Either::Right(ind),
+            };
+            let (slice, cont_prod) =
+                produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration).await;
             // shred and disseminate slice
             let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
             for s in shreds {
@@ -168,8 +170,7 @@ mod tests {
         let (slice, cont) = produce_slice(
             &txs_receiver,
             slot,
-            slice_index,
-            (slot - 1, Hash::default()),
+            Either::Right(NonZeroUsize::new(slice_index).unwrap()),
             sleep_duration,
         )
         .await;
@@ -187,8 +188,7 @@ mod tests {
         let (slice, cont) = produce_slice(
             &txs_receiver,
             slot,
-            0,
-            (slot - 1, Hash::default()),
+            Either::Left((slot - 1, Hash::default())),
             sleep_duration,
         )
         .await;
@@ -216,7 +216,6 @@ mod tests {
 
         tokio::spawn(async move {
             for i in 0..255 {
-                println!("{i}");
                 let data = vec![i; MAX_TRANSACTION_SIZE];
                 let msg = NetworkMessage::Transaction(Transaction(data));
                 txs_sender.send(&msg, addr.clone()).await.unwrap();
@@ -226,8 +225,7 @@ mod tests {
         let (slice, cont) = produce_slice(
             &txs_receiver,
             slot,
-            slice_index,
-            (slot - 1, Hash::default()),
+            Either::Right(NonZeroUsize::new(slice_index).unwrap()),
             sleep_duration,
         )
         .await;
