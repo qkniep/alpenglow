@@ -163,7 +163,7 @@ mod tests {
         let txs_receiver = UdpNetwork::new_with_any_port();
         let sleep_duration = Duration::from_micros(1);
         let slot = 1;
-        // Setting != 0 so that parent info is not included in slice.
+        // setting != 0 so that parent info is not included in slice
         let slice_index = 123;
         let (slice, cont) = produce_slice(
             &txs_receiver,
