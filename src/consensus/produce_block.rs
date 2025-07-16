@@ -38,7 +38,7 @@ where
             let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
             assert!(slice_capacity_left >= MAX_TRANSACTION_SIZE);
             // FIXME: add support for optimistic handover. parent can change in middle of block production.
-            assert_ne!(slice_index, 0);
+            assert_eq!(slice_index, 0);
             (data, slice_index)
         }
         Either::Right(ind) => (Vec::with_capacity(MAX_DATA_PER_SLICE), ind.get()),
