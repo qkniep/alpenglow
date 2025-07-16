@@ -209,7 +209,7 @@ mod tests {
         let txs_receiver = UdpNetwork::new_with_any_port();
         let addr = format!("127.0.0.1:{}", txs_receiver.port());
         let txs_sender = UdpNetwork::new_with_any_port();
-        // Long enough duration so hopefully doesn't fire while collecting txs.
+        // long enough duration so hopefully doesn't fire while collecting txs
         let sleep_duration = Duration::from_secs(100);
         let slot = 1;
         let slice_index = 123;
