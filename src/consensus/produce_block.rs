@@ -154,7 +154,7 @@ where
 mod tests {
     use std::time::Duration;
 
-    use crate::network::UdpNetwork;
+    use crate::{Transaction, network::UdpNetwork};
 
     use super::*;
 
@@ -163,6 +163,7 @@ mod tests {
         let txs_receiver = UdpNetwork::new_with_any_port();
         let sleep_duration = Duration::from_micros(1);
         let slot = 1;
+        // Setting != 0 so that parent info is not included in slice.
         let slice_index = 123;
         let (slice, cont) = produce_slice(
             &txs_receiver,
@@ -199,6 +200,46 @@ mod tests {
                 assert!(slice.is_last == true);
                 assert!(slice.merkle_root.is_none());
                 assert_eq!(slice.data.len(), 8 + 32);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn produce_slice_full_slices() {
+        let txs_receiver = UdpNetwork::new_with_any_port();
+        let addr = format!("127.0.0.1:{}", txs_receiver.port());
+        let txs_sender = UdpNetwork::new_with_any_port();
+        // Long enough duration so hopefully doesn't fire while collecting txs.
+        let sleep_duration = Duration::from_secs(100);
+        let slot = 1;
+        let slice_index = 123;
+
+        tokio::spawn(async move {
+            for i in 0..255 {
+                println!("{i}");
+                let data = vec![i; MAX_TRANSACTION_SIZE];
+                let msg = NetworkMessage::Transaction(Transaction(data));
+                txs_sender.send(&msg, addr.clone()).await.unwrap();
+            }
+        });
+
+        let (slice, cont) = produce_slice(
+            &txs_receiver,
+            slot,
+            slice_index,
+            (slot - 1, Hash::default()),
+            sleep_duration,
+        )
+        .await;
+        match cont {
+            Continue::Stop => panic!("Should not happen"),
+            Continue::Continue { .. } => {
+                assert_eq!(slice.slot, slot);
+                assert_eq!(slice.slice_index, slice_index);
+                assert!(slice.is_last == false);
+                assert!(slice.merkle_root.is_none());
+                assert!(slice.data.len() <= MAX_DATA_PER_SLICE);
+                assert!(slice.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
             }
         }
     }
