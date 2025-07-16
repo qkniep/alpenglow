@@ -22,7 +22,7 @@ enum Continue {
 async fn produce_slice<T>(
     txs_receiver: &T,
     slot: Slot,
-    slice_index: Either<(Slot, Hash), NonZeroUsize>,
+    slice_index: Either<(Slot, Hash, usize), NonZeroUsize>,
     sleep_duration: Duration,
 ) -> (Slice, Continue)
 where
@@ -30,14 +30,16 @@ where
 {
     debug_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
     let (mut data, slice_index) = match slice_index {
-        Either::Left((parent_slot, parent_hash)) => {
+        Either::Left((parent_slot, parent_hash, slice_index)) => {
             let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
             // pack parent information in first slice
             data.extend_from_slice(&parent_slot.to_be_bytes());
             data.extend_from_slice(&parent_hash);
             let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
             assert!(slice_capacity_left >= MAX_TRANSACTION_SIZE);
-            (data, 0)
+            // FIXME: add support for optimistic handover. parent can change in middle of block production.
+            assert_ne!(slice_index, 0);
+            (data, slice_index)
         }
         Either::Right(ind) => (Vec::with_capacity(MAX_DATA_PER_SLICE), ind.get()),
     };
@@ -114,7 +116,7 @@ where
         let mut sleep_duration = DELTA_BLOCK;
         for slice_index in 0.. {
             let slice_index = match NonZeroUsize::new(slice_index) {
-                None => Either::Left(parent),
+                None => Either::Left((parent_slot, parent_hash, 0)),
                 Some(ind) => Either::Right(ind),
             };
             let (slice, cont_prod) =
@@ -188,7 +190,7 @@ mod tests {
         let (slice, cont) = produce_slice(
             &txs_receiver,
             slot,
-            Either::Left((slot - 1, Hash::default())),
+            Either::Left((slot - 1, Hash::default(), 0)),
             sleep_duration,
         )
         .await;
