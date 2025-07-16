@@ -85,7 +85,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     disseminator: Arc<D>,
     /// Block repair protocol.
     repair: Arc<Repair<R>>,
-    /// network connection to receive transactions from users / rpc nodes, etc.
+    /// Network connection to receive transactions from clients.
     txs_receiver: T,
 
     /// Indicates whether the node is shutting down.
