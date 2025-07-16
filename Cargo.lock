@@ -61,6 +61,7 @@ dependencies = [
  "ctr",
  "divan",
  "ed25519-consensus",
+ "either",
  "fastrace",
  "fastrace-opentelemetry",
  "futures",

@@ -93,14 +93,18 @@ impl Blockstore {
     /// Shreds received by Rotor should set `check_equivocation` to `true`.
     /// If `check_equivocation` is `true` and the leader was observed to equivocate,
     /// i.e., produced conflicting blocks/slices, the shred is dropped.
-    /// 
+    ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
     ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    pub async fn add_shred(&mut self, shred: Shred, check_equivocation: bool) -> Option<(Slot, BlockInfo)> {
+    pub async fn add_shred(
+        &mut self,
+        shred: Shred,
+        check_equivocation: bool,
+    ) -> Option<(Slot, BlockInfo)> {
         if check_equivocation && self.equivocated_slots.contains(&shred.payload().slot) {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return None;
