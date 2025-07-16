@@ -23,7 +23,7 @@ async fn produce_slice<T>(
     txs_receiver: &T,
     slot: Slot,
     slice_index: Either<(Slot, Hash, usize), NonZeroUsize>,
-    sleep_duration: Duration,
+    time_left: Duration,
 ) -> (Slice, Continue)
 where
     T: Network + Sync + Send + 'static,
@@ -43,12 +43,12 @@ where
         }
         Either::Right(ind) => (Vec::with_capacity(MAX_DATA_PER_SLICE), ind.get()),
     };
-    let mut left = sleep_duration;
+    let mut left = time_left;
 
     let cont_prod = loop {
         let start_time = Instant::now();
         tokio::select! {
-            () = tokio::time::sleep(sleep_duration) => {
+            () = tokio::time::sleep(time_left) => {
                 break Continue::Stop;
             }
 
