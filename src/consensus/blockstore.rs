@@ -55,15 +55,15 @@ pub struct Blockstore {
     double_merkle_trees: BTreeMap<Slot, MerkleTree>,
     /// Stores last slice index for each slot.
     last_slices: BTreeMap<Slot, usize>,
+    /// Set of slots for which conflicting shreds have been seen (leader equivocated).
+    equivocated_slots: BTreeSet<Slot>,
+    /// Cache of previously verified Merkle roots.
+    merkle_root_cache: HashMap<(Slot, usize), Hash>,
 
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
     /// Information about all active validators.
     epoch_info: Arc<EpochInfo>,
-    /// Cache of previously verified Merkle roots.
-    merkle_root_cache: HashMap<(Slot, usize), Hash>,
-    /// Set of slots for which conflicting shreds have been seen (leader equivocated).
-    equivocated_slots: BTreeSet<Slot>,
 }
 
 impl Blockstore {
@@ -81,10 +81,10 @@ impl Blockstore {
             first_shred_seen: BTreeSet::new(),
             double_merkle_trees: BTreeMap::new(),
             last_slices: BTreeMap::new(),
+            equivocated_slots: BTreeSet::new(),
+            merkle_root_cache: HashMap::new(),
             votor_channel,
             epoch_info,
-            merkle_root_cache: HashMap::new(),
-            equivocated_slots: BTreeSet::new(),
         }
     }
 
@@ -93,14 +93,18 @@ impl Blockstore {
     /// Shreds received by Rotor should set `check_equivocation` to `true`.
     /// If `check_equivocation` is `true` and the leader was observed to equivocate,
     /// i.e., produced conflicting blocks/slices, the shred is dropped.
-    /// 
+    ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
     ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    pub async fn add_shred(&mut self, shred: Shred, check_equivocation: bool) -> Option<(Slot, BlockInfo)> {
+    pub async fn add_shred(
+        &mut self,
+        shred: Shred,
+        check_equivocation: bool,
+    ) -> Option<(Slot, BlockInfo)> {
         if check_equivocation && self.equivocated_slots.contains(&shred.payload().slot) {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return None;
