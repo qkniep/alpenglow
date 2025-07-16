@@ -33,7 +33,8 @@ sequential_tests () {
 	sleep 1
 	RUST_BACKTRACE=1 cargo test -- test-threads=1 --ignored \
 		network::simulated::core::tests::asymmetric \
-		network::simulated::core::tests::symmetric
+		network::simulated::core::tests::symmetric \
+		network::simulated::core::tests::extreme_rate
 }
 
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then
