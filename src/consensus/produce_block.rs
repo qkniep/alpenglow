@@ -149,3 +149,57 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::network::UdpNetwork;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn produce_slice_empty_slices() {
+        let txs_receiver = UdpNetwork::new_with_any_port();
+        let sleep_duration = Duration::from_micros(1);
+        let slot = 1;
+        let slice_index = 123;
+        let (slice, cont) = produce_slice(
+            &txs_receiver,
+            slot,
+            slice_index,
+            (slot - 1, Hash::default()),
+            sleep_duration,
+        )
+        .await;
+        match cont {
+            Continue::Continue { .. } => panic!("Should not happen"),
+            Continue::Stop => {
+                assert_eq!(slice.slot, slot);
+                assert_eq!(slice.slice_index, slice_index);
+                assert!(slice.is_last == true);
+                assert!(slice.merkle_root.is_none());
+                assert_eq!(slice.data.len(), 0);
+            }
+        }
+
+        let (slice, cont) = produce_slice(
+            &txs_receiver,
+            slot,
+            0,
+            (slot - 1, Hash::default()),
+            sleep_duration,
+        )
+        .await;
+        match cont {
+            Continue::Continue { .. } => panic!("Should not happen"),
+            Continue::Stop => {
+                assert_eq!(slice.slot, slot);
+                assert_eq!(slice.slice_index, 0);
+                assert!(slice.is_last == true);
+                assert!(slice.merkle_root.is_none());
+                assert_eq!(slice.data.len(), 8 + 32);
+            }
+        }
+    }
+}
