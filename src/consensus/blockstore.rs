@@ -85,17 +85,17 @@ impl Blockstore {
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let event =
             self.slot_data_mut(slot)
-                .add_shred(shred.clone(), check_equivocation, leader_pk);
+                .add_shred(shred.clone(), check_equivocation, leader_pk)?;
 
-        match event.clone()? {
+        match event.clone() {
             VotorEvent::FirstShred(_) => {
                 // notify Votor of first slice
-                self.votor_channel.send(event.unwrap()).await.unwrap();
+                self.votor_channel.send(event).await.unwrap();
                 None
             }
             VotorEvent::Block { slot, block_info } => {
                 // notify Votor of block and print block info
-                self.votor_channel.send(event.unwrap()).await.unwrap();
+                self.votor_channel.send(event).await.unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     &hex::encode(block_info.hash)[..8],
