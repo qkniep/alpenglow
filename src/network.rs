@@ -33,6 +33,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::Transaction;
 use crate::consensus::{Cert, Vote};
 use crate::repair::RepairMessage;
 use crate::shredder::Shred;
@@ -56,6 +57,9 @@ pub enum NetworkMessage {
     Vote(Vote),
     Cert(Cert),
     Repair(RepairMessage),
+    // FIXME: txs should not be seen on the same connection as other network msgs.
+    // This should not be part of this enum.
+    Transaction(Transaction),
 }
 
 impl NetworkMessage {

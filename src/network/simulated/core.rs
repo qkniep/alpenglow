@@ -255,6 +255,8 @@ mod tests {
     // test simulated latency accuracy to within +/-5%
     const ACCURACY: f64 = 0.05;
 
+    // When run concurrently with other tests on github, then the test fails.
+    // Running sequentially seems to help.
     #[tokio::test]
     #[ignore]
     async fn symmetric() {
@@ -290,6 +292,8 @@ mod tests {
         assert!(latency < max);
     }
 
+    // When run concurrently with other tests on github, then the test fails.
+    // Running sequentially seems to help.
     #[tokio::test]
     #[ignore]
     async fn asymmetric() {
