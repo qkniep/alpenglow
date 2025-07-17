@@ -66,7 +66,7 @@ where
                             }
                         }
                         msg => {
-                            panic!("Unexpected msg {:?}", msg);
+                            panic!("Unexpected msg {msg:?}");
                         }
                     },
                 }
@@ -156,11 +156,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use super::*;
 
     use crate::{Transaction, network::UdpNetwork};
 
-    use super::*;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -181,7 +181,7 @@ mod tests {
             Continue::Stop => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, slice_index);
-                assert!(slice.is_last == true);
+                assert!(slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert_eq!(slice.data.len(), 0);
             }
@@ -199,7 +199,7 @@ mod tests {
             Continue::Stop => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, 0);
-                assert!(slice.is_last == true);
+                assert!(slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert_eq!(slice.data.len(), 8 + 32);
             }
@@ -236,7 +236,7 @@ mod tests {
             Continue::Continue { .. } => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, slice_index);
-                assert!(slice.is_last == false);
+                assert!(slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert!(slice.data.len() <= MAX_DATA_PER_SLICE);
                 assert!(slice.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
