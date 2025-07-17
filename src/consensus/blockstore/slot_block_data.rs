@@ -14,7 +14,7 @@ use super::BlockInfo;
 pub struct SlotBlockData {
     ///
     slot: Slot,
-    /// Stores raw shreds per slice, indexed by slot and slice index.
+    /// Stores raw shreds per slice, indexed by slice index.
     pub(super) shreds: BTreeMap<usize, Vec<Shred>>,
     /// Stores so far reconstructed slices, indexed by slot and slice index.
     pub(super) slices: BTreeMap<usize, Slice>,
