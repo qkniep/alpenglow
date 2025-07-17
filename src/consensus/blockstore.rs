@@ -106,7 +106,7 @@ impl Blockstore {
 
                 Some((slot, block_info))
             }
-            _ => unreachable!(),
+            ev => panic!("unexpected event {ev:?}"),
         }
     }
 
