@@ -46,7 +46,7 @@ use crate::{All2All, Disseminator, ValidatorInfo};
 pub use blockstore::{BlockInfo, Blockstore};
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
-pub use pool::{Pool, PoolError};
+pub use pool::{AddVoteError, Pool};
 pub use vote::Vote;
 use votor::Votor;
 
@@ -358,7 +358,7 @@ where
         match msg {
             NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
                 Ok(()) => {}
-                Err(PoolError::Slashable(offence)) => {
+                Err(AddVoteError::Slashable(offence)) => {
                     warn!("slashable offence detected: {offence}");
                 }
                 Err(err) => trace!("ignoring invalid vote: {err}"),
