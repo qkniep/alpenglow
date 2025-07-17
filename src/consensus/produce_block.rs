@@ -236,7 +236,7 @@ mod tests {
             Continue::Continue { .. } => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, slice_index);
-                assert!(slice.is_last);
+                assert!(!slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert!(slice.data.len() <= MAX_DATA_PER_SLICE);
                 assert!(slice.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
