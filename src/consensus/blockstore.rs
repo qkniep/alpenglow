@@ -121,9 +121,7 @@ impl Blockstore {
         }
 
         // return early if no block was reconstructed
-        let Some(block_info) = block_info else {
-            return None;
-        };
+        let block_info = block_info?;
 
         // notify Votor of block and print block info
         let event = VotorEvent::Block { slot, block_info };
@@ -145,7 +143,7 @@ impl Blockstore {
     /// Returns `None` if blockstore does not hold any version of the block yet.
     #[must_use]
     pub fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
-        self.slot_data(slot).map(|s| s.canonical).flatten()
+        self.slot_data(slot)?.canonical
     }
 
     /// Gives the number of stored slices for a given `slot`.
@@ -355,8 +353,8 @@ impl SlotBlockData {
         // calculate double-Merkle tree & block hash
         let merkle_roots = self
             .slices
-            .iter()
-            .map(|(_, s)| s.merkle_root.as_ref().unwrap())
+            .values()
+            .map(|s| s.merkle_root.as_ref().unwrap())
             .collect::<Vec<_>>();
         let tree = MerkleTree::new(&merkle_roots);
         let block_hash = tree.get_root();
