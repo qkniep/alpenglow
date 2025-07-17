@@ -54,7 +54,7 @@ impl SlotBlockData {
         }
     }
 
-    pub async fn add_shred(
+    pub fn add_shred(
         &mut self,
         shred: Shred,
         check_equivocation: bool,
@@ -125,7 +125,6 @@ impl SlotBlockData {
         // maybe reconstruct slice and block
         if self.try_reconstruct_slice(slice) {
             self.try_reconstruct_block()
-                .await
                 .map(|block_info| VotorEvent::Block {
                     slot: self.slot,
                     block_info,
@@ -154,7 +153,7 @@ impl SlotBlockData {
     ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
-    async fn try_reconstruct_block(&mut self) -> Option<BlockInfo> {
+    fn try_reconstruct_block(&mut self) -> Option<BlockInfo> {
         if self.canonical.is_some() {
             trace!("already have block for slot {}", self.slot);
             return None;

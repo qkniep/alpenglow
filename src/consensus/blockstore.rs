@@ -83,10 +83,9 @@ impl Blockstore {
     ) -> Option<(Slot, BlockInfo)> {
         let slot = shred.payload().slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
-        let event = self
-            .slot_data_mut(slot)
-            .add_shred(shred.clone(), check_equivocation, leader_pk)
-            .await;
+        let event =
+            self.slot_data_mut(slot)
+                .add_shred(shred.clone(), check_equivocation, leader_pk);
 
         match event.clone()? {
             VotorEvent::FirstShred(_) => {
