@@ -87,7 +87,7 @@ impl Blockstore {
             self.slot_data_mut(slot)
                 .add_shred(shred.clone(), check_equivocation, leader_pk)?;
 
-        match event.clone() {
+        match event {
             VotorEvent::FirstShred(_) => {
                 // notify Votor of first slice
                 self.votor_channel.send(event).await.unwrap();
