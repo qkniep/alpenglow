@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use either::Either;
 use log::{debug, trace, warn};
 
 use crate::consensus::votor::VotorEvent;
@@ -60,7 +59,7 @@ impl SlotBlockData {
         shred: Shred,
         check_equivocation: bool,
         leader_pk: PublicKey,
-    ) -> Option<Either<BlockInfo, VotorEvent>> {
+    ) -> Option<VotorEvent> {
         assert_eq!(shred.payload().slot, self.slot);
         if check_equivocation && self.equivocated {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
@@ -120,12 +119,17 @@ impl SlotBlockData {
 
         // maybe send first shred notification
         if is_first_shred {
-            return Some(Either::Right(VotorEvent::FirstShred(self.slot)));
+            return Some(VotorEvent::FirstShred(self.slot));
         }
 
         // maybe reconstruct slice and block
         if self.try_reconstruct_slice(slice) {
-            self.try_reconstruct_block().await.map(|b| Either::Left(b))
+            self.try_reconstruct_block()
+                .await
+                .map(|block_info| VotorEvent::Block {
+                    slot: self.slot,
+                    block_info,
+                })
         } else {
             None
         }

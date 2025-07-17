@@ -10,7 +10,6 @@ mod slot_block_data;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use either::Either;
 use log::debug;
 use tokio::sync::mpsc::Sender;
 
@@ -84,24 +83,20 @@ impl Blockstore {
     ) -> Option<(Slot, BlockInfo)> {
         let slot = shred.payload().slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
-        let add_shred_result = self
+        let event = self
             .slot_data_mut(slot)
             .add_shred(shred.clone(), check_equivocation, leader_pk)
             .await;
 
-        match &add_shred_result? {
-            Either::Right(event) => {
+        match event.clone()? {
+            VotorEvent::FirstShred(_) => {
                 // notify Votor of first slice
-                self.votor_channel.send(event.clone()).await.unwrap();
+                self.votor_channel.send(event.unwrap()).await.unwrap();
                 None
             }
-            Either::Left(block_info) => {
+            VotorEvent::Block { slot, block_info } => {
                 // notify Votor of block and print block info
-                let event = VotorEvent::Block {
-                    slot,
-                    block_info: *block_info,
-                };
-                self.votor_channel.send(event).await.unwrap();
+                self.votor_channel.send(event.unwrap()).await.unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     &hex::encode(block_info.hash)[..8],
@@ -110,8 +105,9 @@ impl Blockstore {
                     block_info.parent_slot,
                 );
 
-                Some((slot, *block_info))
+                Some((slot, block_info))
             }
+            _ => unreachable!(),
         }
     }
 
