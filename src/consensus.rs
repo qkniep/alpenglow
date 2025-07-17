@@ -33,7 +33,6 @@ use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{debug, trace, warn};
-use pool::AddVoteError;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -47,7 +46,7 @@ use crate::{All2All, Disseminator, ValidatorInfo};
 pub use blockstore::{BlockInfo, Blockstore};
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
-pub use pool::Pool;
+pub use pool::{AddVoteError, Pool};
 pub use vote::Vote;
 use votor::Votor;
 
