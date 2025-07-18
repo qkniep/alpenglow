@@ -139,7 +139,7 @@ impl Blockstore {
         self.slot_data(slot)?
             .canonical
             .completed
-            .clone()
+            .as_ref()
             .map(|c| c.0)
     }
 
@@ -150,9 +150,8 @@ impl Blockstore {
 
     /// Gives the number of stored shreds for a given `slot` (across all slices).
     pub fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot).map_or(0, |s| {
-            s.canonical.shreds.values().map(Vec::len).sum::<usize>()
-        })
+        self.slot_data(slot)
+            .map_or(0, |s| s.canonical.shreds.values().map(Vec::len).sum())
     }
 
     /// Gives the number of stored shreds for a given slot and slice.
@@ -160,13 +159,6 @@ impl Blockstore {
         self.slot_data(slot)
             .map_or(0, |s| s.canonical.shreds.get(&slice).map_or(0, Vec::len))
     }
-
-    // /// Gives any relevant alternative block hashes for a given slot, if any.
-    // #[must_use]
-    // pub fn alternative_block_hashes(&self, slot: Slot) -> &[Hash] {
-    //     self.slot_data(slot)
-    //         .map_or(&[], |s| s.alternatives.as_ref())
-    // }
 
     /// Gives reference to stored block for the given `slot` and `hash`.
     ///
