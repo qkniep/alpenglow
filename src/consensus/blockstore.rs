@@ -111,12 +111,10 @@ impl Blockstore {
     async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
         match event {
             VotorEvent::FirstShred(_) => {
-                // notify Votor of first slice
                 self.votor_channel.send(event).await.unwrap();
                 None
             }
             VotorEvent::Block { slot, block_info } => {
-                // notify Votor of block and print block info
                 self.votor_channel.send(event).await.unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
