@@ -4,7 +4,6 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
 use alpenglow::consensus::{Alpenglow, EpochInfo};
 use alpenglow::crypto::aggsig;
@@ -12,35 +11,17 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
+use alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use fastrace::collector::Config;
 use fastrace::prelude::*;
 use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-use logforth::color::LevelColor;
-use logforth::filter::EnvFilter;
-use logforth::{Layout, append};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use rand::rng;
-
-#[derive(Debug, Clone, Copy)]
-struct MinimalLogforthLayout;
-
-impl Layout for MinimalLogforthLayout {
-    fn format(
-        &self,
-        record: &log::Record,
-        _: &[Box<dyn logforth::Diagnostic>],
-    ) -> anyhow::Result<Vec<u8>> {
-        let colors = LevelColor::default();
-        let level = colors.colorize_record_level(false, record.level());
-        let message = record.args();
-        Ok(format!("{level:>5} {message}").into_bytes())
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -68,13 +49,7 @@ async fn main() -> Result<()> {
     );
     fastrace::set_reporter(reporter, Config::default());
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default().with_layout(MinimalLogforthLayout))
-        })
-        .apply();
+    logging::enable_logforth();
 
     {
         let parent = SpanContext::random();

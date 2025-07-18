@@ -5,12 +5,11 @@ use core::f64;
 use std::sync::{Arc, atomic::AtomicUsize};
 use std::{io, time::Duration};
 
+use alpenglow::logging;
 use bincode::{Decode, Encode};
 use clap::Parser;
 use color_eyre::Result;
 use log::{debug, info};
-use logforth::append;
-use logforth::filter::EnvFilter;
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::{net::UdpSocket, task::JoinSet};
@@ -109,13 +108,7 @@ async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default())
-        })
-        .apply();
+    logging::enable_logforth_stderr();
 
     let machine = Machine::new(args.id);
     machine.run().await?;
