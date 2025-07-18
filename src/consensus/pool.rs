@@ -26,17 +26,28 @@ use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Vote};
 use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
 
-/// Errors the Pool may throw when adding a vote or certificate.
+/// Errors the Pool may return when adding a vote.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-pub enum PoolError {
+pub enum AddVoteError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
-    #[error("invalid signature on vote/cert")]
+    #[error("invalid signature on the vote")]
     InvalidSignature,
-    #[error("duplicate vote/cert")]
+    #[error("duplicate vote")]
     Duplicate,
     #[error("vote constitutes a slashable offence")]
     Slashable(SlashableOffence),
+}
+
+/// Errors the Pool may return when adding a certificate.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum AddCertError {
+    #[error("slot is either too old or too far in the future")]
+    SlotOutOfBounds,
+    #[error("invalid signature on the cert")]
+    InvalidSignature,
+    #[error("duplicate cert")]
+    Duplicate,
 }
 
 /// Slashable offences that may be detected by the Pool.
@@ -71,7 +82,6 @@ pub struct Pool {
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
-    ///
     repair_channel: Sender<(Slot, Hash)>,
 }
 
@@ -97,13 +107,7 @@ impl Pool {
     }
 
     /// Adds a new certificate to the pool. Checks validity of the certificate.
-    ///
-    /// # Errors
-    ///
-    /// - Returns [`PoolError::SlotOutOfBounds`] if the slot is too old or too far in the future.
-    /// - Returns [`PoolError::InvalidSignature`] if the certificate's signature is invalid.
-    /// - Returns [`PoolError::Duplicate`] if the certificate can be ignored as duplicate.
-    pub async fn add_cert(&mut self, cert: Cert) -> Result<(), PoolError> {
+    pub async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
         // TODO: set bounds exactly correctly,
@@ -111,12 +115,12 @@ impl Pool {
         if slot < self.highest_finalized_slot
             || slot == self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
         {
-            return Err(PoolError::SlotOutOfBounds);
+            return Err(AddCertError::SlotOutOfBounds);
         }
 
         // verify signature
         if !cert.check_sig(&self.epoch_info.validators) {
-            return Err(PoolError::InvalidSignature);
+            return Err(AddCertError::InvalidSignature);
         }
 
         // get `SlotCertificates`, initialize if it doesn't exist yet
@@ -134,7 +138,7 @@ impl Pool {
             Cert::Final(_) => certs.finalize.is_some(),
         };
         if duplicate {
-            return Err(PoolError::Duplicate);
+            return Err(AddCertError::Duplicate);
         }
 
         self.add_valid_cert(cert).await;
@@ -215,14 +219,7 @@ impl Pool {
     }
 
     /// Adds a new vote to the pool. Checks validity of the vote.
-    ///
-    /// # Errors
-    ///
-    /// - Returns [`PoolError::SlotOutOfBounds`] if the slot is too old or too far in the future.
-    /// - Returns [`PoolError::InvalidSignature`] if the vote's signature is invalid.
-    /// - Returns [`PoolError::Slashable`] if the vote constitutes a slashable offence.
-    /// - Returns [`PoolError::Duplicate`] if the can be ignored as duplicate.
-    pub async fn add_vote(&mut self, vote: Vote) -> Result<(), PoolError> {
+    pub async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
         // TODO: set bounds exactly correctly,
@@ -230,7 +227,7 @@ impl Pool {
         if slot < self.highest_finalized_slot
             || slot == self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
         {
-            return Err(PoolError::SlotOutOfBounds);
+            return Err(AddVoteError::SlotOutOfBounds);
         }
 
         // FIXME: overly aggressive repair
@@ -241,16 +238,16 @@ impl Pool {
         // verify signature
         let pk = &self.epoch_info.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
-            return Err(PoolError::InvalidSignature);
+            return Err(AddVoteError::InvalidSignature);
         }
 
         // check if vote is valid and should be counted
         let voter = vote.signer();
         let voter_stake = self.epoch_info.validator(voter).stake;
         if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
-            return Err(PoolError::Slashable(offence));
+            return Err(AddVoteError::Slashable(offence));
         } else if self.slot_state(slot).should_ignore_vote(&vote) {
-            return Err(PoolError::Duplicate);
+            return Err(AddVoteError::Duplicate);
         }
 
         // actually add the vote
@@ -438,6 +435,7 @@ mod tests {
     use crate::crypto::aggsig::SecretKey;
     use crate::test_utils::generate_validators;
 
+    use static_assertions::const_assert;
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -449,7 +447,10 @@ mod tests {
 
         let wrong_sk = SecretKey::new(&mut rand::rng());
         let vote = Vote::new_notar(0, Hash::default(), &wrong_sk, 0);
-        assert_eq!(pool.add_vote(vote).await, Err(PoolError::InvalidSignature));
+        assert_eq!(
+            pool.add_vote(vote).await,
+            Err(AddVoteError::InvalidSignature)
+        );
         drop(votor_rx);
         drop(repair_rx);
     }
@@ -652,7 +653,7 @@ mod tests {
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // first see skip votes for later slots
-        assert!(SLOTS_PER_WINDOW > 2);
+        const_assert!(SLOTS_PER_WINDOW > 2);
         for slot in 2..SLOTS_PER_WINDOW {
             for v in 0..7 {
                 let vote = Vote::new_skip(slot, &sks[v as usize], v);

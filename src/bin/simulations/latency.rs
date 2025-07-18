@@ -418,16 +418,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
             writeln!(
                 writer,
-                "{},{},{},{},{},{},{},{},{}",
-                percentile,
-                direct_latency,
-                rotor_latency,
-                shreds95_latency,
-                notar_latency,
-                notar65_latency,
-                fast_final_latency,
-                slow_final_latency,
-                final_latency,
+                "{percentile},{direct_latency},{rotor_latency},{shreds95_latency},{notar_latency},{notar65_latency},{fast_final_latency},{slow_final_latency},{final_latency}",
             )
             .unwrap();
         }

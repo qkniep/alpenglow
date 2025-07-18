@@ -8,6 +8,7 @@ use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
 use log::{info, warn};
+use static_assertions::const_assert;
 
 use crate::MAX_TRANSACTION_SIZE;
 use crate::crypto::Hash;
@@ -31,7 +32,7 @@ async fn produce_slice<T>(
 where
     T: Network + Sync + Send + 'static,
 {
-    debug_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
+    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
     let (mut data, slice_index) = match slice_index {
         Either::Left((parent_slot, parent_hash, slice_index)) => {
             let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);

@@ -40,7 +40,6 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::sampling_strategy::{
     DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
     UniformSampler,
@@ -50,10 +49,9 @@ use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
+use alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
-use logforth::append;
-use logforth::filter::EnvFilter;
 use rayon::prelude::*;
 
 use bandwidth::BandwidthTest;
@@ -98,13 +96,7 @@ fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default())
-        })
-        .apply();
+    logging::enable_logforth_stderr();
 
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files

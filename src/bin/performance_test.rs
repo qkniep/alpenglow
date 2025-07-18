@@ -13,24 +13,16 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork};
-use alpenglow::{Alpenglow, ValidatorInfo};
+use alpenglow::{Alpenglow, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
-use logforth::append;
-use logforth::filter::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default())
-        })
-        .apply();
+    logging::enable_logforth_stderr();
 
     latency_test(11).await;
 
@@ -46,7 +38,7 @@ type TestNode = Alpenglow<
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
-    let core = Arc::new(SimulatedNetworkCore::new().with_packet_loss(0.0));
+    let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
     let mut udp_networks = VecDeque::new();
     for i in 0..3 * count {

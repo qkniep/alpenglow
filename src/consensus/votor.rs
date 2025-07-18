@@ -100,7 +100,6 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     event_sender: Sender<VotorEvent>,
     /// [`All2All`] instance used to broadcast votes.
     all2all: Arc<A>,
-    ///
     repair_sender: Sender<(Slot, Hash)>,
 }
 
@@ -285,8 +284,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 .contains(&(slot, parent_slot, parent_hash));
             let h = &hex::encode(parent_hash)[..8];
             trace!(
-                "try notar slot {} with parent {} in slot {} (valid {})",
-                slot, h, parent_slot, valid_parent
+                "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
             );
             if !valid_parent {
                 return false;
