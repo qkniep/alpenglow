@@ -5,11 +5,12 @@ use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
 use log::{info, warn};
+use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 
 use crate::MAX_TRANSACTION_SIZE;
+use crate::Transaction;
 use crate::crypto::Hash;
-use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice};
 use crate::{All2All, Disseminator, Slot, network::Network};
 
@@ -53,23 +54,18 @@ where
                 break Continue::Stop;
             }
 
-            val = txs_receiver.receive() => {
+            val = txs_receiver.receive::<Transaction>() => {
                 match val {
                     Err(err) => panic!("Unexpected error {err}"),
-                    Ok(msg) => match msg {
-                        NetworkMessage::Transaction(tx) => {
-                            let mut bytes = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-                                .expect("serialization should not panic");
-                            data.append(&mut bytes);
-                            let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
-                            if slice_capacity_left < MAX_TRANSACTION_SIZE {
-                                break Continue::Continue { left };
-                            }
-                        }
-                        msg => {
-                            panic!("Unexpected msg {msg:?}");
-                        }
-                    },
+                    Ok(tx) => {
+                        let mut bytes = bincode::serde::encode_to_vec(tx, bincode::config::standard())
+                            .expect("serialization should not panic");
+                        data.append(&mut bytes);
+                        let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
+                        if slice_capacity_left < MAX_TRANSACTION_SIZE {
+                            break Continue::Continue { left };
+                    }
+                },
                 }
                 left = left.saturating_sub(Instant::now() - start_time);
             }
@@ -220,7 +216,7 @@ mod tests {
         tokio::spawn(async move {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
-                let msg = NetworkMessage::Transaction(Transaction(data));
+                let msg = Transaction(data);
                 txs_sender.send(&msg, addr.clone()).await.unwrap();
             }
         });

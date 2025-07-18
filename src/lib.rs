@@ -17,6 +17,7 @@ pub mod shredder;
 pub mod test_utils;
 pub mod validator;
 
+use network::{MTU_BYTES, NetworkError, SerializableMessage};
 use serde::{Deserialize, Serialize};
 
 pub use all2all::All2All;
@@ -49,6 +50,32 @@ pub struct Block {
 /// A transaction cannot be bigger than `MAX_TRANSACTION_SIZE`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction(Vec<u8>);
+
+impl SerializableMessage for Transaction {
+    /// Tries to deserialize a `NetworkMessage` from bytes using [`bincode`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
+    /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
+    fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
+        if bytes.len() > MTU_BYTES {
+            return Err(NetworkError::Deserialization(
+                bincode::error::DecodeError::LimitExceeded,
+            ));
+        }
+        // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
+        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        Ok(msg)
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+            .expect("serialization should not panic");
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+        bytes
+    }
+}
 
 /// Validator information as known about other validators.
 #[derive(Clone, Debug, Serialize, Deserialize)]

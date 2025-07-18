@@ -28,7 +28,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::ValidatorId;
 
-use super::{Network, NetworkError, NetworkMessage};
+use super::{Network, NetworkError, SerializableMessage};
 
 pub use core::SimulatedNetworkCore;
 use token_bucket::TokenBucket;
@@ -66,9 +66,9 @@ impl SimulatedNetwork {
 impl Network for SimulatedNetwork {
     type Address = ValidatorId;
 
-    async fn send(
+    async fn send<SM: SerializableMessage>(
         &self,
-        message: &NetworkMessage,
+        message: &SM,
         to: impl AsRef<str> + Send,
     ) -> Result<(), NetworkError> {
         let bytes = message.to_bytes();
@@ -83,13 +83,13 @@ impl Network for SimulatedNetwork {
         self.send_byte_vec(bytes.to_vec(), to).await
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive<SM: SerializableMessage>(&self) -> Result<SM, NetworkError> {
         loop {
             let Some(bytes) = self.receiver.lock().await.recv().await else {
                 let io_error = std::io::Error::other("channel closed");
                 return Err(NetworkError::BadSocket(io_error));
             };
-            match NetworkMessage::from_bytes(&bytes) {
+            match SM::from_bytes(&bytes) {
                 Ok(msg) => return Ok(msg),
                 Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
                 Err(err) => return Err(err),

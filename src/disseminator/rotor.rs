@@ -10,7 +10,7 @@ use rand::prelude::*;
 use sampling_strategy::PartitionSampler;
 
 use crate::consensus::EpochInfo;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkError, NetworkMessage, SerializableMessage};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId};
 
@@ -115,7 +115,7 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
 
     async fn receive(&self) -> Result<Shred, NetworkError> {
         loop {
-            match self.network.receive().await? {
+            match self.network.receive::<NetworkMessage>().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
                 m => warn!("unexpected message type for Rotor: {m:?}"),
             }

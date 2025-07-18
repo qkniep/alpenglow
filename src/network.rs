@@ -28,12 +28,12 @@ pub mod simulated;
 mod tcp;
 mod udp;
 
+use std::marker::Sync;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::Transaction;
 use crate::consensus::{Cert, Vote};
 use crate::repair::RepairMessage;
 use crate::shredder::Shred;
@@ -44,6 +44,12 @@ pub use udp::UdpNetwork;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
+
+pub trait SerializableMessage: Sized {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError>;
+
+    fn to_bytes(&self) -> Vec<u8>;
+}
 
 /// Network message type.
 ///
@@ -57,38 +63,9 @@ pub enum NetworkMessage {
     Vote(Vote),
     Cert(Cert),
     Repair(RepairMessage),
-    // FIXME: txs should not be seen on the same connection as other network msgs.
-    // This should not be part of this enum.
-    Transaction(Transaction),
 }
 
 impl NetworkMessage {
-    /// Tries to deserialize a `NetworkMessage` from bytes using [`bincode`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
-    /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
-        if bytes.len() > MTU_BYTES {
-            return Err(NetworkError::Deserialization(
-                bincode::error::DecodeError::LimitExceeded,
-            ));
-        }
-        // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
-        Ok(msg)
-    }
-
-    /// Serializes this `NetworkMessage` into owned bytes using [`bincode`].
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
-            .expect("serialization should not panic");
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        bytes
-    }
-
     /// Serializes this `NetworkMessage` into an existing buffer using [`bincode`].
     #[must_use]
     pub fn write_bytes(&self, buf: &mut [u8]) -> usize {
@@ -123,6 +100,33 @@ impl From<RepairMessage> for NetworkMessage {
     }
 }
 
+impl SerializableMessage for NetworkMessage {
+    /// Tries to deserialize a `NetworkMessage` from bytes using [`bincode`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
+    /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
+    fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
+        if bytes.len() > MTU_BYTES {
+            return Err(NetworkError::Deserialization(
+                bincode::error::DecodeError::LimitExceeded,
+            ));
+        }
+        // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
+        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        Ok(msg)
+    }
+
+    /// Serializes this `NetworkMessage` into owned bytes using [`bincode`].
+    fn to_bytes(&self) -> Vec<u8> {
+        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+            .expect("serialization should not panic");
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+        bytes
+    }
+}
+
 /// Error type for network operations.
 #[derive(Debug, Error)]
 pub enum NetworkError {
@@ -144,9 +148,9 @@ pub enum NetworkError {
 pub trait Network: Send + Sync {
     type Address: Send;
 
-    fn send(
+    fn send<SM: SerializableMessage + Sync>(
         &self,
-        message: &NetworkMessage,
+        message: &SM,
         to: impl AsRef<str> + Send,
     ) -> impl Future<Output = Result<(), NetworkError>> + Send;
 
@@ -158,7 +162,8 @@ pub trait Network: Send + Sync {
 
     // TODO: implement brodcast at `Network` level?
 
-    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkError>> + Send;
+    fn receive<SM: SerializableMessage>(&self) -> 
+        impl Future<Output = Result<SM, NetworkError>> + Send;
 
     fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
     where

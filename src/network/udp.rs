@@ -11,7 +11,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use log::warn;
 use tokio::net::UdpSocket;
 
-use super::{MTU_BYTES, Network, NetworkError, NetworkMessage};
+use super::{MTU_BYTES, Network, NetworkError, SerializableMessage};
 
 /// Number of bytes used as buffer for any incoming packet.
 ///
@@ -53,9 +53,9 @@ impl UdpNetwork {
 impl Network for UdpNetwork {
     type Address = SocketAddr;
 
-    async fn send(
+    async fn send<SM: SerializableMessage>(
         &self,
-        message: &NetworkMessage,
+        message: &SM,
         to: impl AsRef<str> + Send,
     ) -> Result<(), NetworkError> {
         let bytes = message.to_bytes();
@@ -72,11 +72,11 @@ impl Network for UdpNetwork {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive<SM: SerializableMessage>(&self) -> Result<SM, NetworkError> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
             let len = self.socket.recv(&mut buf).await?;
-            match NetworkMessage::from_bytes(&buf[..len]) {
+            match SM::from_bytes(&buf[..len]) {
                 Ok(msg) => return Ok(msg),
                 Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
                 Err(err) => return Err(err),

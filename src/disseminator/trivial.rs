@@ -41,7 +41,7 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
 
     async fn receive(&self) -> Result<Shred, NetworkError> {
         loop {
-            match self.network.receive().await? {
+            match self.network.receive::<NetworkMessage>().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
                 m => warn!("unexpected message type for disseminator: {m:?}"),
             }
