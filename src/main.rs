@@ -16,6 +16,7 @@ use color_eyre::Result;
 use fastrace::collector::Config;
 use fastrace::prelude::*;
 use fastrace_opentelemetry::OpenTelemetryReporter;
+use log::warn;
 use opentelemetry::trace::SpanKind;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
         }
 
         tokio::signal::ctrl_c().await.unwrap();
-        log::warn!("shutting down all nodes");
+        warn!("shutting down all nodes");
         for token in &cancel_tokens {
             token.cancel();
         }
