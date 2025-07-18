@@ -14,7 +14,6 @@
 //! Finally, it defines some of the low-level data types representing a block:
 //! - [`Shred`] is a single part of the block that fits into a UDP datagram.
 //! - [`Slice`] corresponds to a fixed number of shreds we perform erasure coding on.
-// TODO: split this file up
 
 mod reed_solomon;
 
@@ -46,6 +45,21 @@ pub const MAX_DATA_PER_SHRED: usize = 1024;
 /// Maximum number of payload bytes an entire slice can hold.
 pub const MAX_DATA_PER_SLICE: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
 
+/// Errors that may occur during shredding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum ShredError {
+    #[error("too much data to fit into slice")]
+    TooMuchData,
+}
+
+impl From<ReedSolomonShredError> for ShredError {
+    fn from(err: ReedSolomonShredError) -> Self {
+        match err {
+            ReedSolomonShredError::TooMuchData => Self::TooMuchData,
+        }
+    }
+}
+
 /// Errors that may occur during deshredding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum DeshredError {
@@ -72,21 +86,6 @@ impl From<ReedSolomonDeshredError> for DeshredError {
 }
 
 impl From<ReedSolomonShredError> for DeshredError {
-    fn from(err: ReedSolomonShredError) -> Self {
-        match err {
-            ReedSolomonShredError::TooMuchData => Self::TooMuchData,
-        }
-    }
-}
-
-/// Errors that may occur during shredding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub enum ShredError {
-    #[error("too much data to fit into slice")]
-    TooMuchData,
-}
-
-impl From<ReedSolomonShredError> for ShredError {
     fn from(err: ReedSolomonShredError) -> Self {
         match err {
             ReedSolomonShredError::TooMuchData => Self::TooMuchData,
