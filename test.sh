@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ $# -gt 0 ] && [ $1 == "slow" ]; then
+slow_tests () {
 	echo "🐌 Running slow tests can take up to 10 minutes!"
 	echo "Starting in 3 seconds..."
 	sleep 3
@@ -20,8 +20,41 @@ if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 		three_nodes \
 		three_nodes_crash && \
 	RUST_BACKTRACE=1 cargo test
-else
-	echo "🚀 Running fast tests only!"
+}
+
+fast_tests () {
+	echo "🚀 Running fast tests!"
 	sleep 1
 	RUST_BACKTRACE=1 cargo nextest run
+}
+
+sequential_tests () {
+	echo "Running sequential tests!"
+	sleep 1
+	RUST_BACKTRACE=1 cargo test -- test-threads=1 --ignored \
+		network::simulated::core::tests::asymmetric \
+		network::simulated::core::tests::symmetric \
+		network::simulated::core::tests::extreme_rate
+}
+
+if [ $# -gt 0 ] && [ $1 == "slow" ]; then
+	slow_tests
+elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
+	fast_tests && \
+		sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
+	sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "many" ]; then
+	echo "🔁 Running tests for 50 iterations to detect flaky tests..."
+	for i in $(seq 1 50); do
+		echo "Iteration $i/50:"
+		fast_tests && \
+			sequential_tests
+		if [ $? -ne 0 ]; then
+            echo "❌ Test failed in one iteration, maybe some tests are flaky."
+            break
+        fi
+    done
+else
+	fast_tests
 fi

@@ -31,6 +31,8 @@ pub type ValidatorId = u64;
 /// Validator stake type.
 pub type Stake = u64;
 
+const MAX_TRANSACTION_SIZE: usize = 512;
+
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
@@ -42,6 +44,8 @@ pub struct Block {
 }
 
 /// Dummy transaction containing payload bytes.
+///
+/// A transaction cannot be bigger than `MAX_TRANSACTION_SIZE`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction(Vec<u8>);
 

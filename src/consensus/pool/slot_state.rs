@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structures handling votes and certificates for a single slot.
-//!
-//!
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

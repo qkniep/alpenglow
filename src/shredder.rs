@@ -123,7 +123,7 @@ pub struct Shred {
 impl Shred {
     /// Verifies the proof and signature of this shred.
     #[must_use]
-    pub fn verify(&self, pk: &PublicKey, existing_merkle_root: Option<&Hash>) -> bool {
+    pub fn verify(&self, pk: &PublicKey, cached_merkle_root: Option<&Hash>) -> bool {
         // FIX: make this work for all shredders
         let index = match self.payload_type {
             ShredPayloadType::Coding(_) => DATA_SHREDS + self.payload().index_in_slice,
@@ -137,15 +137,15 @@ impl Shred {
         ) {
             return false;
         }
-        if let Some(prev_root) = existing_merkle_root {
-            return &self.merkle_root == prev_root;
+        if Some(&self.merkle_root) == cached_merkle_root {
+            return true;
         }
         self.merkle_root_sig.verify(&self.merkle_root, pk)
     }
 
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
-            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => &p,
+            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
     }
 }

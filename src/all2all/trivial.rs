@@ -60,7 +60,7 @@ mod tests {
     async fn simple_broadcast() {
         // set up network and nodes
         let core = Arc::new(
-            SimulatedNetworkCore::new()
+            SimulatedNetworkCore::default()
                 .with_default_latency(Duration::from_millis(10))
                 .with_packet_loss(0.0),
         );

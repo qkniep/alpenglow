@@ -75,7 +75,7 @@ mod tests {
     async fn broadcast_test(packet_loss: f64) {
         // set up network and nodes
         let core = Arc::new(
-            SimulatedNetworkCore::new()
+            SimulatedNetworkCore::default()
                 .with_default_latency(Duration::from_millis(10))
                 .with_packet_loss(packet_loss),
         );

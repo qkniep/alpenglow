@@ -276,8 +276,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 .contains(&(slot, parent_slot, parent_hash));
             let h = &hex::encode(parent_hash)[..8];
             trace!(
-                "try notar slot {} with parent {} in slot {} (valid {})",
-                slot, h, parent_slot, valid_parent
+                "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
             );
             if !valid_parent {
                 return false;
@@ -379,32 +378,33 @@ mod tests {
 
     #[tokio::test]
     async fn timeouts() {
-        let (other_a2a, tx, _) = start_votor().await;
+        let (other_a2a, votor_channel, _) = start_votor().await;
 
         // explicitly send parent ready for genesis
-        tx.send(VotorEvent::ParentReady {
-            slot: 0,
-            parent_slot: 0,
-            parent_hash: Hash::default(),
-        })
-        .await
-        .unwrap();
+        votor_channel
+            .send(VotorEvent::ParentReady {
+                slot: 0,
+                parent_slot: 0,
+                parent_hash: Hash::default(),
+            })
+            .await
+            .unwrap();
 
         // should vote skip for all slots
-        let mut skip_votes = Vec::new();
+        let mut skipped_slots = Vec::new();
         for _ in 0..SLOTS_PER_WINDOW {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     NetworkMessage::Vote(v) => {
                         assert!(v.is_skip());
-                        skip_votes.push(v);
+                        skipped_slots.push(v.slot());
                     }
                     _ => unreachable!(),
                 }
             }
         }
         for i in 0..SLOTS_PER_WINDOW {
-            assert!(skip_votes.iter().any(|v| v.slot() == i));
+            assert!(skipped_slots.contains(&i));
         }
     }
 
@@ -442,7 +442,7 @@ mod tests {
                 assert!(v.is_final());
                 assert_eq!(v.slot(), 0);
             }
-            _ => unreachable!(),
+            m => panic!("other msg: {m:?}"),
         }
     }
 }

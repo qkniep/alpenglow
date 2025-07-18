@@ -38,8 +38,16 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: Build
         run: cargo build --all-targets --verbose
 
       - name: Run tests
-        run: cargo test --verbose
+        run: ./test.sh ci
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -Dwarnings

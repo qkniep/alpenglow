@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 
 use crate::Slot;
 use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
-use crate::crypto::{Hash, MerkleTree};
+use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
@@ -37,7 +37,6 @@ pub enum RepairRequest {
     SliceRoot(Slot, Hash, usize),
     /// Request for shred, identified by block hash, slice index and shred index.
     Shred(Slot, Hash, usize, usize),
-    ///
     Parent(Slot, Hash),
 }
 
@@ -54,7 +53,6 @@ pub enum RepairResponse {
     SliceRoot(RepairRequest, Hash, Vec<Hash>),
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
-    ///
     Parent(RepairRequest, Slot, Hash),
 }
 
@@ -163,13 +161,13 @@ impl<N: Network> Repair<N> {
                 // TODO: include & check proof
                 // self.slice_counts.insert((slot, block_hash), count);
             }
-            RepairResponse::SliceRoot(req, slice_root, proof) => {
-                let RepairRequest::SliceRoot(_, _, slice) = req else {
+            RepairResponse::SliceRoot(req, _slice_root, _proof) => {
+                let RepairRequest::SliceRoot(_, _, _slice) = req else {
                     return;
                 };
-                if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
-                    return;
-                }
+                // if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
+                //     return;
+                // }
                 // self.slice_roots
                 //     .insert((slot, block_hash, slice), slice_root);
             }
@@ -186,7 +184,7 @@ impl<N: Network> Repair<N> {
                 // TODO: make sure shred is checked against correct merkle_root
                 //
                 /* if !shred.merkle_root ... { return; } */
-                self.blockstore.write().await.add_shred(shred).await;
+                self.blockstore.write().await.add_shred(shred, false).await;
             }
             RepairResponse::Parent(_, parent_slot, parent_hash) => {
                 let block_info = BlockInfo {

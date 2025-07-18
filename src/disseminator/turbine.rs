@@ -47,6 +47,7 @@ pub struct Turbine<N: Network> {
 #[derive(Clone, Debug)]
 pub(crate) struct TurbineTree {
     root: ValidatorId,
+    #[allow(dead_code)]
     parent: Option<ValidatorId>,
     children: Vec<ValidatorId>,
 }
@@ -142,7 +143,7 @@ impl<N: Network> Disseminator for Turbine<N> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for Turbine: {:?}", m),
+                m => warn!("unexpected message type for Turbine: {m:?}"),
             }
         }
     }
@@ -209,6 +210,7 @@ impl TurbineTree {
 
     /// Gives the parent of this validator in the Turbine tree.
     /// Returns `None` iff this validator is the root of the tree.
+    #[allow(dead_code)]
     pub const fn get_parent(&self) -> Option<ValidatorId> {
         self.parent
     }
@@ -225,7 +227,8 @@ mod tests {
 
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::UdpNetwork;
+    use crate::network::SimulatedNetwork;
+    use crate::network::simulated::SimulatedNetworkCore;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
 
     use tokio::{sync::Mutex, task};
@@ -252,16 +255,20 @@ mod tests {
         (sks, validators)
     }
 
-    fn create_turbine_instances(
+    async fn create_turbine_instances(
         validators: &mut [ValidatorInfo],
-        base_port: u16,
-    ) -> Vec<Turbine<UdpNetwork>> {
+    ) -> Vec<Turbine<SimulatedNetwork>> {
+        let core = Arc::new(
+            SimulatedNetworkCore::default()
+                .with_jitter(0.0)
+                .with_packet_loss(0.0),
+        );
         for (i, v) in validators.iter_mut().enumerate() {
-            v.disseminator_address = format!("127.0.0.1:{}", base_port + i as u16);
+            v.disseminator_address = i.to_string();
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
-            let network = UdpNetwork::new(base_port + i as u16);
+            let network = core.join_unlimited(i as ValidatorId).await;
             let turbine = Turbine::new(i as ValidatorId, validators.to_vec(), network);
             disseminators.push(turbine);
         }
@@ -326,7 +333,7 @@ mod tests {
     #[tokio::test]
     async fn dissemination() {
         let (sks, mut validators) = create_validator_info(10);
-        let mut disseminators = create_turbine_instances(&mut validators, 4000);
+        let mut disseminators = create_turbine_instances(&mut validators).await;
         let slice = Slice {
             slot: 0,
             slice_index: 0,
@@ -375,10 +382,11 @@ mod tests {
             }
         });
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // wait for shreds to arrive
+        // needs to be longer than the latency of the simulated network
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // non-leaders should have received all shreds via Turbine
-        // TODO: flaky
         assert_eq!(*shreds_received.lock().await, 9 * TOTAL_SHREDS);
         task_leader.abort();
         for task in tasks {

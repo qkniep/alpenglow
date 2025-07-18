@@ -41,11 +41,12 @@ type TestNode = Alpenglow<
     TrivialAll2All<SimulatedNetwork>,
     Rotor<SimulatedNetwork, StakeWeightedSampler>,
     UdpNetwork,
+    UdpNetwork,
 >;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
-    let core = Arc::new(SimulatedNetworkCore::new().with_packet_loss(0.0));
+    let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
     let mut udp_networks = VecDeque::new();
     for i in 0..3 * count {
@@ -106,6 +107,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
             let repair_network = udp_networks.pop_front().unwrap();
+            let txs_receiver = udp_networks.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
@@ -113,6 +115,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator,
                 repair_network,
                 epoch_info,
+                txs_receiver,
             )
         })
         .collect()

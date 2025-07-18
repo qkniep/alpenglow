@@ -21,6 +21,7 @@ mod blockstore;
 mod cert;
 mod epoch_info;
 mod pool;
+mod produce_block;
 mod vote;
 mod votor;
 
@@ -31,9 +32,7 @@ use std::{sync::Arc, time::Duration};
 use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{debug, info, trace, warn};
-use rand::rngs::SmallRng;
-use rand::{RngCore, SeedableRng};
+use log::{debug, trace, warn};
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -41,13 +40,13 @@ use tokio_util::sync::CancellationToken;
 use crate::crypto::{Hash, aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, Slice};
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::shredder::Shred;
+use crate::{All2All, Disseminator, ValidatorInfo};
 
 pub use blockstore::{BlockInfo, Blockstore};
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
-pub use pool::{Pool, PoolError};
+pub use pool::{AddVoteError, Pool};
 pub use vote::Vote;
 use votor::Votor;
 
@@ -68,7 +67,7 @@ const DELTA_TIMEOUT: Duration = DELTA_EARLY_TIMEOUT.checked_add(DELTA_BLOCK).unw
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
+pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
     /// This is not the same as the voting secret key, which is held by [`Votor`].
     secret_key: signature::SecretKey,
@@ -86,6 +85,8 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
     disseminator: Arc<D>,
     /// Block repair protocol.
     repair: Arc<Repair<R>>,
+    /// Network connection to receive transactions from clients.
+    txs_receiver: T,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -93,11 +94,12 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network> {
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
-impl<A, D, R> Alpenglow<A, D, R>
+impl<A, D, R, T> Alpenglow<A, D, R, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
     R: Network + Sync + Send + 'static,
+    T: Network + Sync + Send + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     #[must_use]
@@ -108,6 +110,7 @@ where
         disseminator: D,
         repair_network: R,
         epoch_info: Arc<EpochInfo>,
+        txs_receiver: T,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
@@ -159,6 +162,7 @@ where
             repair,
             cancel_token,
             votor_handle,
+            txs_receiver,
         }
     }
 
@@ -254,10 +258,6 @@ where
     /// Once all previous blocks have been notarized or skipped and the next
     /// slot belongs to our leader window, we will produce a block.
     async fn block_production_loop(&self) -> Result<()> {
-        let mut parent: Slot = 0;
-        let mut parent_hash = Hash::default();
-        let mut parent_ready = true;
-
         'outer: for window in 0.. {
             if self.cancel_token.is_cancelled() {
                 break;
@@ -274,46 +274,59 @@ where
 
             if self.pool.read().await.finalized_slot() >= last_slot_in_window {
                 warn!(
-                    "ignoring window {}..{} for block production",
-                    first_slot_in_window, last_slot_in_window
+                    "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
                 );
                 continue;
             }
 
             // wait for potential parent of first slot (except if first window)
-            if window > 0 {
+            let (parent, parent_hash, parent_ready) = if window == 0 {
+                (0, Hash::default(), false)
+            } else {
                 // PERF: maybe replace busy loop with events
-                (parent, parent_hash, parent_ready) = loop {
+                loop {
                     // build on ready parent, if any
-                    let pool = self.pool.read().await;
-                    if let Some((slot, hash)) = pool.parents_ready(first_slot_in_window).first() {
-                        let h = &hex::encode(hash)[..8];
-                        debug!("building block on ready parent {h} in slot {slot}");
+                    if let Some((slot, hash)) = self
+                        .pool
+                        .read()
+                        .await
+                        .parents_ready(first_slot_in_window)
+                        .first()
+                    {
+                        debug!(
+                            "building block on ready parent {} in slot {}",
+                            &hex::encode(hash)[..8],
+                            slot
+                        );
                         break (*slot, *hash, true);
                     }
-                    drop(pool);
 
                     // optimisitically build on block in previous slot, if any
-                    let blockstore = self.blockstore.read().await;
-                    if let Some(hash) = blockstore.canonical_block_hash(first_slot_in_window - 1) {
+                    if let Some(hash) = self
+                        .blockstore
+                        .read()
+                        .await
+                        .canonical_block_hash(first_slot_in_window - 1)
+                    {
                         let slot = first_slot_in_window - 1;
-                        let h = &hex::encode(hash)[..8];
-                        debug!("optimistically building block on parent {h} in slot {slot}",);
+                        debug!(
+                            "optimistically building block on parent {} in slot {}",
+                            &hex::encode(hash)[..8],
+                            slot
+                        );
                         break (slot, hash, false);
                     }
-                    drop(blockstore);
 
                     if self.pool.read().await.finalized_slot() >= last_slot_in_window {
                         warn!(
-                            "ignoring window {}..{} for block production",
-                            first_slot_in_window, last_slot_in_window
+                            "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
                         );
                         continue 'outer;
                     }
 
                     sleep(Duration::from_millis(1)).await;
-                };
-            }
+                }
+            };
 
             // produce blocks for all slots in window
             let mut block = parent;
@@ -321,74 +334,16 @@ where
             for slot in first_slot_in_window..=last_slot_in_window {
                 self.produce_block(slot, (block, block_hash), parent_ready)
                     .await?;
-                parent_ready = true;
 
                 // build off own block next
-                let blockstore = self.blockstore.read().await;
                 block = slot;
-                block_hash = blockstore.canonical_block_hash(slot).unwrap();
+                block_hash = self
+                    .blockstore
+                    .read()
+                    .await
+                    .canonical_block_hash(slot)
+                    .unwrap();
             }
-        }
-
-        Ok(())
-    }
-
-    async fn produce_block(
-        &self,
-        slot: Slot,
-        parent: (Slot, Hash),
-        parent_ready: bool,
-    ) -> Result<()> {
-        let (parent_slot, parent_hash) = parent;
-        let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
-        let mut rng = SmallRng::seed_from_u64(slot);
-        let ph = &hex::encode(parent_hash)[..8];
-        info!("producing block in slot {slot} with parent {ph} in slot {parent_slot}",);
-
-        // TODO: send actual data
-        for slice_index in 0..1 {
-            let start_time = Instant::now();
-            let mut data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut data);
-            // pack parent information in first slice
-            if slice_index == 0 {
-                data[0..8].copy_from_slice(&parent_slot.to_be_bytes());
-                data[8..40].copy_from_slice(&parent_hash);
-            }
-            let slice = Slice {
-                slot,
-                slice_index,
-                is_last: slice_index == 0,
-                merkle_root: None,
-                data,
-            };
-
-            // shred and disseminate slice
-            let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
-            for s in shreds {
-                self.disseminator.send(&s).await?;
-                // PERF: move expensive add_shred() call out of block production
-                let mut blockstore = self.blockstore.write().await;
-                let block = blockstore.add_shred(s).await;
-                if let Some((slot, block_info)) = block {
-                    let mut pool = self.pool.write().await;
-                    pool.add_block(slot, block_info).await;
-                }
-            }
-
-            // switch parent if necessary (for optimistic handover)
-            if !parent_ready {
-                let pool = self.pool.read().await;
-                if let Some(p) = pool.parents_ready(slot).first() {
-                    if *p != parent {
-                        warn!("switching block production parent");
-                        unimplemented!("have to switch parents");
-                    }
-                }
-            }
-
-            // artificially ensure block time close to 400 ms
-            sleep(DELTA_BLOCK.saturating_sub(start_time.elapsed())).await;
         }
 
         Ok(())
@@ -400,7 +355,7 @@ where
         match msg {
             NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
                 Ok(()) => {}
-                Err(PoolError::Slashable(offence)) => {
+                Err(AddVoteError::Slashable(offence)) => {
                     warn!("slashable offence detected: {offence}");
                 }
                 Err(err) => trace!("ignoring invalid vote: {err}"),
@@ -417,7 +372,7 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
         self.disseminator.forward(&shred).await?;
-        let b = self.blockstore.write().await.add_shred(shred).await;
+        let b = self.blockstore.write().await.add_shred(shred, true).await;
         if let Some((slot, block_info)) = b {
             let mut guard = self.pool.write().await;
             guard.add_block(slot, block_info).await;
