@@ -203,7 +203,7 @@ impl Machine {
                             let block_time =
                                 OffsetDateTime::from_unix_timestamp_nanos(block_timestamp).unwrap();
                             let delay = (rcv_time - block_time).as_seconds_f64() * 1000.0;
-                            debug!("vote seen {:.1} ms after block production", delay);
+                            debug!("vote seen {delay:.1} ms after block production");
                             let mut wcvd_guard = wcvd.lock().await;
                             if delay > *wcvd_guard {
                                 *wcvd_guard = delay;
@@ -376,8 +376,7 @@ impl Machine {
                             let p1 = (time2 - time1).as_seconds_f64() * 1000.0;
                             let p2 = (now - time2).as_seconds_f64() * 1000.0;
                             debug!(
-                                "ping of {:.1} ms ({:.2} + {:.2})observed for {}",
-                                ping_time, p1, p2, addr
+                                "ping of {ping_time:.1} ms ({p1:.2} + {p2:.2})observed for {addr}"
                             );
                             if ping_time < pings.read().await[pong.machine] {
                                 pings.write().await[pong.machine] = ping_time;

@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structures handling votes and certificates for a single slot.
-//!
-//!
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -176,7 +174,6 @@ impl SlotState {
         (certs_created, votor_events)
     }
 
-    ///
     pub fn notify_parent_certified(&mut self, hash: Hash) -> Option<VotorEvent> {
         self.certified_parent.insert(hash);
         if !self.sent_safe_to_notar.contains(&hash) && self.check_safe_to_notar(&hash) {

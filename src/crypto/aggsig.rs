@@ -62,7 +62,7 @@ impl PublicKey {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
 
         Self::try_from_bytes(&buf)
-            .map_err(|e| serde::de::Error::custom(format!("BLST error {:?}", e)))
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
     }
 }
 /// An individual signature as part of the aggregate signature scheme.
@@ -118,7 +118,7 @@ impl SecretKey {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
 
         Self::try_from_bytes(&buf)
-            .map_err(|e| serde::de::Error::custom(format!("BLST error {:?}", e)))
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
     }
 }
 

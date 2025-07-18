@@ -46,7 +46,7 @@ type TestNode = Alpenglow<
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
-    let core = Arc::new(SimulatedNetworkCore::new().with_packet_loss(0.0));
+    let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
     let mut udp_networks = VecDeque::new();
     for i in 0..3 * count {
