@@ -1,3 +1,6 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
