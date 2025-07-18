@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implements reed solomon shreding and deshreding
+//! Implements Reed-Solomon shreding and deshreding.
 
 use reed_solomon_simd as rs;
 
