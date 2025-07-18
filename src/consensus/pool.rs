@@ -12,6 +12,7 @@ mod slot_state;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
@@ -172,12 +173,19 @@ impl Pool {
                 if let Some((child_slot, child_hash)) =
                     self.s2n_waiting_parent_cert.remove(&(slot, block_hash))
                 {
-                    if let Some(event) = self
+                    if let Some(output) = self
                         .slot_state(child_slot)
                         .notify_parent_certified(child_hash)
                         .await
                     {
-                        self.votor_event_channel.send(event).await.unwrap();
+                        match output {
+                            Either::Left(event) => {
+                                self.votor_event_channel.send(event).await.unwrap();
+                            }
+                            Either::Right((slot, hash)) => {
+                                self.repair_channel.send((slot, hash)).await.unwrap();
+                            }
+                        }
                     }
                 }
 
@@ -257,7 +265,8 @@ impl Pool {
 
         // actually add the vote
         trace!("adding vote to pool: {vote:?}");
-        let (new_certs, votor_events) = self.slot_state(slot).add_vote(vote, voter_stake).await;
+        let (new_certs, votor_events, blocks_to_repair) =
+            self.slot_state(slot).add_vote(vote, voter_stake).await;
 
         // handle any resulting events
         for cert in new_certs {
@@ -265,6 +274,9 @@ impl Pool {
         }
         for event in votor_events {
             self.votor_event_channel.send(event).await.unwrap();
+        }
+        for (slot, block_hash) in blocks_to_repair {
+            self.repair_channel.send((slot, block_hash)).await.unwrap();
         }
         Ok(())
     }
@@ -282,12 +294,19 @@ impl Pool {
         self.slot_state(slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(&parent_slot) {
             if parent_state.is_notar_fallback(&parent_hash) {
-                if let Some(event) = self
+                if let Some(output) = self
                     .slot_state(slot)
                     .notify_parent_certified(block_hash)
                     .await
                 {
-                    self.votor_event_channel.send(event).await.unwrap();
+                    match output {
+                        Either::Left(event) => {
+                            self.votor_event_channel.send(event).await.unwrap();
+                        }
+                        Either::Right((slot, hash)) => {
+                            self.repair_channel.send((slot, hash)).await.unwrap();
+                        }
+                    }
                     return;
                 }
             }
@@ -430,13 +449,9 @@ impl Pool {
     }
 
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
-        self.slot_states.entry(slot).or_insert_with(|| {
-            SlotState::new(
-                slot,
-                Arc::clone(&self.epoch_info),
-                self.repair_channel.clone(),
-            )
-        })
+        self.slot_states
+            .entry(slot)
+            .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 }
 
