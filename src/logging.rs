@@ -1,8 +1,11 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use logforth::color::LevelColor;
 use logforth::filter::EnvFilter;
 use logforth::{Layout, append};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct MinimalLogforthLayout;
 
 impl Layout for MinimalLogforthLayout {
@@ -19,15 +22,15 @@ impl Layout for MinimalLogforthLayout {
 }
 
 pub fn enable_logforth() {
-    __enable_logforth(append::Stderr::default().with_layout(MinimalLogforthLayout));
+    enable_logforth_append(append::Stderr::default().with_layout(MinimalLogforthLayout));
 }
 
 pub fn enable_logforth_stderr() {
-    __enable_logforth(append::Stderr::default());
+    enable_logforth_append(append::Stderr::default());
 }
 
-fn __enable_logforth<T: logforth::Append>(layout: T) {
+fn enable_logforth_append<A: logforth::Append>(to_append: A) {
     logforth::builder()
-        .dispatch(|d| d.filter(EnvFilter::from_default_env()).append(layout))
+        .dispatch(|d| d.filter(EnvFilter::from_default_env()).append(to_append))
         .apply();
 }
