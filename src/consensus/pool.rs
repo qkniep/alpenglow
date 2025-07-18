@@ -176,7 +176,6 @@ impl Pool {
                     if let Some(output) = self
                         .slot_state(child_slot)
                         .notify_parent_certified(child_hash)
-                        .await
                     {
                         match output {
                             Either::Left(event) => {
@@ -266,7 +265,7 @@ impl Pool {
         // actually add the vote
         trace!("adding vote to pool: {vote:?}");
         let (new_certs, votor_events, blocks_to_repair) =
-            self.slot_state(slot).add_vote(vote, voter_stake).await;
+            self.slot_state(slot).add_vote(vote, voter_stake);
 
         // handle any resulting events
         for cert in new_certs {
@@ -294,11 +293,7 @@ impl Pool {
         self.slot_state(slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(&parent_slot) {
             if parent_state.is_notar_fallback(&parent_hash) {
-                if let Some(output) = self
-                    .slot_state(slot)
-                    .notify_parent_certified(block_hash)
-                    .await
-                {
+                if let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash) {
                     match output {
                         Either::Left(event) => {
                             self.votor_event_channel.send(event).await.unwrap();
