@@ -255,7 +255,7 @@ impl SlotState {
         self.voted_stakes.top_notar = notar_stake.max(self.voted_stakes.top_notar);
 
         // check quorums
-        if self.sent_safe_to_notar.contains(block_hash) {
+        if !self.sent_safe_to_notar.contains(block_hash) {
             match self.check_safe_to_notar(block_hash) {
                 SafeToNotarStatus::SafeToNotar => {
                     votor_events.push(VotorEvent::SafeToNotar(slot, *block_hash));
