@@ -144,7 +144,7 @@ impl SlotState {
     /// new certificates and checking other conditions, like safe-to-notar.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    pub async fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
+    pub fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
         let slot = vote.slot();
         let voter = vote.signer();
         let v = voter as usize;
@@ -153,7 +153,7 @@ impl SlotState {
             VoteKind::Notar(_, _) => {
                 let block_hash = vote.block_hash().unwrap();
                 self.votes.notar[v] = Some((block_hash, vote));
-                self.count_notar_stake(slot, &block_hash, voter_stake).await
+                self.count_notar_stake(slot, &block_hash, voter_stake)
             }
             VoteKind::NotarFallback(_, _) => {
                 let block_hash = vote.block_hash().unwrap();
@@ -163,11 +163,11 @@ impl SlotState {
             VoteKind::Skip(_) => {
                 self.votes.skip[v] = Some(vote);
                 self.voted_stakes.notar_or_skip += voter_stake;
-                self.count_skip_stake(slot, voter_stake, false).await
+                self.count_skip_stake(slot, voter_stake, false)
             }
             VoteKind::SkipFallback(_) => {
                 self.votes.skip_fallback[v] = Some(vote);
-                self.count_skip_stake(slot, voter_stake, true).await
+                self.count_skip_stake(slot, voter_stake, true)
             }
             VoteKind::Final(_) => {
                 self.votes.finalize[v] = Some(vote);
@@ -181,7 +181,7 @@ impl SlotState {
                 if self.sent_safe_to_notar.contains(&hash) {
                     continue;
                 }
-                match self.check_safe_to_notar(&hash).await {
+                match self.check_safe_to_notar(&hash) {
                     SafeToNotarStatus::SafeToNotar => {
                         votor_events.push(VotorEvent::SafeToNotar(slot, hash));
                     }
@@ -200,7 +200,7 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.
-    pub async fn notify_parent_certified(
+    pub fn notify_parent_certified(
         &mut self,
         hash: Hash,
     ) -> Option<Either<VotorEvent, (Slot, Hash)>> {
@@ -208,7 +208,7 @@ impl SlotState {
         if self.sent_safe_to_notar.contains(&hash) {
             return None;
         }
-        match self.check_safe_to_notar(&hash).await {
+        match self.check_safe_to_notar(&hash) {
             SafeToNotarStatus::SafeToNotar => {
                 Some(Either::Left(VotorEvent::SafeToNotar(self.slot, hash)))
             }
@@ -237,7 +237,7 @@ impl SlotState {
     /// Then, checks if a new notarization certificate can be created.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    async fn count_notar_stake(
+    fn count_notar_stake(
         &mut self,
         slot: Slot,
         block_hash: &Hash,
@@ -256,7 +256,7 @@ impl SlotState {
 
         // check quorums
         if self.sent_safe_to_notar.contains(block_hash) {
-            match self.check_safe_to_notar(block_hash).await {
+            match self.check_safe_to_notar(block_hash) {
                 SafeToNotarStatus::SafeToNotar => {
                     votor_events.push(VotorEvent::SafeToNotar(slot, *block_hash));
                 }
@@ -320,12 +320,7 @@ impl SlotState {
     /// Then, checks if a new skip certificate can be created.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    async fn count_skip_stake(
-        &mut self,
-        slot: Slot,
-        stake: Stake,
-        fallback: bool,
-    ) -> SlotStateOutputs {
+    fn count_skip_stake(&mut self, slot: Slot, stake: Stake, fallback: bool) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let mut votor_events = SmallVec::new();
         let mut blocks_to_repair = SmallVec::new();
@@ -339,7 +334,7 @@ impl SlotState {
             if self.sent_safe_to_notar.contains(&hash) {
                 continue;
             }
-            match self.check_safe_to_notar(&hash).await {
+            match self.check_safe_to_notar(&hash) {
                 SafeToNotarStatus::SafeToNotar => {
                     votor_events.push(VotorEvent::SafeToNotar(slot, hash))
                 }
@@ -445,7 +440,7 @@ impl SlotState {
         }
     }
 
-    async fn check_safe_to_notar(&mut self, block_hash: &Hash) -> SafeToNotarStatus {
+    fn check_safe_to_notar(&mut self, block_hash: &Hash) -> SafeToNotarStatus {
         // check general voted stake conditions
         let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
         let skip_stake = self.voted_stakes.skip;
@@ -550,8 +545,8 @@ mod tests {
     use crate::ValidatorId;
     use crate::test_utils::generate_validators;
 
-    #[tokio::test]
-    async fn quorums() {
+    #[test]
+    fn quorums() {
         let (_, epoch_info) = generate_validators(6);
         let slot_state = SlotState::new(0, epoch_info);
         assert!(slot_state.is_weak_quorum(3));
@@ -569,8 +564,8 @@ mod tests {
         assert!(slot_state.is_strong_quorum(9));
     }
 
-    #[tokio::test]
-    async fn add_cert() {
+    #[test]
+    fn add_cert() {
         let (sks, epoch_info) = generate_validators(11);
         let mut slot_state = SlotState::new(1, epoch_info.clone());
         let votes: Vec<_> = sks
@@ -584,15 +579,15 @@ mod tests {
         assert!(slot_state.certificates.notar.is_some());
     }
 
-    #[tokio::test]
-    async fn add_vote() {
+    #[test]
+    fn add_vote() {
         let (sks, epoch_info) = generate_validators(11);
         let mut slot_state = SlotState::new(1, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
             let vote = Vote::new_notar(1, [1; 32], sk, i as ValidatorId);
             let voter_stake = epoch_info.validator(i as ValidatorId).stake;
             assert!(slot_state.votes.notar[i].is_none());
-            slot_state.add_vote(vote.clone(), voter_stake).await;
+            slot_state.add_vote(vote.clone(), voter_stake);
             let notar_vote = &slot_state.votes.notar[i];
             assert!(notar_vote.is_some());
             assert_eq!(
@@ -603,19 +598,19 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn safe_to_notar() {
+    #[test]
+    fn safe_to_notar() {
         let (sks, epoch_info) = generate_validators(3);
         let mut slot_state = SlotState::new(1, epoch_info.clone());
 
         // mark parent as notarized(-fallback)
         slot_state.notify_parent_known([1; 32]);
-        slot_state.notify_parent_certified([1; 32]).await;
+        slot_state.notify_parent_certified([1; 32]);
 
         // 33% notar alone has no effect
         let vote = Vote::new_notar(1, [1; 32], &sks[1], 1);
         let voter_stake = epoch_info.validator(1).stake;
-        let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake).await;
+        let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert!(events.is_empty());
         assert!(blocks.is_empty());
@@ -623,7 +618,7 @@ mod tests {
         // additional 33% skip should lead to safe-to-notar
         let vote = Vote::new_skip(1, &sks[0], 0);
         let voter_stake = epoch_info.validator(0).stake;
-        let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake).await;
+        let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);
         assert!(blocks.is_empty());
