@@ -97,6 +97,12 @@ pub enum SafeToNotarStatus {
     AwaitingVotes,
 }
 
+type SlotStateOutputs = (
+    SmallVec<[Cert; 2]>,
+    SmallVec<[VotorEvent; 2]>,
+    SmallVec<[(Slot, Hash); 1]>,
+);
+
 impl SlotState {
     /// Creates a new container for votes and certificates for a single slot.
     ///
@@ -138,15 +144,7 @@ impl SlotState {
     /// new certificates and checking other conditions, like safe-to-notar.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    pub async fn add_vote(
-        &mut self,
-        vote: Vote,
-        voter_stake: Stake,
-    ) -> (
-        SmallVec<[Cert; 2]>,
-        SmallVec<[VotorEvent; 2]>,
-        SmallVec<[(Slot, Hash); 1]>,
-    ) {
+    pub async fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
         let slot = vote.slot();
         let voter = vote.signer();
         let v = voter as usize;
@@ -244,11 +242,7 @@ impl SlotState {
         slot: Slot,
         block_hash: &Hash,
         stake: Stake,
-    ) -> (
-        SmallVec<[Cert; 2]>,
-        SmallVec<[VotorEvent; 2]>,
-        SmallVec<[(Slot, Hash); 1]>,
-    ) {
+    ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let mut votor_events = SmallVec::new();
         let mut blocks_to_repair = SmallVec::new();
@@ -306,15 +300,7 @@ impl SlotState {
     /// Then, checks if a new notar-fallback certificate can be created.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    fn count_notar_fallback_stake(
-        &mut self,
-        block_hash: &Hash,
-        stake: Stake,
-    ) -> (
-        SmallVec<[Cert; 2]>,
-        SmallVec<[VotorEvent; 2]>,
-        SmallVec<[(Slot, Hash); 1]>,
-    ) {
+    fn count_notar_fallback_stake(&mut self, block_hash: &Hash, stake: Stake) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let nf_stakes = &mut self.voted_stakes.notar_fallback;
         let nf_stake = nf_stakes.entry(*block_hash).or_insert(0);
@@ -339,11 +325,7 @@ impl SlotState {
         slot: Slot,
         stake: Stake,
         fallback: bool,
-    ) -> (
-        SmallVec<[Cert; 2]>,
-        SmallVec<[VotorEvent; 2]>,
-        SmallVec<[(Slot, Hash); 1]>,
-    ) {
+    ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let mut votor_events = SmallVec::new();
         let mut blocks_to_repair = SmallVec::new();
@@ -386,14 +368,7 @@ impl SlotState {
     /// Then, checks if a new finalization certificate can be created.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    fn count_finalize_stake(
-        &mut self,
-        stake: Stake,
-    ) -> (
-        SmallVec<[Cert; 2]>,
-        SmallVec<[VotorEvent; 2]>,
-        SmallVec<[(Slot, Hash); 1]>,
-    ) {
+    fn count_finalize_stake(&mut self, stake: Stake) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         self.voted_stakes.finalize += stake;
         if self.is_quorum(self.voted_stakes.finalize) && self.certificates.finalize.is_none() {
