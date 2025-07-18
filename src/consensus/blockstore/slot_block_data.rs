@@ -1,6 +1,14 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Data structure holding shreds, slices and blocks for a specific slot.
+//!
+//!
+
 use std::collections::BTreeMap;
 
 use log::{debug, trace, warn};
+use thiserror::Error;
 
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
@@ -11,104 +19,127 @@ use crate::{Block, Slot};
 use super::BlockInfo;
 
 ///
+#[derive(Clone, Copy, Debug, Error)]
+pub enum AddShredError {
+    #[error("Shred has invalid signature")]
+    InvalidSignature,
+    #[error("Shred is already stored")]
+    Duplicate,
+    #[error("Shred shows leader equivocation")]
+    Equivocation,
+    #[error("Shred is after slice marked as last")]
+    AfterLastSlice,
+}
+
+///
 pub struct SlotBlockData {
+    /// Slot number this data corresponds to.
+    slot: Slot,
+    ///
+    pub(super) canonical: BlockData,
+    ///
+    pub(super) alternatives: BTreeMap<Hash, BlockData>,
+    /// Whether conflicting shreds have been seen for this slot.
+    pub(super) equivocated: bool,
+}
+
+pub struct BlockData {
     ///
     slot: Slot,
-    /// Stores raw shreds per slice, indexed by slice index.
+    ///
+    pub(super) completed: Option<(Hash, Block)>,
+    ///
     pub(super) shreds: BTreeMap<usize, Vec<Shred>>,
-    /// Stores so far reconstructed slices, indexed by slice index.
+    ///
     pub(super) slices: BTreeMap<usize, Slice>,
     ///
-    // repair_shreds: BTreeMap<(Hash, usize), Vec<Shred>>,
+    pub(super) last_slice: Option<usize>,
     ///
-    // repair_slices: BTreeMap<(Hash, usize), Slice>,
-    /// Stores actual fully reconstructed block data for all relevant blocks.
-    pub(super) blocks: BTreeMap<Hash, Block>,
-    /// Holds currently canonical block hash for a given slot number.
-    pub(super) canonical: Option<Hash>,
-    /// Holds hashes of alternative blocks for a given slot number.
-    pub(super) alternatives: Vec<Hash>,
-    /// Stores double-Merkle tree for each canonical block.
     pub(super) double_merkle_tree: Option<MerkleTree>,
-    /// Stores last slice index for each slot.
-    last_slice: Option<usize>,
-    /// Set of slots for which conflicting shreds have been seen (leader equivocated).
-    equivocated: bool,
-    /// Cache of previously verified Merkle roots.
-    merkle_root_cache: BTreeMap<usize, Hash>,
+    ///
+    pub(super) merkle_root_cache: BTreeMap<usize, Hash>,
+}
+
+impl BlockData {
+    pub fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            completed: None,
+            shreds: BTreeMap::new(),
+            slices: BTreeMap::new(),
+            last_slice: None,
+            double_merkle_tree: None,
+            merkle_root_cache: BTreeMap::new(),
+        }
+    }
 }
 
 impl SlotBlockData {
     pub fn new(slot: Slot) -> Self {
         Self {
             slot,
-            shreds: BTreeMap::new(),
-            slices: BTreeMap::new(),
-            blocks: BTreeMap::new(),
-            canonical: None,
-            alternatives: Vec::new(),
-            double_merkle_tree: None,
-            last_slice: None,
+            canonical: BlockData::new(slot),
+            alternatives: BTreeMap::new(),
             equivocated: false,
-            merkle_root_cache: BTreeMap::new(),
         }
     }
 
-    pub fn add_shred(
+    ///
+    pub fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
-        check_equivocation: bool,
         leader_pk: PublicKey,
-    ) -> Option<VotorEvent> {
+    ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().slot, self.slot);
-        if check_equivocation && self.equivocated {
+        if self.equivocated {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
-            return None;
+            return Err(AddShredError::Equivocation);
         }
-        let slice = shred.payload().slice_index;
-        let index = shred.payload().index_in_slice;
+        let add_shred_result = self.canonical.check_shred_to_add(&shred, true, leader_pk);
+        if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
+            self.equivocated = true;
+        }
+        add_shred_result?;
+        Ok(self.canonical.add_valid_shred(shred))
+    }
+
+    ///
+    pub fn add_shred_from_repair(
+        &mut self,
+        hash: Hash,
+        shred: Shred,
+        leader_pk: PublicKey,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        assert_eq!(shred.payload().slot, self.slot);
+        let block_data = self
+            .alternatives
+            .entry(hash)
+            .or_insert_with(|| BlockData::new(self.slot));
+        let add_shred_result = block_data.check_shred_to_add(&shred, true, leader_pk);
+        if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
+            self.equivocated = true;
+        }
+        add_shred_result?;
+        Ok(block_data.add_valid_shred(shred))
+    }
+}
+
+impl BlockData {
+    ///
+    pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
+        let slice_index = shred.payload().slice_index;
         let is_last_slice = shred.payload().is_last_slice;
         let is_first_shred = self.shreds.is_empty();
-        let slice_shreds = self.shreds.entry(slice).or_default();
-
-        // check Merkle root and signature
-        let cached_merkle_root = self.merkle_root_cache.get(&slice);
-        if !shred.verify(&leader_pk, cached_merkle_root) {
-            debug!("dropping invalid shred");
-            return None;
-        } else if cached_merkle_root.is_none() {
-            self.merkle_root_cache.insert(slice, shred.merkle_root);
-        } else if cached_merkle_root != Some(&shred.merkle_root) {
-            if !self.equivocated {
-                self.equivocated = true;
-                warn!("shreds show leader equivocation in slot {}", self.slot);
-            }
-            if check_equivocation {
-                return None;
-            }
-        }
-
-        // store and handle this shred if and only if:
-        //   - it is not yet stored in the blockstore
-        //   - it is not (known to be) after the last slice
-        let exists = slice_shreds.iter().any(|s| {
-            s.payload().index_in_slice == index
-                && shred.payload_type.is_data() == s.payload_type.is_data()
-        });
-        let after_last = self.last_slice.is_some_and(|last_slice| slice > last_slice);
-        if exists || after_last {
-            return None;
-        }
-        slice_shreds.push(shred);
+        self.shreds.entry(slice_index).or_default().push(shred);
 
         // store last slice index, delete later shreds
         if is_last_slice && self.last_slice.is_none() {
-            self.last_slice = Some(slice);
+            self.last_slice = Some(slice_index);
 
             // delete shreds after last slice, if there are any
             let keys_to_delete: Vec<_> = self
                 .shreds
-                .range(&slice + 1..)
+                .range(&slice_index + 1..)
                 .map(|(k, _)| k)
                 .copied()
                 .collect();
@@ -123,7 +154,7 @@ impl SlotBlockData {
         }
 
         // maybe reconstruct slice and block
-        if self.try_reconstruct_slice(slice) {
+        if self.try_reconstruct_slice(slice_index) {
             self.try_reconstruct_block()
                 .map(|block_info| VotorEvent::Block {
                     slot: self.slot,
@@ -132,6 +163,48 @@ impl SlotBlockData {
         } else {
             None
         }
+    }
+
+    fn check_shred_to_add(
+        &mut self,
+        shred: &Shred,
+        check_equivocation: bool,
+        leader_pk: PublicKey,
+    ) -> Result<(), AddShredError> {
+        let slice_index = shred.payload().slice_index;
+        let shred_index = shred.payload().index_in_slice;
+        let slice_shreds = self.shreds.entry(slice_index).or_default();
+
+        // check Merkle root and signature
+        let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
+        if !shred.verify(&leader_pk, cached_merkle_root) {
+            debug!("dropping invalid shred");
+            return Err(AddShredError::InvalidSignature);
+        } else if cached_merkle_root.is_none() {
+            self.merkle_root_cache
+                .insert(slice_index, shred.merkle_root);
+        } else if cached_merkle_root != Some(&shred.merkle_root) {
+            if check_equivocation {
+                warn!("shreds show leader equivocation in slot {}", self.slot);
+                return Err(AddShredError::Equivocation);
+            }
+        }
+
+        // store and handle this shred only if it is not yet stored in the blockstore
+        let exists = slice_shreds.iter().any(|s| {
+            s.payload().index_in_slice == shred_index
+                && shred.payload_type.is_data() == s.payload_type.is_data()
+        });
+        if exists {
+            return Err(AddShredError::Duplicate);
+        }
+
+        // store and handle this shred only if it is not (known to be) after the last slice
+        if self.last_slice.is_some_and(|l| slice_index > l) {
+            return Err(AddShredError::AfterLastSlice);
+        }
+
+        return Ok(());
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
@@ -154,7 +227,7 @@ impl SlotBlockData {
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     fn try_reconstruct_block(&mut self) -> Option<BlockInfo> {
-        if self.canonical.is_some() {
+        if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
             return None;
         }
@@ -178,7 +251,6 @@ impl SlotBlockData {
         let first_slice = self.slices.get(&0).unwrap();
         let parent_slot = u64::from_be_bytes(first_slice.data[0..8].try_into().unwrap());
         let parent_hash = first_slice.data[8..40].try_into().unwrap();
-        self.canonical = Some(block_hash);
         // TODO: reconstruct actual block content
         let block = Block {
             slot: self.slot,
@@ -188,7 +260,7 @@ impl SlotBlockData {
             transactions: vec![],
         };
         let block_info = BlockInfo::from(&block);
-        self.blocks.insert(block_hash, block);
+        self.completed = Some((block_hash, block));
 
         // clean up raw slices
         for slice_index in 0..=last_slice {

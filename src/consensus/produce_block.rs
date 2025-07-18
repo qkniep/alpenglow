@@ -129,8 +129,13 @@ where
             for s in shreds {
                 self.disseminator.send(&s).await?;
                 // PERF: move expensive add_shred() call out of block production
-                let block = self.blockstore.write().await.add_shred(s, true).await;
-                if let Some((slot, block_info)) = block {
+                let block = self
+                    .blockstore
+                    .write()
+                    .await
+                    .add_shred_from_disseminator(s)
+                    .await;
+                if let Ok(Some((slot, block_info))) = block {
                     self.pool.write().await.add_block(slot, block_info).await;
                 }
             }
