@@ -131,20 +131,11 @@ impl BlockData {
         let is_first_shred = self.shreds.is_empty();
         self.shreds.entry(slice_index).or_default().push(shred);
 
-        // store last slice index, delete later shreds
+        // store last slice index, delete everything after last slice
         if is_last_slice && self.last_slice.is_none() {
             self.last_slice = Some(slice_index);
-
-            // delete shreds after last slice, if there are any
-            let keys_to_delete: Vec<_> = self
-                .shreds
-                .range(&slice_index + 1..)
-                .map(|(k, _)| k)
-                .copied()
-                .collect();
-            for key in keys_to_delete {
-                self.shreds.remove(&key);
-            }
+            self.slices.split_off(&(slice_index + 1));
+            self.shreds.split_off(&(slice_index + 1));
         }
 
         // maybe send first shred notification
