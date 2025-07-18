@@ -7,7 +7,6 @@ use std::io::Read;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 
-use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
 use alpenglow::consensus::{Alpenglow, EpochInfo};
 use alpenglow::crypto::aggsig;
@@ -15,16 +14,13 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
+use alpenglow::{ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
 use fastrace::collector::Config;
 use fastrace::prelude::*;
 use fastrace_opentelemetry::OpenTelemetryReporter;
-use log::warn;
-use logforth::color::LevelColor;
-use logforth::filter::EnvFilter;
-use logforth::{Layout, append};
 use opentelemetry::trace::SpanKind;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
@@ -32,23 +28,6 @@ use opentelemetry_sdk::Resource;
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
-// TODO: remove this duplicate definition
-#[derive(Debug, Clone, Copy)]
-struct MinimalLogforthLayout;
-
-impl Layout for MinimalLogforthLayout {
-    fn format(
-        &self,
-        record: &log::Record,
-        _: &[Box<dyn logforth::Diagnostic>],
-    ) -> anyhow::Result<Vec<u8>> {
-        let colors = LevelColor::default();
-        let level = colors.colorize_record_level(false, record.level());
-        let message = record.args();
-        Ok(format!("{level:>5} {message}").into_bytes())
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConfigFile {
@@ -109,13 +88,7 @@ async fn main() -> Result<()> {
     );
     fastrace::set_reporter(reporter, Config::default());
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default().with_layout(MinimalLogforthLayout))
-        })
-        .apply();
+    logging::enable_logforth();
 
     let span_context = SpanContext::random();
     let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
@@ -127,7 +100,7 @@ async fn main() -> Result<()> {
 
     // wait for shutdown signal (Ctrl + C)
     tokio::signal::ctrl_c().await?;
-    warn!("shutting down node");
+    log::warn!("shutting down node");
     cancel_token.cancel();
     node_task.await??;
 

@@ -13,24 +13,16 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork};
-use alpenglow::{Alpenglow, ValidatorInfo};
+use alpenglow::{Alpenglow, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
-use logforth::append;
-use logforth::filter::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default())
-        })
-        .apply();
+    logging::enable_logforth_stderr();
 
     latency_test(11).await;
 
