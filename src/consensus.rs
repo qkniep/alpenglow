@@ -275,8 +275,7 @@ where
 
             if self.pool.read().await.finalized_slot() >= last_slot_in_window {
                 warn!(
-                    "ignoring window {}..{} for block production",
-                    first_slot_in_window, last_slot_in_window
+                    "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
                 );
                 continue;
             }
@@ -321,8 +320,7 @@ where
 
                     if self.pool.read().await.finalized_slot() >= last_slot_in_window {
                         warn!(
-                            "ignoring window {}..{} for block production",
-                            first_slot_in_window, last_slot_in_window
+                            "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
                         );
                         continue 'outer;
                     }

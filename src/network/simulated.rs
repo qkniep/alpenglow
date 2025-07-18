@@ -86,7 +86,7 @@ impl Network for SimulatedNetwork {
     async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
         loop {
             let Some(bytes) = self.receiver.lock().await.recv().await else {
-                let io_error = std::io::Error::new(std::io::ErrorKind::Other, "channel closed");
+                let io_error = std::io::Error::other("channel closed");
                 return Err(NetworkError::BadSocket(io_error));
             };
             match NetworkMessage::from_bytes(&bytes) {
@@ -114,7 +114,7 @@ mod tests {
     #[tokio::test]
     async fn basic() {
         // set up network with two nodes
-        let core = Arc::new(SimulatedNetworkCore::new().with_packet_loss(0.0));
+        let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1 = core.join(0, 8192, 8192).await;
         let net2 = core.join(1, 8192, 8192).await;
         let msg = NetworkMessage::Ping;
@@ -136,7 +136,7 @@ mod tests {
     async fn low_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(
-            SimulatedNetworkCore::new()
+            SimulatedNetworkCore::default()
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
@@ -197,7 +197,7 @@ mod tests {
     async fn high_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(
-            SimulatedNetworkCore::new()
+            SimulatedNetworkCore::default()
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
@@ -258,7 +258,7 @@ mod tests {
     async fn unlimited_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(
-            SimulatedNetworkCore::new()
+            SimulatedNetworkCore::default()
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );

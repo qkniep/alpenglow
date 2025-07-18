@@ -47,6 +47,7 @@ pub struct Turbine<N: Network> {
 #[derive(Clone, Debug)]
 pub(crate) struct TurbineTree {
     root: ValidatorId,
+    #[allow(dead_code)]
     parent: Option<ValidatorId>,
     children: Vec<ValidatorId>,
 }
@@ -209,6 +210,7 @@ impl TurbineTree {
 
     /// Gives the parent of this validator in the Turbine tree.
     /// Returns `None` iff this validator is the root of the tree.
+    #[allow(dead_code)]
     pub const fn get_parent(&self) -> Option<ValidatorId> {
         self.parent
     }
@@ -257,7 +259,7 @@ mod tests {
         validators: &mut [ValidatorInfo],
     ) -> Vec<Turbine<SimulatedNetwork>> {
         let core = Arc::new(
-            SimulatedNetworkCore::new()
+            SimulatedNetworkCore::default()
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );

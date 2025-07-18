@@ -125,7 +125,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("127.0.0.1:{}", port),
+            all2all_address: format!("127.0.0.1:{port}"),
             disseminator_address: format!("127.0.0.1:{}", port + 1),
             repair_address: format!("127.0.0.1:{}", port + 2),
         });

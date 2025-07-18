@@ -901,7 +901,7 @@ mod tests {
             .zip(turbine_workload_normalized)
             .zip(sampler_workload_normalized);
         for (((i, stake), tw), sw) in iter {
-            println!("validator {}, {} stake, tw {}, sw {}", i, stake, tw, sw);
+            println!("validator {i}, {stake} stake, tw {tw}, sw {sw}");
             let rel_workload = tw / sw;
             if tw > 0.01 {
                 assert!(rel_workload < 1.25);

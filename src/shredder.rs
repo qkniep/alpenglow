@@ -145,7 +145,7 @@ impl Shred {
 
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
-            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => &p,
+            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
     }
 }

@@ -39,7 +39,7 @@ pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
 ) -> Vec<TrivialAll2All<SimulatedNetwork>> {
     let core = Arc::new(
-        SimulatedNetworkCore::new()
+        SimulatedNetworkCore::default()
             .with_jitter(0.0)
             .with_packet_loss(0.0),
     );

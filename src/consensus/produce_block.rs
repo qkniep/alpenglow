@@ -5,6 +5,7 @@ use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
 use log::{info, warn};
+use static_assertions::const_assert;
 
 use crate::MAX_TRANSACTION_SIZE;
 use crate::crypto::Hash;
@@ -28,7 +29,7 @@ async fn produce_slice<T>(
 where
     T: Network + Sync + Send + 'static,
 {
-    debug_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
+    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
     let (mut data, slice_index) = match slice_index {
         Either::Left((parent_slot, parent_hash, slice_index)) => {
             let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
@@ -66,7 +67,7 @@ where
                             }
                         }
                         msg => {
-                            panic!("Unexpected msg {:?}", msg);
+                            panic!("Unexpected msg {msg:?}");
                         }
                     },
                 }
@@ -181,7 +182,7 @@ mod tests {
             Continue::Stop => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, slice_index);
-                assert!(slice.is_last == true);
+                assert!(slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert_eq!(slice.data.len(), 0);
             }
@@ -199,7 +200,7 @@ mod tests {
             Continue::Stop => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, 0);
-                assert!(slice.is_last == true);
+                assert!(slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert_eq!(slice.data.len(), 8 + 32);
             }
@@ -236,7 +237,7 @@ mod tests {
             Continue::Continue { .. } => {
                 assert_eq!(slice.slot, slot);
                 assert_eq!(slice.slice_index, slice_index);
-                assert!(slice.is_last == false);
+                assert!(!slice.is_last);
                 assert!(slice.merkle_root.is_none());
                 assert!(slice.data.len() <= MAX_DATA_PER_SLICE);
                 assert!(slice.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);

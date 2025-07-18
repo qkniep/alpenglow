@@ -82,7 +82,6 @@ pub struct Pool {
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
-    ///
     repair_channel: Sender<(Slot, Hash)>,
 }
 
@@ -436,6 +435,7 @@ mod tests {
     use crate::crypto::aggsig::SecretKey;
     use crate::test_utils::generate_validators;
 
+    use static_assertions::const_assert;
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -653,7 +653,7 @@ mod tests {
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // first see skip votes for later slots
-        assert!(SLOTS_PER_WINDOW > 2);
+        const_assert!(SLOTS_PER_WINDOW > 2);
         for slot in 2..SLOTS_PER_WINDOW {
             for v in 0..7 {
                 let vote = Vote::new_skip(slot, &sks[v as usize], v);
