@@ -84,7 +84,7 @@ impl Blockstore {
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
             .slot_data_mut(slot)
-            .add_shred_from_disseminator(shred.clone(), leader_pk)?
+            .add_shred_from_disseminator(shred, leader_pk)?
         {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
@@ -101,7 +101,7 @@ impl Blockstore {
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
             .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred.clone(), leader_pk)?
+            .add_shred_from_repair(hash, shred, leader_pk)?
         {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
@@ -177,14 +177,12 @@ impl Blockstore {
             if *h == hash {
                 return Some(block);
             }
-        } else {
-            return slot_data
-                .alternatives
-                .get(&hash)
-                .and_then(|data| data.completed.as_ref().map(|(_, block)| Some(block)))
-                .flatten();
         }
-        return None;
+        slot_data
+            .alternatives
+            .get(&hash)
+            .and_then(|data| data.completed.as_ref().map(|(_, block)| Some(block)))
+            .flatten()
     }
 
     /// Gives reference to stored slice for the given `slot` and `slice` index.
@@ -298,14 +296,14 @@ mod tests {
         // first slice is not enough
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_none());
 
         // after second slice we should have the block
         let shreds = RegularShredder::shred(&slices[1], &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_some());
 
@@ -325,7 +323,7 @@ mod tests {
         // insert shreds in reverse order
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in shreds.into_iter().rev() {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_some());
 
@@ -346,21 +344,21 @@ mod tests {
         // insert just enough shreds to reconstruct slice 0 (from beginning)
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in shreds.into_iter().take(DATA_SHREDS) {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(0), 1);
 
         // insert just enough shreds to reconstruct slice 1 (from end)
         let shreds = RegularShredder::shred(&slices[1], &sk)?;
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(0), 2);
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
         let shreds = RegularShredder::shred(&slices[2], &sk)?;
         for shred in shreds.into_iter().skip(DATA_SHREDS / 2) {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(0), 3);
 
@@ -371,7 +369,7 @@ mod tests {
             .enumerate()
             .filter(|(i, _)| *i < DATA_SHREDS / 2 || *i >= TOTAL_SHREDS - DATA_SHREDS / 2)
         {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_some());
 
@@ -443,7 +441,7 @@ mod tests {
         // insert many duplicate shreds
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in vec![shreds[0].clone(); 1024] {
-            blockstore.add_shred_from_disseminator(shred).await;
+            let _ = blockstore.add_shred_from_disseminator(shred).await;
         }
 
         // should only store one copy
@@ -466,7 +464,7 @@ mod tests {
         shreds.extend(RegularShredder::shred(&block1[0], &sk)?);
         shreds.extend(RegularShredder::shred(&block2[0], &sk)?);
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_some());
         assert!(blockstore.canonical_block_hash(1).is_some());

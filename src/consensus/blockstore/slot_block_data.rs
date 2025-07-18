@@ -60,20 +60,6 @@ pub struct BlockData {
     pub(super) merkle_root_cache: BTreeMap<usize, Hash>,
 }
 
-impl BlockData {
-    pub fn new(slot: Slot) -> Self {
-        Self {
-            slot,
-            completed: None,
-            shreds: BTreeMap::new(),
-            slices: BTreeMap::new(),
-            last_slice: None,
-            double_merkle_tree: None,
-            merkle_root_cache: BTreeMap::new(),
-        }
-    }
-}
-
 impl SlotBlockData {
     pub fn new(slot: Slot) -> Self {
         Self {
@@ -125,6 +111,19 @@ impl SlotBlockData {
 }
 
 impl BlockData {
+    ///
+    pub fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            completed: None,
+            shreds: BTreeMap::new(),
+            slices: BTreeMap::new(),
+            last_slice: None,
+            double_merkle_tree: None,
+            merkle_root_cache: BTreeMap::new(),
+        }
+    }
+
     ///
     pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
         let slice_index = shred.payload().slice_index;
