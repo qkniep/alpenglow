@@ -207,7 +207,7 @@ impl<N: Network> Repair<N> {
     /// Returns [`NetworkError`] if the underlying network fails.
     pub async fn receive(&self) -> Result<RepairMessage, NetworkError> {
         loop {
-            match self.network.receive().await? {
+            match self.network.receive::<NetworkMessage>().await? {
                 NetworkMessage::Repair(r) => return Ok(r),
                 m => warn!("unexpected message type for repair: {m:?}"),
             }
