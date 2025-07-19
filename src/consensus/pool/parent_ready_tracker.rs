@@ -15,47 +15,37 @@
 //! production, i.e., under good network conditions an honest leader proposing
 //! a block with parent `b` in slot `s` will have their block finalized.
 
+mod parent_ready_state;
+
 use std::collections::HashMap;
 
+use either::Either;
 use smallvec::SmallVec;
+use tokio::sync::oneshot;
 
 use crate::{Slot, consensus::SLOTS_PER_WINDOW, crypto::Hash};
 
-type BlockId = (u64, Hash);
+use parent_ready_state::ParentReadyState;
+
+pub type BlockId = (Slot, Hash);
 
 /// Keeps track of the parent-ready condition across slots.
 pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
 
-/// Holds the relevant state for a single slot.
-#[derive(Clone, Default)]
-struct ParentReadyState {
-    skip: bool,
-    // we can potentially have multiple notar fallbacks per slot,
-    // but we optimize the common case where there will only be one
-    notar_fallbacks: SmallVec<[Hash; 1]>,
-    // we can potentiall have multiple parents ready per slot,
-    // but we optimize the common case where there will only be one
-    parents_ready: SmallVec<[BlockId; 1]>,
-}
-
-impl ParentReadyTracker {
+impl Default for ParentReadyTracker {
     /// Creates a new empty tracker.
     ///
     /// Only the genesis block is considered a valid parent for the first leader window.
-    pub fn new() -> Self {
-        let genesis = (0, [0; 32]);
+    fn default() -> Self {
+        let genesis_block = (0, [0; 32]);
         let mut map = HashMap::new();
-        map.insert(
-            0,
-            ParentReadyState {
-                skip: false,
-                notar_fallbacks: SmallVec::new(),
-                parents_ready: [genesis].into(),
-            },
-        );
+        let genesis_parent_state = ParentReadyState::new([genesis_block]);
+        map.insert(0, genesis_parent_state);
         Self(map)
     }
+}
 
+impl ParentReadyTracker {
     /// Marks the given block as notar-fallback.
     ///
     /// Returns a list of any newly connected parents.
@@ -73,7 +63,7 @@ impl ParentReadyTracker {
         for s in slot + 1.. {
             let state = self.0.entry(s).or_default();
             if s % SLOTS_PER_WINDOW == 0 {
-                state.parents_ready = [id].into();
+                state.add_to_ready(id);
                 newly_certified.push((s, id));
             }
             if !state.skip {
@@ -117,16 +107,17 @@ impl ParentReadyTracker {
             if !state.skip {
                 break;
             }
-            for parent in &state.parents_ready {
-                potential_parents.push(*parent);
-            }
+
+            potential_parents.extend_from_slice(state.ready_block_ids());
         }
 
         // add these as valid parents to future windows
         let mut newly_certified = Vec::new();
         for first_slot in future_windows {
             let state = self.0.entry(first_slot).or_default();
-            state.parents_ready.extend_from_slice(&potential_parents);
+            for p in potential_parents.iter() {
+                state.add_to_ready(*p);
+            }
             for parent in &potential_parents {
                 newly_certified.push((first_slot, *parent));
             }
@@ -135,10 +126,21 @@ impl ParentReadyTracker {
     }
 
     /// Returns list of all valid parents for the given slot, as of now.
+    /// The list can be empty.
     pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.0
             .get(&slot)
-            .map_or(&[], |state| state.parents_ready.as_slice())
+            .map_or(&[], |state| state.ready_block_ids())
+    }
+
+    /// If the slot has a parent ready, then returns it right away or else
+    /// blocks till a parent ready.
+    pub fn wait_for_parent_ready(
+        &mut self,
+        slot: Slot,
+    ) -> Either<BlockId, oneshot::Receiver<BlockId>> {
+        let state = self.0.entry(slot).or_default();
+        state.wait_for_parent_ready()
     }
 }
 
@@ -148,7 +150,7 @@ mod tests {
 
     #[test]
     fn basic() {
-        let mut tracker = ParentReadyTracker::new();
+        let mut tracker = ParentReadyTracker::default();
         for i in 0..2 * SLOTS_PER_WINDOW {
             let next_window_slot = (i / SLOTS_PER_WINDOW + 1) * SLOTS_PER_WINDOW;
             let block = (i, [i as u8 + 1; 32]);
@@ -163,7 +165,7 @@ mod tests {
 
     #[test]
     fn genesis() {
-        let mut tracker = ParentReadyTracker::new();
+        let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_skipped(0).is_empty());
         assert!(tracker.mark_skipped(1).is_empty());
         assert!(tracker.mark_skipped(2).is_empty());
@@ -173,7 +175,7 @@ mod tests {
 
     #[test]
     fn skips() {
-        let mut tracker = ParentReadyTracker::new();
+        let mut tracker = ParentReadyTracker::default();
         let block = (0, [1; 32]);
         assert!(tracker.mark_notar_fallback(block).is_empty());
         assert!(tracker.mark_skipped(0).is_empty());
@@ -186,7 +188,7 @@ mod tests {
 
     #[test]
     fn out_of_order_skips() {
-        let mut tracker = ParentReadyTracker::new();
+        let mut tracker = ParentReadyTracker::default();
         let block = (0, [1; 32]);
         assert!(tracker.mark_skipped(3).is_empty());
         assert!(tracker.mark_skipped(1).is_empty());
@@ -197,7 +199,7 @@ mod tests {
 
     #[test]
     fn out_of_order_notars() {
-        let mut tracker = ParentReadyTracker::new();
+        let mut tracker = ParentReadyTracker::default();
         let block0 = (0, [1; 32]);
         let block1 = (1, [2; 32]);
         let block2 = (2, [3; 32]);
@@ -210,7 +212,7 @@ mod tests {
 
     #[test]
     fn no_double_counting() {
-        let mut tracker = ParentReadyTracker::new();
+        let mut tracker = ParentReadyTracker::default();
         let block = (0, [1; 32]);
         assert!(tracker.mark_notar_fallback(block).is_empty());
         assert!(tracker.mark_skipped(1).is_empty());

@@ -16,6 +16,7 @@ use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 
 use crate::crypto::Hash;
 use crate::{Slot, ValidatorId};
@@ -24,7 +25,7 @@ use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Vote};
 
-use parent_ready_tracker::ParentReadyTracker;
+use parent_ready_tracker::{BlockId, ParentReadyTracker};
 use slot_state::SlotState;
 
 /// Errors the Pool may return when adding a vote.
@@ -98,7 +99,7 @@ impl Pool {
     ) -> Self {
         Self {
             slot_states: BTreeMap::new(),
-            parent_ready_tracker: ParentReadyTracker::new(),
+            parent_ready_tracker: ParentReadyTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
@@ -380,6 +381,13 @@ impl Pool {
     /// Returns all possible parents for the given slot that are ready.
     pub fn parents_ready(&self, slot: Slot) -> &[(Slot, Hash)] {
         self.parent_ready_tracker.parents_ready(slot)
+    }
+
+    pub fn wait_for_parent_ready(
+        &mut self,
+        slot: Slot,
+    ) -> Either<BlockId, oneshot::Receiver<BlockId>> {
+        self.parent_ready_tracker.wait_for_parent_ready(slot)
     }
 
     /// Returns `true` iff the pool contains a skip certificate for the slot.
