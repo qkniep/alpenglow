@@ -88,6 +88,7 @@ impl Network for UdpNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::NetworkMessage;
 
     #[tokio::test]
     async fn ping() {

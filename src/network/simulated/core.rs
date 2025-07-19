@@ -275,7 +275,7 @@ mod tests {
         // one direction
         net1.send(&msg, "1").await.unwrap();
         let now = Instant::now();
-        let _ = net2.receive().await.unwrap();
+        let _: NetworkMessage = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -285,7 +285,7 @@ mod tests {
         // other direction
         net2.send(&msg, "0").await.unwrap();
         let now = Instant::now();
-        let _ = net1.receive().await.unwrap();
+        let _: NetworkMessage = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -315,7 +315,7 @@ mod tests {
         // one direction
         net1.send(&msg, "1").await.unwrap();
         let now = Instant::now();
-        let _ = net2.receive().await.unwrap();
+        let _: NetworkMessage = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -331,7 +331,7 @@ mod tests {
         // other direction
         net2.send(&msg, "0").await.unwrap();
         let now = Instant::now();
-        let _ = net1.receive().await.unwrap();
+        let _: NetworkMessage = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (100_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (100_000.0 * (1.0 + ACCURACY)) as u128;

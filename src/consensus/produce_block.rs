@@ -5,7 +5,6 @@ use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
 use log::{info, warn};
-use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 
 use crate::MAX_TRANSACTION_SIZE;

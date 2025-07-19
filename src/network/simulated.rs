@@ -103,6 +103,7 @@ mod tests {
     use super::*;
 
     use crate::crypto::signature::SecretKey;
+    use crate::network::NetworkMessage;
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS,
     };

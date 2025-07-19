@@ -162,8 +162,9 @@ pub trait Network: Send + Sync {
 
     // TODO: implement brodcast at `Network` level?
 
-    fn receive<SM: SerializableMessage>(&self) -> 
-        impl Future<Output = Result<SM, NetworkError>> + Send;
+    fn receive<SM: SerializableMessage>(
+        &self,
+    ) -> impl Future<Output = Result<SM, NetworkError>> + Send;
 
     fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
     where
