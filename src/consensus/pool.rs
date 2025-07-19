@@ -96,7 +96,7 @@ impl Pool {
     ) -> Self {
         Self {
             slot_states: BTreeMap::new(),
-            parent_ready_tracker: ParentReadyTracker::new(),
+            parent_ready_tracker: ParentReadyTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
             highest_notarized_fallback_slot: 0,
             highest_finalized_slot: 0,
