@@ -24,7 +24,7 @@ use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
-use super::{Cert, DELTA_BLOCK, DELTA_EARLY_TIMEOUT, SLOTS_PER_WINDOW, Vote};
+use super::{Cert, DELTA_BLOCK, DELTA_EARLY_TIMEOUT, Vote};
 
 /// Events that Votor is interested in.
 ///
@@ -113,7 +113,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     ) -> Self {
         let mut parents_ready = BTreeSet::new();
         // add dummy genesis block
-        parents_ready.insert((0, 0, Hash::default()));
+        parents_ready.insert((Slot::new(0), Slot::new(0), Hash::default()));
         let votor = Self {
             voted: BTreeSet::new(),
             voted_notar: BTreeMap::new(),
@@ -129,7 +129,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             event_sender,
             all2all,
         };
-        votor.set_timeouts(0);
+        votor.set_timeouts(Slot::new(0));
         votor
     }
 
@@ -155,12 +155,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
                     self.parents_ready.insert((slot, parent_slot, parent_hash));
                     self.check_pending_blocks().await;
-                    // TODO: set timeouts only once?
-                    trace!(
-                        "setting timeouts for slots {}..{}",
-                        slot,
-                        slot + SLOTS_PER_WINDOW
-                    );
                     self.set_timeouts(slot);
                 }
                 VotorEvent::SafeToNotar(slot, hash) => {
@@ -187,8 +181,8 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                                 .await;
                         }
                         Cert::Final(_) | Cert::FastFinal(_) => {
-                            let slot = cert.slot() - cert.slot() % SLOTS_PER_WINDOW;
-                            self.set_timeouts(slot);
+                            let first_slot_in_window = cert.slot().first_slot_in_window();
+                            self.set_timeouts(first_slot_in_window);
                         }
                         _ => {}
                     }
@@ -245,16 +239,19 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     ///
     /// Panics if `slot` is not the first slot of a window.
     fn set_timeouts(&self, slot: Slot) {
-        assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+        assert!(slot.is_start_of_window());
+        // TODO: set timeouts only once?
+        let window = slot.slots_in_window().into_iter().collect::<Vec<_>>();
+        trace!("setting times for slots {window:?}");
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
             tokio::time::sleep(DELTA_TIMEOUT.saturating_sub(DELTA_EARLY_TIMEOUT)).await;
-            for offset in 0..SLOTS_PER_WINDOW {
-                let event = VotorEvent::TimeoutCrashedLeader(slot + offset);
+            for s in window {
+                let event = VotorEvent::TimeoutCrashedLeader(s);
                 // HACK: ignoring errors to prevent panic when shutting down votor
                 let _ = sender.send(event).await;
                 tokio::time::sleep(DELTA_BLOCK).await;
-                let event = VotorEvent::Timeout(slot + offset);
+                let event = VotorEvent::Timeout(s);
                 let _ = sender.send(event).await;
             }
         });
@@ -269,8 +266,8 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             parent_slot,
             parent_hash,
         } = block_info;
-        let first_slot = slot / SLOTS_PER_WINDOW * SLOTS_PER_WINDOW;
-        if slot == first_slot {
+        let first_slot_in_window = slot.first_slot_in_window();
+        if slot == first_slot_in_window {
             let valid_parent = self
                 .parents_ready
                 .contains(&(slot, parent_slot, parent_hash));
@@ -281,7 +278,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             if !valid_parent {
                 return false;
             }
-        } else if parent_slot != slot - 1
+        } else if parent_slot != slot.prev()
             || self.voted_notar.get(&parent_slot) != Some(&parent_hash)
         {
             return false;
@@ -311,8 +308,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
     async fn try_skip_window(&mut self, slot: Slot) {
         trace!("try skip window of slot {slot}");
-        let first_slot = slot / SLOTS_PER_WINDOW * SLOTS_PER_WINDOW;
-        for s in first_slot..first_slot + SLOTS_PER_WINDOW {
+        for s in slot.slots_in_window() {
             if self.voted.insert(s) {
                 let vote = Vote::new_skip(s, &self.voting_key, self.validator_id);
                 self.all2all.broadcast(&vote.into()).await.unwrap();
@@ -383,8 +379,8 @@ mod tests {
         // explicitly send parent ready for genesis
         votor_channel
             .send(VotorEvent::ParentReady {
-                slot: 0,
-                parent_slot: 0,
+                slot: Slot::new(0),
+                parent_slot: Slot::new(0),
                 parent_hash: Hash::default(),
             })
             .await
@@ -404,7 +400,7 @@ mod tests {
             }
         }
         for i in 0..SLOTS_PER_WINDOW {
-            assert!(skipped_slots.contains(&i));
+            assert!(skipped_slots.contains(&Slot::new(i)));
         }
     }
 
@@ -413,15 +409,15 @@ mod tests {
         let (other_a2a, tx, epoch_info) = start_votor().await;
 
         // vote notar after seeing block
-        let event = VotorEvent::FirstShred(0);
+        let event = VotorEvent::FirstShred(Slot::new(0));
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
             hash: [1u8; 32],
-            parent_slot: 0,
+            parent_slot: Slot::new(0),
             parent_hash: Hash::default(),
         };
         let event = VotorEvent::Block {
-            slot: 0,
+            slot: Slot::new(0),
             block_info,
         };
         tx.send(event).await.unwrap();
@@ -430,7 +426,7 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(vote.is_notar());
-        assert_eq!(vote.slot(), 0);
+        assert_eq!(vote.slot(), Slot::new(0));
 
         // vote finalize after seeing branch-certified
         let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], &epoch_info.validators));
@@ -439,7 +435,7 @@ mod tests {
         match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => {
                 assert!(v.is_final());
-                assert_eq!(v.slot(), 0);
+                assert_eq!(v.slot(), Slot::new(0));
             }
             m => panic!("other msg: {m:?}"),
         }

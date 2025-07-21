@@ -23,7 +23,6 @@ use either::Either;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
-use crate::consensus::SLOTS_PER_WINDOW;
 use crate::{BlockId, Slot};
 
 use parent_ready_state::ParentReadyState;
@@ -36,10 +35,10 @@ impl Default for ParentReadyTracker {
     ///
     /// Only the genesis block is considered a valid parent for the first leader window.
     fn default() -> Self {
-        let genesis_block = (0, [0; 32]);
+        let genesis_block = (Slot::new(0), [0; 32]);
         let mut map = HashMap::new();
         let genesis_parent_state = ParentReadyState::new([genesis_block]);
-        map.insert(0, genesis_parent_state);
+        map.insert(Slot::new(0), genesis_parent_state);
         Self(map)
     }
 }
@@ -59,9 +58,9 @@ impl ParentReadyTracker {
 
         // add this block as valid parent to any skip-connected future windows
         let mut newly_certified = Vec::new();
-        for s in slot + 1.. {
+        for s in slot.future_slots() {
             let state = self.0.entry(s).or_default();
-            if s % SLOTS_PER_WINDOW == 0 {
+            if slot.is_start_of_window() {
                 state.add_to_ready(id);
                 newly_certified.push((s, id));
             }
@@ -69,6 +68,7 @@ impl ParentReadyTracker {
                 break;
             }
         }
+
         newly_certified
     }
 
@@ -83,8 +83,8 @@ impl ParentReadyTracker {
 
         // get newly connected future windows
         let mut future_windows = SmallVec::<[Slot; 1]>::new();
-        for s in slot + 1.. {
-            if s % SLOTS_PER_WINDOW == 0 {
+        for s in slot.future_slots() {
+            if slot.is_start_of_window() {
                 future_windows.push(s);
             }
             let state = self.0.entry(s).or_default();
@@ -95,8 +95,13 @@ impl ParentReadyTracker {
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
-        let start_of_window = slot.saturating_sub(slot % SLOTS_PER_WINDOW);
-        for s in (start_of_window..=slot).rev() {
+
+        for s in slot
+            .slots_in_window()
+            .into_iter()
+            .filter(|s| *s <= slot)
+            .rev()
+        {
             let state = self.0.entry(s).or_default();
             if s < slot {
                 for nf in &state.notar_fallbacks {

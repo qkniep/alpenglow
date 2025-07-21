@@ -3,8 +3,6 @@
 
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
-use super::SLOTS_PER_WINDOW;
-
 /// Epoch-specfic validator information.
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
@@ -32,9 +30,7 @@ impl EpochInfo {
     // TODO: actual stake-based pseudorandom leader schedule
     #[must_use]
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
-        let window = slot / SLOTS_PER_WINDOW;
-        let leader_id = window % (self.validators.len() as u64);
-        self.validator(leader_id)
+        slot.leader(&self.validators)
     }
 
     /// Gives the total stake over all validators.

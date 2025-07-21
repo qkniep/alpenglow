@@ -151,7 +151,7 @@ mod tests {
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 4,
                 merkle_root: None,
@@ -212,7 +212,7 @@ mod tests {
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 999,
                 merkle_root: None,
@@ -273,7 +273,7 @@ mod tests {
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 9999,
                 merkle_root: None,

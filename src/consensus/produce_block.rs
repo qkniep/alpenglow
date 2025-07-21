@@ -175,7 +175,7 @@ mod tests {
     async fn produce_slice_empty_slices() {
         let txs_receiver = UdpNetwork::new_with_any_port();
         let sleep_duration = Duration::from_micros(1);
-        let slot = 1;
+        let slot = Slot::new(1);
         // setting != 0 so that parent info is not included in slice
         let slice_index = 123;
         let (slice, cont) = produce_slice(
@@ -206,7 +206,7 @@ mod tests {
         let (slice, cont) = produce_slice(
             &txs_receiver,
             slot,
-            Either::Left((slot - 1, Hash::default(), 0)),
+            Either::Left((slot.prev(), Hash::default(), 0)),
             sleep_duration,
         )
         .await;
@@ -236,7 +236,7 @@ mod tests {
         let txs_sender = UdpNetwork::new_with_any_port();
         // long enough duration so hopefully doesn't fire while collecting txs
         let sleep_duration = Duration::from_secs(100);
-        let slot = 1;
+        let slot = Slot::new(1);
         let slice_index = 123;
 
         tokio::spawn(async move {

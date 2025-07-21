@@ -23,7 +23,7 @@ use crate::{BlockId, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
-use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Vote};
+use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, Vote};
 
 use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
@@ -101,8 +101,8 @@ impl Pool {
             slot_states: BTreeMap::new(),
             parent_ready_tracker: ParentReadyTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
-            highest_notarized_fallback_slot: 0,
-            highest_finalized_slot: 0,
+            highest_notarized_fallback_slot: Slot::new(0),
+            highest_finalized_slot: Slot::new(0),
             epoch_info,
             votor_event_channel,
             repair_channel,
@@ -115,9 +115,9 @@ impl Pool {
         let slot = cert.slot();
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
-        if slot < self.highest_finalized_slot
-            || slot >= self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
-        {
+        let slot_far_in_future =
+            Slot::new(self.highest_finalized_slot.take() + 2 * SLOTS_PER_EPOCH);
+        if slot < self.highest_finalized_slot || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
@@ -194,7 +194,7 @@ impl Pool {
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
                 for (slot, (parent_slot, parent_hash)) in new_parents_ready {
-                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+                    debug_assert!(slot.is_start_of_window());
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -210,7 +210,7 @@ impl Pool {
                 warn!("skipped slot {slot}");
                 let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
-                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+                    debug_assert!(slot.is_start_of_window());
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -242,9 +242,9 @@ impl Pool {
         let slot = vote.slot();
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
-        if slot < self.highest_finalized_slot
-            || slot >= self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
-        {
+        let slot_far_in_future =
+            Slot::new(self.highest_finalized_slot.take() + 2 * SLOTS_PER_EPOCH);
+        if slot < self.highest_finalized_slot || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
@@ -319,7 +319,7 @@ impl Pool {
     pub async fn recover_from_standstill(&self) {
         let slot = self.highest_finalized_slot;
         let certs = self.get_certs(slot);
-        let votes = self.get_own_votes(slot + 1);
+        let votes = self.get_own_votes(slot.next());
 
         warn!("recovering from standstill at slot {slot}");
         debug!(
@@ -330,7 +330,7 @@ impl Pool {
 
         // NOTE: This event corresponds to the slot after the last finalized one,
         //       this way it is ignored by `Votor` iff a new slot was finalized.
-        let event = VotorEvent::Standstill(slot + 1, certs, votes);
+        let event = VotorEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
         self.votor_event_channel.send(event).await.unwrap();
