@@ -19,7 +19,7 @@ use crate::{Block, Slot};
 use super::BlockInfo;
 
 /// Errors that may be encountered when adding a shred.
-#[derive(Clone, Copy, Debug, Error)]
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum AddShredError {
     #[error("Shred has invalid signature")]
     InvalidSignature,

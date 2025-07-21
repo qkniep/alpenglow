@@ -414,7 +414,8 @@ mod tests {
         // insert many duplicate shreds
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in vec![shreds[0].clone(); 1024] {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            // ignore errors
+            let _ = blockstore.add_shred_from_disseminator(shred).await;
         }
 
         // should only store one copy
@@ -430,14 +431,14 @@ mod tests {
         let (sk, mut blockstore) = test_setup(tx);
         let slices = create_random_block(0, 1);
 
-        // insert many duplicate shreds
+        // insert shreds with wrong Merkle root
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
-        for shred in vec![shreds[0].clone(); 1024] {
-            let _ = blockstore.add_shred_from_disseminator(shred).await;
+        for mut shred in shreds {
+            shred.merkle_root = Hash::default();
+            let res = blockstore.add_shred_from_disseminator(shred).await;
+            assert!(res.is_err());
+            assert_eq!(res.err(), Some(AddShredError::InvalidSignature));
         }
-
-        // should only store one copy
-        assert_eq!(blockstore.stored_shreds_for_slot(0), 1);
 
         drop(rx);
         Ok(())
