@@ -188,7 +188,8 @@ impl<N: Network> Repair<N> {
                     .write()
                     .await
                     .add_shred_from_repair(req.block_hash(), shred)
-                    .await;
+                    .await
+                    .unwrap();
             }
             RepairResponse::Parent(_, parent_slot, parent_hash) => {
                 let block_info = BlockInfo {

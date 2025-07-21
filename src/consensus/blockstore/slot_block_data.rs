@@ -18,7 +18,7 @@ use crate::{Block, Slot};
 
 use super::BlockInfo;
 
-///
+/// Errors that may be encountered when adding a shred.
 #[derive(Clone, Copy, Debug, Error)]
 pub enum AddShredError {
     #[error("Shred has invalid signature")]
@@ -31,37 +31,38 @@ pub enum AddShredError {
     AfterLastSlice,
 }
 
-///
+/// Holds all data corresponding to any blocks for a single slot.
 pub struct SlotBlockData {
     /// Slot number this data corresponds to.
     slot: Slot,
-    ///
+    /// Spot for storing the block that was received via block dissemination.
     pub(super) canonical: BlockData,
-    ///
+    /// Spot for storing alternative blocks that might later be received via repair.
     pub(super) alternatives: BTreeMap<Hash, BlockData>,
     /// Whether conflicting shreds have been seen for this slot.
     pub(super) equivocated: bool,
 }
 
+/// Holds all data corresponding to a single block.
 pub struct BlockData {
-    ///
+    /// Slot number this block is in.
     slot: Slot,
-    ///
+    /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
-    ///
+    /// Any shreds of this block stored so far, indexed by slice index.
     pub(super) shreds: BTreeMap<usize, Vec<Shred>>,
-    ///
+    /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<usize, Slice>,
-    ///
+    /// Index of the slice marked as last, if any.
     pub(super) last_slice: Option<usize>,
-    ///
+    /// Double merkle tree of this block, only known if block has been reconstructed.
     pub(super) double_merkle_tree: Option<MerkleTree>,
-    ///
+    /// Cache of Merkle roots for which the leader signature has been verified.
     pub(super) merkle_root_cache: BTreeMap<usize, Hash>,
 }
 
 impl SlotBlockData {
-    ///
+    /// Creates a new empty structure for a slot's block data.
     pub fn new(slot: Slot) -> Self {
         Self {
             slot,
@@ -71,7 +72,9 @@ impl SlotBlockData {
         }
     }
 
+    /// Adds a shred receive via block dissemination in the corresponding spot.
     ///
+    /// Performs the necessary validity checks, including checks for leader equivocation.
     pub fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
@@ -90,7 +93,9 @@ impl SlotBlockData {
         Ok(self.canonical.add_valid_shred(shred))
     }
 
+    /// Adds a shred received via repair to the spot given by block hash.
     ///
+    /// Performs the necessary validity checks, all but leader equivocation.
     pub fn add_shred_from_repair(
         &mut self,
         hash: Hash,
@@ -115,7 +120,7 @@ impl SlotBlockData {
 }
 
 impl BlockData {
-    ///
+    /// Create a new spot for storing data of a single block.
     pub fn new(slot: Slot) -> Self {
         Self {
             slot,
@@ -128,7 +133,14 @@ impl BlockData {
         }
     }
 
+    /// Adds a new valid shred to the block.
     ///
+    /// Assumes that the shred is valid, performs no more validity checks.
+    ///
+    /// Returns:
+    /// - `Some(VotorEvent::FirstShred)` if this was the first shred of this block,
+    /// - `Some(VotorEvent::Block)` if the block was successfully reconstructed,
+    /// - `None` otherwise.
     pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
         let slice_index = shred.payload().slice_index;
         let is_last_slice = shred.payload().is_last_slice;
@@ -177,11 +189,9 @@ impl BlockData {
         } else if cached_merkle_root.is_none() {
             self.merkle_root_cache
                 .insert(slice_index, shred.merkle_root);
-        } else if cached_merkle_root != Some(&shred.merkle_root) {
-            if check_equivocation {
-                warn!("shreds show leader equivocation in slot {}", self.slot);
-                return Err(AddShredError::Equivocation);
-            }
+        } else if check_equivocation && cached_merkle_root != Some(&shred.merkle_root) {
+            warn!("shreds show leader equivocation in slot {}", self.slot);
+            return Err(AddShredError::Equivocation);
         }
 
         // store and handle this shred only if it is not yet stored in the blockstore
@@ -198,7 +208,7 @@ impl BlockData {
             return Err(AddShredError::AfterLastSlice);
         }
 
-        return Ok(());
+        Ok(())
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.

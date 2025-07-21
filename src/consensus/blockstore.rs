@@ -42,7 +42,7 @@ impl From<&Block> for BlockInfo {
 
 /// Blockstore is the fundamental data structure holding block data per slot.
 pub struct Blockstore {
-    ///
+    /// Data structure holding the actual block data per slot.
     block_data: BTreeMap<Slot, SlotBlockData>,
 
     /// Event channel for sending notifications to Votor.
@@ -214,12 +214,12 @@ impl Blockstore {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    ///
+    /// Reads slot data for the given `slot`.
     fn slot_data(&self, slot: Slot) -> Option<&SlotBlockData> {
         self.block_data.get(&slot)
     }
 
-    ///
+    /// Writes slot data for the given `slot`, initializing it if necessary.
     fn slot_data_mut(&mut self, slot: Slot) -> &mut SlotBlockData {
         self.block_data
             .entry(slot)
@@ -384,7 +384,7 @@ mod tests {
         // second slice alone is not enough
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_none());
 
@@ -394,7 +394,7 @@ mod tests {
         // after also also inserting first slice we should have the block
         let shreds = RegularShredder::shred(&slices[1], &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(0).is_some());
 
@@ -414,7 +414,7 @@ mod tests {
         // insert many duplicate shreds
         let shreds = RegularShredder::shred(&slices[0], &sk)?;
         for shred in vec![shreds[0].clone(); 1024] {
-            blockstore.add_shred_from_disseminator(shred).await;
+            blockstore.add_shred_from_disseminator(shred).await?;
         }
 
         // should only store one copy
