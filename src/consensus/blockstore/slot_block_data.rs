@@ -61,6 +61,7 @@ pub struct BlockData {
 }
 
 impl SlotBlockData {
+    ///
     pub fn new(slot: Slot) -> Self {
         Self {
             slot,
@@ -101,12 +102,15 @@ impl SlotBlockData {
             .alternatives
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        let add_shred_result = block_data.check_shred_to_add(&shred, true, leader_pk);
-        if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
-            self.equivocated = true;
+        match block_data.check_shred_to_add(&shred, true, leader_pk) {
+            Ok(()) => Ok(self.canonical.add_valid_shred(shred)),
+            Err(err) => {
+                if let AddShredError::Equivocation = &err {
+                    self.equivocated = true;
+                }
+                Err(err)
+            }
         }
-        add_shred_result?;
-        Ok(block_data.add_valid_shred(shred))
     }
 }
 
