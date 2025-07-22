@@ -116,7 +116,7 @@ async fn wait_for_first_slot(
     let first_slot_in_window = window * SLOTS_PER_WINDOW;
     let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
 
-    // if already have parent ready, return it, otherwise get a channel to await on.
+    // if already have parent ready, return it, otherwise get a channel to await on
     let rx = {
         let mut guard = pool.write().await;
         match guard.wait_for_parent_ready(first_slot_in_window) {
