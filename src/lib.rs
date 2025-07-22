@@ -32,6 +32,8 @@ pub type Slot = u64;
 pub type ValidatorId = u64;
 /// Validator stake type.
 pub type Stake = u64;
+/// Block identifier type.
+pub type BlockId = (Slot, Hash);
 
 const MAX_TRANSACTION_SIZE: usize = 512;
 
