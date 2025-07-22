@@ -90,6 +90,7 @@ pub struct SlotCertificates {
     pub(super) finalize: Option<FinalCert>,
 }
 
+/// Possible states for the safe-to-notar check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SafeToNotarStatus {
     SafeToNotar,

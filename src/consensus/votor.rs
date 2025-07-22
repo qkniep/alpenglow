@@ -408,7 +408,6 @@ mod tests {
         }
     }
 
-    // FIXME flaky test
     #[tokio::test]
     async fn notar_and_final() {
         let (other_a2a, tx, epoch_info) = start_votor().await;
