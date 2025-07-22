@@ -81,7 +81,7 @@ impl ParentReadyState {
 
     pub(super) fn wait_for_parent_ready(&mut self) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         match &mut self.is_ready {
-            IsReady::Ready(block_ids) => Either::Left(block_ids.first().unwrap().clone()),
+            IsReady::Ready(block_ids) => Either::Left(*block_ids.first().unwrap()),
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
                 let (tx, rx) = oneshot::channel();
