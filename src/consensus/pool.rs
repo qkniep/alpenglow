@@ -12,6 +12,7 @@ mod slot_state;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
@@ -82,6 +83,7 @@ pub struct Pool {
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
+    /// Channel for sending repair requests to the repair loop.
     repair_channel: Sender<(Slot, Hash)>,
 }
 
@@ -164,20 +166,34 @@ impl Pool {
                 let block_hash = cert.block_hash().unwrap();
                 let h = &hex::encode(block_hash)[..8];
                 info!("notarized(-fallback) block {h} in slot {slot}");
+                self.highest_notarized_fallback_slot =
+                    slot.max(self.highest_notarized_fallback_slot);
+
+                // potentially notify child waiting for safe-to-notar
                 if let Some((child_slot, child_hash)) =
                     self.s2n_waiting_parent_cert.remove(&(slot, block_hash))
                 {
-                    if let Some(event) = self
+                    if let Some(output) = self
                         .slot_state(child_slot)
                         .notify_parent_certified(child_hash)
                     {
-                        self.votor_event_channel.send(event).await.unwrap();
+                        match output {
+                            Either::Left(event) => {
+                                self.votor_event_channel.send(event).await.unwrap();
+                            }
+                            Either::Right((slot, hash)) => {
+                                self.repair_channel.send((slot, hash)).await.unwrap();
+                            }
+                        }
                     }
                 }
+
+                // add block to parent-ready tracker, send any new parents to Votor.
                 let new_parents_ready = self
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
                 for (slot, (parent_slot, parent_hash)) in new_parents_ready {
+                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -185,14 +201,15 @@ impl Pool {
                     };
                     self.votor_event_channel.send(event).await.unwrap();
                 }
-                self.highest_notarized_fallback_slot =
-                    slot.max(self.highest_notarized_fallback_slot);
+
+                // repair this block, if necessary
+                self.repair_channel.send((slot, block_hash)).await.unwrap();
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
                 let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
-                    assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -230,11 +247,6 @@ impl Pool {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
-        // FIXME: overly aggressive repair
-        if let Some(hash) = vote.block_hash() {
-            self.repair_channel.send((slot, hash)).await.unwrap();
-        }
-
         // verify signature
         let pk = &self.epoch_info.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
@@ -252,7 +264,8 @@ impl Pool {
 
         // actually add the vote
         trace!("adding vote to pool: {vote:?}");
-        let (new_certs, votor_events) = self.slot_state(slot).add_vote(vote, voter_stake);
+        let (new_certs, votor_events, blocks_to_repair) =
+            self.slot_state(slot).add_vote(vote, voter_stake);
 
         // handle any resulting events
         for cert in new_certs {
@@ -260,6 +273,9 @@ impl Pool {
         }
         for event in votor_events {
             self.votor_event_channel.send(event).await.unwrap();
+        }
+        for (slot, block_hash) in blocks_to_repair {
+            self.repair_channel.send((slot, block_hash)).await.unwrap();
         }
         Ok(())
     }
@@ -274,10 +290,18 @@ impl Pool {
             parent_slot,
             parent_hash,
         } = block_info;
+        self.slot_state(slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(&parent_slot) {
             if parent_state.is_notar_fallback(&parent_hash) {
-                if let Some(event) = self.slot_state(slot).notify_parent_certified(block_hash) {
-                    self.votor_event_channel.send(event).await.unwrap();
+                if let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash) {
+                    match output {
+                        Either::Left(event) => {
+                            self.votor_event_channel.send(event).await.unwrap();
+                        }
+                        Either::Right((slot, hash)) => {
+                            self.repair_channel.send((slot, hash)).await.unwrap();
+                        }
+                    }
                     return;
                 }
             }

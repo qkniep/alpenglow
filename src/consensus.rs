@@ -119,7 +119,7 @@ where
 
         let blockstore = Blockstore::new(epoch_info.clone(), votor_tx.clone());
         let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx.clone());
+        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx);
         let pool = Arc::new(RwLock::new(pool));
         let repair = Repair::new(
             Arc::clone(&blockstore),
@@ -146,7 +146,6 @@ where
             votor_tx.clone(),
             votor_rx,
             all2all.clone(),
-            repair_tx,
         );
         let votor_handle = tokio::spawn(
             async move { votor.voting_loop().await.unwrap() }
