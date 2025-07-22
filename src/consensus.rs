@@ -119,7 +119,7 @@ where
 
         let blockstore = Blockstore::new(epoch_info.clone(), votor_tx.clone());
         let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx.clone());
+        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx);
         let pool = Arc::new(RwLock::new(pool));
         let repair = Repair::new(
             Arc::clone(&blockstore),
@@ -146,7 +146,6 @@ where
             votor_tx.clone(),
             votor_rx,
             all2all.clone(),
-            repair_tx,
         );
         let votor_handle = tokio::spawn(
             async move { votor.voting_loop().await.unwrap() }
@@ -373,8 +372,13 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
         self.disseminator.forward(&shred).await?;
-        let b = self.blockstore.write().await.add_shred(shred, true).await;
-        if let Some((slot, block_info)) = b {
+        let b = self
+            .blockstore
+            .write()
+            .await
+            .add_shred_from_disseminator(shred)
+            .await;
+        if let Ok(Some((slot, block_info))) = b {
             let mut guard = self.pool.write().await;
             guard.add_block(slot, block_info).await;
         }

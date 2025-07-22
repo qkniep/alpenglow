@@ -1,3 +1,6 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
@@ -122,8 +125,13 @@ where
             for s in shreds {
                 self.disseminator.send(&s).await?;
                 // PERF: move expensive add_shred() call out of block production
-                let block = self.blockstore.write().await.add_shred(s, true).await;
-                if let Some((slot, block_info)) = block {
+                let block = self
+                    .blockstore
+                    .write()
+                    .await
+                    .add_shred_from_disseminator(s)
+                    .await;
+                if let Ok(Some((slot, block_info))) = block {
                     self.pool.write().await.add_block(slot, block_info).await;
                 }
             }
@@ -152,11 +160,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use super::*;
 
     use crate::{Transaction, network::UdpNetwork};
 
-    use super::*;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {

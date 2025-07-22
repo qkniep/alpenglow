@@ -100,7 +100,6 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     event_sender: Sender<VotorEvent>,
     /// [`All2All`] instance used to broadcast votes.
     all2all: Arc<A>,
-    repair_sender: Sender<(Slot, Hash)>,
 }
 
 impl<A: All2All + Sync + Send + 'static> Votor<A> {
@@ -111,7 +110,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         event_sender: Sender<VotorEvent>,
         event_receiver: Receiver<VotorEvent>,
         all2all: Arc<A>,
-        repair_sender: Sender<(Slot, Hash)>,
     ) -> Self {
         let mut parents_ready = BTreeSet::new();
         // add dummy genesis block
@@ -130,7 +128,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
             event_receiver,
             event_sender,
             all2all,
-            repair_sender,
         };
         votor.set_timeouts(0);
         votor
@@ -183,11 +180,6 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 }
                 VotorEvent::CertCreated(cert) => {
                     match cert.as_ref() {
-                        Cert::NotarFallback(_) => {
-                            self.repair_sender
-                                .send((cert.slot(), cert.block_hash().unwrap()))
-                                .await?;
-                        }
                         Cert::Notar(_) => {
                             self.block_notarized
                                 .insert(cert.slot(), cert.block_hash().unwrap());
@@ -377,15 +369,7 @@ mod tests {
         let (tx, rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let (repair_tx, _) = mpsc::channel(100);
-        let mut votor = Votor::new(
-            0,
-            sks[0].clone(),
-            tx.clone(),
-            rx,
-            Arc::new(votor_a2a),
-            repair_tx,
-        );
+        let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
         tokio::spawn(async move {
             votor.voting_loop().await.unwrap();
         });
