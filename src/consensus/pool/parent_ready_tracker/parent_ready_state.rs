@@ -1,13 +1,15 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use either::Either;
 use log::warn;
 use smallvec::{SmallVec, smallvec};
 use tokio::sync::oneshot;
 
+use crate::BlockId;
 use crate::crypto::Hash;
 
-use super::BlockId;
-
-/// Tracks the status of whether or not individual slots have parent ready.
+/// Tracks the status of whether an individual slot has a parent ready.
 enum IsReady {
     /// Do not have a parent ready for this slot.
     /// Might have someone waiting to hear when the slot does become ready.
@@ -41,6 +43,7 @@ impl Default for ParentReadyState {
 }
 
 impl ParentReadyState {
+    /// Creates a new `ParentReadyState` with the given `block_ids` as valid parents.
     pub(super) fn new<T: Into<SmallVec<[BlockId; 1]>>>(block_ids: T) -> Self {
         Self {
             is_ready: IsReady::Ready(block_ids.into()),
@@ -48,8 +51,8 @@ impl ParentReadyState {
         }
     }
 
-    /// Adds a `BlockId` to the parents ready list.  Additionally, will inform
-    /// any waiters.
+    /// Adds a `BlockId` to the parents ready list.
+    /// Additionally, will inform any waiters.
     pub(super) fn add_to_ready(&mut self, id: BlockId) {
         match &mut self.is_ready {
             IsReady::NotReady(sender) => {
@@ -59,7 +62,7 @@ impl ParentReadyState {
                     Some(sender) => match sender.send(id) {
                         Ok(()) => (),
                         Err(id) => {
-                            warn!("sending {id:?} failed.  Receiver deallocated");
+                            warn!("sending {id:?} failed, receiver deallocated");
                         }
                     },
                 }
@@ -72,6 +75,7 @@ impl ParentReadyState {
         }
     }
 
+    /// Returns the list of currently valid parents for this slot.
     pub(super) fn ready_block_ids(&self) -> &[BlockId] {
         match &self.is_ready {
             IsReady::NotReady(_) => &[],
@@ -79,6 +83,12 @@ impl ParentReadyState {
         }
     }
 
+    /// Requests to know a valid parent for this slot.
+    ///
+    /// Returns either:
+    /// - The block ID of an (arbitrary) parent if a parent is already ready.
+    /// - A receiver of a oneshot channel that will receive the first parent's block ID.
+    // TODO: always return the parent with the lowest slot number if there are multiple
     pub(super) fn wait_for_parent_ready(&mut self) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         match &mut self.is_ready {
             IsReady::Ready(block_ids) => Either::Left(*block_ids.first().unwrap()),

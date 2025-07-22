@@ -95,19 +95,20 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
-/// Waits for first slot in the given window to become ready.
+/// Waits for first slot in the given window to become ready for block production.
 ///
-/// Ready here can mean that we saw a parent_ready for it or that we saw the
-/// canonical block hash for its parent.
+/// Ready here can mean:
+/// - Pool emitted the `ParentReady` event for it, OR
+/// - the blockstore has stored a canonical block for the previous slot.
 ///
-/// If the slot became ready, returns Some((parent slot, parent hash, is parent ready))
-/// Else returns None if the window should be skipped.
+/// If the slot became ready, returns `Some((parent_slot, parent_hash, is_parent-ready))`.
+/// Else returns `None` if the window should be skipped.
 async fn wait_for_first_slot(
     pool: Arc<RwLock<Pool>>,
     blockstore: Arc<RwLock<Blockstore>>,
     window: Slot,
 ) -> Option<(Slot, Hash, bool)> {
-    // Genesis
+    // genesis
     if window == 0 {
         return Some((0, Hash::default(), false));
     }
@@ -115,7 +116,7 @@ async fn wait_for_first_slot(
     let first_slot_in_window = window * SLOTS_PER_WINDOW;
     let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
 
-    // If already have parent ready, then return it, else get a channel to await on.
+    // if already have parent ready, return it, otherwise get a channel to await on.
     let rx = {
         let mut guard = pool.write().await;
         match guard.wait_for_parent_ready(first_slot_in_window) {
@@ -127,9 +128,9 @@ async fn wait_for_first_slot(
     };
 
     // Concurrently wait for:
-    // - parent_ready
-    // - canonical block hash of the parent
-    // - or notification that the window is already finalized.
+    // - `ParentReady` event,
+    // - canonical block reconstruction in blockstore, OR
+    // - notification that a later slot was finalized.
     tokio::select! {
         res = rx => {
             let (slot, hash) = res.expect("Sender dropped channel.");
@@ -138,7 +139,7 @@ async fn wait_for_first_slot(
 
         res = async {
             let handle = tokio::spawn(async move {
-                // PERF: these are burning a CPU.  Can we use async here?
+                // PERF: These are burning a CPU. Can we use async here?
                 loop {
                     if let Some(hash) = blockstore
                         .read()
@@ -214,7 +215,6 @@ where
             .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
-        // let cancel = cancel_token.clone();
         let mut votor = Votor::new(
             epoch_info.own_id,
             voting_secret_key,

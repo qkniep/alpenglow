@@ -23,11 +23,10 @@ use either::Either;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
-use crate::{Slot, consensus::SLOTS_PER_WINDOW, crypto::Hash};
+use crate::consensus::SLOTS_PER_WINDOW;
+use crate::{BlockId, Slot};
 
 use parent_ready_state::ParentReadyState;
-
-pub type BlockId = (Slot, Hash);
 
 /// Keeps track of the parent-ready condition across slots.
 pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);

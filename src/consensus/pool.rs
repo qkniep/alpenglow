@@ -19,13 +19,13 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
 use crate::crypto::Hash;
-use crate::{Slot, ValidatorId};
+use crate::{BlockId, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Vote};
 
-use parent_ready_tracker::{BlockId, ParentReadyTracker};
+use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
 
 /// Errors the Pool may return when adding a vote.
