@@ -188,11 +188,18 @@ mod tests {
         match cont {
             Continue::Continue { .. } => panic!("Should not happen"),
             Continue::Stop => {
-                assert_eq!(slice.slot, slot);
-                assert_eq!(slice.slice_index, slice_index);
-                assert!(slice.is_last);
-                assert!(slice.merkle_root.is_none());
-                assert_eq!(slice.data.len(), 0);
+                let Slice {
+                    slot,
+                    slice_index,
+                    is_last,
+                    merkle_root,
+                    data,
+                } = slice;
+                assert_eq!(slot, slot);
+                assert_eq!(slice_index, slice_index);
+                assert!(is_last);
+                assert!(merkle_root.is_none());
+                assert_eq!(data.len(), 0);
             }
         }
 
@@ -206,11 +213,18 @@ mod tests {
         match cont {
             Continue::Continue { .. } => panic!("Should not happen"),
             Continue::Stop => {
-                assert_eq!(slice.slot, slot);
-                assert_eq!(slice.slice_index, 0);
-                assert!(slice.is_last);
-                assert!(slice.merkle_root.is_none());
-                assert_eq!(slice.data.len(), 8 + 32);
+                let Slice {
+                    slot,
+                    slice_index,
+                    is_last,
+                    merkle_root,
+                    data,
+                } = slice;
+                assert_eq!(slot, slot);
+                assert_eq!(slice_index, 0);
+                assert!(is_last);
+                assert!(merkle_root.is_none());
+                assert_eq!(data.len(), 8 + 32);
             }
         }
     }
@@ -243,12 +257,19 @@ mod tests {
         match cont {
             Continue::Stop => panic!("Should not happen"),
             Continue::Continue { .. } => {
-                assert_eq!(slice.slot, slot);
-                assert_eq!(slice.slice_index, slice_index);
-                assert!(!slice.is_last);
-                assert!(slice.merkle_root.is_none());
-                assert!(slice.data.len() <= MAX_DATA_PER_SLICE);
-                assert!(slice.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
+                let Slice {
+                    slot,
+                    slice_index,
+                    is_last,
+                    merkle_root,
+                    data,
+                } = slice;
+                assert_eq!(slot, slot);
+                assert_eq!(slice_index, slice_index);
+                assert!(!is_last);
+                assert!(merkle_root.is_none());
+                assert!(data.len() <= MAX_DATA_PER_SLICE);
+                assert!(data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
             }
         }
     }
