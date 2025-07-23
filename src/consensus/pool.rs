@@ -116,7 +116,7 @@ impl Pool {
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
         if slot < self.highest_finalized_slot
-            || slot == self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
+            || slot >= self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
         {
             return Err(AddCertError::SlotOutOfBounds);
         }
