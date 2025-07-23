@@ -53,6 +53,7 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
 mod tests {
     use super::*;
 
+    use crate::Slot;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;

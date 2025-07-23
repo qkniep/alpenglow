@@ -102,6 +102,7 @@ impl Network for SimulatedNetwork {
 mod tests {
     use super::*;
 
+    use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS,

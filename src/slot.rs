@@ -2,7 +2,13 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ValidatorInfo, consensus::SLOTS_PER_WINDOW};
+use crate::ValidatorInfo;
+
+/// Number of slots in each leader window.
+///
+/// NOTE: this is public to support testing and one function additional function.
+/// Consider hiding it.
+pub const SLOTS_PER_WINDOW: u64 = 4;
 
 /// Slot number type.
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -13,19 +19,21 @@ impl Slot {
         Self(slot)
     }
 
-    pub fn take(&self) -> u64 {
+    pub fn inner(self) -> u64 {
         self.0
+    }
+
+    pub fn windows() -> impl Iterator<Item = Self> {
+        (0..).map(|i| Self(i * SLOTS_PER_WINDOW))
     }
 
     pub fn to_be_bytes(&self) -> [u8; 8] {
         self.0.to_be_bytes()
     }
 
-    pub fn slots_in_window(&self) -> Vec<Slot> {
+    pub fn slots_in_window(self) -> impl Iterator<Item = Slot> {
         let start = self.first_slot_in_window();
-        (start.0..start.0 + SLOTS_PER_WINDOW)
-            .map(|s| Self::new(s))
-            .collect()
+        (start.0..start.0 + SLOTS_PER_WINDOW).map(|s| Self::new(s))
     }
 
     pub fn future_slots(&self) -> impl Iterator<Item = Self> {

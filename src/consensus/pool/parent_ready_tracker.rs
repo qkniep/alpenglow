@@ -58,11 +58,11 @@ impl ParentReadyTracker {
 
         // add this block as valid parent to any skip-connected future windows
         let mut newly_certified = Vec::new();
-        for s in slot.future_slots() {
-            let state = self.0.entry(s).or_default();
+        for slot in slot.future_slots() {
+            let state = self.0.entry(slot).or_default();
             if slot.is_start_of_window() {
                 state.add_to_ready(id);
-                newly_certified.push((s, id));
+                newly_certified.push((slot, id));
             }
             if !state.skip {
                 break;
@@ -83,11 +83,11 @@ impl ParentReadyTracker {
 
         // get newly connected future windows
         let mut future_windows = SmallVec::<[Slot; 1]>::new();
-        for s in slot.future_slots() {
+        for slot in slot.future_slots() {
             if slot.is_start_of_window() {
-                future_windows.push(s);
+                future_windows.push(slot);
             }
-            let state = self.0.entry(s).or_default();
+            let state = self.0.entry(slot).or_default();
             if !state.skip {
                 break;
             }
@@ -96,12 +96,12 @@ impl ParentReadyTracker {
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
 
-        for s in slot
+        let mut slots = slot
             .slots_in_window()
-            .into_iter()
             .filter(|s| *s <= slot)
-            .rev()
-        {
+            .collect::<Vec<_>>();
+        slots.reverse();
+        for s in slots {
             let state = self.0.entry(s).or_default();
             if s < slot {
                 for nf in &state.notar_fallbacks {
@@ -150,14 +150,18 @@ impl ParentReadyTracker {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::slot::SLOTS_PER_WINDOW;
+
     use super::*;
 
     #[test]
     fn basic() {
         let mut tracker = ParentReadyTracker::default();
+
         for i in 0..2 * SLOTS_PER_WINDOW {
-            let next_window_slot = (i / SLOTS_PER_WINDOW + 1) * SLOTS_PER_WINDOW;
-            let block = (i, [i as u8 + 1; 32]);
+            let next_window_slot = Slot::new((i / SLOTS_PER_WINDOW + 1) * SLOTS_PER_WINDOW);
+            let block = (Slot::new(i), [i as u8 + 1; 32]);
             let new_valid_parents = tracker.mark_notar_fallback(block);
             if i % SLOTS_PER_WINDOW == SLOTS_PER_WINDOW - 1 {
                 assert!(new_valid_parents.contains(&(next_window_slot, block)));
@@ -170,46 +174,55 @@ mod tests {
     #[test]
     fn genesis() {
         let mut tracker = ParentReadyTracker::default();
-        assert!(tracker.mark_skipped(0).is_empty());
-        assert!(tracker.mark_skipped(1).is_empty());
-        assert!(tracker.mark_skipped(2).is_empty());
-        let new_valid_parents = tracker.mark_skipped(3);
-        assert!(new_valid_parents.contains(&(4, (0, [0; 32]))));
+        assert!(tracker.mark_skipped(Slot::new(0)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
+        let new_valid_parents = tracker.mark_skipped(Slot::new(3));
+        assert!(new_valid_parents.contains(&(Slot::new(4), (Slot::new(0), [0; 32]))));
     }
 
     #[test]
     fn skips() {
         let mut tracker = ParentReadyTracker::default();
-        let block = (0, [1; 32]);
+        let block = (Slot::new(0), [1; 32]);
         assert!(tracker.mark_notar_fallback(block).is_empty());
-        assert!(tracker.mark_skipped(0).is_empty());
-        assert!(tracker.mark_skipped(1).is_empty());
-        assert!(tracker.mark_skipped(2).is_empty());
-        let new_valid_parents = tracker.mark_skipped(3);
-        assert!(new_valid_parents.contains(&(4, block)));
-        assert!(new_valid_parents.contains(&(4, (0, [0; 32]))));
+        assert!(tracker.mark_skipped(Slot::new(0)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
+        let new_valid_parents = tracker.mark_skipped(Slot::new(3));
+        assert!(new_valid_parents.contains(&(Slot::new(4), block)));
+        assert!(new_valid_parents.contains(&(Slot::new(4), (Slot::new(0), [0; 32]))));
     }
 
     #[test]
     fn out_of_order_skips() {
         let mut tracker = ParentReadyTracker::default();
-        let block = (0, [1; 32]);
-        assert!(tracker.mark_skipped(3).is_empty());
-        assert!(tracker.mark_skipped(1).is_empty());
-        assert!(tracker.mark_skipped(2).is_empty());
-        assert_eq!(tracker.mark_notar_fallback(block), vec![(4, block)]);
-        assert_eq!(tracker.mark_skipped(0), vec![(4, (0, [0; 32]))]);
+        let block = (Slot::new(0), [1; 32]);
+        assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
+        assert_eq!(
+            tracker.mark_notar_fallback(block),
+            vec![(Slot::new(4), block)]
+        );
+        assert_eq!(
+            tracker.mark_skipped(Slot::new(0)),
+            vec![(Slot::new(4), (Slot::new(0), [0; 32]))]
+        );
     }
 
     #[test]
     fn out_of_order_notars() {
         let mut tracker = ParentReadyTracker::default();
-        let block0 = (0, [1; 32]);
-        let block1 = (1, [2; 32]);
-        let block2 = (2, [3; 32]);
-        let block3 = (3, [4; 32]);
+        let block0 = (Slot::new(0), [1; 32]);
+        let block1 = (Slot::new(1), [2; 32]);
+        let block2 = (Slot::new(2), [3; 32]);
+        let block3 = (Slot::new(3), [4; 32]);
         assert!(tracker.mark_notar_fallback(block2).is_empty());
-        assert_eq!(tracker.mark_notar_fallback(block3), vec![(4, block3)]);
+        assert_eq!(
+            tracker.mark_notar_fallback(block3),
+            vec![(Slot::new(4), block3)]
+        );
         assert!(tracker.mark_notar_fallback(block0).is_empty());
         assert!(tracker.mark_notar_fallback(block1).is_empty());
     }
@@ -217,14 +230,20 @@ mod tests {
     #[test]
     fn no_double_counting() {
         let mut tracker = ParentReadyTracker::default();
-        let block = (0, [1; 32]);
+        let block = (Slot::new(0), [1; 32]);
         assert!(tracker.mark_notar_fallback(block).is_empty());
-        assert!(tracker.mark_skipped(1).is_empty());
-        assert!(tracker.mark_skipped(2).is_empty());
-        assert_eq!(tracker.mark_skipped(3), vec![(4, block)]);
-        assert!(tracker.mark_skipped(4).is_empty());
-        assert!(tracker.mark_skipped(5).is_empty());
-        assert!(tracker.mark_skipped(6).is_empty());
-        assert_eq!(tracker.mark_skipped(7), vec![(8, block)]);
+        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
+        assert_eq!(
+            tracker.mark_skipped(Slot::new(3)),
+            vec![(Slot::new(4), block)]
+        );
+        assert!(tracker.mark_skipped(Slot::new(4)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(5)).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(6)).is_empty());
+        assert_eq!(
+            tracker.mark_skipped(Slot::new(7)),
+            vec![(Slot::new(8), block)]
+        );
     }
 }

@@ -51,8 +51,6 @@ pub use pool::{AddVoteError, Pool};
 pub use vote::Vote;
 use votor::Votor;
 
-/// Number of slots in each leader window.
-pub const SLOTS_PER_WINDOW: u64 = 4;
 /// Number of slots in each epoch.
 pub const SLOTS_PER_EPOCH: u64 = 18_000;
 /// Time bound assumed on network transmission delays during periods of synchrony.
@@ -331,8 +329,7 @@ where
     /// Once all previous blocks have been notarized or skipped and the next
     /// slot belongs to our leader window, we will produce a block.
     async fn block_production_loop(&self) -> Result<()> {
-        let mut first_slot_in_window = Slot::new(0);
-        loop {
+        for first_slot_in_window in Slot::windows() {
             if self.cancel_token.is_cancelled() {
                 break;
             }
@@ -379,7 +376,6 @@ where
                     .canonical_block_hash(slot)
                     .unwrap();
             }
-            first_slot_in_window = first_slot_in_window.first_slot_in_next_window();
         }
 
         Ok(())

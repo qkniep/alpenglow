@@ -241,12 +241,15 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     fn set_timeouts(&self, slot: Slot) {
         assert!(slot.is_start_of_window());
         // TODO: set timeouts only once?
-        let window = slot.slots_in_window().into_iter().collect::<Vec<_>>();
-        trace!("setting times for slots {window:?}");
+
+        trace!(
+            "setting timeouts for slots {:?}",
+            slot.slots_in_window().collect::<Vec<_>>()
+        );
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
             tokio::time::sleep(DELTA_TIMEOUT.saturating_sub(DELTA_EARLY_TIMEOUT)).await;
-            for s in window {
+            for s in slot.slots_in_window() {
                 let event = VotorEvent::TimeoutCrashedLeader(s);
                 // HACK: ignoring errors to prevent panic when shutting down votor
                 let _ = sender.send(event).await;
@@ -388,7 +391,7 @@ mod tests {
 
         // should vote skip for all slots
         let mut skipped_slots = Vec::new();
-        for _ in 0..SLOTS_PER_WINDOW {
+        for _ in Slot::new(0).slots_in_window() {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     NetworkMessage::Vote(v) => {
@@ -399,8 +402,8 @@ mod tests {
                 }
             }
         }
-        for i in 0..SLOTS_PER_WINDOW {
-            assert!(skipped_slots.contains(&Slot::new(i)));
+        for i in Slot::new(0).slots_in_window() {
+            assert!(skipped_slots.contains(&i));
         }
     }
 
