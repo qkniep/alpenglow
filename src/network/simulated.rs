@@ -154,6 +154,7 @@ mod tests {
                 slot: 0,
                 slice_index: i,
                 is_last: i == 4,
+                parent_switched: false,
                 merkle_root: None,
                 data,
             };
@@ -215,6 +216,7 @@ mod tests {
                 slot: 0,
                 slice_index: i,
                 is_last: i == 999,
+                parent_switched: false,
                 merkle_root: None,
                 data,
             };
@@ -276,6 +278,7 @@ mod tests {
                 slot: 0,
                 slice_index: i,
                 is_last: i == 9999,
+                parent_switched: false,
                 merkle_root: None,
                 data,
             };

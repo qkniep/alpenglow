@@ -35,8 +35,17 @@ pub(super) fn reed_solomon_shred(
         is_last,
         merkle_root: _,
         data,
+        parent_switched,
     } = slice;
-    reed_solomon_shred_raw(*slot, *slice_index, *is_last, data, num_data, num_coding)
+    reed_solomon_shred_raw(
+        *slot,
+        *slice_index,
+        *is_last,
+        *parent_switched,
+        data,
+        num_data,
+        num_coding,
+    )
 }
 
 /// Splits the given data into `num_data` data shreds, then generates
@@ -47,6 +56,7 @@ pub(super) fn reed_solomon_shred_raw(
     slot: Slot,
     slice_index: usize,
     is_last_slice: bool,
+    parent_switched: bool,
     data: &[u8],
     num_data: usize,
     num_coding: usize,
@@ -65,6 +75,7 @@ pub(super) fn reed_solomon_shred_raw(
         slice_index,
         index_in_slice: index,
         is_last_slice,
+        parent_switched,
         data: data.into(),
     };
     let data_shreds = data_parts

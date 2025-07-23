@@ -269,6 +269,7 @@ mod tests {
                 slot,
                 slice_index,
                 is_last: slice_index == num_slices - 1,
+                parent_switched: false,
                 merkle_root: None,
                 data: buf,
             });

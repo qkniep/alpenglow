@@ -104,6 +104,7 @@ pub struct Slice {
     pub slot: Slot,
     /// Index of the slice within its slot.
     pub slice_index: usize,
+    pub parent_switched: bool,
     /// Indicates whether this is the last slice in the slot.
     pub is_last: bool,
     /// Merkle root hash over all shreds in this slice.
@@ -118,12 +119,14 @@ impl Slice {
     pub const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
         let slot = any_shred.payload().slot;
         let slice_index = any_shred.payload().slice_index;
+        let parent_switched = any_shred.payload().parent_switched;
         let is_last = any_shred.payload().is_last_slice;
         let merkle_root = Some(any_shred.merkle_root);
         Self {
             slot,
             slice_index,
             is_last,
+            parent_switched,
             merkle_root,
             data,
         }
@@ -199,6 +202,7 @@ pub struct CodingShred(ShredPayload);
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
     pub(crate) slot: Slot,
+    pub(crate) parent_switched: bool,
     pub(crate) slice_index: usize,
     pub(crate) index_in_slice: usize,
     pub(crate) is_last_slice: bool,
@@ -338,6 +342,7 @@ impl Shredder for PetsShredder {
             slice.slot,
             slice.slice_index,
             slice.is_last,
+            slice.parent_switched,
             &buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
@@ -360,6 +365,7 @@ impl Shredder for PetsShredder {
             shreds[0].payload().slot,
             shreds[0].payload().slice_index,
             shreds[0].payload().is_last_slice,
+            shreds[0].payload().parent_switched,
             &buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
@@ -415,6 +421,7 @@ impl Shredder for AontShredder {
             slice.slot,
             slice.slice_index,
             slice.is_last,
+            slice.parent_switched,
             &buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
@@ -434,6 +441,7 @@ impl Shredder for AontShredder {
             shreds[0].payload().slot,
             shreds[0].payload().slice_index,
             shreds[0].payload().is_last_slice,
+            shreds[0].payload().parent_switched,
             &buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
@@ -518,6 +526,7 @@ mod tests {
             slice_index: 0,
             is_last: true,
             merkle_root: None,
+            parent_switched: false,
             data: buf,
         }
     }

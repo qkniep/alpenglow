@@ -98,6 +98,7 @@ mod tests {
             slot: 0,
             slice_index: 0,
             is_last: true,
+            parent_switched: false,
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };

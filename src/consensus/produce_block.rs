@@ -88,6 +88,7 @@ where
             slot,
             slice_index,
             is_last,
+            parent_switched: false,
             merkle_root: None,
             data,
         },
