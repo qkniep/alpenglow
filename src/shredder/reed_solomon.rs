@@ -5,7 +5,7 @@
 
 use reed_solomon_simd as rs;
 
-use crate::Slot;
+use crate::{BlockId, Slot};
 
 use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, Shred, ShredPayload, ShredPayloadType,
@@ -30,20 +30,30 @@ pub(super) fn reed_solomon_shred(
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
     let Slice {
+        parent,
         slot,
         slice_index,
         is_last,
         merkle_root: _,
         data,
     } = slice;
-    reed_solomon_shred_raw(*slot, *slice_index, *is_last, data, num_data, num_coding)
+    reed_solomon_shred_raw(
+        *parent,
+        *slot,
+        *slice_index,
+        *is_last,
+        data,
+        num_data,
+        num_coding,
+    )
 }
 
 /// Splits the given data into `num_data` data shreds, then generates
 /// `num_coding` additional Reed-Solomon coding shreds.
-/// The slice-specific fields `slot`, `slice_index`, and `is_last` are included
-/// in every `DataShred` or `CodingShred`.
+/// The slice-specific fields `parent`, `slot`, `slice_index`, and `is_last`
+/// are included in every `DataShred` or `CodingShred`.
 pub(super) fn reed_solomon_shred_raw(
+    parent: Option<BlockId>,
     slot: Slot,
     slice_index: usize,
     is_last_slice: bool,
@@ -61,6 +71,7 @@ pub(super) fn reed_solomon_shred_raw(
 
     // map raw data/coding parts to `DataShred` and `CodingShred`
     let payload_from_index_and_data = |index: usize, data: Vec<u8>| ShredPayload {
+        parent,
         slot,
         slice_index,
         index_in_slice: index,

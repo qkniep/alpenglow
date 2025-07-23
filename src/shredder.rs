@@ -24,9 +24,9 @@ use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::Slot;
 use crate::crypto::signature::{PublicKey, SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
+use crate::{BlockId, Slot};
 
 use reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
@@ -100,6 +100,7 @@ impl From<ReedSolomonShredError> for DeshredError {
 /// During deshredding, multiple shreds are turned into a slice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slice {
+    pub parent: Option<BlockId>,
     /// Slot number this slice is part of.
     pub slot: Slot,
     /// Index of the slice within its slot.
@@ -116,11 +117,13 @@ impl Slice {
     /// Creates a slice from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
     pub const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
+        let parent = any_shred.payload().parent;
         let slot = any_shred.payload().slot;
         let slice_index = any_shred.payload().slice_index;
         let is_last = any_shred.payload().is_last_slice;
         let merkle_root = Some(any_shred.merkle_root);
         Self {
+            parent,
             slot,
             slice_index,
             is_last,
@@ -198,6 +201,7 @@ pub struct CodingShred(ShredPayload);
 /// Base payload of a shred, regardless of its type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
+    pub(crate) parent: Option<BlockId>,
     pub(crate) slot: Slot,
     pub(crate) slice_index: usize,
     pub(crate) index_in_slice: usize,
@@ -335,6 +339,7 @@ impl Shredder for PetsShredder {
         }
 
         let (mut data, coding) = reed_solomon_shred_raw(
+            slice.parent,
             slice.slot,
             slice.slice_index,
             slice.is_last,
@@ -357,6 +362,7 @@ impl Shredder for PetsShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let (mut data, coding) = reed_solomon_shred_raw(
+            shreds[0].payload().parent,
             shreds[0].payload().slot,
             shreds[0].payload().slice_index,
             shreds[0].payload().is_last_slice,
@@ -412,6 +418,7 @@ impl Shredder for AontShredder {
         }
 
         let (data, coding) = reed_solomon_shred_raw(
+            slice.parent,
             slice.slot,
             slice.slice_index,
             slice.is_last,
@@ -431,6 +438,7 @@ impl Shredder for AontShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let (data, coding) = reed_solomon_shred_raw(
+            shreds[0].payload().parent,
             shreds[0].payload().slot,
             shreds[0].payload().slice_index,
             shreds[0].payload().is_last_slice,
@@ -514,6 +522,7 @@ mod tests {
         let mut buf = vec![0u8; MAX_DATA_PER_SLICE - padding];
         rng.fill_bytes(&mut buf);
         Slice {
+            parent: None,
             slot: 0,
             slice_index: 0,
             is_last: true,

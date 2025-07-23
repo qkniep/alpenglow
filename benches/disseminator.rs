@@ -28,6 +28,7 @@ fn turbine_tree(bencher: divan::Bencher) {
             let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut slice_data);
             let slice = Slice {
+                parent: None,
                 slot: 0,
                 slice_index: 0,
                 is_last: true,

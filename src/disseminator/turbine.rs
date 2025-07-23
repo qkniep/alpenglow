@@ -335,6 +335,7 @@ mod tests {
         let (sks, mut validators) = create_validator_info(10);
         let mut disseminators = create_turbine_instances(&mut validators).await;
         let slice = Slice {
+            parent: None,
             slot: 0,
             slice_index: 0,
             is_last: true,

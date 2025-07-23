@@ -95,6 +95,7 @@ mod tests {
     async fn dissemination() {
         let (sks, mut disseminators) = create_disseminator_instances(20, 5000);
         let slice = Slice {
+            parent: None,
             slot: 0,
             slice_index: 0,
             is_last: true,

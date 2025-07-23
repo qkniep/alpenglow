@@ -176,6 +176,7 @@ mod tests {
     async fn two_instances() {
         let (sks, mut rotors) = create_rotor_instances(2, 3000);
         let slice = Slice {
+            parent: None,
             slot: 0,
             slice_index: 0,
             is_last: true,
@@ -247,6 +248,7 @@ mod tests {
     async fn many_instances() {
         let (sks, mut rotors) = create_rotor_instances(10, 3100);
         let slice = Slice {
+            parent: None,
             slot: 0,
             slice_index: 0,
             is_last: true,

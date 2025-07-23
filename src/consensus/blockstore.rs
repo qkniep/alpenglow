@@ -266,6 +266,7 @@ mod tests {
             let mut buf = vec![0u8; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut buf);
             slices.push(Slice {
+                parent: None,
                 slot,
                 slice_index,
                 is_last: slice_index == num_slices - 1,
