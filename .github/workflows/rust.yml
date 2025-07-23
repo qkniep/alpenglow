@@ -41,7 +41,7 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
-          tool: nextest
+          tool: nextest,cargo-llvm-cov
 
       - name: Build
         run: cargo build --all-targets --verbose
@@ -51,3 +51,14 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -Dwarnings
+
+      - name: Collect coverage data
+        run: cargo llvm-cov --lcov --output-path lcov.info nextest
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
