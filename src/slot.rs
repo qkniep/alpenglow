@@ -63,11 +63,6 @@ impl Slot {
         Self(next_window * SLOTS_PER_WINDOW)
     }
 
-    pub fn last_slot_in_prev_window(&self) -> Self {
-        let window = self.0 / SLOTS_PER_WINDOW;
-        Self(window * SLOTS_PER_WINDOW - 1)
-    }
-
     pub fn is_start_of_window(&self) -> bool {
         self.0 % SLOTS_PER_WINDOW == 0
     }

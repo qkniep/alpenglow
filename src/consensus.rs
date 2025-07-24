@@ -135,7 +135,7 @@ async fn wait_for_first_slot(
             let handle = tokio::spawn(async move {
                 // PERF: These are burning a CPU. Can we use async here?
                 loop {
-                    let last_slot_in_prev_window = first_slot_in_window.last_slot_in_prev_window();
+                    let last_slot_in_prev_window = first_slot_in_window.prev();
                     if let Some(hash) = blockstore
                         .read()
                         .await
