@@ -45,7 +45,7 @@ impl<N: Network> All2All for RobustAll2All<N> {
     }
 
     async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
-        self.network.receive().await
+        self.network.receive::<NetworkMessage>().await
         // loop {
         //     let msg = self.network.receive().await;
         //     match msg {

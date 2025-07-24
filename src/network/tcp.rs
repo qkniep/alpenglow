@@ -14,7 +14,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use super::{Network, NetworkError, NetworkMessage};
+use super::{Network, NetworkError, NetworkMessage, SerializableMessage};
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
@@ -64,9 +64,9 @@ impl TcpNetwork {
 impl Network for TcpNetwork {
     type Address = SocketAddr;
 
-    async fn send(
+    async fn send<SM: SerializableMessage>(
         &self,
-        message: &NetworkMessage,
+        message: &SM,
         to: impl AsRef<str> + Send,
     ) -> Result<(), NetworkError> {
         let bytes = message.to_bytes();
@@ -84,7 +84,7 @@ impl Network for TcpNetwork {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive<SM: SerializableMessage>(&self) -> Result<SM, NetworkError> {
         loop {
             tokio::select! {
                 // accept new incoming connections
