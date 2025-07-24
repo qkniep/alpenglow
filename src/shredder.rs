@@ -514,7 +514,7 @@ mod tests {
         let mut buf = vec![0u8; MAX_DATA_PER_SLICE - padding];
         rng.fill_bytes(&mut buf);
         Slice {
-            slot: 0,
+            slot: Slot::new(0),
             slice_index: 0,
             is_last: true,
             merkle_root: None,

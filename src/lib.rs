@@ -13,6 +13,7 @@ pub mod logging;
 pub mod network;
 pub mod repair;
 pub mod shredder;
+pub mod slot;
 #[cfg(test)]
 pub mod test_utils;
 pub mod validator;
@@ -23,10 +24,9 @@ pub use all2all::All2All;
 pub use consensus::Alpenglow;
 use crypto::{Hash, aggsig, signature};
 pub use disseminator::Disseminator;
+pub use slot::Slot;
 pub use validator::Validator;
 
-/// Slot number type.
-pub type Slot = u64;
 /// Validator ID number type.
 pub type ValidatorId = u64;
 /// Validator stake type.

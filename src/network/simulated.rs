@@ -102,6 +102,7 @@ impl Network for SimulatedNetwork {
 mod tests {
     use super::*;
 
+    use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS,
@@ -151,7 +152,7 @@ mod tests {
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 4,
                 merkle_root: None,
@@ -212,7 +213,7 @@ mod tests {
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 999,
                 merkle_root: None,
@@ -273,7 +274,7 @@ mod tests {
             let mut data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 9999,
                 merkle_root: None,

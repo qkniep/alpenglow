@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use alpenglow::Slot;
 use alpenglow::consensus::Vote;
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::NetworkMessage;
@@ -22,7 +23,7 @@ fn serialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            NetworkMessage::Vote(Vote::new_notar(0, hash, &sk, 0))
+            NetworkMessage::Vote(Vote::new_notar(Slot::new(0), hash, &sk, 0))
         })
         .bench_values(|msg: NetworkMessage| msg.to_bytes());
 }
@@ -36,7 +37,7 @@ fn deserialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            let msg = NetworkMessage::Vote(Vote::new_notar(0, hash, &sk, 0));
+            let msg = NetworkMessage::Vote(Vote::new_notar(Slot::new(0), hash, &sk, 0));
             msg.to_bytes()
         })
         .bench_values(|bytes: Vec<u8>| NetworkMessage::from_bytes(&bytes));
@@ -52,7 +53,7 @@ fn serialize_slice(bencher: divan::Bencher) {
             let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut slice_data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
@@ -79,7 +80,7 @@ fn serialize_slice_into(bencher: divan::Bencher) {
             let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut slice_data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
@@ -110,7 +111,7 @@ fn deserialize_slice(bencher: divan::Bencher) {
             let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
             rng.fill_bytes(&mut slice_data);
             let slice = Slice {
-                slot: 0,
+                slot: Slot::new(0),
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
