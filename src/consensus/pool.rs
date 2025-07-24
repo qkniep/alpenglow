@@ -463,7 +463,6 @@ impl Pool {
 mod tests {
     use super::*;
 
-    use crate::consensus::SLOTS_PER_WINDOW;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::crypto::aggsig::SecretKey;
     use crate::slot::SLOTS_PER_WINDOW;
@@ -930,7 +929,10 @@ mod tests {
             let slot = Slot::new(last_slot.inner() + s);
             assert!(!pool.slot_states.contains_key(&slot));
         }
-        assert!(pool.slot_states.contains_key(&Slot::new(last_slot + 10)));
+        assert!(
+            pool.slot_states
+                .contains_key(&Slot::new(last_slot.inner() + 10))
+        );
     }
 
     #[tokio::test]
@@ -941,17 +943,17 @@ mod tests {
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // insert a notar vote from validator 0
-        let vote = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[0], 0);
         assert_eq!(pool.add_vote(vote).await, Ok(()));
 
         // insert a skip vote from validator 1
-        let vote = Vote::new_skip(0, &sks[1], 1);
+        let vote = Vote::new_skip(Slot::new(0), &sks[1], 1);
         assert_eq!(pool.add_vote(vote).await, Ok(()));
 
         // inserting same votes again should fail
-        let vote = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[0], 0);
         assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
-        let vote = Vote::new_skip(0, &sks[1], 1);
+        let vote = Vote::new_skip(Slot::new(0), &sks[1], 1);
         assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
     }
 
@@ -965,7 +967,12 @@ mod tests {
         // insert a notar cert for slot 0
         let mut votes = Vec::new();
         for v in 0..11 {
-            votes.push(Vote::new_notar(0, Hash::default(), &sks[v as usize], v));
+            votes.push(Vote::new_notar(
+                Slot::new(0),
+                Hash::default(),
+                &sks[v as usize],
+                v,
+            ));
         }
         let notar_cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
@@ -973,7 +980,7 @@ mod tests {
         // insert a skip cert for slot 1
         let mut votes = Vec::new();
         for v in 0..11 {
-            votes.push(Vote::new_skip(0, &sks[v as usize], v));
+            votes.push(Vote::new_skip(Slot::new(1), &sks[v as usize], v));
         }
         let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
