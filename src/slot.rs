@@ -2,8 +2,6 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ValidatorInfo;
-
 /// Number of slots in each leader window.
 ///
 /// NOTE: this is public to support testing and one function additional function.
@@ -23,23 +21,28 @@ impl Slot {
         Self(slot)
     }
 
+    /// Returns the inner u64.
     pub fn inner(self) -> u64 {
         self.0
     }
 
+    /// Returns an infinite iterator that yields the first slot in each window.
     pub fn windows() -> impl Iterator<Item = Self> {
         (0..).map(Self)
     }
 
+    /// Returns the representation in big endian.
     pub fn to_be_bytes(&self) -> [u8; 8] {
         self.0.to_be_bytes()
     }
 
+    /// Returns an iterator that yields all the slots in the window `self` is in.
     pub fn slots_in_window(self) -> impl Iterator<Item = Slot> {
         let start = self.first_slot_in_window();
         (start.0..start.0 + SLOTS_PER_WINDOW).map(Self)
     }
 
+    /// Returns an infinite iterator that yields all the slots after `self`.
     pub fn future_slots(&self) -> impl Iterator<Item = Self> {
         (self.0 + 1..).map(Self)
     }
@@ -57,30 +60,19 @@ impl Slot {
         Self(next_window * SLOTS_PER_WINDOW - 1)
     }
 
-    pub fn first_slot_in_next_window(&self) -> Self {
-        let window = self.0 / SLOTS_PER_WINDOW;
-        let next_window = window + 1;
-        Self(next_window * SLOTS_PER_WINDOW)
-    }
-
+    /// Returns true if `self` is the first slot in the window.
     pub fn is_start_of_window(&self) -> bool {
         self.0 % SLOTS_PER_WINDOW == 0
     }
 
+    /// Returns the next slot after `self`.
     pub fn next(&self) -> Self {
         Self(self.0 + 1)
     }
 
+    /// Returns the previous slot before `self`.
     pub fn prev(&self) -> Self {
         Self(self.0 - 1)
-    }
-
-    /// Returns which validator should be the leader for the window this slot is in.
-    pub fn leader<'a>(&self, validators: &'a [ValidatorInfo]) -> &'a ValidatorInfo {
-        let slot = self.0;
-        let window = (slot / SLOTS_PER_WINDOW) as usize;
-        let ind = window % validators.len();
-        &validators[ind]
     }
 
     /// Returns true if this slot is part of the genesis window.
