@@ -24,7 +24,7 @@ impl Slot {
     }
 
     pub fn windows() -> impl Iterator<Item = Self> {
-        (0..).map(|i| Self(i * SLOTS_PER_WINDOW))
+        (0..).map(Self)
     }
 
     pub fn to_be_bytes(&self) -> [u8; 8] {
@@ -33,11 +33,11 @@ impl Slot {
 
     pub fn slots_in_window(self) -> impl Iterator<Item = Slot> {
         let start = self.first_slot_in_window();
-        (start.0..start.0 + SLOTS_PER_WINDOW).map(|s| Self::new(s))
+        (start.0..start.0 + SLOTS_PER_WINDOW).map(Self)
     }
 
     pub fn future_slots(&self) -> impl Iterator<Item = Self> {
-        (self.0 + 1..).map(|s| Self(s))
+        (self.0 + 1..).map(Self)
     }
 
     /// Returns the first slot in the window this slot belongs to.
