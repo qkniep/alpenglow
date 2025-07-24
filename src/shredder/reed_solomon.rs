@@ -5,11 +5,9 @@
 
 use reed_solomon_simd as rs;
 
-use crate::Slot;
-
 use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, Shred, ShredPayload, ShredPayloadType,
-    Slice, TOTAL_SHREDS,
+    SliceHeader, SlicePayload, TOTAL_SHREDS,
 };
 
 pub(super) enum ReedSolomonShredError {
@@ -25,50 +23,26 @@ pub(super) enum ReedSolomonDeshredError {
 /// Splits the given slice into `num_data` data shreds, then generates
 /// `num_coding` additional Reed-Solomon coding shreds.
 pub(super) fn reed_solomon_shred(
-    slice: &Slice,
+    header: SliceHeader,
+    payload: &SlicePayload,
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
-    let Slice {
-        slot,
-        slice_index,
-        is_last,
-        merkle_root: _,
-        data,
-    } = slice;
-    reed_solomon_shred_raw(*slot, *slice_index, *is_last, data, num_data, num_coding)
-}
-
-/// Splits the given data into `num_data` data shreds, then generates
-/// `num_coding` additional Reed-Solomon coding shreds.
-/// The slice-specific fields `slot`, `slice_index`, and `is_last` are included
-/// in every `DataShred` or `CodingShred`.
-pub(super) fn reed_solomon_shred_raw(
-    slot: Slot,
-    slice_index: usize,
-    is_last_slice: bool,
-    data: &[u8],
-    num_data: usize,
-    num_coding: usize,
-) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
-    if data.len() > MAX_DATA_PER_SLICE {
+    if payload.len() > MAX_DATA_PER_SLICE {
         return Err(ReedSolomonShredError::TooMuchData);
     }
 
-    let shred_bytes = data.len() / DATA_SHREDS;
-    let data_parts = data.chunks(shred_bytes);
-    let coding_parts = rs::encode(num_data, num_coding, data_parts.clone()).unwrap();
+    let shred_bytes = payload.len() / DATA_SHREDS;
+    let coding_parts = rs::encode(num_data, num_coding, payload.chunks(shred_bytes)).unwrap();
 
     // map raw data/coding parts to `DataShred` and `CodingShred`
-    let payload_from_index_and_data = |index: usize, data: Vec<u8>| ShredPayload {
-        slot,
-        slice_index,
-        index_in_slice: index,
-        is_last_slice,
+    let payload_from_index_and_data = |index_in_slice: usize, data: Vec<u8>| ShredPayload {
+        header: header.clone(),
+        index_in_slice,
         data: data.into(),
     };
-    let data_shreds = data_parts
-        .into_iter()
+    let data_shreds = payload
+        .chunks(shred_bytes)
         .enumerate()
         .map(|(i, p)| DataShred(payload_from_index_and_data(i, p.to_vec())))
         .collect();
