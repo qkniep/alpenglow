@@ -37,7 +37,7 @@ where
         Either::Left((parent_slot, parent_hash, slice_index)) => {
             let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
             // pack parent information in first slice
-            data.extend_from_slice(&parent_slot.to_be_bytes());
+            data.extend_from_slice(&parent_slot.inner().to_be_bytes());
             data.extend_from_slice(&parent_hash);
             let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
             assert!(slice_capacity_left >= MAX_TRANSACTION_SIZE);

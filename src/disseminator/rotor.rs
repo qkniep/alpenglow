@@ -98,7 +98,13 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     }
 
     fn sample_relay(&self, slot: Slot, shred: usize) -> ValidatorId {
-        let seed = [slot.to_be_bytes(), shred.to_be_bytes(), [0; 8], [0; 8]].concat();
+        let seed = [
+            slot.inner().to_be_bytes(),
+            shred.to_be_bytes(),
+            [0; 8],
+            [0; 8],
+        ]
+        .concat();
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
         self.sampler.sample(&mut rng)
     }

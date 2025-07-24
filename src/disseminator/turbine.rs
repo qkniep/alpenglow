@@ -164,7 +164,7 @@ impl TurbineTree {
         // seed the RNG
         let seed = [
             b"ALPENGLOWTURBINE",
-            &slot.to_be_bytes()[..],
+            &slot.inner().to_be_bytes()[..],
             &shred.to_be_bytes()[..],
         ]
         .concat();

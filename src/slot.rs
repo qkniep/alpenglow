@@ -31,11 +31,6 @@ impl Slot {
         (0..).map(Self)
     }
 
-    /// Returns the representation in big endian.
-    pub fn to_be_bytes(&self) -> [u8; 8] {
-        self.0.to_be_bytes()
-    }
-
     /// Returns an iterator that yields all the slots in the window `self` is in.
     pub fn slots_in_window(self) -> impl Iterator<Item = Slot> {
         let start = self.first_slot_in_window();
