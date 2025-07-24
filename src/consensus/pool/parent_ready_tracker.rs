@@ -96,12 +96,7 @@ impl ParentReadyTracker {
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
 
-        let mut slots = slot
-            .slots_in_window()
-            .filter(|s| *s <= slot)
-            .collect::<Vec<_>>();
-        slots.reverse();
-        for s in slots {
+        for s in slot.slots_in_window().filter(|s| *s <= slot).rev() {
             let state = self.0.entry(s).or_default();
             if s < slot {
                 for nf in &state.notar_fallbacks {

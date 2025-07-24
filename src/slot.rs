@@ -31,8 +31,9 @@ impl Slot {
         (0..).map(Self)
     }
 
-    /// Returns an iterator that yields all the slots in the window `self` is in.
-    pub fn slots_in_window(self) -> impl Iterator<Item = Slot> {
+    /// Returns a double ended iterator that yields all the slots in the
+    /// window `self` is in.
+    pub fn slots_in_window(self) -> impl DoubleEndedIterator<Item = Slot> {
         let start = self.first_slot_in_window();
         (start.0..start.0 + SLOTS_PER_WINDOW).map(Self)
     }
