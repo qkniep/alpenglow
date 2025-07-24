@@ -253,7 +253,9 @@ impl BlockData {
 
         // reconstruct block header
         let first_slice = self.slices.get(&0).unwrap();
-        let parent_slot = u64::from_be_bytes(first_slice.data[0..8].try_into().unwrap());
+        let parent_slot = Slot::new(u64::from_be_bytes(
+            first_slice.data[0..8].try_into().unwrap(),
+        ));
         let parent_hash = first_slice.data[8..40].try_into().unwrap();
         // TODO: reconstruct actual block content
         let block = Block {

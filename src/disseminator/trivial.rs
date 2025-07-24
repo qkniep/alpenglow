@@ -53,6 +53,7 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
 mod tests {
     use super::*;
 
+    use crate::Slot;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
@@ -95,7 +96,7 @@ mod tests {
     async fn dissemination() {
         let (sks, mut disseminators) = create_disseminator_instances(20, 5000);
         let slice = Slice {
-            slot: 0,
+            slot: Slot::new(0),
             slice_index: 0,
             is_last: true,
             merkle_root: None,

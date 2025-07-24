@@ -164,7 +164,7 @@ impl TurbineTree {
         // seed the RNG
         let seed = [
             b"ALPENGLOWTURBINE",
-            &slot.to_be_bytes()[..],
+            &slot.inner().to_be_bytes()[..],
             &shred.to_be_bytes()[..],
         ]
         .concat();
@@ -281,7 +281,7 @@ mod tests {
         let mut trees = Vec::new();
         for v in 0..validators.len() {
             let v = v as ValidatorId;
-            let tree = TurbineTree::new(&validators, 200, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             trees.push((v, tree));
         }
 
@@ -317,15 +317,15 @@ mod tests {
         let (_, validators) = create_validator_info(500);
         for v in 0..validators.len() {
             let v = v as ValidatorId;
-            let tree = TurbineTree::new(&validators, 200, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 200);
-            let tree = TurbineTree::new(&validators, 1, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 1, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 1);
-            let tree = TurbineTree::new(&validators, 2, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 2, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 2);
-            let tree = TurbineTree::new(&validators, 400, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 400, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 400);
-            let tree = TurbineTree::new(&validators, 1000, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 1000, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 500);
         }
     }
@@ -335,7 +335,7 @@ mod tests {
         let (sks, mut validators) = create_validator_info(10);
         let mut disseminators = create_turbine_instances(&mut validators).await;
         let slice = Slice {
-            slot: 0,
+            slot: Slot::new(0),
             slice_index: 0,
             is_last: true,
             merkle_root: None,

@@ -51,10 +51,6 @@ pub use pool::{AddVoteError, Pool};
 pub use vote::Vote;
 use votor::Votor;
 
-/// Number of slots in each leader window.
-pub const SLOTS_PER_WINDOW: u64 = 4;
-/// Number of slots in each epoch.
-pub const SLOTS_PER_EPOCH: u64 = 18_000;
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the block.
@@ -106,15 +102,13 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
 async fn wait_for_first_slot(
     pool: Arc<RwLock<Pool>>,
     blockstore: Arc<RwLock<Blockstore>>,
-    window: Slot,
+    first_slot_in_window: Slot,
 ) -> Option<(Slot, Hash, bool)> {
-    // genesis
-    if window == 0 {
-        return Some((0, Hash::default(), false));
+    if first_slot_in_window.is_genesis_window() {
+        return Some((Slot::new(0), Hash::default(), false));
     }
 
-    let first_slot_in_window = window * SLOTS_PER_WINDOW;
-    let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
+    let last_slot_in_window = first_slot_in_window.last_slot_in_window();
 
     // if already have parent ready, return it, otherwise get a channel to await on
     let rx = {
@@ -141,18 +135,18 @@ async fn wait_for_first_slot(
             let handle = tokio::spawn(async move {
                 // PERF: These are burning a CPU. Can we use async here?
                 loop {
+                    let last_slot_in_prev_window = first_slot_in_window.prev();
                     if let Some(hash) = blockstore
                         .read()
                         .await
-                        .canonical_block_hash(first_slot_in_window - 1)
+                        .canonical_block_hash(last_slot_in_prev_window)
                     {
-                        let slot = first_slot_in_window - 1;
                         debug!(
                             "optimistically building block on parent {} in slot {}",
                             &hex::encode(hash)[..8],
-                            slot
+                            last_slot_in_prev_window,
                         );
-                        return Some((slot, hash, false));
+                        return Some((last_slot_in_prev_window, hash, false));
                     }
                     if pool.read().await.finalized_slot() >= last_slot_in_window {
                         warn!(
@@ -313,7 +307,7 @@ where
     /// Keeps track of when consensus progresses, i.e., [`Pool`] finalizes new blocks.
     /// Triggers standstill recovery if no progress was detected for a long time.
     async fn standstill_loop(self: &Arc<Self>) -> Result<()> {
-        let mut finalized_slot = 0;
+        let mut finalized_slot = Slot::new(0);
         let mut last_progress = Instant::now();
         loop {
             let slot = self.pool.read().await.finalized_slot();
@@ -333,13 +327,12 @@ where
     /// Once all previous blocks have been notarized or skipped and the next
     /// slot belongs to our leader window, we will produce a block.
     async fn block_production_loop(&self) -> Result<()> {
-        for window in 0.. {
+        for first_slot_in_window in Slot::windows() {
             if self.cancel_token.is_cancelled() {
                 break;
             }
 
-            let first_slot_in_window = window * SLOTS_PER_WINDOW;
-            let last_slot_in_window = (window + 1) * SLOTS_PER_WINDOW - 1;
+            let last_slot_in_window = first_slot_in_window.last_slot_in_window();
 
             // don't do anything if we are not the leader
             let leader = self.epoch_info.leader(first_slot_in_window);
@@ -354,17 +347,21 @@ where
                 continue;
             }
 
-            let (parent, parent_hash, parent_ready) =
-                match wait_for_first_slot(self.pool.clone(), self.blockstore.clone(), window).await
-                {
-                    Some(res) => res,
-                    None => continue,
-                };
+            let (parent, parent_hash, parent_ready) = match wait_for_first_slot(
+                self.pool.clone(),
+                self.blockstore.clone(),
+                first_slot_in_window,
+            )
+            .await
+            {
+                Some(res) => res,
+                None => continue,
+            };
 
             // produce blocks for all slots in window
             let mut block = parent;
             let mut block_hash = parent_hash;
-            for slot in first_slot_in_window..=last_slot_in_window {
+            for slot in first_slot_in_window.slots_in_window() {
                 self.produce_block(slot, (block, block_hash), parent_ready)
                     .await?;
 
