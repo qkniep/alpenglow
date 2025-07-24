@@ -597,36 +597,35 @@ mod tests {
         let (sks, info) = create_signers(100);
 
         // notar cert
-        let votes: Vec<Vote> = create_votes(VoteKind::Notar(Slot::new(0), Hash::default()), &sks);
+        let votes = create_votes(VoteKind::Notar(Slot::new(0), Hash::default()), &sks);
         let res = NotarCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::Notar(res.unwrap());
         check_full_cert(cert, &info);
 
         // notar-fallback cert
-        let votes: Vec<Vote> =
-            create_votes(VoteKind::NotarFallback(Slot::new(0), Hash::default()), &sks);
+        let votes = create_votes(VoteKind::NotarFallback(Slot::new(0), Hash::default()), &sks);
         let res = NotarFallbackCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::NotarFallback(res.unwrap());
         check_full_cert(cert, &info);
 
         // skip cert
-        let votes: Vec<Vote> = create_votes(VoteKind::Skip(Slot::new(0)), &sks);
+        let votes = create_votes(VoteKind::Skip(Slot::new(0)), &sks);
         let res = SkipCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::Skip(res.unwrap());
         check_full_cert(cert, &info);
 
         // fast finalization cert
-        let votes: Vec<Vote> = create_votes(VoteKind::Notar(Slot::new(0), Hash::default()), &sks);
+        let votes = create_votes(VoteKind::Notar(Slot::new(0), Hash::default()), &sks);
         let res = FastFinalCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::FastFinal(res.unwrap());
         check_full_cert(cert, &info);
 
         // finalization cert
-        let votes: Vec<Vote> = create_votes(VoteKind::Final(Slot::new(0)), &sks);
+        let votes = create_votes(VoteKind::Final(Slot::new(0)), &sks);
         let res = FinalCert::try_new(&votes, &info);
         assert!(res.is_ok());
         let cert = Cert::Final(res.unwrap());

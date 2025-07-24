@@ -9,6 +9,10 @@ use crate::ValidatorInfo;
 /// NOTE: this is public to support testing and one function additional function.
 /// Consider hiding it.
 pub const SLOTS_PER_WINDOW: u64 = 4;
+/// Number of slots in each epoch.
+///
+/// NOTE: consider hiding this definition.
+pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
 #[derive(Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, PartialEq, Eq, Hash)]

@@ -19,11 +19,12 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
 use crate::crypto::Hash;
+use crate::slot::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
-use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, Vote};
+use super::{Cert, EpochInfo, Vote};
 
 use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
@@ -467,7 +468,6 @@ mod tests {
     use crate::slot::SLOTS_PER_WINDOW;
     use crate::test_utils::generate_validators;
 
-    use static_assertions::const_assert;
     use tokio::sync::mpsc;
 
     #[tokio::test]
@@ -636,20 +636,17 @@ mod tests {
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
-        for slot in 0..SLOTS_PER_WINDOW {
+        let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
-        assert!(pool.is_parent_ready(
-            Slot::new(SLOTS_PER_WINDOW),
-            (
-                Slot::new(SLOTS_PER_WINDOW - 1),
-                [SLOTS_PER_WINDOW as u8 - 1; 32]
-            )
-        ));
+        let slot = *window.last().unwrap();
+        let next = slot.next();
+        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32])));
         drop(votor_rx);
         drop(repair_rx);
     }
@@ -662,25 +659,22 @@ mod tests {
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // receive mixed notar & notar-fallback votes
-        for slot in Slot::new(0).slots_in_window() {
-            assert!(!pool.is_parent_ready(slot.next(), (slot, [slot.inner() as u8; 32])));
+        let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        for slot in window.iter() {
+            assert!(!pool.is_parent_ready(slot.next(), (*slot, [slot.inner() as u8; 32])));
             for v in 0..4 {
-                let vote = Vote::new_notar(slot, [slot.inner() as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
             for v in 4..7 {
                 let vote =
-                    Vote::new_notar_fallback(slot, [slot.inner() as u8; 32], &sks[v as usize], v);
+                    Vote::new_notar_fallback(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
-        assert!(pool.is_parent_ready(
-            Slot::new(SLOTS_PER_WINDOW),
-            (
-                Slot::new(SLOTS_PER_WINDOW - 1),
-                [SLOTS_PER_WINDOW as u8 - 1; 32]
-            )
-        ));
+        let slot = *window.last().unwrap();
+        let next = slot.next();
+        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32])));
         drop(votor_rx);
         drop(repair_rx);
     }
@@ -693,26 +687,32 @@ mod tests {
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // first see skip votes for later slots
-        const_assert!(SLOTS_PER_WINDOW > 2);
-        for slot in 2..SLOTS_PER_WINDOW {
+        let mut window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        assert!(window.len() > 2);
+        window.remove(0);
+        window.remove(0);
+        for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_skip(Slot::new(slot), &sks[v as usize], v);
+                let vote = Vote::new_skip(*slot, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
+
+        let next = window.last().unwrap().next();
         // no blocks are valid parents yet
-        assert!(pool.parents_ready(Slot::new(SLOTS_PER_WINDOW)).is_empty());
+        assert!(pool.parents_ready(next).is_empty());
 
         // then see notarization votes for slot 1
+        let slot_1 = Slot::new(1);
         for v in 0..7 {
-            let vote = Vote::new_notar(Slot::new(1), [1; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot_1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
         // branch can only be certified once we saw votes other slots in window
-        assert!(pool.is_parent_ready(Slot::new(SLOTS_PER_WINDOW), (Slot::new(1), [1; 32])));
+        assert!(pool.is_parent_ready(next, (slot_1, [1; 32])));
         // no other blocks are valid parents
-        assert_eq!(pool.parents_ready(Slot::new(SLOTS_PER_WINDOW)).len(), 1);
+        assert_eq!(pool.parents_ready(next).len(), 1);
         drop(votor_rx);
         drop(repair_rx);
     }
@@ -725,26 +725,32 @@ mod tests {
         let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
 
         // first see skip votes for later slots
-        for slot in 2..SLOTS_PER_WINDOW {
-            let slot = Slot::new(slot);
+        let mut window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        assert!(window.len() > 2);
+        window.remove(0);
+        window.remove(0);
+        for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_skip(slot, &sks[v as usize], v);
+                let vote = Vote::new_skip(*slot, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
+
         // no blocks are valid parents yet
-        assert!(pool.parents_ready(Slot::new(SLOTS_PER_WINDOW)).is_empty());
+        let next = window.last().unwrap().next();
+        assert!(pool.parents_ready(next).is_empty());
 
         // then receive notarization cert for slot 1
+        let slot_1 = Slot::new(1);
         let mut votes = Vec::new();
         for v in 0..7 {
-            votes.push(Vote::new_notar(Slot::new(1), [1; 32], &sks[v as usize], v));
+            votes.push(Vote::new_notar(slot_1, [1; 32], &sks[v as usize], v));
         }
         let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
-        assert!(pool.is_parent_ready(Slot::new(SLOTS_PER_WINDOW), (Slot::new(1), [1; 32])));
+        assert!(pool.is_parent_ready(next, (slot_1, [1; 32])));
         drop(votor_rx);
         drop(repair_rx);
     }

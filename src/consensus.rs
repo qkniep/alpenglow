@@ -51,8 +51,6 @@ pub use pool::{AddVoteError, Pool};
 pub use vote::Vote;
 use votor::Votor;
 
-/// Number of slots in each epoch.
-pub const SLOTS_PER_EPOCH: u64 = 18_000;
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the block.
