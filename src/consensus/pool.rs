@@ -496,10 +496,7 @@ mod tests {
         assert!(!pool.is_notarized(Slot::new(0)));
         for v in 0..11 {
             let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[v as usize], v);
-            match pool.add_vote(vote).await {
-                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
-                Err(e) => panic!("unexpected error: {e}"),
-            }
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_notarized(Slot::new(0)));
 
@@ -531,10 +528,7 @@ mod tests {
         assert!(!pool.is_skip_certified(Slot::new(0)));
         for v in 0..11 {
             let vote = Vote::new_skip(Slot::new(0), &sks[v as usize], v);
-            match pool.add_vote(vote).await {
-                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
-                Err(e) => panic!("unexpected error: {e}"),
-            }
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_skip_certified(Slot::new(0)));
 
@@ -566,10 +560,7 @@ mod tests {
         assert!(!pool.is_finalized(Slot::new(0)));
         for v in 0..11 {
             let vote = Vote::new_final(Slot::new(0), &sks[v as usize], v);
-            match pool.add_vote(vote).await {
-                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
-                Err(e) => panic!("unexpected error: {e}"),
-            }
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(Slot::new(0)));
         assert!(pool.highest_finalized_slot == Slot::new(0));
@@ -780,10 +771,7 @@ mod tests {
         for slot in 0..SLOTS_PER_WINDOW - 1 {
             for v in 0..7 {
                 let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
-                match pool.add_vote(vote).await {
-                    Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
-                    Err(e) => panic!("unexpected error: {e}"),
-                }
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
@@ -881,10 +869,7 @@ mod tests {
             assert!(!pool.is_finalized(slot));
             for v in 0..11 {
                 let vote = Vote::new_final(slot, &sks[v as usize], v);
-                match pool.add_vote(vote).await {
-                    Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
-                    Err(e) => panic!("unexpected error: {e}"),
-                }
+                assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
             assert!(pool.is_finalized(slot));
         }
@@ -1007,10 +992,7 @@ mod tests {
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         for v in 0..11 {
             let vote = Vote::new_notar(slot, Hash::default(), &sks[v as usize], v);
-            match pool.add_vote(vote).await {
-                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
-                Err(e) => panic!("unexpected error: {e}"),
-            }
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert_eq!(pool.highest_finalized_slot, slot);
 
