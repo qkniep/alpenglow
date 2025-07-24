@@ -463,7 +463,7 @@ mod tests {
     use super::*;
 
     use crate::consensus::SLOTS_PER_WINDOW;
-    use crate::consensus::cert::NotarCert;
+    use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::crypto::aggsig::SecretKey;
     use crate::test_utils::generate_validators;
 
@@ -498,7 +498,10 @@ mod tests {
         assert!(!pool.is_notarized(0));
         for v in 0..11 {
             let vote = Vote::new_notar(0, Hash::default(), &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
+            match pool.add_vote(vote).await {
+                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
+                Err(e) => panic!("unexpected error: {e}"),
+            }
         }
         assert!(pool.is_notarized(0));
 
@@ -532,7 +535,10 @@ mod tests {
         assert!(!pool.is_skip_certified(0));
         for v in 0..11 {
             let vote = Vote::new_skip(0, &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
+            match pool.add_vote(vote).await {
+                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
+                Err(e) => panic!("unexpected error: {e}"),
+            }
         }
         assert!(pool.is_skip_certified(0));
 
@@ -566,7 +572,10 @@ mod tests {
         assert!(!pool.is_finalized(0));
         for v in 0..11 {
             let vote = Vote::new_final(0, &sks[v as usize], v);
-            assert_eq!(pool.add_vote(vote).await, Ok(()));
+            match pool.add_vote(vote).await {
+                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
+                Err(e) => panic!("unexpected error: {e}"),
+            }
         }
         assert!(pool.is_finalized(0));
         assert!(pool.highest_finalized_slot == 0);
@@ -774,7 +783,10 @@ mod tests {
         for slot in 0..SLOTS_PER_WINDOW - 1 {
             for v in 0..7 {
                 let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
-                assert_eq!(pool.add_vote(vote).await, Ok(()));
+                match pool.add_vote(vote).await {
+                    Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
+                    Err(e) => panic!("unexpected error: {e}"),
+                }
             }
         }
 
@@ -863,12 +875,15 @@ mod tests {
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
-        // all nodes vote finalize on 100 leader windows
+        // all nodes vote finalize on 3 leader windows
         for slot in 0..3 * SLOTS_PER_WINDOW {
             assert!(!pool.is_finalized(slot));
             for v in 0..11 {
                 let vote = Vote::new_final(slot, &sks[v as usize], v);
-                assert_eq!(pool.add_vote(vote).await, Ok(()));
+                match pool.add_vote(vote).await {
+                    Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
+                    Err(e) => panic!("unexpected error: {e}"),
+                }
             }
             assert!(pool.is_finalized(slot));
         }
@@ -913,6 +928,159 @@ mod tests {
             assert!(!pool.slot_states.contains_key(&slot));
         }
         assert!(pool.slot_states.contains_key(&(last_slot + 10)));
+
+        drop(votor_rx);
+        drop(repair_rx);
+    }
+
+    #[tokio::test]
+    async fn duplicate_votes() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, votor_rx) = mpsc::channel(1024);
+        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
+
+        // insert a notar vote from validator 0
+        let vote = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        assert_eq!(pool.add_vote(vote).await, Ok(()));
+
+        // insert a skip vote from validator 1
+        let vote = Vote::new_skip(0, &sks[1], 1);
+        assert_eq!(pool.add_vote(vote).await, Ok(()));
+
+        // inserting same votes again should fail
+        let vote = Vote::new_notar(0, Hash::default(), &sks[0], 0);
+        assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
+        let vote = Vote::new_skip(0, &sks[1], 1);
+        assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
+
+        drop(votor_rx);
+        drop(repair_rx);
+    }
+
+    #[tokio::test]
+    async fn duplicate_certs() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, votor_rx) = mpsc::channel(1024);
+        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
+
+        // insert a notar cert for slot 0
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_notar(0, Hash::default(), &sks[v as usize], v));
+        }
+        let notar_cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
+
+        // insert a skip cert for slot 1
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_skip(0, &sks[v as usize], v));
+        }
+        let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
+
+        // inserting same certs again should fail
+        assert_eq!(
+            pool.add_cert(Cert::Notar(notar_cert)).await,
+            Err(AddCertError::Duplicate)
+        );
+        assert_eq!(
+            pool.add_cert(Cert::Skip(skip_cert)).await,
+            Err(AddCertError::Duplicate)
+        );
+
+        drop(votor_rx);
+        drop(repair_rx);
+    }
+
+    #[tokio::test]
+    async fn out_of_bounds_votes() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, votor_rx) = mpsc::channel(1024);
+        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
+
+        // all nodes vote finalize last slot of 3rd leader windows
+        let slot = 3 * SLOTS_PER_WINDOW - 1;
+        for v in 0..11 {
+            let vote = Vote::new_notar(slot, Hash::default(), &sks[v as usize], v);
+            match pool.add_vote(vote).await {
+                Ok(()) | Err(AddVoteError::SlotOutOfBounds) => {}
+                Err(e) => panic!("unexpected error: {e}"),
+            }
+        }
+        assert_eq!(pool.highest_finalized_slot, slot);
+
+        // dismiss old votes
+        for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
+            for v in 0..11 {
+                let vote = Vote::new_final(slot, &sks[v as usize], v);
+                assert_eq!(
+                    pool.add_vote(vote).await,
+                    Err(AddVoteError::SlotOutOfBounds)
+                );
+            }
+        }
+
+        // dismiss far-in-the-future vote
+        let slot = 5 * SLOTS_PER_EPOCH;
+        for v in 0..11 {
+            let vote = Vote::new_final(slot, &sks[v as usize], v);
+            assert_eq!(
+                pool.add_vote(vote).await,
+                Err(AddVoteError::SlotOutOfBounds)
+            );
+        }
+
+        drop(votor_rx);
+        drop(repair_rx);
+    }
+
+    #[tokio::test]
+    async fn out_of_bounds_certs() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, votor_rx) = mpsc::channel(1024);
+        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
+
+        // insert a notar cert for last slot of 3rd leader window
+        let slot = 3 * SLOTS_PER_WINDOW - 1;
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_notar(slot, Hash::default(), &sks[v as usize], v));
+        }
+        let ff_cert = FastFinalCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(
+            pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
+            Ok(())
+        );
+
+        // dismiss old certs
+        for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
+            let mut votes = Vec::new();
+            for v in 0..11 {
+                votes.push(Vote::new_skip(slot, &sks[v as usize], v));
+            }
+            let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+            assert_eq!(
+                pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+                Err(AddCertError::SlotOutOfBounds)
+            );
+        }
+
+        // dismiss far-in-the-future certs
+        let slot = 3 * SLOTS_PER_EPOCH;
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_skip(slot, &sks[v as usize], v));
+        }
+        let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(
+            pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+            Err(AddCertError::SlotOutOfBounds)
+        );
 
         drop(votor_rx);
         drop(repair_rx);
