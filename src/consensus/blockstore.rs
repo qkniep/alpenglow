@@ -80,7 +80,7 @@ impl Blockstore {
         &mut self,
         shred: Shred,
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
-        let slot = shred.payload().slot;
+        let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
             .slot_data_mut(slot)
@@ -97,7 +97,7 @@ impl Blockstore {
         hash: Hash,
         shred: Shred,
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
-        let slot = shred.payload().slot;
+        let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
             .slot_data_mut(slot)

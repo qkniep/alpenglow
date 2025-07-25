@@ -175,8 +175,9 @@ impl<N: Network> Repair<N> {
                 let RepairRequest::Shred(_, _, slice, index) = req else {
                     return;
                 };
-                if shred.payload().slot != slot
-                    || shred.payload().slice_index == slice
+                let slice_header = &shred.payload().header;
+                if slice_header.slot != slot
+                    || slice_header.slice_index == slice
                     || shred.payload().index_in_slice == index
                 {
                     return;

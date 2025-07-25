@@ -30,7 +30,6 @@ use crate::crypto::{Hash, MerkleTree, hash};
 
 use reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
-    reed_solomon_shred_raw,
 };
 
 /// Number of data shreds the payload of a slice is split into.
@@ -116,9 +115,11 @@ impl Slice {
     /// Creates a slice from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
     pub const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
-        let slot = any_shred.payload().slot;
-        let slice_index = any_shred.payload().slice_index;
-        let is_last = any_shred.payload().is_last_slice;
+        let SliceHeader {
+            slot,
+            slice_index,
+            is_last,
+        } = any_shred.payload().header;
         let merkle_root = Some(any_shred.merkle_root);
         Self {
             slot,
@@ -127,6 +128,46 @@ impl Slice {
             merkle_root,
             data,
         }
+    }
+
+    fn deconstruct_slice(self) -> (SliceHeader, SlicePayload) {
+        let Slice {
+            slot,
+            slice_index,
+            is_last,
+            merkle_root: _,
+            data,
+        } = self;
+        (
+            SliceHeader {
+                slot,
+                slice_index,
+                is_last,
+            },
+            SlicePayload { data },
+        )
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SliceHeader {
+    pub slot: Slot,
+    pub slice_index: usize,
+    pub is_last: bool,
+}
+
+struct SlicePayload {
+    data: Vec<u8>,
+}
+
+impl SlicePayload {
+    fn len(&self) -> usize {
+        let SlicePayload { data } = self;
+        data.len()
+    }
+
+    fn chunks(&self, chunk_size: usize) -> impl Iterator<Item = &[u8]> {
+        self.data.chunks(chunk_size)
     }
 }
 
@@ -198,10 +239,8 @@ pub struct CodingShred(ShredPayload);
 /// Base payload of a shred, regardless of its type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
-    pub(crate) slot: Slot,
-    pub(crate) slice_index: usize,
+    pub(crate) header: SliceHeader,
     pub(crate) index_in_slice: usize,
-    pub(crate) is_last_slice: bool,
     pub(crate) data: bytes::Bytes,
 }
 
@@ -209,7 +248,7 @@ impl ShredPayload {
     /// Returns the index of this shred within the entire slot.
     #[must_use]
     pub const fn index_in_slot(&self) -> usize {
-        self.slice_index * DATA_SHREDS + self.index_in_slice
+        self.header.slice_index * DATA_SHREDS + self.index_in_slice
     }
 }
 
@@ -259,7 +298,13 @@ impl Shredder for RegularShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
 
     fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        let (data, coding) = reed_solomon_shred(slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
+        let (data, coding) = reed_solomon_shred(
+            slice_header,
+            &slice_payload,
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
@@ -269,7 +314,13 @@ impl Shredder for RegularShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (data, coding) = reed_solomon_shred(&slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
+        let (data, coding) = reed_solomon_shred(
+            slice_header,
+            &slice_payload,
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -286,7 +337,9 @@ impl Shredder for CodingOnlyShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
 
     fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        let (_data, coding) = reed_solomon_shred(slice, DATA_SHREDS, TOTAL_SHREDS)?;
+        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
+        let (_data, coding) =
+            reed_solomon_shred(slice_header, &slice_payload, DATA_SHREDS, TOTAL_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
     }
 
@@ -296,7 +349,9 @@ impl Shredder for CodingOnlyShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (_, coding) = reed_solomon_shred(&slice, DATA_SHREDS, TOTAL_SHREDS)?;
+        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
+        let (_, coding) =
+            reed_solomon_shred(slice_header, &slice_payload, DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -334,11 +389,11 @@ impl Shredder for PetsShredder {
             buffer.push(key[i]);
         }
 
-        let (mut data, coding) = reed_solomon_shred_raw(
-            slice.slot,
-            slice.slice_index,
-            slice.is_last,
-            &buffer,
+        let (slice_header, _) = slice.clone().deconstruct_slice();
+        let slice_payload = SlicePayload { data: buffer };
+        let (mut data, coding) = reed_solomon_shred(
+            slice_header,
+            &slice_payload,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
         )?;
@@ -356,11 +411,13 @@ impl Shredder for PetsShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (mut data, coding) = reed_solomon_shred_raw(
-            shreds[0].payload().slot,
-            shreds[0].payload().slice_index,
-            shreds[0].payload().is_last_slice,
-            &buffer,
+        let slice_header = shreds[0].payload().header.clone();
+        let slice_payload = SlicePayload {
+            data: buffer.clone(),
+        };
+        let (mut data, coding) = reed_solomon_shred(
+            slice_header,
+            &slice_payload,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
         )?;
@@ -395,27 +452,29 @@ impl Shredder for AontShredder {
 
     fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let mut buffer = vec![0; slice.data.len()];
-        buffer.copy_from_slice(&slice.data);
+        let slice_payload = {
+            let mut buffer = vec![0; slice.data.len()];
+            buffer.copy_from_slice(&slice.data);
 
-        let mut rng = rng();
-        let mut key = Array::from([0; 16]);
-        rng.fill_bytes(&mut key);
-        let iv = Array::from([0u8; 16]);
+            let mut rng = rng();
+            let mut key = Array::from([0; 16]);
+            rng.fill_bytes(&mut key);
+            let iv = Array::from([0u8; 16]);
 
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
+            let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
+            cipher.apply_keystream(&mut buffer);
 
-        let hash = hash(&buffer);
-        for i in 0..16 {
-            buffer.push(hash[i] ^ key[i]);
-        }
+            let hash = hash(&buffer);
+            for i in 0..16 {
+                buffer.push(hash[i] ^ key[i]);
+            }
+            SlicePayload { data: buffer }
+        };
 
-        let (data, coding) = reed_solomon_shred_raw(
-            slice.slot,
-            slice.slice_index,
-            slice.is_last,
-            &buffer,
+        let (slice_header, _) = slice.clone().deconstruct_slice();
+        let (data, coding) = reed_solomon_shred(
+            slice_header,
+            &slice_payload,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
@@ -430,11 +489,13 @@ impl Shredder for AontShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (data, coding) = reed_solomon_shred_raw(
-            shreds[0].payload().slot,
-            shreds[0].payload().slice_index,
-            shreds[0].payload().is_last_slice,
-            &buffer,
+        let slice_header = shreds[0].payload().header.clone();
+        let slice_payload = SlicePayload {
+            data: buffer.clone(),
+        };
+        let (data, coding) = reed_solomon_shred(
+            slice_header,
+            &slice_payload,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
