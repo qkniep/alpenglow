@@ -36,7 +36,7 @@ fn turbine_tree(bencher: divan::Bencher) {
                 data: slice_data,
             };
             let sk = SecretKey::new(&mut rng);
-            let mut shreds = RegularShredder::shred(&slice, &sk).unwrap();
+            let mut shreds = RegularShredder::shred(slice, &sk).unwrap();
             let shred = shreds.pop().unwrap();
 
             (shred, turbine1, turbine2)

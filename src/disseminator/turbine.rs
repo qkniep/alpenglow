@@ -341,7 +341,7 @@ mod tests {
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
         let mut tasks = Vec::new();

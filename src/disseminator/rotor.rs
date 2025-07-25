@@ -188,7 +188,7 @@ mod tests {
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let data_shreds_received = Arc::new(Mutex::new(HashSet::new()));
         let code_shreds_received = Arc::new(Mutex::new(HashSet::new()));
@@ -259,7 +259,7 @@ mod tests {
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let mut data_shreds_received = Vec::with_capacity(rotors.len());
         (0..rotors.len())

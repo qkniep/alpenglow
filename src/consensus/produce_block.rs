@@ -126,7 +126,7 @@ where
             let (slice, cont_prod) =
                 produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration).await;
             // shred and disseminate slice
-            let shreds = RegularShredder::shred(&slice, &self.secret_key).unwrap();
+            let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
             for s in shreds {
                 self.disseminator.send(&s).await?;
                 // PERF: move expensive add_shred() call out of block production

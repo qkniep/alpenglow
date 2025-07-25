@@ -158,7 +158,7 @@ mod tests {
                 merkle_root: None,
                 data,
             };
-            let slice_shreds = RegularShredder::shred(&slice, &sk).unwrap();
+            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
@@ -219,7 +219,7 @@ mod tests {
                 merkle_root: None,
                 data,
             };
-            let slice_shreds = RegularShredder::shred(&slice, &sk).unwrap();
+            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
@@ -280,7 +280,7 @@ mod tests {
                 merkle_root: None,
                 data,
             };
-            let slice_shreds = RegularShredder::shred(&slice, &sk).unwrap();
+            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
