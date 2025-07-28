@@ -25,7 +25,7 @@ pub(super) enum ReedSolomonDeshredError {
 /// Splits the given slice into `num_data` data shreds, then generates
 /// `num_coding` additional Reed-Solomon coding shreds.
 pub(super) fn reed_solomon_shred(
-    slice: &Slice,
+    slice: Slice,
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
@@ -36,7 +36,7 @@ pub(super) fn reed_solomon_shred(
         merkle_root: _,
         data,
     } = slice;
-    reed_solomon_shred_raw(*slot, *slice_index, *is_last, data, num_data, num_coding)
+    reed_solomon_shred_raw(slot, slice_index, is_last, data, num_data, num_coding)
 }
 
 /// Splits the given data into `num_data` data shreds, then generates
@@ -47,7 +47,7 @@ pub(super) fn reed_solomon_shred_raw(
     slot: Slot,
     slice_index: usize,
     is_last_slice: bool,
-    data: &[u8],
+    data: Vec<u8>,
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {

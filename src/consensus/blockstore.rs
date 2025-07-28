@@ -286,14 +286,14 @@ mod tests {
         let slices = create_random_block(Slot::new(0), 2);
 
         // first slice is not enough
-        let shreds = RegularShredder::shred(&slices[0], &sk)?;
+        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(blockstore.canonical_block_hash(Slot::new(0)).is_none());
 
         // after second slice we should have the block
-        let shreds = RegularShredder::shred(&slices[1], &sk)?;
+        let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
@@ -313,7 +313,7 @@ mod tests {
         let slices = create_random_block(Slot::new(0), 1);
 
         // insert shreds in reverse order
-        let shreds = RegularShredder::shred(&slices[0], &sk)?;
+        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().rev() {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
@@ -334,28 +334,28 @@ mod tests {
         assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 0);
 
         // insert just enough shreds to reconstruct slice 0 (from beginning)
-        let shreds = RegularShredder::shred(&slices[0], &sk)?;
+        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().take(DATA_SHREDS) {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 1);
 
         // insert just enough shreds to reconstruct slice 1 (from end)
-        let shreds = RegularShredder::shred(&slices[1], &sk)?;
+        let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 2);
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
-        let shreds = RegularShredder::shred(&slices[2], &sk)?;
+        let shreds = RegularShredder::shred(slices[2].clone(), &sk)?;
         for shred in shreds.into_iter().skip(DATA_SHREDS / 2) {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 3);
 
         // insert just enough shreds to reconstruct slice 3 (split)
-        let shreds = RegularShredder::shred(&slices[3], &sk)?;
+        let shreds = RegularShredder::shred(slices[3].clone(), &sk)?;
         for (_, shred) in shreds
             .into_iter()
             .enumerate()
@@ -382,7 +382,7 @@ mod tests {
         let slices = create_random_block(Slot::new(0), 2);
 
         // second slice alone is not enough
-        let shreds = RegularShredder::shred(&slices[0], &sk)?;
+        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
@@ -395,7 +395,7 @@ mod tests {
         );
 
         // after also also inserting first slice we should have the block
-        let shreds = RegularShredder::shred(&slices[1], &sk)?;
+        let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
@@ -418,7 +418,7 @@ mod tests {
         let slices = create_random_block(Slot::new(0), 1);
 
         // insert many duplicate shreds
-        let shreds = RegularShredder::shred(&slices[0], &sk)?;
+        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in vec![shreds[0].clone(); 1024] {
             // ignore errors
             let _ = blockstore.add_shred_from_disseminator(shred).await;
@@ -438,7 +438,7 @@ mod tests {
         let slices = create_random_block(Slot::new(0), 1);
 
         // insert shreds with wrong Merkle root
-        let shreds = RegularShredder::shred(&slices[0], &sk)?;
+        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for mut shred in shreds {
             shred.merkle_root = Hash::default();
             let res = blockstore.add_shred_from_disseminator(shred).await;
@@ -459,9 +459,9 @@ mod tests {
         let block2 = create_random_block(Slot::new(2), 1);
 
         // insert shreds
-        let mut shreds = RegularShredder::shred(&block0[0], &sk)?;
-        shreds.extend(RegularShredder::shred(&block1[0], &sk)?);
-        shreds.extend(RegularShredder::shred(&block2[0], &sk)?);
+        let mut shreds = RegularShredder::shred(block0[0].clone(), &sk)?;
+        shreds.extend(RegularShredder::shred(block1[0].clone(), &sk)?);
+        shreds.extend(RegularShredder::shred(block2[0].clone(), &sk)?);
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
