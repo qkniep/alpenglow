@@ -13,6 +13,7 @@ pub mod logging;
 pub mod network;
 pub mod repair;
 pub mod shredder;
+pub mod slice;
 pub mod slot;
 #[cfg(test)]
 pub mod test_utils;

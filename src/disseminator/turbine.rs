@@ -229,7 +229,8 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::slice::Slice;
 
     use tokio::{sync::Mutex, task};
 

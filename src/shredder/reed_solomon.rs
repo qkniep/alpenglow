@@ -23,33 +23,12 @@ pub(super) enum ReedSolomonDeshredError {
 /// Splits the given slice into `num_data` data shreds, then generates
 /// `num_coding` additional Reed-Solomon coding shreds.
 pub(super) fn reed_solomon_shred(
-    slice: Slice,
+    header: SliceHeader,
+    payload: SlicePayload,
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
-    let Slice {
-        slot,
-        slice_index,
-        is_last,
-        merkle_root: _,
-        data,
-    } = slice;
-    reed_solomon_shred_raw(slot, slice_index, is_last, data, num_data, num_coding)
-}
-
-/// Splits the given data into `num_data` data shreds, then generates
-/// `num_coding` additional Reed-Solomon coding shreds.
-/// The slice-specific fields `slot`, `slice_index`, and `is_last` are included
-/// in every `DataShred` or `CodingShred`.
-pub(super) fn reed_solomon_shred_raw(
-    slot: Slot,
-    slice_index: usize,
-    is_last_slice: bool,
-    data: Vec<u8>,
-    num_data: usize,
-    num_coding: usize,
-) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
-    if data.len() > MAX_DATA_PER_SLICE {
+    if payload.len() > MAX_DATA_PER_SLICE {
         return Err(ReedSolomonShredError::TooMuchData);
     }
 
@@ -84,7 +63,8 @@ pub(super) fn reed_solomon_deshred(
 ) -> Result<Vec<u8>, ReedSolomonDeshredError> {
     if shreds.len() < DATA_SHREDS {
         return Err(ReedSolomonDeshredError::NotEnoughShreds);
-    } else if shreds.len() > TOTAL_SHREDS {
+    }
+    if shreds.len() > TOTAL_SHREDS {
         return Err(ReedSolomonDeshredError::TooManyShreds);
     }
 

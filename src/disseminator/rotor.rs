@@ -138,8 +138,9 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{
-        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, Slice, TOTAL_SHREDS,
+        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, TOTAL_SHREDS,
     };
+    use crate::slice::Slice;
 
     use tokio::sync::Mutex;
     use tokio::task;

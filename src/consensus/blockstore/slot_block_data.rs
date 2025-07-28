@@ -13,7 +13,8 @@ use thiserror::Error;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
-use crate::shredder::{self, RegularShredder, Shred, Shredder, Slice};
+use crate::shredder::{self, RegularShredder, Shred, Shredder};
+use crate::slice::Slice;
 use crate::{Block, Slot};
 
 use super::BlockInfo;

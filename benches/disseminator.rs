@@ -5,7 +5,8 @@ use alpenglow::Slot;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
-use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice};
+use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use alpenglow::slice::Slice;
 use divan::counter::ItemsCount;
 use rand::RngCore;
 

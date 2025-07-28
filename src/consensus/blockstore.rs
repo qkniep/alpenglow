@@ -14,7 +14,8 @@ use log::debug;
 use tokio::sync::mpsc::Sender;
 
 use crate::crypto::Hash;
-use crate::shredder::{Shred, Slice};
+use crate::shredder::Shred;
+use crate::slice::Slice;
 use crate::{Block, Slot};
 
 use super::epoch_info::EpochInfo;
