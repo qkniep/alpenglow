@@ -272,7 +272,7 @@ pub trait Shredder {
     ///   shredding process fails for any implementation-specific reason.
     /// - Should always return [`ShredError::TooMuchData`] if the `slice` is
     ///   too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError>;
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError>;
 
     /// Puts the given shreds back together into a complete slice.
     ///
@@ -297,14 +297,8 @@ pub struct RegularShredder;
 impl Shredder for RegularShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
 
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
-        let (data, coding) = reed_solomon_shred(
-            slice_header,
-            &slice_payload,
-            DATA_SHREDS,
-            TOTAL_SHREDS - DATA_SHREDS,
-        )?;
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+        let (data, coding) = reed_solomon_shred(slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
@@ -314,13 +308,8 @@ impl Shredder for RegularShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
-        let (data, coding) = reed_solomon_shred(
-            slice_header,
-            &slice_payload,
-            DATA_SHREDS,
-            TOTAL_SHREDS - DATA_SHREDS,
-        )?;
+        let (data, coding) =
+            reed_solomon_shred(slice.clone(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -336,10 +325,8 @@ pub struct CodingOnlyShredder;
 impl Shredder for CodingOnlyShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
 
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
-        let (_data, coding) =
-            reed_solomon_shred(slice_header, &slice_payload, DATA_SHREDS, TOTAL_SHREDS)?;
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+        let (_data, coding) = reed_solomon_shred(slice, DATA_SHREDS, TOTAL_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
     }
 
@@ -349,9 +336,7 @@ impl Shredder for CodingOnlyShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (slice_header, slice_payload) = slice.clone().deconstruct_slice();
-        let (_, coding) =
-            reed_solomon_shred(slice_header, &slice_payload, DATA_SHREDS, TOTAL_SHREDS)?;
+        let (_, coding) = reed_solomon_shred(slice.clone(), DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -372,7 +357,7 @@ pub struct PetsShredder;
 impl Shredder for PetsShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
         let mut buffer = vec![0; slice.data.len()];
         buffer.copy_from_slice(&slice.data);
@@ -389,11 +374,11 @@ impl Shredder for PetsShredder {
             buffer.push(key[i]);
         }
 
-        let (slice_header, _) = slice.clone().deconstruct_slice();
-        let slice_payload = SlicePayload { data: buffer };
-        let (mut data, coding) = reed_solomon_shred(
-            slice_header,
-            &slice_payload,
+        let (mut data, coding) = reed_solomon_shred_raw(
+            slice.slot,
+            slice.slice_index,
+            slice.is_last,
+            buffer,
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
         )?;
@@ -411,13 +396,11 @@ impl Shredder for PetsShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let slice_header = shreds[0].payload().header.clone();
-        let slice_payload = SlicePayload {
-            data: buffer.clone(),
-        };
-        let (mut data, coding) = reed_solomon_shred(
-            slice_header,
-            &slice_payload,
+        let (mut data, coding) = reed_solomon_shred_raw(
+            shreds[0].payload().slot,
+            shreds[0].payload().slice_index,
+            shreds[0].payload().is_last_slice,
+            buffer.clone(),
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
         )?;
@@ -450,7 +433,7 @@ pub struct AontShredder;
 impl Shredder for AontShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
         let slice_payload = {
             let mut buffer = vec![0; slice.data.len()];
@@ -471,10 +454,11 @@ impl Shredder for AontShredder {
             SlicePayload { data: buffer }
         };
 
-        let (slice_header, _) = slice.clone().deconstruct_slice();
-        let (data, coding) = reed_solomon_shred(
-            slice_header,
-            &slice_payload,
+        let (data, coding) = reed_solomon_shred_raw(
+            slice.slot,
+            slice.slice_index,
+            slice.is_last,
+            buffer.clone(),
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
@@ -489,13 +473,11 @@ impl Shredder for AontShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let slice_header = shreds[0].payload().header.clone();
-        let slice_payload = SlicePayload {
-            data: buffer.clone(),
-        };
-        let (data, coding) = reed_solomon_shred(
-            slice_header,
-            &slice_payload,
+        let (data, coding) = reed_solomon_shred_raw(
+            shreds[0].payload().slot,
+            shreds[0].payload().slice_index,
+            shreds[0].payload().is_last_slice,
+            buffer.clone(),
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
@@ -587,7 +569,7 @@ mod tests {
     fn regular_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
         let mut slice = create_random_slice(0);
-        let shreds = RegularShredder::shred(&slice, &sk)?;
+        let shreds = RegularShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
@@ -633,7 +615,7 @@ mod tests {
     fn coding_only_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
         let mut slice = create_random_slice(0);
-        let shreds = CodingOnlyShredder::shred(&slice, &sk)?;
+        let shreds = CodingOnlyShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
@@ -669,7 +651,7 @@ mod tests {
     fn aont_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
         let mut slice = create_random_slice(16);
-        let shreds = AontShredder::shred(&slice, &sk)?;
+        let shreds = AontShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
@@ -711,7 +693,7 @@ mod tests {
     fn pets_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
         let mut slice = create_random_slice(16);
-        let shreds = PetsShredder::shred(&slice, &sk)?;
+        let shreds = PetsShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds

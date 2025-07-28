@@ -35,7 +35,7 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
             (slice, sk)
         })
         .bench_values(|(slice, sk): (Slice, SecretKey)| {
-            let _ = S::shred(&slice, &sk).unwrap();
+            let _ = S::shred(slice, &sk).unwrap();
         });
 }
 
@@ -57,7 +57,7 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
                 data: slice_data,
             };
             let sk = SecretKey::new(&mut rng);
-            S::shred(&slice, &sk).unwrap()
+            S::shred(slice, &sk).unwrap()
         })
         .bench_values(|shreds: Vec<Shred>| {
             let _ = S::deshred(&shreds[DATA_SHREDS..]).unwrap();
