@@ -28,6 +28,7 @@ pub(super) fn reed_solomon_shred(
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
+    let payload = bincode::serde::encode_to_vec(payload, bincode::config::standard()).unwrap();
     if payload.len() > MAX_DATA_PER_SLICE {
         return Err(ReedSolomonShredError::TooMuchData);
     }

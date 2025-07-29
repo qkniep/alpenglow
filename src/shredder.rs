@@ -300,7 +300,7 @@ impl Shredder for PetsShredder {
         }
 
         let (header, _) = slice.deconstruct_slice();
-        let payload = SlicePayload::new(buffer);
+        let payload = SlicePayload::new(&buffer).unwrap();
         let (mut data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         // delete data shred containing key
@@ -318,7 +318,7 @@ impl Shredder for PetsShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let header = shreds[0].payload().header.clone();
-        let payload = SlicePayload::new(buffer.clone());
+        let payload = SlicePayload::new(&buffer).unwrap();
         let (mut data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         data.pop();
@@ -368,7 +368,7 @@ impl Shredder for AontShredder {
             for i in 0..16 {
                 buffer.push(hash[i] ^ key[i]);
             }
-            SlicePayload::new(buffer)
+            SlicePayload::new(&buffer).unwrap()
         };
 
         let (header, _) = slice.clone().deconstruct_slice();
@@ -386,7 +386,7 @@ impl Shredder for AontShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let header = shreds[0].payload().header.clone();
-        let payload = SlicePayload::new(buffer.clone());
+        let payload = SlicePayload::new(&buffer).unwrap();
         let (data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         let tree = build_merkle_tree(&data, &coding);
@@ -471,6 +471,7 @@ mod tests {
             slice_index: 0,
             is_last: true,
             merkle_root: None,
+            parent: None,
             data: buf,
         }
     }

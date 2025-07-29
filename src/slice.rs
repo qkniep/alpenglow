@@ -3,6 +3,7 @@
 
 //! Defines the Slice and related data structures.
 
+use bincode::error::DecodeError;
 use serde::{Deserialize, Serialize};
 
 use crate::Slot;
@@ -24,6 +25,7 @@ pub struct Slice {
     pub is_last: bool,
     /// Merkle root hash over all shreds in this slice.
     pub merkle_root: Option<Hash>,
+    pub parent: Option<(Slot, Hash)>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
@@ -31,19 +33,21 @@ pub struct Slice {
 impl Slice {
     /// Creates a slice from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
-    pub(crate) const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
+    pub(crate) fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
         let SliceHeader {
             slot,
             slice_index,
             is_last,
         } = any_shred.payload().header;
         let merkle_root = Some(any_shred.merkle_root);
+        let payload = SlicePayload::new(&data).unwrap();
         Self {
             slot,
             slice_index,
             is_last,
             merkle_root,
-            data,
+            parent: payload.parent,
+            data: payload.data,
         }
     }
 
@@ -54,6 +58,7 @@ impl Slice {
             slice_index,
             is_last,
             merkle_root: _,
+            parent,
             data,
         } = self;
         (
@@ -62,7 +67,7 @@ impl Slice {
                 slice_index,
                 is_last,
             },
-            SlicePayload { data },
+            SlicePayload { parent, data },
         )
     }
 }
@@ -81,24 +86,14 @@ pub(crate) struct SliceHeader {
 
 /// Struct to hold all the actual payload of a Slice.
 /// This is what actually gets "shredded" in the `Shred`s.
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
+    parent: Option<(Slot, Hash)>,
     data: Vec<u8>,
 }
 
 impl SlicePayload {
-    /// Constructs a new `SlicePayload` from the given `data`.
-    pub(crate) fn new(data: Vec<u8>) -> Self {
-        Self { data }
-    }
-
-    /// Returns the size of the payload in bytes.
-    pub(crate) fn len(&self) -> usize {
-        let SlicePayload { data } = self;
-        data.len()
-    }
-
-    /// Returns and iterator that iterates over the payload in `chunk_size`s.
-    pub(crate) fn chunks(&self, chunk_size: usize) -> impl Iterator<Item = &[u8]> {
-        self.data.chunks(chunk_size)
+    pub(crate) fn new(data: &[u8]) -> Result<Self, DecodeError> {
+        bincode::serde::decode_from_slice(data, bincode::config::standard()).map(|(p, _)| p)
     }
 }
