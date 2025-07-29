@@ -4,7 +4,7 @@
 use alpenglow::Slot;
 use alpenglow::consensus::Vote;
 use alpenglow::crypto::{Hash, aggsig, signature};
-use alpenglow::network::NetworkMessage;
+use alpenglow::network::{NetworkMessage, SerializableMessage};
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice};
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
