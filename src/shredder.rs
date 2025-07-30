@@ -11,9 +11,11 @@
 //! - [`AontShredder`] uses the RAONT-RS all-or-nothing construction.
 //! - [`PetsShredder`] uses the PETS all-or-nothing construction.
 //!
-//! Finally, it defines some of the low-level data types representing a block:
-//! - [`Shred`] is a single part of the block that fits into a UDP datagram.
-//! - [`Slice`] corresponds to a fixed number of shreds we perform erasure coding on.
+//! Finally, it defines the relevant low-level data type:
+//! - [`Shred`] is a single part of the block that fits into a UDP datagram,
+//!   that also contains the slice header, Merkle path and leader signature.
+//!
+//! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
 
 mod reed_solomon;
 
@@ -159,8 +161,11 @@ pub struct CodingShred(ShredPayload);
 /// Base payload of a shred, regardless of its type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
+    /// Slice header replicated in each shred.
     pub(crate) header: SliceHeader,
+    /// Index of this shred within the slice.
     pub(crate) index_in_slice: usize,
+    /// Raw payload bytes of this shred, part of the erasure-coded slice payload.
     pub(crate) data: bytes::Bytes,
 }
 
@@ -456,9 +461,9 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 
 #[cfg(test)]
 mod tests {
-    use crate::Slot;
-
     use super::*;
+
+    use crate::Slot;
 
     use color_eyre::Result;
 

@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Defines the Slice and related data structures.
+//! Defines the [`Slice`] and related data structures.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub struct Slice {
 }
 
 impl Slice {
-    /// Creates a slice from raw payload bytes and the metadata extracted from a shred.
+    /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
     pub(crate) const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
         let SliceHeader {
@@ -47,7 +47,7 @@ impl Slice {
         }
     }
 
-    /// Deconstructs a slice into its components: `SliceHeader` and `SlicePayload`.
+    /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
     pub(crate) fn deconstruct_slice(self) -> (SliceHeader, SlicePayload) {
         let Slice {
             slot,
@@ -67,26 +67,28 @@ impl Slice {
     }
 }
 
-/// Struct to hold all the header payload of a Slice.
-/// This is included in each Shred.
+/// Struct to hold all the header payload of a [`Slice`].
+///
+/// This is included in each [`Shred`] after shredding.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SliceHeader {
-    /// Same as `Slice::slot`.
+    /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,
-    /// Same as `Slice::slice_index`.
+    /// Same as [`Slice::slice_index`].
     pub(crate) slice_index: usize,
-    /// Same as `Slice::is_last`.
+    /// Same as [`Slice::is_last`].
     pub(crate) is_last: bool,
 }
 
-/// Struct to hold all the actual payload of a Slice.
-/// This is what actually gets "shredded" in the `Shred`s.
+/// Struct to hold all the actual payload of a [`Slice`].
+///
+/// This is what actually gets "shredded" into different [`Shred`]s.
 pub(crate) struct SlicePayload {
     data: Vec<u8>,
 }
 
 impl SlicePayload {
-    /// Constructs a new `SlicePayload` from the given `data`.
+    /// Constructs a new [`SlicePayload`] from the given `data`.
     pub(crate) fn new(data: Vec<u8>) -> Self {
         Self { data }
     }
@@ -97,7 +99,7 @@ impl SlicePayload {
         data.len()
     }
 
-    /// Returns and iterator that iterates over the payload in `chunk_size`s.
+    /// Returns an iterator that iterates over the payload, `chunk_size` bytes at a time.
     pub(crate) fn chunks(&self, chunk_size: usize) -> impl Iterator<Item = &[u8]> {
         self.data.chunks(chunk_size)
     }
