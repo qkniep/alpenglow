@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Slot;
 use crate::crypto::Hash;
-use crate::shredder::Shred;
+use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
 
 /// A slice is the unit of data between block and shred.
 ///
@@ -24,27 +24,39 @@ pub struct Slice {
     pub is_last: bool,
     /// Merkle root hash over all shreds in this slice.
     pub merkle_root: Option<Hash>,
+    pub parent: Option<(Slot, Hash)>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
 
 impl Slice {
-    /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
-    #[must_use]
-    pub(crate) const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
+    pub(crate) fn from_parts(
+        header: SliceHeader,
+        payload: SlicePayload,
+        merkle_root: Option<[u8; 32]>,
+    ) -> Self {
         let SliceHeader {
             slot,
             slice_index,
             is_last,
-        } = any_shred.payload().header;
-        let merkle_root = Some(any_shred.merkle_root);
+        } = header;
+        let SlicePayload { parent, data } = payload;
         Self {
             slot,
             slice_index,
             is_last,
             merkle_root,
+            parent,
             data,
         }
+    }
+
+    /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
+    #[must_use]
+    pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &Shred) -> Self {
+        let header = any_shred.payload().header.clone();
+        let merkle_root = Some(any_shred.merkle_root);
+        Self::from_parts(header, payload, merkle_root)
     }
 
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
@@ -54,6 +66,7 @@ impl Slice {
             slice_index,
             is_last,
             merkle_root: _,
+            parent,
             data,
         } = self;
         (
@@ -62,7 +75,7 @@ impl Slice {
                 slice_index,
                 is_last,
             },
-            SlicePayload { data },
+            SlicePayload { parent, data },
         )
     }
 }
@@ -83,24 +96,23 @@ pub(crate) struct SliceHeader {
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
 /// This is what actually gets "shredded" into different [`Shred`]s.
+#[derive(Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
-    pub(crate) data: Vec<u8>,
+    parent: Option<(Slot, Hash)>,
+    data: Vec<u8>,
 }
 
-impl SlicePayload {
-    /// Constructs a new [`SlicePayload`] from the given `data`.
-    pub(crate) fn new(data: Vec<u8>) -> Self {
-        Self { data }
+impl From<SlicePayload> for Vec<u8> {
+    fn from(payload: SlicePayload) -> Self {
+        bincode::serde::encode_to_vec(payload, bincode::config::standard()).unwrap()
     }
+}
 
-    /// Returns the size of the payload in bytes.
-    pub(crate) fn len(&self) -> usize {
-        let SlicePayload { data } = self;
-        data.len()
-    }
-
-    /// Returns an iterator that iterates over the payload, `chunk_size` bytes at a time.
-    pub(crate) fn chunks(&self, chunk_size: usize) -> impl Iterator<Item = &[u8]> {
-        self.data.chunks(chunk_size)
+impl From<Vec<u8>> for SlicePayload {
+    fn from(payload: Vec<u8>) -> Self {
+        assert!(payload.len() <= MAX_DATA_PER_SLICE);
+        bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+            .map(|(p, _)| p)
+            .unwrap()
     }
 }

@@ -58,6 +58,7 @@ fn serialize_slice(bencher: divan::Bencher) {
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
+                parent: None,
                 data: slice_data,
             };
             let sk = signature::SecretKey::new(&mut rng);
@@ -85,6 +86,7 @@ fn serialize_slice_into(bencher: divan::Bencher) {
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
+                parent: None,
                 data: slice_data,
             };
             let sk = signature::SecretKey::new(&mut rng);
@@ -116,6 +118,7 @@ fn deserialize_slice(bencher: divan::Bencher) {
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
+                parent: None,
                 data: slice_data,
             };
             let sk = signature::SecretKey::new(&mut rng);

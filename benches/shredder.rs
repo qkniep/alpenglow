@@ -29,6 +29,7 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
+                parent: None,
                 data: slice_data,
             };
             let sk = SecretKey::new(&mut rng);
@@ -54,6 +55,7 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
                 slice_index: 0,
                 is_last: true,
                 merkle_root: None,
+                parent: None,
                 data: slice_data,
             };
             let sk = SecretKey::new(&mut rng);

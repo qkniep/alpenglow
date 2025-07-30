@@ -14,7 +14,7 @@ use crate::MAX_TRANSACTION_SIZE;
 use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use crate::slice::Slice;
+use crate::slice::{Slice, SliceHeader, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
 
 use super::{Alpenglow, DELTA_BLOCK};
@@ -34,20 +34,15 @@ where
     T: Network + Sync + Send + 'static,
 {
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
-    let (mut data, slice_index) = match slice_index {
+    let (parent, slice_index) = match slice_index {
         Either::Left((parent_slot, parent_hash, slice_index)) => {
-            let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
-            // pack parent information in first slice
-            data.extend_from_slice(&parent_slot.inner().to_be_bytes());
-            data.extend_from_slice(&parent_hash);
-            let slice_capacity_left = MAX_DATA_PER_SLICE.checked_sub(data.len()).unwrap();
-            assert!(slice_capacity_left >= MAX_TRANSACTION_SIZE);
-            // FIXME: add support for optimistic handover. parent can change in middle of block production.
-            assert_eq!(slice_index, 0);
-            (data, slice_index)
+            (Some((parent_slot, parent_hash)), slice_index)
         }
-        Either::Right(ind) => (Vec::with_capacity(MAX_DATA_PER_SLICE), ind.get()),
+        Either::Right(ind) => (None, ind.get()),
     };
+    let mut data = Vec::with_capacity(MAX_DATA_PER_SLICE);
+    let mut parent = bincode::serde::encode_to_vec(parent, bincode::config::standard()).unwrap();
+    data.append(&mut parent);
     let mut left = time_left;
 
     let cont_prod = loop {
@@ -84,16 +79,13 @@ where
         Continue::Stop => true,
         Continue::Continue { .. } => false,
     };
-    (
-        Slice {
-            slot,
-            slice_index,
-            is_last,
-            merkle_root: None,
-            data,
-        },
-        cont_prod,
-    )
+    let header = SliceHeader {
+        slot,
+        slice_index,
+        is_last,
+    };
+    let payload = SlicePayload::from(data);
+    (Slice::from_parts(header, payload, None), cont_prod)
 }
 
 impl<A, D, R, T> Alpenglow<A, D, R, T>
@@ -194,12 +186,14 @@ mod tests {
                     slice_index,
                     is_last,
                     merkle_root,
+                    parent,
                     data,
                 } = slice;
                 assert_eq!(slot, slot);
                 assert_eq!(slice_index, slice_index);
                 assert!(is_last);
                 assert!(merkle_root.is_none());
+                assert!(parent.is_none());
                 assert_eq!(data.len(), 0);
             }
         }
@@ -219,12 +213,14 @@ mod tests {
                     slice_index,
                     is_last,
                     merkle_root,
+                    parent,
                     data,
                 } = slice;
                 assert_eq!(slot, slot);
                 assert_eq!(slice_index, 0);
                 assert!(is_last);
                 assert!(merkle_root.is_none());
+                assert!(parent.is_none());
                 assert_eq!(data.len(), 8 + 32);
             }
         }
@@ -263,12 +259,14 @@ mod tests {
                     slice_index,
                     is_last,
                     merkle_root,
+                    parent,
                     data,
                 } = slice;
                 assert_eq!(slot, slot);
                 assert_eq!(slice_index, slice_index);
                 assert!(!is_last);
                 assert!(merkle_root.is_none());
+                assert!(parent.is_none());
                 assert!(data.len() <= MAX_DATA_PER_SLICE);
                 assert!(data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
             }

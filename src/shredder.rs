@@ -224,20 +224,28 @@ impl Shredder for RegularShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         let (header, payload) = slice.deconstruct();
-        let (data, coding) =
-            reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let (data, coding) = reed_solomon_shred(
+            header,
+            payload.into(),
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
-        let data = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        let slice = Slice::from_parts(data, &shreds[0]);
+        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let slice = Slice::from_shreds(payload.into(), &shreds[0]);
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let (header, payload) = slice.clone().deconstruct();
-        let (data, coding) =
-            reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let (data, coding) = reed_solomon_shred(
+            header,
+            payload.into(),
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -255,18 +263,19 @@ impl Shredder for CodingOnlyShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         let (header, payload) = slice.deconstruct();
-        let (_data, coding) = reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS)?;
+        let (_data, coding) =
+            reed_solomon_shred(header, payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
-        let data = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS)?;
-        let slice = Slice::from_parts(data, &shreds[0]);
+        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS)?;
+        let slice = Slice::from_shreds(payload.into(), &shreds[0]);
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let (header, payload) = slice.clone().deconstruct();
-        let (_, coding) = reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS)?;
+        let (_, coding) = reed_solomon_shred(header, payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -288,8 +297,9 @@ impl Shredder for PetsShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let (header, mut payload) = slice.deconstruct();
+        let (header, payload) = slice.deconstruct();
+        let mut payload: Vec<u8> = payload.into();
+        assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
         let mut rng = rng();
         let mut key = Array::from([0; 16]);
@@ -297,9 +307,9 @@ impl Shredder for PetsShredder {
         let iv = Array::from([0; 16]);
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut payload.data);
+        cipher.apply_keystream(&mut payload);
 
-        payload.data.extend_from_slice(&key);
+        payload.extend_from_slice(&key);
         let (mut data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         // delete data shred containing key
@@ -317,9 +327,13 @@ impl Shredder for PetsShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let header = shreds[0].payload().header.clone();
-        let payload = SlicePayload::new(buffer.clone());
-        let (mut data, coding) =
-            reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
+        let payload = SlicePayload::from(buffer.clone());
+        let (mut data, coding) = reed_solomon_shred(
+            header,
+            payload.into(),
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS + 1,
+        )?;
         data.pop();
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
@@ -333,8 +347,7 @@ impl Shredder for PetsShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-
-        Ok(Slice::from_parts(buffer, &shreds[0]))
+        Ok(Slice::from_shreds(buffer.into(), &shreds[0]))
     }
 }
 
@@ -350,8 +363,9 @@ impl Shredder for AontShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let (header, mut payload) = slice.deconstruct();
+        let (header, payload) = slice.deconstruct();
+        let mut payload: Vec<u8> = payload.into();
+        assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
         let mut rng = rng();
         let mut key = Array::from([0; 16]);
@@ -359,11 +373,11 @@ impl Shredder for AontShredder {
         let iv = Array::from([0u8; 16]);
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut payload.data);
+        cipher.apply_keystream(&mut payload);
 
-        let hash = hash(&payload.data);
+        let hash = hash(&payload);
         for i in 0..16 {
-            payload.data.push(hash[i] ^ key[i]);
+            payload.push(hash[i] ^ key[i]);
         }
 
         let (data, coding) =
@@ -380,9 +394,13 @@ impl Shredder for AontShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let header = shreds[0].payload().header.clone();
-        let payload = SlicePayload::new(buffer.clone());
-        let (data, coding) =
-            reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let payload = SlicePayload::from(buffer.clone());
+        let (data, coding) = reed_solomon_shred(
+            header,
+            payload.into(),
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -401,7 +419,7 @@ impl Shredder for AontShredder {
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
 
-        Ok(Slice::from_parts(buffer, &shreds[0]))
+        Ok(Slice::from_shreds(buffer.into(), &shreds[0]))
     }
 }
 
@@ -465,6 +483,7 @@ mod tests {
             slice_index: 0,
             is_last: true,
             merkle_root: None,
+            parent: None,
             data: buf,
         }
     }
