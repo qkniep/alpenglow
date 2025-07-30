@@ -66,7 +66,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
 
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let relay = self.sample_relay(shred.payload().slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let msg = NetworkMessage::Shred(shred.clone());
         let v = &self.epoch_info.validator(relay);
         self.network.send(&msg, &v.disseminator_address).await
@@ -75,10 +75,10 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
     async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let leader = self.epoch_info.leader(shred.payload().slot).id;
+        let leader = self.epoch_info.leader(shred.payload().header.slot).id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred.payload().slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         if self.epoch_info.own_id != relay {
             return Ok(());
         }
@@ -138,8 +138,9 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{
-        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, Slice, TOTAL_SHREDS,
+        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, TOTAL_SHREDS,
     };
+    use crate::slice::Slice;
 
     use tokio::sync::Mutex;
     use tokio::task;

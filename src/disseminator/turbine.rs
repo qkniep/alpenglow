@@ -86,7 +86,7 @@ impl<N: Network> Turbine<N> {
     pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkError> {
         // TODO: fix duplicate use indices between data and coding shreds
         let tree = self
-            .get_tree(shred.payload().slot, shred.payload().index_in_slot())
+            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
         let msg = NetworkMessage::Shred(shred.clone());
@@ -102,7 +102,7 @@ impl<N: Network> Turbine<N> {
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkError> {
         let tree = self
-            .get_tree(shred.payload().slot, shred.payload().index_in_slot())
+            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let msg = NetworkMessage::Shred(shred.clone());
         for child in tree.get_children() {
@@ -229,7 +229,8 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::slice::Slice;
 
     use tokio::{sync::Mutex, task};
 

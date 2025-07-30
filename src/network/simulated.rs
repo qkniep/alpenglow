@@ -105,8 +105,9 @@ mod tests {
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{
-        DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS,
+        DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
+    use crate::slice::Slice;
 
     use rand::RngCore;
 

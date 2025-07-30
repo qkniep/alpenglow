@@ -13,7 +13,8 @@ use static_assertions::const_assert;
 use crate::MAX_TRANSACTION_SIZE;
 use crate::crypto::Hash;
 use crate::network::NetworkMessage;
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::slice::Slice;
 use crate::{All2All, Disseminator, Slot, network::Network};
 
 use super::{Alpenglow, DELTA_BLOCK};
