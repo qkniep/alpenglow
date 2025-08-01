@@ -73,7 +73,7 @@ type TestNode = Alpenglow<
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
     let mut networks = VecDeque::new();
-    for _ in 0..3 * count {
+    for _ in 0..4 * count {
         networks.push_back(UdpNetwork::new_with_any_port());
     }
 
@@ -85,9 +85,9 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let a2a_port = networks[3 * id as usize].port();
-        let dis_port = networks[3 * id as usize + 1].port();
-        let rep_port = networks[3 * id as usize + 2].port();
+        let a2a_port = networks[4 * id as usize].port();
+        let dis_port = networks[4 * id as usize + 1].port();
+        let rep_port = networks[4 * id as usize + 2].port();
         validators.push(ValidatorInfo {
             id,
             stake: 1,
