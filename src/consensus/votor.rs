@@ -18,13 +18,12 @@ use color_eyre::Result;
 use log::{debug, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::consensus::DELTA_TIMEOUT;
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
-use super::{Cert, DELTA_BLOCK, DELTA_EARLY_TIMEOUT, Vote};
+use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 
 /// Events that Votor is interested in.
 ///
@@ -248,7 +247,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         );
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(DELTA_TIMEOUT.saturating_sub(DELTA_EARLY_TIMEOUT)).await;
+            tokio::time::sleep(DELTA_TIMEOUT).await;
             for s in slot.slots_in_window() {
                 let event = VotorEvent::TimeoutCrashedLeader(s);
                 // HACK: ignoring errors to prevent panic when shutting down votor
