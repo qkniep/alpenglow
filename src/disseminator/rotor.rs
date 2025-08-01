@@ -66,7 +66,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
 
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let relay = self.sample_relay(shred.payload().slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let msg = NetworkMessage::Shred(shred.clone());
         let v = &self.epoch_info.validator(relay);
         self.network.send(&msg, &v.disseminator_address).await
@@ -75,10 +75,10 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
     async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkError> {
-        let leader = self.epoch_info.leader(shred.payload().slot).id;
+        let leader = self.epoch_info.leader(shred.payload().header.slot).id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred.payload().slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         if self.epoch_info.own_id != relay {
             return Ok(());
         }
@@ -98,7 +98,13 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     }
 
     fn sample_relay(&self, slot: Slot, shred: usize) -> ValidatorId {
-        let seed = [slot.to_be_bytes(), shred.to_be_bytes(), [0; 8], [0; 8]].concat();
+        let seed = [
+            slot.inner().to_be_bytes(),
+            shred.to_be_bytes(),
+            [0; 8],
+            [0; 8],
+        ]
+        .concat();
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
         self.sampler.sample(&mut rng)
     }
@@ -132,8 +138,9 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{
-        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, Slice, TOTAL_SHREDS,
+        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, TOTAL_SHREDS,
     };
+    use crate::slice::Slice;
 
     use tokio::sync::Mutex;
     use tokio::task;
@@ -176,13 +183,13 @@ mod tests {
     async fn two_instances() {
         let (sks, mut rotors) = create_rotor_instances(2, 3000);
         let slice = Slice {
-            slot: 0,
+            slot: Slot::new(0),
             slice_index: 0,
             is_last: true,
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let data_shreds_received = Arc::new(Mutex::new(HashSet::new()));
         let code_shreds_received = Arc::new(Mutex::new(HashSet::new()));
@@ -247,13 +254,13 @@ mod tests {
     async fn many_instances() {
         let (sks, mut rotors) = create_rotor_instances(10, 3100);
         let slice = Slice {
-            slot: 0,
+            slot: Slot::new(0),
             slice_index: 0,
             is_last: true,
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let mut data_shreds_received = Vec::with_capacity(rotors.len());
         (0..rotors.len())

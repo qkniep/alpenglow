@@ -26,16 +26,16 @@ ctr = "0.10.0-rc.0"
 ed25519-consensus = "2"
 either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
-fastrace-opentelemetry = "0.10"
+fastrace-opentelemetry = "0.13"
 futures = "0.3"
 geo = "0.30"
 hex = "0.4"
 log = "0.4"
-logforth = { version = "0.25", features = ["colored", "fastrace"] }
+logforth = { version = "0.26", features = ["colored", "append-fastrace"] }
 moka = { version = "0.12", features = ["future"] }
-opentelemetry = "0.29"
-opentelemetry-otlp = { version = "0.29", features = ["grpc-tonic"] }
-opentelemetry_sdk = "0.29"
+opentelemetry = "0.30"
+opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic"] }
+opentelemetry_sdk = "0.30"
 rand = "0.9"
 rayon = "1"
 reed-solomon-simd = "3"

@@ -19,11 +19,12 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
 use crate::crypto::Hash;
+use crate::slot::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
-use super::{Cert, EpochInfo, SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Vote};
+use super::{Cert, EpochInfo, Vote};
 
 use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
@@ -101,8 +102,8 @@ impl Pool {
             slot_states: BTreeMap::new(),
             parent_ready_tracker: ParentReadyTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
-            highest_notarized_fallback_slot: 0,
-            highest_finalized_slot: 0,
+            highest_notarized_fallback_slot: Slot::new(0),
+            highest_finalized_slot: Slot::new(0),
             epoch_info,
             votor_event_channel,
             repair_channel,
@@ -115,9 +116,9 @@ impl Pool {
         let slot = cert.slot();
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
-        if slot < self.highest_finalized_slot
-            || slot >= self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
-        {
+        let slot_far_in_future =
+            Slot::new(self.highest_finalized_slot.inner() + 2 * SLOTS_PER_EPOCH);
+        if slot < self.highest_finalized_slot || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
@@ -194,7 +195,7 @@ impl Pool {
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
                 for (slot, (parent_slot, parent_hash)) in new_parents_ready {
-                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+                    debug_assert!(slot.is_start_of_window());
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -210,7 +211,7 @@ impl Pool {
                 warn!("skipped slot {slot}");
                 let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
                 for (slot, (parent_slot, parent_hash)) in newly_certified {
-                    debug_assert_eq!(slot % SLOTS_PER_WINDOW, 0);
+                    debug_assert!(slot.is_start_of_window());
                     let event = VotorEvent::ParentReady {
                         slot,
                         parent_slot,
@@ -242,9 +243,9 @@ impl Pool {
         let slot = vote.slot();
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
-        if slot < self.highest_finalized_slot
-            || slot >= self.highest_finalized_slot + 2 * SLOTS_PER_EPOCH
-        {
+        let slot_far_in_future =
+            Slot::new(self.highest_finalized_slot.inner() + 2 * SLOTS_PER_EPOCH);
+        if slot < self.highest_finalized_slot || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
@@ -319,7 +320,7 @@ impl Pool {
     pub async fn recover_from_standstill(&self) {
         let slot = self.highest_finalized_slot;
         let certs = self.get_certs(slot);
-        let votes = self.get_own_votes(slot + 1);
+        let votes = self.get_own_votes(slot.next());
 
         warn!("recovering from standstill at slot {slot}");
         debug!(
@@ -330,7 +331,7 @@ impl Pool {
 
         // NOTE: This event corresponds to the slot after the last finalized one,
         //       this way it is ignored by `Votor` iff a new slot was finalized.
-        let event = VotorEvent::Standstill(slot + 1, certs, votes);
+        let event = VotorEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
         self.votor_event_channel.send(event).await.unwrap();
@@ -462,380 +463,378 @@ impl Pool {
 mod tests {
     use super::*;
 
-    use crate::consensus::SLOTS_PER_WINDOW;
-    use crate::consensus::cert::NotarCert;
+    use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::crypto::aggsig::SecretKey;
+    use crate::slot::SLOTS_PER_WINDOW;
     use crate::test_utils::generate_validators;
 
-    use static_assertions::const_assert;
     use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn handle_invalid_votes() {
         let (_, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         let wrong_sk = SecretKey::new(&mut rand::rng());
-        let vote = Vote::new_notar(0, Hash::default(), &wrong_sk, 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &wrong_sk, 0);
         assert_eq!(
             pool.add_vote(vote).await,
             Err(AddVoteError::InvalidSignature)
         );
-        drop(votor_rx);
-        drop(repair_rx);
     }
 
     #[tokio::test]
     async fn notarize_block() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // all nodes notarize block in slot 0
-        assert!(!pool.is_notarized(0));
+        assert!(!pool.is_notarized(Slot::new(0)));
         for v in 0..11 {
-            let vote = Vote::new_notar(0, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_notarized(0));
+        assert!(pool.is_notarized(Slot::new(0)));
 
         // just enough nodes notarize block in slot 1
-        assert!(!pool.is_notarized(1));
+        assert!(!pool.is_notarized(Slot::new(1)));
         for v in 0..7 {
-            let vote = Vote::new_notar(1, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(1), Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_notarized(1));
+        assert!(pool.is_notarized(Slot::new(1)));
 
         // just NOT enough nodes notarize block in slot 2
-        assert!(!pool.is_notarized(2));
+        assert!(!pool.is_notarized(Slot::new(2)));
         for v in 0..6 {
-            let vote = Vote::new_notar(2, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(2), Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(!pool.is_notarized(2));
-        drop(votor_rx);
-        drop(repair_rx);
+        assert!(!pool.is_notarized(Slot::new(2)));
     }
 
     #[tokio::test]
     async fn skip_block() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // all nodes vote skip on slot 0
-        assert!(!pool.is_skip_certified(0));
+        assert!(!pool.is_skip_certified(Slot::new(0)));
         for v in 0..11 {
-            let vote = Vote::new_skip(0, &sks[v as usize], v);
+            let vote = Vote::new_skip(Slot::new(0), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_skip_certified(0));
+        assert!(pool.is_skip_certified(Slot::new(0)));
 
         // just enough nodes vote skip on slot 1
-        assert!(!pool.is_skip_certified(1));
+        assert!(!pool.is_skip_certified(Slot::new(1)));
         for v in 0..7 {
-            let vote = Vote::new_skip(1, &sks[v as usize], v);
+            let vote = Vote::new_skip(Slot::new(1), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_skip_certified(1));
+        assert!(pool.is_skip_certified(Slot::new(1)));
 
         // just NOT enough nodes notarize block in slot 2
-        assert!(!pool.is_skip_certified(2));
+        assert!(!pool.is_skip_certified(Slot::new(2)));
         for v in 0..6 {
-            let vote = Vote::new_skip(2, &sks[v as usize], v);
+            let vote = Vote::new_skip(Slot::new(2), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(!pool.is_skip_certified(2));
-        drop(votor_rx);
-        drop(repair_rx);
+        assert!(!pool.is_skip_certified(Slot::new(2)));
     }
 
     #[tokio::test]
     async fn finalize_block() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // all nodes vote finalize on slot 0
-        assert!(!pool.is_finalized(0));
+        assert!(!pool.is_finalized(Slot::new(0)));
         for v in 0..11 {
-            let vote = Vote::new_final(0, &sks[v as usize], v);
+            let vote = Vote::new_final(Slot::new(0), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_finalized(0));
-        assert!(pool.highest_finalized_slot == 0);
+        assert!(pool.is_finalized(Slot::new(0)));
+        assert!(pool.highest_finalized_slot == Slot::new(0));
 
         // just enough nodes vote finalize on slot 1
-        assert!(!pool.is_finalized(1));
+        assert!(!pool.is_finalized(Slot::new(1)));
         for v in 0..7 {
-            let vote = Vote::new_final(1, &sks[v as usize], v);
+            let vote = Vote::new_final(Slot::new(1), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_finalized(1));
-        assert!(pool.highest_finalized_slot == 1);
+        assert!(pool.is_finalized(Slot::new(1)));
+        assert!(pool.highest_finalized_slot == Slot::new(1));
 
         // just NOT enough nodes vote finalize on slot 2
-        assert!(!pool.is_finalized(2));
+        assert!(!pool.is_finalized(Slot::new(2)));
         for v in 0..6 {
-            let vote = Vote::new_final(2, &sks[v as usize], v);
+            let vote = Vote::new_final(Slot::new(2), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(!pool.is_finalized(2));
-        assert!(pool.highest_finalized_slot == 1);
-        drop(votor_rx);
-        drop(repair_rx);
+        assert!(!pool.is_finalized(Slot::new(2)));
+        assert!(pool.highest_finalized_slot == Slot::new(1));
     }
 
     #[tokio::test]
     async fn fast_finalize_block() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // all nodes vote notarize on slot 0
-        assert!(!pool.is_finalized(0));
+        assert!(!pool.is_finalized(Slot::new(0)));
         for v in 0..11 {
-            let vote = Vote::new_notar(0, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_finalized(0));
-        assert!(pool.highest_finalized_slot == 0);
+        assert!(pool.is_finalized(Slot::new(0)));
+        assert!(pool.highest_finalized_slot == Slot::new(0));
 
         // just enough nodes to fast finalize slot 1
-        assert!(!pool.is_finalized(1));
+        assert!(!pool.is_finalized(Slot::new(1)));
         for v in 0..9 {
-            let vote = Vote::new_notar(1, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(1), Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(pool.is_finalized(1));
-        assert!(pool.highest_finalized_slot == 1);
+        assert!(pool.is_finalized(Slot::new(1)));
+        assert!(pool.highest_finalized_slot == Slot::new(1));
 
         // just NOT enough nodes to fast finalize slot 2
-        assert!(!pool.is_finalized(2));
+        assert!(!pool.is_finalized(Slot::new(2)));
         for v in 0..8 {
-            let vote = Vote::new_notar(2, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(2), Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert!(!pool.is_finalized(2));
-        assert!(pool.highest_finalized_slot == 1);
-        drop(votor_rx);
-        drop(repair_rx);
+        assert!(!pool.is_finalized(Slot::new(2)));
+        assert!(pool.highest_finalized_slot == Slot::new(1));
     }
 
     #[tokio::test]
     async fn simple_branch_certified() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
-        for slot in 0..SLOTS_PER_WINDOW {
+        let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
-        assert!(pool.is_parent_ready(
-            SLOTS_PER_WINDOW,
-            (SLOTS_PER_WINDOW - 1, [SLOTS_PER_WINDOW as u8 - 1; 32])
-        ));
-        drop(votor_rx);
-        drop(repair_rx);
+        let slot = *window.last().unwrap();
+        let next = slot.next();
+        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32])));
     }
 
     #[tokio::test]
     async fn branch_certified_notar_fallback() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // receive mixed notar & notar-fallback votes
-        for slot in 0..SLOTS_PER_WINDOW {
-            assert!(!pool.is_parent_ready(slot + 1, (slot, [slot as u8; 32])));
+        let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        for slot in window.iter() {
+            assert!(!pool.is_parent_ready(slot.next(), (*slot, [slot.inner() as u8; 32])));
             for v in 0..4 {
-                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
             for v in 4..7 {
-                let vote = Vote::new_notar_fallback(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote =
+                    Vote::new_notar_fallback(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
-        assert!(pool.is_parent_ready(
-            SLOTS_PER_WINDOW,
-            (SLOTS_PER_WINDOW - 1, [SLOTS_PER_WINDOW as u8 - 1; 32])
-        ));
-        drop(votor_rx);
-        drop(repair_rx);
+        let slot = *window.last().unwrap();
+        let next = slot.next();
+        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32])));
     }
 
     #[tokio::test]
     async fn branch_certified_out_of_order() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // first see skip votes for later slots
-        const_assert!(SLOTS_PER_WINDOW > 2);
-        for slot in 2..SLOTS_PER_WINDOW {
+        let mut window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        assert!(window.len() > 2);
+        window.remove(0);
+        window.remove(0);
+        for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_skip(slot, &sks[v as usize], v);
+                let vote = Vote::new_skip(*slot, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
+
+        let next = window.last().unwrap().next();
         // no blocks are valid parents yet
-        assert!(pool.parents_ready(SLOTS_PER_WINDOW).is_empty());
+        assert!(pool.parents_ready(next).is_empty());
 
         // then see notarization votes for slot 1
+        let slot_1 = Slot::new(1);
         for v in 0..7 {
-            let vote = Vote::new_notar(1, [1; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot_1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
         // branch can only be certified once we saw votes other slots in window
-        assert!(pool.is_parent_ready(SLOTS_PER_WINDOW, (1, [1; 32])));
+        assert!(pool.is_parent_ready(next, (slot_1, [1; 32])));
         // no other blocks are valid parents
-        assert_eq!(pool.parents_ready(SLOTS_PER_WINDOW).len(), 1);
-        drop(votor_rx);
-        drop(repair_rx);
+        assert_eq!(pool.parents_ready(next).len(), 1);
     }
 
     #[tokio::test]
     async fn branch_certified_late_cert() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
 
         // first see skip votes for later slots
-        for slot in 2..SLOTS_PER_WINDOW {
+        let mut window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
+        assert!(window.len() > 2);
+        window.remove(0);
+        window.remove(0);
+        for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_skip(slot, &sks[v as usize], v);
+                let vote = Vote::new_skip(*slot, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
+
         // no blocks are valid parents yet
-        assert!(pool.parents_ready(SLOTS_PER_WINDOW).is_empty());
+        let next = window.last().unwrap().next();
+        assert!(pool.parents_ready(next).is_empty());
 
         // then receive notarization cert for slot 1
+        let slot_1 = Slot::new(1);
         let mut votes = Vec::new();
         for v in 0..7 {
-            votes.push(Vote::new_notar(1, [1; 32], &sks[v as usize], v));
+            votes.push(Vote::new_notar(slot_1, [1; 32], &sks[v as usize], v));
         }
         let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
-        assert!(pool.is_parent_ready(SLOTS_PER_WINDOW, (1, [1; 32])));
-        drop(votor_rx);
-        drop(repair_rx);
+        assert!(pool.is_parent_ready(next, (slot_1, [1; 32])));
     }
 
     #[tokio::test]
     async fn regular_handover() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // notarize all slots of first window
         for slot in 0..SLOTS_PER_WINDOW {
             for v in 0..7 {
-                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
         assert!(pool.is_parent_ready(
-            SLOTS_PER_WINDOW,
-            (SLOTS_PER_WINDOW - 1, [(SLOTS_PER_WINDOW - 1) as u8; 32])
+            Slot::new(SLOTS_PER_WINDOW),
+            (
+                Slot::new(SLOTS_PER_WINDOW - 1),
+                [(SLOTS_PER_WINDOW - 1) as u8; 32]
+            )
         ));
-        drop(votor_rx);
-        drop(repair_rx);
     }
 
     #[tokio::test]
     async fn one_skip_handover() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // notarize all slots but last one
         for slot in 0..SLOTS_PER_WINDOW - 1 {
             for v in 0..7 {
-                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
         // skip last slot
         for v in 0..7 {
-            let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
+            let vote = Vote::new_skip(Slot::new(SLOTS_PER_WINDOW - 1), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
         assert!(pool.is_parent_ready(
-            SLOTS_PER_WINDOW,
-            (SLOTS_PER_WINDOW - 2, [(SLOTS_PER_WINDOW - 2) as u8; 32])
+            Slot::new(SLOTS_PER_WINDOW),
+            (
+                Slot::new(SLOTS_PER_WINDOW - 2),
+                [(SLOTS_PER_WINDOW - 2) as u8; 32]
+            )
         ));
-        drop(votor_rx);
-        drop(repair_rx);
     }
 
     #[tokio::test]
     async fn two_skip_handover() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // notarize all slots but last two
         for slot in 0..SLOTS_PER_WINDOW - 2 {
             for v in 0..7 {
-                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
         // skip last 2 slots
         for v in 0..7 {
-            let vote = Vote::new_skip(SLOTS_PER_WINDOW - 2, &sks[v as usize], v);
+            let vote = Vote::new_skip(Slot::new(SLOTS_PER_WINDOW - 2), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         for v in 0..7 {
-            let vote = Vote::new_skip(SLOTS_PER_WINDOW - 1, &sks[v as usize], v);
+            let vote = Vote::new_skip(Slot::new(SLOTS_PER_WINDOW - 1), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
         assert!(pool.is_parent_ready(
-            SLOTS_PER_WINDOW,
-            (SLOTS_PER_WINDOW - 3, [(SLOTS_PER_WINDOW - 3) as u8; 32])
+            Slot::new(SLOTS_PER_WINDOW),
+            (
+                Slot::new(SLOTS_PER_WINDOW - 3),
+                [(SLOTS_PER_WINDOW - 3) as u8; 32]
+            )
         ));
-        drop(votor_rx);
-        drop(repair_rx);
     }
 
     #[tokio::test]
     async fn skip_window_handover() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
         // notarize all slots in first window
         for slot in 0..SLOTS_PER_WINDOW {
             for v in 0..7 {
-                let vote = Vote::new_notar(slot, [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -843,28 +842,30 @@ mod tests {
         // skip all slots in second window
         for slot in 0..SLOTS_PER_WINDOW {
             for v in 0..7 {
-                let vote = Vote::new_skip(SLOTS_PER_WINDOW + slot, &sks[v as usize], v);
+                let vote = Vote::new_skip(Slot::new(SLOTS_PER_WINDOW + slot), &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
 
         assert!(pool.is_parent_ready(
-            2 * SLOTS_PER_WINDOW,
-            (SLOTS_PER_WINDOW - 1, [(SLOTS_PER_WINDOW - 1) as u8; 32])
+            Slot::new(2 * SLOTS_PER_WINDOW),
+            (
+                Slot::new(SLOTS_PER_WINDOW - 1),
+                [(SLOTS_PER_WINDOW - 1) as u8; 32]
+            )
         ));
-        drop(votor_rx);
-        drop(repair_rx);
     }
 
     #[tokio::test]
     async fn pruning() {
         let (sks, epoch_info) = generate_validators(11);
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
 
-        // all nodes vote finalize on 100 leader windows
+        // all nodes vote finalize on 3 leader windows
         for slot in 0..3 * SLOTS_PER_WINDOW {
+            let slot = Slot::new(slot);
             assert!(!pool.is_finalized(slot));
             for v in 0..11 {
                 let vote = Vote::new_final(slot, &sks[v as usize], v);
@@ -872,18 +873,19 @@ mod tests {
             }
             assert!(pool.is_finalized(slot));
         }
-        let last_slot = 3 * SLOTS_PER_WINDOW - 1;
+        let last_slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         assert_eq!(pool.highest_finalized_slot, last_slot);
 
         // finalization triggers pruning, only last slot should be there
-        for slot in 0..last_slot {
+        for slot in 0..last_slot.inner() {
+            let slot = Slot::new(slot);
             assert!(!pool.slot_states.contains_key(&slot));
         }
         assert!(pool.slot_states.contains_key(&(last_slot)));
 
         // NOT enough nodes vote finalize on next 10 slots
         for s in 1..=10 {
-            let slot = last_slot + s;
+            let slot = Slot::new(last_slot.inner() + s);
             for v in 0..6 {
                 let vote = Vote::new_final(slot, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
@@ -894,27 +896,170 @@ mod tests {
 
         // these slots should still be there
         for s in 0..=10 {
-            let slot = last_slot + s;
+            let slot = Slot::new(last_slot.inner() + s);
             assert!(pool.slot_states.contains_key(&slot));
         }
 
         // add one more vote each to finalize next 10 slots
         for s in 1..=10 {
-            let slot = last_slot + s;
+            let slot = Slot::new(last_slot.inner() + s);
             let vote = Vote::new_final(slot, &sks[6], 6);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
             assert!(pool.is_finalized(slot));
         }
-        assert_eq!(pool.highest_finalized_slot, last_slot + 10);
+        assert_eq!(pool.highest_finalized_slot.inner(), last_slot.inner() + 10);
 
         // NOW first 10 slots should be gone
         for s in 0..10 {
-            let slot = last_slot + s;
+            let slot = Slot::new(last_slot.inner() + s);
             assert!(!pool.slot_states.contains_key(&slot));
         }
-        assert!(pool.slot_states.contains_key(&(last_slot + 10)));
+        assert!(
+            pool.slot_states
+                .contains_key(&Slot::new(last_slot.inner() + 10))
+        );
+    }
 
-        drop(votor_rx);
-        drop(repair_rx);
+    #[tokio::test]
+    async fn duplicate_votes() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
+
+        // insert a notar vote from validator 0
+        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[0], 0);
+        assert_eq!(pool.add_vote(vote).await, Ok(()));
+
+        // insert a skip vote from validator 1
+        let vote = Vote::new_skip(Slot::new(0), &sks[1], 1);
+        assert_eq!(pool.add_vote(vote).await, Ok(()));
+
+        // inserting same votes again should fail
+        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[0], 0);
+        assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
+        let vote = Vote::new_skip(Slot::new(0), &sks[1], 1);
+        assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
+    }
+
+    #[tokio::test]
+    async fn duplicate_certs() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
+
+        // insert a notar cert for slot 0
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_notar(
+                Slot::new(0),
+                Hash::default(),
+                &sks[v as usize],
+                v,
+            ));
+        }
+        let notar_cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
+
+        // insert a skip cert for slot 1
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_skip(Slot::new(1), &sks[v as usize], v));
+        }
+        let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
+
+        // inserting same certs again should fail
+        assert_eq!(
+            pool.add_cert(Cert::Notar(notar_cert)).await,
+            Err(AddCertError::Duplicate)
+        );
+        assert_eq!(
+            pool.add_cert(Cert::Skip(skip_cert)).await,
+            Err(AddCertError::Duplicate)
+        );
+    }
+
+    #[tokio::test]
+    async fn out_of_bounds_votes() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info, votor_tx, repair_tx);
+
+        // all nodes vote finalize last slot of 3rd leader windows
+        let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
+        for v in 0..11 {
+            let vote = Vote::new_notar(slot, Hash::default(), &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert_eq!(pool.highest_finalized_slot, slot);
+
+        // dismiss old votes
+        for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
+            for v in 0..11 {
+                let vote = Vote::new_final(Slot::new(slot), &sks[v as usize], v);
+                assert_eq!(
+                    pool.add_vote(vote).await,
+                    Err(AddVoteError::SlotOutOfBounds)
+                );
+            }
+        }
+
+        // dismiss far-in-the-future vote
+        let slot = Slot::new(5 * SLOTS_PER_EPOCH);
+        for v in 0..11 {
+            let vote = Vote::new_final(slot, &sks[v as usize], v);
+            assert_eq!(
+                pool.add_vote(vote).await,
+                Err(AddVoteError::SlotOutOfBounds)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn out_of_bounds_certs() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, _votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
+        let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
+
+        // insert a notar cert for last slot of 3rd leader window
+        let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_notar(slot, Hash::default(), &sks[v as usize], v));
+        }
+        let ff_cert = FastFinalCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(
+            pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
+            Ok(())
+        );
+
+        // dismiss old certs
+        for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
+            let mut votes = Vec::new();
+            for v in 0..11 {
+                votes.push(Vote::new_skip(Slot::new(slot), &sks[v as usize], v));
+            }
+            let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+            assert_eq!(
+                pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+                Err(AddCertError::SlotOutOfBounds)
+            );
+        }
+
+        // dismiss far-in-the-future certs
+        let slot = Slot::new(3 * SLOTS_PER_EPOCH);
+        let mut votes = Vec::new();
+        for v in 0..11 {
+            votes.push(Vote::new_skip(slot, &sks[v as usize], v));
+        }
+        let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+        assert_eq!(
+            pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+            Err(AddCertError::SlotOutOfBounds)
+        );
     }
 }

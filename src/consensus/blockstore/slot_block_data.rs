@@ -13,7 +13,8 @@ use thiserror::Error;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
-use crate::shredder::{self, RegularShredder, Shred, Shredder, Slice};
+use crate::shredder::{self, RegularShredder, Shred, Shredder};
+use crate::slice::Slice;
 use crate::{Block, Slot};
 
 use super::BlockInfo;
@@ -80,7 +81,7 @@ impl SlotBlockData {
         shred: Shred,
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
-        assert_eq!(shred.payload().slot, self.slot);
+        assert_eq!(shred.payload().header.slot, self.slot);
         if self.equivocated {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
@@ -102,7 +103,7 @@ impl SlotBlockData {
         shred: Shred,
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
-        assert_eq!(shred.payload().slot, self.slot);
+        assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
             .alternatives
             .entry(hash)
@@ -142,8 +143,8 @@ impl BlockData {
     /// - `Some(VotorEvent::Block)` if the block was successfully reconstructed,
     /// - `None` otherwise.
     pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
-        let slice_index = shred.payload().slice_index;
-        let is_last_slice = shred.payload().is_last_slice;
+        let slice_index = shred.payload().header.slice_index;
+        let is_last_slice = shred.payload().header.is_last;
         let is_first_shred = self.shreds.is_empty();
         self.shreds.entry(slice_index).or_default().push(shred);
 
@@ -177,7 +178,7 @@ impl BlockData {
         check_equivocation: bool,
         leader_pk: PublicKey,
     ) -> Result<(), AddShredError> {
-        let slice_index = shred.payload().slice_index;
+        let slice_index = shred.payload().header.slice_index;
         let shred_index = shred.payload().index_in_slice;
         let slice_shreds = self.shreds.entry(slice_index).or_default();
 
@@ -253,7 +254,9 @@ impl BlockData {
 
         // reconstruct block header
         let first_slice = self.slices.get(&0).unwrap();
-        let parent_slot = u64::from_be_bytes(first_slice.data[0..8].try_into().unwrap());
+        let parent_slot = Slot::new(u64::from_be_bytes(
+            first_slice.data[0..8].try_into().unwrap(),
+        ));
         let parent_hash = first_slice.data[8..40].try_into().unwrap();
         // TODO: reconstruct actual block content
         let block = Block {
