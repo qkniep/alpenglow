@@ -22,7 +22,6 @@ use fastrace::collector::Config;
 use fastrace::prelude::*;
 use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-use opentelemetry::trace::SpanKind;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
@@ -77,7 +76,6 @@ async fn main() -> Result<()> {
             .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
             .build()
             .expect("initialize oltp exporter"),
-        SpanKind::Server,
         Cow::Owned(
             Resource::builder()
                 .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
