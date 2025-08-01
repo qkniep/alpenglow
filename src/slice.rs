@@ -48,7 +48,7 @@ impl Slice {
     }
 
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
-    pub(crate) fn deconstruct_slice(self) -> (SliceHeader, SlicePayload) {
+    pub(crate) fn deconstruct(self) -> (SliceHeader, SlicePayload) {
         let Slice {
             slot,
             slice_index,
@@ -84,7 +84,7 @@ pub(crate) struct SliceHeader {
 ///
 /// This is what actually gets "shredded" into different [`Shred`]s.
 pub(crate) struct SlicePayload {
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {

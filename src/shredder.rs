@@ -223,7 +223,7 @@ impl Shredder for RegularShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        let (header, payload) = slice.deconstruct_slice();
+        let (header, payload) = slice.deconstruct();
         let (data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
@@ -235,7 +235,7 @@ impl Shredder for RegularShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (header, payload) = slice.clone().deconstruct_slice();
+        let (header, payload) = slice.clone().deconstruct();
         let (data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         let tree = build_merkle_tree(&data, &coding);
@@ -254,7 +254,7 @@ impl Shredder for CodingOnlyShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
-        let (header, payload) = slice.deconstruct_slice();
+        let (header, payload) = slice.deconstruct();
         let (_data, coding) = reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
     }
@@ -265,7 +265,7 @@ impl Shredder for CodingOnlyShredder {
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (header, payload) = slice.clone().deconstruct_slice();
+        let (header, payload) = slice.clone().deconstruct();
         let (_, coding) = reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
         if tree.get_root() != merkle_root {
@@ -289,8 +289,7 @@ impl Shredder for PetsShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let mut buffer = vec![0; slice.data.len()];
-        buffer.copy_from_slice(&slice.data);
+        let (header, mut payload) = slice.deconstruct();
 
         let mut rng = rng();
         let mut key = Array::from([0; 16]);
@@ -298,14 +297,9 @@ impl Shredder for PetsShredder {
         let iv = Array::from([0; 16]);
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
+        cipher.apply_keystream(&mut payload.data);
 
-        for i in 0..16 {
-            buffer.push(key[i]);
-        }
-
-        let (header, _) = slice.deconstruct_slice();
-        let payload = SlicePayload::new(buffer);
+        payload.data.extend_from_slice(&key);
         let (mut data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         // delete data shred containing key
@@ -357,26 +351,21 @@ impl Shredder for AontShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
         assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let payload = {
-            let mut buffer = vec![0; slice.data.len()];
-            buffer.copy_from_slice(&slice.data);
+        let (header, mut payload) = slice.deconstruct();
 
-            let mut rng = rng();
-            let mut key = Array::from([0; 16]);
-            rng.fill_bytes(&mut key);
-            let iv = Array::from([0u8; 16]);
+        let mut rng = rng();
+        let mut key = Array::from([0; 16]);
+        rng.fill_bytes(&mut key);
+        let iv = Array::from([0u8; 16]);
 
-            let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-            cipher.apply_keystream(&mut buffer);
+        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
+        cipher.apply_keystream(&mut payload.data);
 
-            let hash = hash(&buffer);
-            for i in 0..16 {
-                buffer.push(hash[i] ^ key[i]);
-            }
-            SlicePayload::new(buffer)
-        };
+        let hash = hash(&payload.data);
+        for i in 0..16 {
+            payload.data.push(hash[i] ^ key[i]);
+        }
 
-        let (header, _) = slice.clone().deconstruct_slice();
         let (data, coding) =
             reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
