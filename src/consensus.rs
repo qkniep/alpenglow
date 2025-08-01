@@ -55,8 +55,7 @@ use votor::Votor;
 const DELTA: Duration = Duration::from_millis(250);
 /// Time the leader has for producing and sending the block.
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
-/// Timeout to use when we haven't seen any shred from the leader's block.
-/// This is used to skip honest but crashed leaders faster.
+/// Base timeout for when leader's first slice should arrive if they sent it immediately.
 const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
