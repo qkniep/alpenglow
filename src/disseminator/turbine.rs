@@ -86,7 +86,7 @@ impl<N: Network> Turbine<N> {
     pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkError> {
         // TODO: fix duplicate use indices between data and coding shreds
         let tree = self
-            .get_tree(shred.payload().slot, shred.payload().index_in_slot())
+            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
         let msg = NetworkMessage::Shred(shred.clone());
@@ -102,7 +102,7 @@ impl<N: Network> Turbine<N> {
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkError> {
         let tree = self
-            .get_tree(shred.payload().slot, shred.payload().index_in_slot())
+            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let msg = NetworkMessage::Shred(shred.clone());
         for child in tree.get_children() {
@@ -164,7 +164,7 @@ impl TurbineTree {
         // seed the RNG
         let seed = [
             b"ALPENGLOWTURBINE",
-            &slot.to_be_bytes()[..],
+            &slot.inner().to_be_bytes()[..],
             &shred.to_be_bytes()[..],
         ]
         .concat();
@@ -229,7 +229,8 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::slice::Slice;
 
     use tokio::{sync::Mutex, task};
 
@@ -281,7 +282,7 @@ mod tests {
         let mut trees = Vec::new();
         for v in 0..validators.len() {
             let v = v as ValidatorId;
-            let tree = TurbineTree::new(&validators, 200, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             trees.push((v, tree));
         }
 
@@ -317,15 +318,15 @@ mod tests {
         let (_, validators) = create_validator_info(500);
         for v in 0..validators.len() {
             let v = v as ValidatorId;
-            let tree = TurbineTree::new(&validators, 200, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 200);
-            let tree = TurbineTree::new(&validators, 1, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 1, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 1);
-            let tree = TurbineTree::new(&validators, 2, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 2, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 2);
-            let tree = TurbineTree::new(&validators, 400, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 400, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 400);
-            let tree = TurbineTree::new(&validators, 1000, v, 0, 0);
+            let tree = TurbineTree::new(&validators, 1000, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 500);
         }
     }
@@ -335,13 +336,13 @@ mod tests {
         let (sks, mut validators) = create_validator_info(10);
         let mut disseminators = create_turbine_instances(&mut validators).await;
         let slice = Slice {
-            slot: 0,
+            slot: Slot::new(0),
             slice_index: 0,
             is_last: true,
             merkle_root: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
         let mut tasks = Vec::new();

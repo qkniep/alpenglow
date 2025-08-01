@@ -11,7 +11,7 @@ use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::{Rotor, rotor::StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
-use alpenglow::{Alpenglow, ValidatorInfo};
+use alpenglow::{Alpenglow, Slot, ValidatorInfo};
 use rand::prelude::*;
 
 #[tokio::test]
@@ -139,7 +139,7 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
     // spawn a thread checking pool for progress
     let cancel_tokens = node_cancel_tokens.clone();
     let liveness_tester = tokio::spawn(async move {
-        let mut finalized = vec![0; pools.len()];
+        let mut finalized = vec![Slot::new(0); pools.len()];
         for t in 1.. {
             tokio::time::sleep(Duration::from_secs(10)).await;
             for (i, pool) in pools.iter().enumerate() {

@@ -13,7 +13,7 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork};
-use alpenglow::{Alpenglow, ValidatorInfo, logging};
+use alpenglow::{Alpenglow, Slot, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 
@@ -127,7 +127,7 @@ async fn latency_test(num_nodes: usize) {
     // spawn a thread checking pool for progress
     let cancel_tokens = node_cancel_tokens.clone();
     let liveness_tester = tokio::spawn(async move {
-        let mut finalized = vec![0; pools.len()];
+        let mut finalized = vec![Slot::new(0); pools.len()];
         let mut times = vec![Instant::now(); pools.len()];
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
