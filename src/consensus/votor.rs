@@ -18,13 +18,12 @@ use color_eyre::Result;
 use log::{debug, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::consensus::DELTA_BLOCK;
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
-use super::{Cert, DELTA_TIMEOUT, Vote};
+use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 
 /// Events that Votor is interested in.
 ///
