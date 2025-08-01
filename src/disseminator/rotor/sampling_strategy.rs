@@ -189,7 +189,7 @@ impl Clone for DecayingAcceptanceSampler {
     }
 }
 
-/// A sampler that simulates the probability distribution in Turbine for Rotor.
+/// A sampler that simulates the probability distribution of Turbine for Rotor.
 ///
 /// The goal is to distribute the required work for validators as in Turbine.
 /// Specifically, it should respect the same upper bound on the amount of work,
@@ -221,7 +221,7 @@ impl TurbineSampler {
         for leader in &validators {
             let validators_left = validators.len() - 1;
             let prob = leader.stake as f64 / total_stake as f64;
-            expected_work[leader.id as usize] += prob;
+            // expected_work[leader.id as usize] += prob;
             for root in &validators {
                 if root.id == leader.id {
                     continue;
@@ -251,7 +251,7 @@ impl TurbineSampler {
         }
 
         // turn expected work into stakes
-        for (i, w) in expected_work.iter().enumerate() {
+        for (i, w) in expected_work.into_iter().enumerate() {
             validators[i].stake = (w * 1_000_000_000.0) as Stake;
         }
 
@@ -773,13 +773,15 @@ mod tests {
     #[test]
     #[ignore]
     fn turbine_sampler() {
-        const SLICES: usize = 100;
+        const SLICES: usize = 1_000_000;
 
         let mut rng = rand::rng();
-        let mut validators = create_validator_info(4000);
-        // two large nodes with 5% of the stake each
-        validators[0].stake = 200;
-        validators[1].stake = 200;
+        let mut validators = create_validator_info(1000);
+        // two large nodes with roughly 5% of the stake each
+        validators[0].stake = 55;
+        validators[1].stake = 55;
+
+        // calculate work expected with `TurbineSampler`
         let sampler = TurbineSampler::new(validators.clone());
         let sampled = sampler.sample_multiple(TOTAL_SHREDS * SLICES, &mut rng);
         let appearances0 = sampled.iter().filter(|v| **v == 0).count();
@@ -787,34 +789,27 @@ mod tests {
         let work0 = (TOTAL_SHREDS * SLICES / 20) + appearances0 * validators.len();
         let work1 = (TOTAL_SHREDS * SLICES / 20) + appearances1 * validators.len();
 
-        let mut turbine_work0 = 0;
-        let mut turbine_work1 = 0;
+        // simulate and count work required with actual `Turbine`
+        let mut turbine_work = [0, 0];
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
         for _ in 0..TOTAL_SHREDS * SLICES {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
-            let validator_ids: Vec<_> = weighted_shuffle
-                .shuffle(&mut rng)
-                .map(|i| i as ValidatorId)
-                .collect();
+            let mut validator_ids = weighted_shuffle.shuffle(&mut rng).map(|i| i as ValidatorId);
 
-            let leader = validator_ids[0];
-            if leader == 0 {
-                turbine_work0 += 1;
-            } else if leader == 1 {
-                turbine_work1 += 1;
+            let leader = validator_ids.next().unwrap();
+            if leader == 0 || leader == 1 {
+                turbine_work[leader as usize] += 1;
             }
-            let root = validator_ids[1];
-            if root == 0 {
-                turbine_work0 += DEFAULT_FANOUT;
-            } else if root == 1 {
-                turbine_work1 += DEFAULT_FANOUT;
+            let root = validator_ids.next().unwrap();
+            if root == 0 || root == 1 {
+                turbine_work[root as usize] += DEFAULT_FANOUT;
             }
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
-            for i in 0..DEFAULT_FANOUT {
-                let parent = validator_ids[2 + i] as usize;
-                if parent == 0 {
-                    turbine_work0 += DEFAULT_FANOUT.min(validators_left);
-                } else if parent == 1 {
-                    turbine_work1 += DEFAULT_FANOUT.min(validators_left);
+            for _ in 0..DEFAULT_FANOUT {
+                let parent = validator_ids.next().unwrap() as usize;
+                if parent == 0 || parent == 1 {
+                    let work = DEFAULT_FANOUT.min(validators_left);
+                    turbine_work[parent as usize] += work;
                 }
                 if validators_left < DEFAULT_FANOUT {
                     break;
@@ -823,15 +818,20 @@ mod tests {
             }
         }
 
-        let rel_workload = (turbine_work0 + turbine_work1) as f64 / (work0 + work1) as f64;
-        assert!(rel_workload < 1.1);
-        assert!(rel_workload > 0.9);
+        // compare the two
+        const TOLERANCE: f64 = 0.05;
+        let rel_workload0 = turbine_work[0] as f64 / work0 as f64;
+        assert!(rel_workload0 > 1.0 - TOLERANCE);
+        assert!(rel_workload0 < 1.0 + TOLERANCE);
+        let rel_workload1 = turbine_work[1] as f64 / work1 as f64;
+        assert!(rel_workload1 > 1.0 - TOLERANCE);
+        assert!(rel_workload1 < 1.0 + TOLERANCE);
     }
 
-    #[tokio::test]
+    #[test]
     #[ignore]
-    async fn turbine_sampler_real_world() {
-        const SLICES: usize = 100_000;
+    fn turbine_sampler_real_world() {
+        const SLICES: usize = 1_000_000;
 
         // use real mainnet validator stake distribution
         let mut stakes = Vec::new();
@@ -849,22 +849,33 @@ mod tests {
             validators[i].stake = stake;
         }
 
-        // count workload of each validator in Turbine
-        let mut rng = rand::rng();
+        // calculate work expected with `TurbineSampler`
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
+        let sampler = TurbineSampler::new(validators.clone());
+        let mut expected_work = vec![0; validators.len()];
+        let relays = sampler.sample_multiple(TOTAL_SHREDS * SLICES, &mut rng);
+        for (v, stake) in validators.iter().map(|v| v.stake).enumerate() {
+            let appearances = relays
+                .iter()
+                .filter(|val| **val == v as ValidatorId)
+                .count();
+            expected_work[v] = ((TOTAL_SHREDS * SLICES) as u64 * stake / total_stake)
+                + (appearances * validators.len()) as u64;
+        }
+
+        // simulate and count work required with actual `Turbine`
         let mut turbine_workload = vec![0; validators.len()];
         for _ in 0..TOTAL_SHREDS * SLICES {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
-            let validator_ids: Vec<_> = weighted_shuffle
-                .shuffle(&mut rng)
-                .map(|i| i as ValidatorId)
-                .collect();
+            let mut validator_ids = weighted_shuffle.shuffle(&mut rng).map(|i| i as ValidatorId);
 
-            let _leader = validator_ids[0];
-            let root = validator_ids[1];
+            let leader = validator_ids.next().unwrap();
+            turbine_workload[leader as usize] += 1;
+            let root = validator_ids.next().unwrap();
             turbine_workload[root as usize] += DEFAULT_FANOUT;
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
-            for i in 0..DEFAULT_FANOUT {
-                let parent = validator_ids[2 + i] as usize;
+            for _ in 0..DEFAULT_FANOUT {
+                let parent = validator_ids.next().unwrap() as usize;
                 turbine_workload[parent] += DEFAULT_FANOUT.min(validators_left);
                 if validators_left < DEFAULT_FANOUT {
                     break;
@@ -872,41 +883,16 @@ mod tests {
                 validators_left -= DEFAULT_FANOUT;
             }
         }
-        let turbine_workload_normalized = turbine_workload
-            .into_iter()
-            .map(|w| w as f64 / (64.0 * SLICES as f64));
-
-        // count workload of each validator in TurbineSampler
-        let mut sampler_workload = vec![0; validators.len()];
-        let sampler = TurbineSampler::new(validators.clone());
-        for _ in 0..SLICES {
-            let relays = sampler.sample_multiple(64, &mut rng);
-            for relay in relays {
-                let relay_stake = validators[relay as usize].stake;
-                let relay_leader_prob = relay_stake as f64 / total_stake as f64;
-                if rng.random_bool(relay_leader_prob) {
-                    sampler_workload[relay as usize] += validators.len() - 1;
-                } else {
-                    sampler_workload[relay as usize] += validators.len() - 2;
-                }
-            }
-        }
-        let sampler_workload_normalized = sampler_workload
-            .into_iter()
-            .map(|w| w as f64 / (64.0 * SLICES as f64));
 
         // compare the two
-        let stake_iter = validators.iter().map(|v| v.stake).enumerate();
-        let iter = stake_iter
-            .zip(turbine_workload_normalized)
-            .zip(sampler_workload_normalized);
-        for (((i, stake), tw), sw) in iter {
-            println!("validator {i}, {stake} stake, tw {tw}, sw {sw}");
-            let rel_workload = tw / sw;
-            if tw > 0.01 {
-                assert!(rel_workload < 1.25);
-                assert!(rel_workload > 0.75);
+        const TOLERANCE: f64 = 0.15;
+        for (tw, sw) in turbine_workload.into_iter().zip(expected_work) {
+            if tw as f64 / (TOTAL_SHREDS * SLICES) as f64 <= 0.001 {
+                continue;
             }
+            let rel_workload = tw as f64 / sw as f64;
+            assert!(rel_workload > 1.0 - TOLERANCE);
+            assert!(rel_workload < 1.0 + TOLERANCE);
         }
     }
 
