@@ -187,6 +187,7 @@ mod tests {
             slice_index: 0,
             is_last: true,
             merkle_root: None,
+            parent: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
@@ -258,6 +259,7 @@ mod tests {
             slice_index: 0,
             is_last: true,
             merkle_root: None,
+            parent: None,
             data: vec![42; MAX_DATA_PER_SLICE],
         };
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();

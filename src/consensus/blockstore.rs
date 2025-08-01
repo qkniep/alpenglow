@@ -271,6 +271,7 @@ mod tests {
                 slice_index,
                 is_last: slice_index == num_slices - 1,
                 merkle_root: None,
+                parent: None,
                 data: buf,
             });
         }

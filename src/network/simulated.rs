@@ -157,6 +157,7 @@ mod tests {
                 slice_index: i,
                 is_last: i == 4,
                 merkle_root: None,
+                parent: None,
                 data,
             };
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
@@ -218,6 +219,7 @@ mod tests {
                 slice_index: i,
                 is_last: i == 999,
                 merkle_root: None,
+                parent: None,
                 data,
             };
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
@@ -279,6 +281,7 @@ mod tests {
                 slice_index: i,
                 is_last: i == 9999,
                 merkle_root: None,
+                parent: None,
                 data,
             };
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();

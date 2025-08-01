@@ -7,7 +7,7 @@ use reed_solomon_simd as rs;
 
 use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, Shred, ShredPayload, ShredPayloadType,
-    SliceHeader, SlicePayload, TOTAL_SHREDS,
+    SliceHeader, TOTAL_SHREDS,
 };
 
 pub(super) enum ReedSolomonShredError {
@@ -24,7 +24,7 @@ pub(super) enum ReedSolomonDeshredError {
 /// `num_coding` additional Reed-Solomon coding shreds.
 pub(super) fn reed_solomon_shred(
     header: SliceHeader,
-    payload: SlicePayload,
+    payload: Vec<u8>,
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
