@@ -23,6 +23,7 @@ use either::Either;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
+use crate::crypto::Hash;
 use crate::{BlockId, Slot};
 
 use parent_ready_state::ParentReadyState;
@@ -35,10 +36,11 @@ impl Default for ParentReadyTracker {
     ///
     /// Only the genesis block is considered a valid parent for the first leader window.
     fn default() -> Self {
-        let genesis_block = (Slot::new(0), [0; 32]);
+        let genesis_block = (Slot::genesis(), Hash::default());
         let mut map = HashMap::new();
-        let genesis_parent_state = ParentReadyState::new([genesis_block]);
-        map.insert(Slot::new(0), genesis_parent_state);
+        let mut genesis_parent_state = ParentReadyState::new([genesis_block]);
+        genesis_parent_state.skip = true;
+        map.insert(Slot::genesis(), genesis_parent_state);
         Self(map)
     }
 }
@@ -145,21 +147,22 @@ impl ParentReadyTracker {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     use crate::slot::SLOTS_PER_WINDOW;
-
-    use super::*;
 
     #[test]
     fn basic() {
         let mut tracker = ParentReadyTracker::default();
 
-        for i in 0..2 * SLOTS_PER_WINDOW {
-            let next_window_slot = Slot::new((i / SLOTS_PER_WINDOW + 1) * SLOTS_PER_WINDOW);
-            let block = (Slot::new(i), [i as u8 + 1; 32]);
+        for s in Slot::genesis()
+            .future_slots()
+            .take(2 * SLOTS_PER_WINDOW as usize)
+        {
+            let block = (s, [s.inner() as u8; 32]);
             let new_valid_parents = tracker.mark_notar_fallback(block);
-            if i % SLOTS_PER_WINDOW == SLOTS_PER_WINDOW - 1 {
-                assert!(new_valid_parents.contains(&(next_window_slot, block)));
+            if s == s.last_slot_in_window() {
+                assert!(new_valid_parents.contains(&(s.next(), block)));
             } else {
                 assert!(new_valid_parents.is_empty());
             }
@@ -168,66 +171,74 @@ mod tests {
 
     #[test]
     fn genesis() {
+        let genesis = (Slot::genesis(), Hash::default());
         let mut tracker = ParentReadyTracker::default();
-        assert!(tracker.mark_skipped(Slot::new(0)).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
-        let new_valid_parents = tracker.mark_skipped(Slot::new(3));
-        assert!(new_valid_parents.contains(&(Slot::new(4), (Slot::new(0), [0; 32]))));
+        for slot in genesis.0.slots_in_window() {
+            let new_valid_parents = tracker.mark_skipped(slot);
+            if slot == slot.last_slot_in_window() {
+                assert!(new_valid_parents.contains(&(slot.next(), genesis)));
+            } else {
+                assert!(new_valid_parents.is_empty());
+            }
+        }
     }
 
     #[test]
     fn skips() {
+        let genesis = (Slot::genesis(), Hash::default());
+        let slot = Slot::genesis().next();
+        let block = (slot, [1; 32]);
         let mut tracker = ParentReadyTracker::default();
-        let block = (Slot::new(0), [1; 32]);
         assert!(tracker.mark_notar_fallback(block).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(0)).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
-        let new_valid_parents = tracker.mark_skipped(Slot::new(3));
-        assert!(new_valid_parents.contains(&(Slot::new(4), block)));
-        assert!(new_valid_parents.contains(&(Slot::new(4), (Slot::new(0), [0; 32]))));
+        for s in slot.slots_in_window() {
+            let new_valid_parents = tracker.mark_skipped(s);
+            if s == s.last_slot_in_window() {
+                assert!(new_valid_parents.contains(&(s.next(), block)));
+                assert!(new_valid_parents.contains(&(s.next(), genesis)));
+            } else {
+                assert!(new_valid_parents.is_empty());
+            }
+        }
     }
 
     #[test]
     fn out_of_order_skips() {
+        let genesis = (Slot::genesis(), Hash::default());
+        let slot = Slot::genesis().next();
+        let block = (slot, [1; 32]);
         let mut tracker = ParentReadyTracker::default();
-        let block = (Slot::new(0), [1; 32]);
+        assert_eq!(slot.slots_in_window().count(), 4);
         assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
             tracker.mark_notar_fallback(block),
             vec![(Slot::new(4), block)]
         );
-        assert_eq!(
-            tracker.mark_skipped(Slot::new(0)),
-            vec![(Slot::new(4), (Slot::new(0), [0; 32]))]
-        );
+        assert_eq!(tracker.mark_skipped(slot), vec![(Slot::new(4), genesis)]);
     }
 
     #[test]
     fn out_of_order_notars() {
+        assert_eq!(Slot::genesis().slots_in_window().count(), 4);
+        let block1 = (Slot::new(1), [1; 32]);
+        let block2 = (Slot::new(2), [2; 32]);
+        let block3 = (Slot::new(3), [3; 32]);
         let mut tracker = ParentReadyTracker::default();
-        let block0 = (Slot::new(0), [1; 32]);
-        let block1 = (Slot::new(1), [2; 32]);
-        let block2 = (Slot::new(2), [3; 32]);
-        let block3 = (Slot::new(3), [4; 32]);
         assert!(tracker.mark_notar_fallback(block2).is_empty());
         assert_eq!(
             tracker.mark_notar_fallback(block3),
             vec![(Slot::new(4), block3)]
         );
-        assert!(tracker.mark_notar_fallback(block0).is_empty());
         assert!(tracker.mark_notar_fallback(block1).is_empty());
     }
 
     #[test]
     fn no_double_counting() {
+        assert_eq!(Slot::genesis().slots_in_window().count(), 4);
+        let slot = Slot::genesis().next();
+        let block = (slot, [1; 32]);
         let mut tracker = ParentReadyTracker::default();
-        let block = (Slot::new(0), [1; 32]);
         assert!(tracker.mark_notar_fallback(block).is_empty());
-        assert!(tracker.mark_skipped(Slot::new(1)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
             tracker.mark_skipped(Slot::new(3)),

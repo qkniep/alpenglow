@@ -113,7 +113,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     ) -> Self {
         let mut parents_ready = BTreeSet::new();
         // add dummy genesis block
-        parents_ready.insert((Slot::new(0), Slot::new(0), Hash::default()));
+        parents_ready.insert((Slot::genesis(), Slot::genesis(), Hash::default()));
         let votor = Self {
             voted: BTreeSet::new(),
             voted_notar: BTreeMap::new(),
@@ -382,8 +382,8 @@ mod tests {
         // explicitly send parent ready for genesis
         votor_channel
             .send(VotorEvent::ParentReady {
-                slot: Slot::new(0),
-                parent_slot: Slot::new(0),
+                slot: Slot::genesis(),
+                parent_slot: Slot::genesis(),
                 parent_hash: Hash::default(),
             })
             .await
@@ -391,7 +391,7 @@ mod tests {
 
         // should vote skip for all slots
         let mut skipped_slots = Vec::new();
-        for _ in Slot::new(0).slots_in_window() {
+        for _ in Slot::genesis().slots_in_window() {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     NetworkMessage::Vote(v) => {
@@ -402,7 +402,7 @@ mod tests {
                 }
             }
         }
-        for i in Slot::new(0).slots_in_window() {
+        for i in Slot::genesis().slots_in_window() {
             assert!(skipped_slots.contains(&i));
         }
     }

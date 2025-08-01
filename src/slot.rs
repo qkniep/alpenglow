@@ -16,11 +16,17 @@ pub const SLOTS_PER_EPOCH: u64 = 18_000;
 pub struct Slot(u64);
 
 impl Slot {
+    /// Creates a new slot with the given number.
     pub fn new(slot: u64) -> Self {
         Self(slot)
     }
 
-    /// Returns the inner u64.
+    /// Returns the genesis slot.
+    pub fn genesis() -> Self {
+        Self(0)
+    }
+
+    /// Returns the inner `u64`.
     pub fn inner(self) -> u64 {
         self.0
     }
