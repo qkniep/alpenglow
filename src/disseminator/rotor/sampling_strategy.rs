@@ -197,6 +197,7 @@ impl Clone for DecayingAcceptanceSampler {
 /// be sampled no more than with probability `turbine_fanout / v`.
 #[derive(Clone)]
 pub struct TurbineSampler {
+    fanout: usize,
     stake_weighted: StakeWeightedSampler,
 }
 
@@ -210,18 +211,16 @@ impl TurbineSampler {
     }
 
     /// Creates a new `TurbineSampler` instance simulating the given fanout.
-    // FIXME: slow and still somewhat incaccurate
     // TODO: support more than 2 levels of Turbine?
     #[must_use]
     pub fn new_with_fanout(mut validators: Vec<ValidatorInfo>, turbine_fanout: usize) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
 
-        // calculate expected work for each validator
+        // calculate expected work for each validator (only excess over leader work)
         let mut expected_work = vec![0.0; validators.len()];
         for leader in &validators {
             let validators_left = validators.len() - 1;
             let prob = leader.stake as f64 / total_stake as f64;
-            // expected_work[leader.id as usize] += prob;
             for root in &validators {
                 if root.id == leader.id {
                     continue;
@@ -235,7 +234,8 @@ impl TurbineSampler {
                     if maybe_level1.id == leader.id || maybe_level1.id == root.id {
                         continue;
                     }
-                    let stake_left = total_stake - root.stake;
+                    let validators_left = validators_left - turbine_fanout;
+                    let stake_left = stake_left - root.stake;
                     let select_prob = maybe_level1.stake as f64 / stake_left as f64;
                     let full_level1_slots = validators_left / turbine_fanout;
                     let prob_full =
@@ -256,6 +256,7 @@ impl TurbineSampler {
         }
 
         Self {
+            fanout: turbine_fanout,
             stake_weighted: StakeWeightedSampler::new(validators),
         }
     }
@@ -268,8 +269,9 @@ impl SamplingStrategy for TurbineSampler {
     ///
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
     fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        let n = self.stake_weighted.validators.len();
         let root = self.stake_weighted.sample(rng);
-        if rng.random::<f64>() < 0.2 {
+        if rng.random::<f64>() < self.fanout as f64 / n as f64 {
             root
         } else {
             for _ in 0..MAX_TRIES_PER_SAMPLE {
@@ -300,6 +302,7 @@ impl SamplingStrategy for TurbineSampler {
 ///
 /// In expectation each validator is sampled proportionally to its stake.
 /// However, this is done with lower variance than [`StakeWeightedSampler`] would.
+#[derive(Clone)]
 pub struct PartitionSampler {
     validators: Vec<ValidatorInfo>,
     bins: Vec<WeightedIndex<u64>>,
@@ -381,17 +384,6 @@ impl SamplingStrategy for PartitionSampler {
             samples.push(validators[i]);
         }
         samples
-    }
-}
-
-impl Clone for PartitionSampler {
-    fn clone(&self) -> Self {
-        Self {
-            validators: self.validators.clone(),
-            bins: self.bins.clone(),
-            bin_validators: self.bin_validators.clone(),
-            bin_stakes: self.bin_stakes.clone(),
-        }
     }
 }
 
@@ -780,14 +772,17 @@ mod tests {
         // two large nodes with roughly 5% of the stake each
         validators[0].stake = 55;
         validators[1].stake = 55;
+        let total_stake = validators.len() as u64 - 2 + validators[0].stake + validators[1].stake;
 
         // calculate work expected with `TurbineSampler`
         let sampler = TurbineSampler::new(validators.clone());
         let sampled = sampler.sample_multiple(TOTAL_SHREDS * SLICES, &mut rng);
         let appearances0 = sampled.iter().filter(|v| **v == 0).count();
         let appearances1 = sampled.iter().filter(|v| **v == 1).count();
-        let work0 = (TOTAL_SHREDS * SLICES / 20) + appearances0 * validators.len();
-        let work1 = (TOTAL_SHREDS * SLICES / 20) + appearances1 * validators.len();
+        let work0 = ((TOTAL_SHREDS * SLICES) as u64 * validators[0].stake / total_stake)
+            + (appearances0 * (validators.len() - 2)) as u64;
+        let work1 = ((TOTAL_SHREDS * SLICES) as u64 * validators[1].stake / total_stake)
+            + (appearances1 * (validators.len() - 2)) as u64;
 
         // simulate and count work required with actual `Turbine`
         let mut turbine_work = [0, 0];
@@ -796,14 +791,18 @@ mod tests {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
             let mut validator_ids = weighted_shuffle.shuffle(&mut rng).map(|i| i as ValidatorId);
 
+            // leader work
             let leader = validator_ids.next().unwrap();
             if leader == 0 || leader == 1 {
                 turbine_work[leader as usize] += 1;
             }
+            // root work
+            assert!(validators.len() > DEFAULT_FANOUT + 2);
             let root = validator_ids.next().unwrap();
             if root == 0 || root == 1 {
                 turbine_work[root as usize] += DEFAULT_FANOUT;
             }
+            // layer-1 work
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
             for _ in 0..DEFAULT_FANOUT {
                 let parent = validator_ids.next().unwrap() as usize;
@@ -811,7 +810,7 @@ mod tests {
                     let work = DEFAULT_FANOUT.min(validators_left);
                     turbine_work[parent as usize] += work;
                 }
-                if validators_left < DEFAULT_FANOUT {
+                if validators_left <= DEFAULT_FANOUT {
                     break;
                 }
                 validators_left -= DEFAULT_FANOUT;
@@ -821,9 +820,11 @@ mod tests {
         // compare the two
         const TOLERANCE: f64 = 0.05;
         let rel_workload0 = turbine_work[0] as f64 / work0 as f64;
+        println!("{rel_workload0}");
         assert!(rel_workload0 > 1.0 - TOLERANCE);
         assert!(rel_workload0 < 1.0 + TOLERANCE);
         let rel_workload1 = turbine_work[1] as f64 / work1 as f64;
+        println!("{rel_workload1}");
         assert!(rel_workload1 > 1.0 - TOLERANCE);
         assert!(rel_workload1 < 1.0 + TOLERANCE);
     }
@@ -860,7 +861,7 @@ mod tests {
                 .filter(|val| **val == v as ValidatorId)
                 .count();
             expected_work[v] = ((TOTAL_SHREDS * SLICES) as u64 * stake / total_stake)
-                + (appearances * validators.len()) as u64;
+                + (appearances * (validators.len() - 2)) as u64;
         }
 
         // simulate and count work required with actual `Turbine`
@@ -869,10 +870,14 @@ mod tests {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
             let mut validator_ids = weighted_shuffle.shuffle(&mut rng).map(|i| i as ValidatorId);
 
+            // leader work
             let leader = validator_ids.next().unwrap();
             turbine_workload[leader as usize] += 1;
+            // root work
+            assert!(validators.len() > DEFAULT_FANOUT + 2);
             let root = validator_ids.next().unwrap();
             turbine_workload[root as usize] += DEFAULT_FANOUT;
+            // level-1 work
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
             for _ in 0..DEFAULT_FANOUT {
                 let parent = validator_ids.next().unwrap() as usize;
@@ -885,9 +890,10 @@ mod tests {
         }
 
         // compare the two
-        const TOLERANCE: f64 = 0.15;
+        const TOLERANCE: f64 = 0.05;
         for (tw, sw) in turbine_workload.into_iter().zip(expected_work) {
-            if tw as f64 / (TOTAL_SHREDS * SLICES) as f64 <= 0.001 {
+            // ignore very small validators
+            if tw as f64 / (TOTAL_SHREDS * SLICES * (validators.len() - 1)) as f64 <= 0.001 {
                 continue;
             }
             let rel_workload = tw as f64 / sw as f64;
