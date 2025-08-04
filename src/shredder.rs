@@ -407,7 +407,7 @@ impl Shredder for AontShredder {
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
 /// Each shred contains the Merkle root, its own path and the signature.
-fn data_and_coding_to_output_shreds(
+pub fn data_and_coding_to_output_shreds(
     data: Vec<DataShred>,
     coding: Vec<CodingShred>,
     sk: &SecretKey,
