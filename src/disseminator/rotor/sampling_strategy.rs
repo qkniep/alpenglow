@@ -218,24 +218,24 @@ impl TurbineSampler {
 
         // calculate expected work for each validator (only excess over leader work)
         let mut expected_work = vec![0.0; validators.len()];
+        let validators_left = validators.len() - 1;
         for leader in &validators {
-            let validators_left = validators.len() - 1;
             let prob = leader.stake as f64 / total_stake as f64;
+            let stake_left = total_stake - leader.stake;
+            let validators_left = validators_left - 1;
             for root in &validators {
                 if root.id == leader.id {
                     continue;
                 }
-                let validators_left = validators_left - 1;
-                let stake_left = total_stake - leader.stake;
                 let prob = prob * root.stake as f64 / stake_left as f64;
                 let root_work = (turbine_fanout as f64).min(validators_left as f64);
                 expected_work[root.id as usize] += prob * root_work;
+                let stake_left = stake_left - root.stake;
+                let validators_left = validators_left - turbine_fanout;
                 for maybe_level1 in &validators {
                     if maybe_level1.id == leader.id || maybe_level1.id == root.id {
                         continue;
                     }
-                    let validators_left = validators_left - turbine_fanout;
-                    let stake_left = stake_left - root.stake;
                     let select_prob = maybe_level1.stake as f64 / stake_left as f64;
                     let full_level1_slots = validators_left / turbine_fanout;
                     let prob_full =
