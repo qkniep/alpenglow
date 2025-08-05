@@ -70,7 +70,7 @@ impl Slice {
 /// Struct to hold all the header payload of a [`Slice`].
 ///
 /// This is included in each [`Shred`] after shredding.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,
