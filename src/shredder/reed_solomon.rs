@@ -4,11 +4,12 @@
 //! Implements Reed-Solomon shreding and deshreding.
 
 use reed_solomon_simd as rs;
+use static_assertions::const_assert;
 use thiserror::Error;
 
 use super::{
-    CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, Shred, ShredPayload, ShredPayloadType,
-    SliceHeader, SlicePayload, TOTAL_SHREDS,
+    CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
+    Shred, ShredPayload, ShredPayloadType, SliceHeader, SlicePayload, TOTAL_SHREDS,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -31,13 +32,22 @@ pub(super) enum ReedSolomonDeshredError {
 /// `num_coding` additional Reed-Solomon coding shreds.
 pub(super) fn reed_solomon_shred(
     header: SliceHeader,
-    payload: SlicePayload,
+    mut payload: SlicePayload,
     num_data: usize,
     num_coding: usize,
 ) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
     if payload.len() > MAX_DATA_PER_SLICE {
         return Err(ReedSolomonShredError::TooMuchData);
     }
+
+    // add padding
+    // TODO: use a padding scheme that can support larger slices
+    const_assert!(2 * DATA_SHREDS < 256);
+    let padding_bytes = (2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS)) as u8;
+    payload
+        .data
+        .resize(payload.len() + padding_bytes as usize, padding_bytes);
+    assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
 
     let shred_bytes = payload.len().div_ceil(DATA_SHREDS);
     let coding_parts = rs::encode(num_data, num_coding, payload.chunks(shred_bytes)).unwrap();
@@ -93,17 +103,21 @@ pub(super) fn reed_solomon_deshred(
     }
 
     // restore data from data shreds (from input and restored)
-    let mut restored_payload = Vec::with_capacity(MAX_DATA_PER_SLICE);
+    let mut restored_payload = Vec::with_capacity(MAX_DATA_PER_SLICE_AFTER_PADDING);
     for (i, d) in data_shreds.into_iter().enumerate() {
         let shred_data = match d {
             Some(data_ref) => data_ref.as_ref(),
             None => restored.get(&i).unwrap(),
         };
-        if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE {
+        if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE_AFTER_PADDING {
             return Err(ReedSolomonDeshredError::TooMuchData);
         }
         restored_payload.extend_from_slice(shred_data);
     }
+
+    // remove padding
+    let padding_bytes = restored_payload[restored_payload.len() - 1] as usize;
+    restored_payload.truncate(restored_payload.len().saturating_sub(padding_bytes));
 
     Ok(restored_payload)
 }
@@ -179,11 +193,6 @@ mod tests {
         let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
-    }
-
-    #[test]
-    fn test_reed_solomon_deshred_too_much_data() {
-        unimplemented!()
     }
 
     fn random_slice(num_bytes: usize) -> (SliceHeader, SlicePayload) {
