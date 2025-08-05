@@ -248,10 +248,10 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
             tokio::time::sleep(DELTA_TIMEOUT).await;
+            // HACK: ignoring errors to prevent panic when shutting down votor
+            let event = VotorEvent::TimeoutCrashedLeader(slot);
+            let _ = sender.send(event).await;
             for s in slot.slots_in_window() {
-                let event = VotorEvent::TimeoutCrashedLeader(s);
-                // HACK: ignoring errors to prevent panic when shutting down votor
-                let _ = sender.send(event).await;
                 tokio::time::sleep(DELTA_BLOCK).await;
                 let event = VotorEvent::Timeout(s);
                 let _ = sender.send(event).await;
