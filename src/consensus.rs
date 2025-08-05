@@ -359,6 +359,9 @@ where
             let mut block = parent;
             let mut block_hash = parent_hash;
             for slot in first_slot_in_window.slots_in_window() {
+                if slot.is_genesis() {
+                    continue;
+                }
                 self.produce_block(slot, (block, block_hash), parent_ready)
                     .await?;
 
