@@ -203,7 +203,6 @@ mod tests {
             is_last: rng.random(),
         };
         let payload = SlicePayload {
-            // parent: rng.random(),
             data: vec![rng.random(); num_bytes],
         };
         (header, payload)
