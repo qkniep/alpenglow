@@ -83,12 +83,14 @@ pub(crate) struct SliceHeader {
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
 /// This is what actually gets "shredded" into different [`Shred`]s.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
     /// Constructs a new [`SlicePayload`] from the given `data`.
+    // TODO: throw error if `data` is too large
     pub(crate) fn new(data: Vec<u8>) -> Self {
         Self { data }
     }

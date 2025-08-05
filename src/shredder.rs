@@ -43,8 +43,10 @@ pub const DATA_SHREDS: usize = 32;
 pub const TOTAL_SHREDS: usize = 64;
 /// Maximum number of payload bytes a single shred can hold.
 pub const MAX_DATA_PER_SHRED: usize = 1024;
-/// Maximum number of payload bytes an entire slice can hold.
-pub const MAX_DATA_PER_SLICE: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
+/// Maximum number of bytes an entire slice can hold, incl. padding.
+pub const MAX_DATA_PER_SLICE_AFTER_PADDING: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
+/// Maximum number of payload bytes a slice can hold.
+pub const MAX_DATA_PER_SLICE: usize = MAX_DATA_PER_SLICE_AFTER_PADDING - 1;
 
 /// Errors that may occur during shredding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -407,7 +409,7 @@ impl Shredder for AontShredder {
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
 /// Each shred contains the Merkle root, its own path and the signature.
-fn data_and_coding_to_output_shreds(
+pub fn data_and_coding_to_output_shreds(
     data: Vec<DataShred>,
     coding: Vec<CodingShred>,
     sk: &SecretKey,
