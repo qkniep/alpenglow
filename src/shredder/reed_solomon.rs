@@ -4,7 +4,6 @@
 //! Implements Reed-Solomon shreding and deshreding.
 
 use reed_solomon_simd as rs;
-use static_assertions::const_assert;
 use thiserror::Error;
 
 use super::{
@@ -42,8 +41,8 @@ pub(super) fn reed_solomon_shred(
 
     // add padding
     // TODO: use a padding scheme that can support larger slices
-    const_assert!(2 * DATA_SHREDS < 256);
-    let padding_bytes = (2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS)) as u8;
+    let padding_bytes = u8::try_from(2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS))
+        .expect("cannot fit number of padding bytes in u8");
     payload
         .data
         .resize(payload.len() + padding_bytes as usize, padding_bytes);
