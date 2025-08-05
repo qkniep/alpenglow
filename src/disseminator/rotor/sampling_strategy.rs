@@ -193,8 +193,8 @@ impl Clone for DecayingAcceptanceSampler {
 ///
 /// The goal is to distribute the required work for validators as in Turbine.
 /// Specifically, it should respect the same upper bound on the amount of work,
-/// that is, for `v` validators and given `turbine_fanout` any validator should
-/// be sampled no more than with probability `turbine_fanout / v`.
+/// that is, for `v` validators and given `fanout` any validator should
+/// be sampled no more than with probability `fanout / v`.
 #[derive(Clone)]
 pub struct TurbineSampler {
     fanout: usize,
