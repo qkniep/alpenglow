@@ -89,7 +89,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_basic() {
+    fn basic() {
         let window_slots = Slot::windows().take(10).collect::<Vec<_>>();
         for (window, first_slot) in window_slots.iter().take(9).enumerate() {
             assert!(first_slot.is_start_of_window());
