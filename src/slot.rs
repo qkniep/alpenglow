@@ -28,7 +28,7 @@ impl Slot {
 
     /// Returns an infinite iterator that yields the first slot in each window.
     pub fn windows() -> impl Iterator<Item = Self> {
-        (0..).map(Self)
+        (0..).step_by(SLOTS_PER_WINDOW as usize).map(Self)
     }
 
     /// Returns a double-ended iterator that yields all the slots in the
