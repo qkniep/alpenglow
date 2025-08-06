@@ -83,3 +83,20 @@ impl Display for Slot {
         write!(f, "{}", self.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic() {
+        let window_slots = Slot::windows().take(10).collect::<Vec<_>>();
+        for (window, first_slot) in window_slots.iter().take(9).enumerate() {
+            assert!(first_slot.is_start_of_window());
+            assert_eq!(*first_slot, first_slot.first_slot_in_window());
+            let last_slot = first_slot.last_slot_in_window();
+            assert_eq!(last_slot.next(), window_slots[window + 1]);
+            assert_eq!(last_slot, window_slots[window + 1].prev());
+        }
+    }
+}
