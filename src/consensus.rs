@@ -369,7 +369,7 @@ where
                     .read()
                     .await
                     .canonical_block_hash(slot)
-                    .unwrap();
+                    .expect("missing own block during block production");
             }
         }
 
