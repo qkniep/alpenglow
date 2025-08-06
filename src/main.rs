@@ -28,24 +28,24 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
 
     // enable `fastrace` tracing
-    // let reporter = OpenTelemetryReporter::new(
-    //     SpanExporter::builder()
-    //         .with_tonic()
-    //         .with_endpoint("http://127.0.0.1:4317".to_string())
-    //         .with_protocol(opentelemetry_otlp::Protocol::Grpc)
-    //         .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
-    //         .build()
-    //         .expect("initialize oltp exporter"),
-    //     Cow::Owned(
-    //         Resource::builder()
-    //             .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
-    //             .build(),
-    //     ),
-    //     InstrumentationScope::builder("alpenglow")
-    //         .with_version(env!("CARGO_PKG_VERSION"))
-    //         .build(),
-    // );
-    // fastrace::set_reporter(reporter, Config::default());
+    let reporter = OpenTelemetryReporter::new(
+        SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint("http://127.0.0.1:4317".to_string())
+            .with_protocol(opentelemetry_otlp::Protocol::Grpc)
+            .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
+            .build()
+            .expect("initialize oltp exporter"),
+        Cow::Owned(
+            Resource::builder()
+                .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
+                .build(),
+        ),
+        InstrumentationScope::builder("alpenglow")
+            .with_version(env!("CARGO_PKG_VERSION"))
+            .build(),
+    );
+    fastrace::set_reporter(reporter, Config::default());
 
     logging::enable_logforth();
 
