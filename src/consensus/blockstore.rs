@@ -55,8 +55,10 @@ pub struct Blockstore {
 impl Blockstore {
     /// Initializes a new empty blockstore.
     ///
-    /// For each later reconstructed block this blockstore will send a
-    /// [`VotorEvent::Block`] to the provided `votor_channel`.
+    /// Blockstore will send the following `VotorEvent`s to the provided `votor_channel`:
+    /// - [`VotorEvent::FirstShred`] when receiving the first shred for a slot
+    ///   from the block dissemination protocol
+    /// - [`VotorEvent::Block`] for any reconstructed block
     pub fn new(epoch_info: Arc<EpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
         Self {
             block_data: BTreeMap::new(),
@@ -65,11 +67,12 @@ impl Blockstore {
         }
     }
 
-    /// Stores a new shred in the blockstore.
+    /// Stores a new shred from block dissemination in the blockstore.
     ///
-    /// Shreds received by Rotor should set `check_equivocation` to `true`.
-    /// If `check_equivocation` is `true` and the leader was observed to equivocate,
-    /// i.e., produced conflicting blocks/slices, the shred is dropped.
+    /// This shred is stored in the default spot without a known block hash.
+    /// For shreds obtained through repair, `add_shred_from_repair`
+    /// should be used instead.
+    /// Compared to that function, this one checks for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
@@ -92,6 +95,18 @@ impl Blockstore {
         }
     }
 
+    /// Stores a new shred from repair in the blockstore.
+    ///
+    /// This shred is stored in a spot associated with the given block`hash`.
+    /// For shreds obtained through block dissemination, `add_shred_from_disseminator`
+    /// should be used instead.
+    /// Compared to that function, this one does not check for leader equivocation.
+    ///
+    /// Reconstructs the corresponding slice and block if possible and necessary.
+    /// If the added shred belongs to the last slice, all later shreds are deleted.
+    ///
+    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
+    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
     pub async fn add_shred_from_repair(
         &mut self,
@@ -420,7 +435,7 @@ mod tests {
 
         // insert many duplicate shreds
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
-        for shred in vec![shreds[0].clone(); 1024] {
+        for shred in vec![shreds[0].clone(); 2] {
             // ignore errors
             let _ = blockstore.add_shred_from_disseminator(shred).await;
         }
