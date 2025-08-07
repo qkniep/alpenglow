@@ -52,9 +52,16 @@ pub struct SecretKey(BlstSecretKey);
 pub struct PublicKey(BlstPublicKey);
 
 impl PublicKey {
+    /// Tries to convert a byte array into a public key.
+    ///
+    /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS public key.
     pub fn try_from_bytes(pk_in: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(BlstPublicKey::from_bytes(pk_in)?))
     }
+
+    /// Tries to deserialize a `Vec<u8>` into a public key.
+    ///
+    /// This is for use with `serde(deserialize_with)`.
     pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -65,6 +72,7 @@ impl PublicKey {
             .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
     }
 }
+
 /// An individual signature as part of the aggregate signature scheme.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
@@ -93,9 +101,26 @@ impl SecretKey {
         Self(sk)
     }
 
+    /// Tries to convert a byte string into a secret key.
+    ///
+    /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS secret key.
     pub fn try_from_bytes(sk_in: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(blst::min_sig::SecretKey::from_bytes(sk_in)?))
     }
+
+    /// Tries to deserialize a `Vec<u8>` into a secret key.
+    ///
+    /// This is for use with `serde(deserialize_with)`.
+    pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+
+        Self::try_from_bytes(&buf)
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
+    }
+
     /// Converts this secret key into the corresponding public key.
     #[must_use]
     pub fn to_pk(&self) -> PublicKey {
@@ -109,22 +134,6 @@ impl SecretKey {
     pub fn sign(&self, msg: &[u8]) -> IndividualSignature {
         let sig = self.0.sign(msg, DST, &[]);
         IndividualSignature(sig)
-    }
-
-    pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
-
-        Self::try_from_bytes(&buf)
-            .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
-    }
-}
-
-impl AsRef<BlstPublicKey> for PublicKey {
-    fn as_ref(&self) -> &BlstPublicKey {
-        &self.0
     }
 }
 
@@ -170,7 +179,7 @@ impl AggregateSignature {
         if self.bitmask.len() != pks.len() {
             return false;
         }
-        let pks: Vec<_> = self.signers().map(|v| pks[v as usize].as_ref()).collect();
+        let pks: Vec<_> = self.signers().map(|v| &pks[v as usize].0).collect();
         let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
@@ -181,7 +190,7 @@ impl AggregateSignature {
         if self.bitmask.count_ones() != pks.len() {
             return false;
         }
-        let pks: Vec<_> = pks.iter().map(|p| p.as_ref()).collect();
+        let pks: Vec<_> = pks.iter().map(|p| &p.0).collect();
         let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
@@ -302,5 +311,46 @@ mod tests {
         assert!(!aggsig.verify(msg, &[pk1, pk3, pk2]));
         assert!(!aggsig.verify(msg, &[pk2, pk3, pk1]));
         assert!(!aggsig.verify(msg, &[pk3, pk1, pk2]));
+    }
+
+    #[test]
+    fn serialize_toml() {
+        #[derive(Serialize, Deserialize)]
+        struct KeyPair {
+            #[serde(deserialize_with = "SecretKey::from_array_of_bytes")]
+            sk: SecretKey,
+            #[serde(deserialize_with = "PublicKey::from_array_of_bytes")]
+            pk: PublicKey,
+        }
+
+        let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
+
+        // serialize and deserialize to/from TOML
+        let kp = KeyPair { sk, pk };
+        let serialized = toml::to_string(&kp).unwrap();
+        let deserialized: KeyPair = toml::from_str(&serialized).unwrap();
+        assert_eq!(kp.sk.0.to_bytes(), deserialized.sk.0.to_bytes());
+        assert_eq!(kp.pk.0.to_bytes(), deserialized.pk.0.to_bytes());
+
+        // wrong type for secret key
+        let wrong_sk_str = format!("sk = \"hello\"\npk = {:?}", kp.pk.0.to_bytes());
+        let deserialized: Result<KeyPair, toml::de::Error> = toml::from_str(&wrong_sk_str);
+        assert!(deserialized.is_err());
+
+        // invalid bytes for secret key
+        let wrong_sk_str = format!("sk = [0, 0, 0, 0]\npk = {:?}", kp.pk.0.to_bytes());
+        let deserialized: Result<KeyPair, toml::de::Error> = toml::from_str(&wrong_sk_str);
+        assert!(deserialized.is_err());
+
+        // wrong type for public key
+        let wrong_pk_str = format!("sk = {:?}\npk = \"hello\"", kp.sk.0.to_bytes());
+        let deserialized: Result<KeyPair, toml::de::Error> = toml::from_str(&wrong_pk_str);
+        assert!(deserialized.is_err());
+
+        // invalid bytes for public key
+        let wrong_pk_str = format!("sk = {:?}\npk = [0, 0, 0, 0]", kp.sk.0.to_bytes());
+        let deserialized: Result<KeyPair, toml::de::Error> = toml::from_str(&wrong_pk_str);
+        assert!(deserialized.is_err());
     }
 }
