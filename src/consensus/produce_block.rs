@@ -146,17 +146,17 @@ where
             // switch parent if necessary (for optimistic handover)
             if !parent_ready {
                 let pool = self.pool.read().await;
-                if let Some(p) = pool.parents_ready(slot).first() {
-                    if *p != parent {
-                        warn!(
-                            "switching block production parent from {} in slot {} to {} in slot {}",
-                            &hex::encode(parent.1)[..8],
-                            parent.0,
-                            &hex::encode(p.1)[..8],
-                            p.0,
-                        );
-                        unimplemented!("have to switch parents");
-                    }
+                if let Some(p) = pool.parents_ready(slot).first()
+                    && *p != parent
+                {
+                    warn!(
+                        "switching block production parent from {} in slot {} to {} in slot {}",
+                        &hex::encode(parent.1)[..8],
+                        parent.0,
+                        &hex::encode(p.1)[..8],
+                        p.0,
+                    );
+                    unimplemented!("have to switch parents");
                 }
             }
 

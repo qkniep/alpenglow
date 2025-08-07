@@ -73,13 +73,13 @@ impl Default for SimulatedNetworkCore {
         tokio::spawn(async move {
             loop {
                 let mut guard = p.lock().await;
-                if let Some(msg) = guard.peek() {
-                    if msg.deliver_at <= Instant::now() {
-                        let msg = guard.pop().unwrap();
-                        let n_guard = n.read().await;
-                        let channel = n_guard.get(&msg.to).unwrap();
-                        channel.send(msg).await.unwrap();
-                    }
+                if let Some(msg) = guard.peek()
+                    && msg.deliver_at <= Instant::now()
+                {
+                    let msg = guard.pop().unwrap();
+                    let n_guard = n.read().await;
+                    let channel = n_guard.get(&msg.to).unwrap();
+                    channel.send(msg).await.unwrap();
                 }
             }
         });

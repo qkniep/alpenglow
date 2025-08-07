@@ -174,18 +174,16 @@ impl Pool {
                 // potentially notify child waiting for safe-to-notar
                 if let Some((child_slot, child_hash)) =
                     self.s2n_waiting_parent_cert.remove(&(slot, block_hash))
-                {
-                    if let Some(output) = self
+                    && let Some(output) = self
                         .slot_state(child_slot)
                         .notify_parent_certified(child_hash)
-                    {
-                        match output {
-                            Either::Left(event) => {
-                                self.votor_event_channel.send(event).await.unwrap();
-                            }
-                            Either::Right((slot, hash)) => {
-                                self.repair_channel.send((slot, hash)).await.unwrap();
-                            }
+                {
+                    match output {
+                        Either::Left(event) => {
+                            self.votor_event_channel.send(event).await.unwrap();
+                        }
+                        Either::Right((slot, hash)) => {
+                            self.repair_channel.send((slot, hash)).await.unwrap();
                         }
                     }
                 }
@@ -293,20 +291,19 @@ impl Pool {
             parent_hash,
         } = block_info;
         self.slot_state(slot).notify_parent_known(block_hash);
-        if let Some(parent_state) = self.slot_states.get(&parent_slot) {
-            if parent_state.is_notar_fallback(&parent_hash) {
-                if let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash) {
-                    match output {
-                        Either::Left(event) => {
-                            self.votor_event_channel.send(event).await.unwrap();
-                        }
-                        Either::Right((slot, hash)) => {
-                            self.repair_channel.send((slot, hash)).await.unwrap();
-                        }
-                    }
-                    return;
+        if let Some(parent_state) = self.slot_states.get(&parent_slot)
+            && parent_state.is_notar_fallback(&parent_hash)
+            && let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash)
+        {
+            match output {
+                Either::Left(event) => {
+                    self.votor_event_channel.send(event).await.unwrap();
+                }
+                Either::Right((slot, hash)) => {
+                    self.repair_channel.send((slot, hash)).await.unwrap();
                 }
             }
+            return;
         }
         self.s2n_waiting_parent_cert
             .insert((parent_slot, parent_hash), (slot, block_hash));

@@ -3,13 +3,12 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 /// Number of slots in each leader window.
-///
-/// NOTE: this is public to support testing and one function additional function.
-/// Consider hiding it.
+// NOTE: this is public to support testing and one additional function.
+// Consider hiding it.
 pub const SLOTS_PER_WINDOW: u64 = 4;
+
 /// Number of slots in each epoch.
-///
-/// NOTE: consider hiding this definition.
+// NOTE: consider hiding this definition.
 pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
@@ -17,11 +16,17 @@ pub const SLOTS_PER_EPOCH: u64 = 18_000;
 pub struct Slot(u64);
 
 impl Slot {
+    /// Creates a new slot with the given number.
     pub fn new(slot: u64) -> Self {
         Self(slot)
     }
 
-    /// Returns the inner u64.
+    /// Returns the genesis slot.
+    pub fn genesis() -> Self {
+        Self(0)
+    }
+
+    /// Returns the inner `u64`.
     pub fn inner(self) -> u64 {
         self.0
     }
@@ -71,10 +76,15 @@ impl Slot {
         Self(self.0 - 1)
     }
 
-    /// Returns true if this slot is part of the genesis window.
+    /// Returns `true` iff this slot is part of the genesis window.
     pub fn is_genesis_window(&self) -> bool {
         let window = self.0 / SLOTS_PER_WINDOW;
         window == 0
+    }
+
+    /// Returns `true` iff this slot is the genesis slot.
+    pub fn is_genesis(&self) -> bool {
+        self.0 == 0
     }
 }
 

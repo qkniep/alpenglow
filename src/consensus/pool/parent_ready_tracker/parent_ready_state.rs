@@ -116,7 +116,7 @@ mod tests {
         state.add_to_ready(block_id);
         let res = state.wait_for_parent_ready();
         let Either::Left(received_block_id) = res else {
-            panic!("Unexpected result {res:?}");
+            panic!("unexpected result {res:?}");
         };
         assert_eq!(received_block_id, block_id);
         assert_eq!(state.ready_block_ids().len(), 1);
@@ -128,7 +128,7 @@ mod tests {
         assert_eq!(state.ready_block_ids().len(), 0);
         let res = state.wait_for_parent_ready();
         let Either::Right(rx) = res else {
-            panic!("Unexpected result {res:?}");
+            panic!("unexpected result {res:?}");
         };
         let block_id = (Slot::new(0), [1; 32]);
         state.add_to_ready(block_id);

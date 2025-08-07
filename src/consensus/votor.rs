@@ -110,18 +110,24 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         event_receiver: Receiver<VotorEvent>,
         all2all: Arc<A>,
     ) -> Self {
-        let mut parents_ready = BTreeSet::new();
-        // add dummy genesis block
-        parents_ready.insert((Slot::new(0), Slot::new(0), Hash::default()));
+        // add dummy genesis block to some of the data structures
+        let voted = [Slot::genesis()].into_iter().collect();
+        let voted_notar = [(Slot::genesis(), Hash::default())].into_iter().collect();
+        let block_notarized = [(Slot::genesis(), Hash::default())].into_iter().collect();
+        let parents_ready = [(Slot::genesis(), Slot::genesis(), Hash::default())]
+            .into_iter()
+            .collect();
+        let retired_slots = [Slot::genesis()].into_iter().collect();
+
         let votor = Self {
-            voted: BTreeSet::new(),
-            voted_notar: BTreeMap::new(),
+            voted,
+            voted_notar,
             bad_window: BTreeSet::new(),
-            block_notarized: BTreeMap::new(),
+            block_notarized,
             parents_ready,
             received_shred: BTreeSet::new(),
             pending_blocks: BTreeMap::new(),
-            retired_slots: BTreeSet::new(),
+            retired_slots,
             validator_id,
             voting_key,
             event_receiver,
@@ -376,21 +382,13 @@ mod tests {
 
     #[tokio::test]
     async fn timeouts() {
-        let (other_a2a, votor_channel, _) = start_votor().await;
-
-        // explicitly send parent ready for genesis
-        votor_channel
-            .send(VotorEvent::ParentReady {
-                slot: Slot::new(0),
-                parent_slot: Slot::new(0),
-                parent_hash: Hash::default(),
-            })
-            .await
-            .unwrap();
+        let (other_a2a, _, _) = start_votor().await;
 
         // should vote skip for all slots
         let mut skipped_slots = Vec::new();
-        for _ in Slot::new(0).slots_in_window() {
+        let mut slots = Slot::genesis().slots_in_window().collect::<Vec<_>>();
+        slots.remove(0);
+        for _ in slots.clone() {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     NetworkMessage::Vote(v) => {
@@ -401,9 +399,7 @@ mod tests {
                 }
             }
         }
-        for i in Slot::new(0).slots_in_window() {
-            assert!(skipped_slots.contains(&i));
-        }
+        assert_eq!(skipped_slots, slots);
     }
 
     #[tokio::test]
@@ -411,24 +407,22 @@ mod tests {
         let (other_a2a, tx, epoch_info) = start_votor().await;
 
         // vote notar after seeing block
-        let event = VotorEvent::FirstShred(Slot::new(0));
+        let slot = Slot::genesis().next();
+        let event = VotorEvent::FirstShred(slot);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
             hash: [1u8; 32],
-            parent_slot: Slot::new(0),
+            parent_slot: Slot::genesis(),
             parent_hash: Hash::default(),
         };
-        let event = VotorEvent::Block {
-            slot: Slot::new(0),
-            block_info,
-        };
+        let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
         let vote = match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => v,
             _ => unreachable!(),
         };
         assert!(vote.is_notar());
-        assert_eq!(vote.slot(), Slot::new(0));
+        assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
         let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], &epoch_info.validators));
@@ -437,7 +431,7 @@ mod tests {
         match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => {
                 assert!(v.is_final());
-                assert_eq!(v.slot(), Slot::new(0));
+                assert_eq!(v.slot(), slot);
             }
             m => panic!("other msg: {m:?}"),
         }

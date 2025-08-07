@@ -166,10 +166,10 @@ impl Blockstore {
     /// Returns `None` if blockstore does not hold that block yet.
     pub fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
         let slot_data = self.slot_data(slot)?;
-        if let Some((h, block)) = slot_data.canonical.completed.as_ref() {
-            if *h == hash {
-                return Some(block);
-            }
+        if let Some((h, block)) = slot_data.canonical.completed.as_ref()
+            && *h == hash
+        {
+            return Some(block);
         }
         slot_data
             .alternatives
