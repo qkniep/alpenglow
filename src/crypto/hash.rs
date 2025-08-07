@@ -45,3 +45,62 @@ pub fn hash_all(data: &[&[u8]]) -> Hash {
 pub fn truncate(hash: Hash) -> ShortHash {
     hash[..16].try_into().expect("wrong length")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashSet;
+
+    const HASH_ITERATIONS: u64 = 100_000;
+
+    #[test]
+    fn deterministic() {
+        let hash1 = hash(&[0; 32]);
+        let hash2 = hash(&[0; 32]);
+        assert_eq!(hash1, hash2);
+
+        for i in 0..HASH_ITERATIONS {
+            let bytes = i.to_be_bytes();
+            let hash1 = hash(&bytes);
+            let hash2 = hash(&bytes);
+            assert_eq!(hash1, hash2);
+        }
+    }
+
+    #[test]
+    fn unique() {
+        let hash1 = hash(&[0; 16]);
+        let hash2 = hash(&[0; 32]);
+        assert_ne!(hash1, hash2);
+
+        // should find no duplicate hashes
+        let unique_hashes = (0..HASH_ITERATIONS)
+            .map(|i| {
+                let bytes = i.to_be_bytes();
+                hash(&bytes)
+            })
+            .collect::<HashSet<_>>()
+            .len();
+        assert_eq!(unique_hashes as u64, HASH_ITERATIONS);
+
+        // should find no duplicate truncated hashes
+        let unique_hashes = (0..HASH_ITERATIONS)
+            .map(|i| {
+                let bytes = i.to_be_bytes();
+                truncate(hash(&bytes))
+            })
+            .collect::<HashSet<_>>()
+            .len();
+        assert_eq!(unique_hashes as u64, HASH_ITERATIONS);
+    }
+
+    #[test]
+    fn concatenation() {
+        let hash_direct = hash(&[[0; 32], [1; 32]].concat());
+        let hash_all_1 = hash_all(&[&[0; 32], &[1; 32]]);
+        let hash_all_2 = hash_all(&[&[0; 16], &[0; 16], &[1; 16], &[1; 16]]);
+        assert_eq!(hash_all_1, hash_direct);
+        assert_eq!(hash_all_2, hash_direct);
+    }
+}
