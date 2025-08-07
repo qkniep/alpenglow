@@ -389,10 +389,10 @@ impl SlotState {
                 if self.votes.skip[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
-                if let Some((old_hash, _)) = self.votes.notar[v] {
-                    if block_hash != old_hash {
-                        return Some(SlashableOffence::NotarDifferentHash(voter, slot));
-                    }
+                if let Some((old_hash, _)) = self.votes.notar[v]
+                    && block_hash != old_hash
+                {
+                    return Some(SlashableOffence::NotarDifferentHash(voter, slot));
                 }
             }
             VoteKind::NotarFallback(_, _) => {
