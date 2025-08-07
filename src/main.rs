@@ -102,7 +102,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             disseminator_address: format!("127.0.0.1:{}", port + 1),
             repair_address: format!("127.0.0.1:{}", port + 2),
         });
-        port += 3;
+        port += 4;
     }
 
     // turn validator info into actual nodes

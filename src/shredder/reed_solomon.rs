@@ -133,25 +133,25 @@ mod tests {
     use static_assertions::const_assert;
 
     #[test]
-    fn test_reed_solomon_restore_full() {
+    fn restore_full() {
         let (header, payload) = random_slice(MAX_DATA_PER_SLICE);
         shred_deshred_restore(header, payload);
     }
 
     #[test]
-    fn test_reed_solomon_restore_tiny() {
+    fn restore_tiny() {
         let (header, payload) = random_slice(DATA_SHREDS - 1);
         shred_deshred_restore(header, payload);
     }
 
     #[test]
-    fn test_reed_solomon_restore_empty() {
+    fn restore_empty() {
         let (header, payload) = random_slice(0);
         shred_deshred_restore(header, payload);
     }
 
     #[test]
-    fn test_reed_solomon_restore_various() {
+    fn restore_various() {
         const_assert!(MAX_DATA_PER_SLICE >= 2 * DATA_SHREDS);
         let slice_bytes = MAX_DATA_PER_SLICE / 2;
         for offset in 0..DATA_SHREDS {
@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reed_solomon_shred_too_much_data() {
+    fn shred_too_much_data() {
         let (header, payload) = random_slice(MAX_DATA_PER_SLICE + 1);
         let res = reed_solomon_shred(header, payload, DATA_SHREDS, DATA_SHREDS);
         assert!(res.is_err());
@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reed_solomon_deshred_too_many_shreds() {
+    fn deshred_too_many_shreds() {
         const CODING_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
         let (header, payload) = random_slice(MAX_DATA_PER_SLICE);
         let (data, coding) =
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reed_solomon_deshred_not_enough_shreds() {
+    fn deshred_not_enough_shreds() {
         let (header, payload) = random_slice(MAX_DATA_PER_SLICE);
         let (data, coding) =
             reed_solomon_shred(header, payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
