@@ -110,18 +110,24 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         event_receiver: Receiver<VotorEvent>,
         all2all: Arc<A>,
     ) -> Self {
-        let mut parents_ready = BTreeSet::new();
-        // add dummy genesis block
-        parents_ready.insert((Slot::genesis(), Slot::genesis(), Hash::default()));
+        // add dummy genesis block to some of the data structures
+        let voted = [Slot::genesis()].into_iter().collect();
+        let voted_notar = [(Slot::genesis(), Hash::default())].into_iter().collect();
+        let block_notarized = [(Slot::genesis(), Hash::default())].into_iter().collect();
+        let parents_ready = [(Slot::genesis(), Slot::genesis(), Hash::default())]
+            .into_iter()
+            .collect();
+        let retired_slots = [Slot::genesis()].into_iter().collect();
+
         let votor = Self {
-            voted: BTreeSet::new(),
-            voted_notar: BTreeMap::new(),
+            voted,
+            voted_notar,
             bad_window: BTreeSet::new(),
-            block_notarized: BTreeMap::new(),
+            block_notarized,
             parents_ready,
             received_shred: BTreeSet::new(),
             pending_blocks: BTreeMap::new(),
-            retired_slots: BTreeSet::new(),
+            retired_slots,
             validator_id,
             voting_key,
             event_receiver,
