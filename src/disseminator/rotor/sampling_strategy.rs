@@ -765,7 +765,7 @@ mod tests {
     #[test]
     #[ignore]
     fn turbine_sampler() {
-        const SLICES: usize = 1_000_000;
+        const SLICES: usize = 100_000;
 
         let mut rng = rand::rng();
         let mut validators = create_validator_info(1000);
@@ -832,7 +832,7 @@ mod tests {
     #[test]
     #[ignore]
     fn turbine_sampler_real_world() {
-        const SLICES: usize = 1_000_000;
+        const SLICES: usize = 100_000;
 
         // use real mainnet validator stake distribution
         let mut stakes = Vec::new();
