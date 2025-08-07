@@ -54,14 +54,19 @@ impl SecretKey {
         let sig = self.0.sign(msg);
         Signature(sig)
     }
+
+    /// Returns the bytes of this secret key.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
 }
 
-impl AsRef<VerificationKey> for PublicKey {
-    fn as_ref(&self) -> &VerificationKey {
-        &self.0
+impl PublicKey {
+    /// Returns the bytes of this public key.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
     }
 }
 
@@ -81,6 +86,7 @@ mod tests {
     fn basic() {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
+        assert_ne!(sk.as_bytes(), pk.as_bytes());
         let msg = b"ed25519 is pretty fine";
         let sig = sk.sign(msg);
         assert!(sig.verify(msg, &pk));
