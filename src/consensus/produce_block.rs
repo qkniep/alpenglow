@@ -112,10 +112,11 @@ where
         let (parent_slot, parent_hash) = parent;
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         info!(
-            "producing block in slot {} with parent {} in slot {}",
+            "producing block in slot {} with parent {} in slot {} (parent ready: {})",
             slot,
             &hex::encode(parent_hash)[..8],
-            parent_slot
+            parent_slot,
+            parent_ready,
         );
 
         let mut sleep_duration = DELTA_BLOCK;
@@ -147,7 +148,13 @@ where
                 let pool = self.pool.read().await;
                 if let Some(p) = pool.parents_ready(slot).first() {
                     if *p != parent {
-                        warn!("switching block production parent");
+                        warn!(
+                            "switching block production parent from {} in slot {} to {} in slot {}",
+                            &hex::encode(parent.1)[..8],
+                            parent.0,
+                            &hex::encode(p.1)[..8],
+                            p.0,
+                        );
                         unimplemented!("have to switch parents");
                     }
                 }

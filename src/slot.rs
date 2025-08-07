@@ -33,7 +33,7 @@ impl Slot {
 
     /// Returns an infinite iterator that yields the first slot in each window.
     pub fn windows() -> impl Iterator<Item = Self> {
-        (0..).map(Self)
+        (0..).step_by(SLOTS_PER_WINDOW as usize).map(Self)
     }
 
     /// Returns a double-ended iterator that yields all the slots in the
@@ -91,5 +91,22 @@ impl Slot {
 impl Display for Slot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let window_slots = Slot::windows().take(10).collect::<Vec<_>>();
+        for (window, first_slot) in window_slots.iter().take(9).enumerate() {
+            assert!(first_slot.is_start_of_window());
+            assert_eq!(*first_slot, first_slot.first_slot_in_window());
+            let last_slot = first_slot.last_slot_in_window();
+            assert_eq!(last_slot.next(), window_slots[window + 1]);
+            assert_eq!(last_slot, window_slots[window + 1].prev());
+        }
     }
 }
