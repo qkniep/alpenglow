@@ -382,21 +382,13 @@ mod tests {
 
     #[tokio::test]
     async fn timeouts() {
-        let (other_a2a, votor_channel, _) = start_votor().await;
-
-        // explicitly send parent ready for genesis
-        votor_channel
-            .send(VotorEvent::ParentReady {
-                slot: Slot::genesis(),
-                parent_slot: Slot::genesis(),
-                parent_hash: Hash::default(),
-            })
-            .await
-            .unwrap();
+        let (other_a2a, _, _) = start_votor().await;
 
         // should vote skip for all slots
         let mut skipped_slots = Vec::new();
-        for _ in Slot::genesis().slots_in_window() {
+        let mut slots = Slot::genesis().slots_in_window().collect::<Vec<_>>();
+        slots.remove(0);
+        for _ in slots.clone() {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     NetworkMessage::Vote(v) => {
@@ -407,9 +399,7 @@ mod tests {
                 }
             }
         }
-        for i in Slot::genesis().slots_in_window() {
-            assert!(skipped_slots.contains(&i));
-        }
+        assert_eq!(skipped_slots, slots);
     }
 
     #[tokio::test]
@@ -417,24 +407,22 @@ mod tests {
         let (other_a2a, tx, epoch_info) = start_votor().await;
 
         // vote notar after seeing block
-        let event = VotorEvent::FirstShred(Slot::new(0));
+        let slot = Slot::genesis().next();
+        let event = VotorEvent::FirstShred(slot);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
             hash: [1u8; 32],
-            parent_slot: Slot::new(0),
+            parent_slot: Slot::genesis(),
             parent_hash: Hash::default(),
         };
-        let event = VotorEvent::Block {
-            slot: Slot::new(0),
-            block_info,
-        };
+        let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
         let vote = match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => v,
             _ => unreachable!(),
         };
         assert!(vote.is_notar());
-        assert_eq!(vote.slot(), Slot::new(0));
+        assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
         let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], &epoch_info.validators));
@@ -443,7 +431,7 @@ mod tests {
         match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => {
                 assert!(v.is_final());
-                assert_eq!(v.slot(), Slot::new(0));
+                assert_eq!(v.slot(), slot);
             }
             m => panic!("other msg: {m:?}"),
         }
