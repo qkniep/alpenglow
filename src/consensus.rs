@@ -315,7 +315,7 @@ where
                 self.pool.read().await.recover_from_standstill().await;
                 last_progress = Instant::now();
             }
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            tokio::time::sleep(DELTA_BLOCK).await;
         }
     }
 
