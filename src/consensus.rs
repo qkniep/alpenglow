@@ -344,7 +344,7 @@ where
                 continue;
             }
 
-            let (parent, parent_hash, parent_ready) = match wait_for_first_slot(
+            let (parent, parent_hash, mut parent_ready) = match wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
@@ -360,6 +360,7 @@ where
             let mut block_hash = parent_hash;
             for slot in first_slot_in_window.slots_in_window() {
                 if slot.is_genesis() {
+                    parent_ready = true;
                     continue;
                 }
                 self.produce_block(slot, (block, block_hash), parent_ready)
@@ -373,6 +374,7 @@ where
                     .await
                     .canonical_block_hash(slot)
                     .expect("missing own block during block production");
+                parent_ready = true;
             }
         }
 
