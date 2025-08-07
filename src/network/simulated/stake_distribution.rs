@@ -293,3 +293,27 @@ pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     }
     validators
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let validator_data = hub_validator_data(vec![("San Francisco".to_string(), 1.0)]);
+        let (validators, _) = validators_from_validator_data(&validator_data);
+        assert_eq!(validators.len(), 30);
+
+        let (validators, _) = validators_from_validator_data(&VALIDATOR_DATA);
+        assert_eq!(validators.len(), 1283);
+
+        let (validators, _) = validators_from_validator_data(&SUI_VALIDATOR_DATA);
+        assert_eq!(validators.len(), 106);
+
+        let (validators, _) = validators_from_validator_data(&FIVE_HUBS_VALIDATOR_DATA);
+        assert_eq!(validators.len(), 5 * 30);
+
+        let (validators, _) = validators_from_validator_data(&STOCK_EXCHANGES_VALIDATOR_DATA);
+        assert_eq!(validators.len(), 8 * 30);
+    }
+}

@@ -150,3 +150,16 @@ impl PingServer {
         (self.latitude, self.longitude)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_ping() {
+        let berlin = find_closest_ping_server(52.516, 13.378);
+        let zurich = find_closest_ping_server(47.376, 8.547);
+        let ping_b2z = get_ping(berlin.id, zurich.id).unwrap();
+        assert!(ping_b2z > 0.0);
+    }
+}
