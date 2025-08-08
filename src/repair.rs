@@ -242,7 +242,7 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    /// Tries to receive and deserialize messages from the underlying network.
+    /// Tries to receive a repair message from the underlying [`Network`].
     ///
     /// Resolves to the next successfully deserialized [`RepairMessage`].
     /// Ignores any potentially received [`NetworkMessage`] of a different type.
