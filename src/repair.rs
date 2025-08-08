@@ -17,12 +17,12 @@ use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::Slot;
 use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::{BlockId, Slot};
 
 /// Message types for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,6 +66,10 @@ pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Blockstore>>,
     pool: Arc<RwLock<Pool>>,
     network: N,
+    repair_channel: (
+        tokio::sync::mpsc::Sender<BlockId>,
+        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<BlockId>>,
+    ),
     sampler: StakeWeightedSampler,
 }
 
@@ -78,15 +82,33 @@ impl<N: Network> Repair<N> {
         blockstore: Arc<RwLock<Blockstore>>,
         pool: Arc<RwLock<Pool>>,
         network: N,
+        repair_channel: (
+            tokio::sync::mpsc::Sender<BlockId>,
+            tokio::sync::mpsc::Receiver<BlockId>,
+        ),
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler = StakeWeightedSampler::new(validators);
+        let repair_channel = (repair_channel.0, tokio::sync::Mutex::new(repair_channel.1));
         Self {
             blockstore,
             pool,
             network,
+            repair_channel,
             sampler,
+        }
+    }
+
+    /// The main repair loop.
+    ///
+    /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
+    /// Inititates the corresponding repair process and handles ongoing repairs.
+    pub async fn repair_loop(&self) {
+        // only this loop uses the receiver
+        let mut guard = self.repair_channel.1.lock().await;
+        while let Some((slot, hash)) = guard.recv().await {
+            self.repair_block(slot, hash).await;
         }
     }
 
@@ -203,6 +225,19 @@ impl<N: Network> Repair<N> {
                     parent_hash,
                 };
                 self.pool.write().await.add_block(slot, block_info).await;
+                if self
+                    .blockstore
+                    .read()
+                    .await
+                    .get_block(slot, block_hash)
+                    .is_none()
+                {
+                    self.repair_channel
+                        .0
+                        .send((slot, block_hash))
+                        .await
+                        .unwrap();
+                }
             }
         }
     }
