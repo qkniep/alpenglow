@@ -144,8 +144,17 @@ mod tests {
 
     #[test]
     fn restore_empty() {
-        let (header, payload) = create_random_slice(0).deconstruct();
-        shred_deshred_restore(header, payload);
+        let header = SliceHeader {
+            slot: Slot::new(0),
+            slice_index: 0,
+            is_last: true,
+        };
+        let payload = vec![0];
+        let (data, coding) =
+            reed_solomon_shred(header, payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
+        let shreds = take_and_map_enough_shreds(data, coding);
+        let restored = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS).unwrap();
+        assert_eq!(restored, payload);
     }
 
     #[test]
