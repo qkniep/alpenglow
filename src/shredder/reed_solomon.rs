@@ -123,6 +123,7 @@ pub(super) fn reed_solomon_deshred(
 mod tests {
     use super::*;
 
+    use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
     use crate::slice::{SlicePayload, create_random_slice};
@@ -159,8 +160,13 @@ mod tests {
 
     #[test]
     fn shred_too_much_data() {
-        let (header, payload) = create_random_slice(MAX_DATA_PER_SLICE + 1).deconstruct();
-        let res = reed_solomon_shred(header, payload.into(), DATA_SHREDS, DATA_SHREDS);
+        let header = SliceHeader {
+            slot: Slot::new(0),
+            slice_index: 0,
+            is_last: true,
+        };
+        let payload = vec![0; MAX_DATA_PER_SLICE + 1];
+        let res = reed_solomon_shred(header, payload, DATA_SHREDS, DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonShredError::TooMuchData);
     }
