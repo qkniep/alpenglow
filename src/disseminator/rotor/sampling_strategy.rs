@@ -774,14 +774,11 @@ mod tests {
 
         // test `clone` and `reset`
         let sampler = sampler.clone();
-        let mut sampled0 = 0;
         for _ in 0..100 {
             sampler.reset();
             let id = sampler.sample(&mut rand::rng());
             assert_eq!(id, 0);
-            sampled0 += 1;
         }
-        assert_eq!(sampled0, 100);
     }
 
     #[test]
