@@ -6,9 +6,9 @@
 use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
-use crate::Slot;
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
+use crate::{Slot, highest_non_zero_byte};
 
 /// A slice is the unit of data between block and shred.
 ///
@@ -128,16 +128,6 @@ impl From<Vec<u8>> for SlicePayload {
     }
 }
 
-/// Returns the highest non-zero byte in `val`.
-fn highest_non_zero_byte(mut val: usize) -> usize {
-    let mut cnt = 0;
-    while val != 0 {
-        val /= 256;
-        cnt += 1;
-    }
-    cnt
-}
-
 /// Creates a [`SlicePayload`] with a random payload of desired size.
 ///
 /// This function should only be used for testing and benchmarking.
@@ -153,7 +143,7 @@ pub fn create_random_slice_payload(
         .unwrap();
     let left = desired_size.checked_sub(used).unwrap();
 
-    // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`
+    // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`.  If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.  Otherwise, it takes number of non-zero bytes minus 1.
     let highest_byte = highest_non_zero_byte(desired_size);
     let size = if highest_byte == 1 {
         left.checked_sub(highest_byte).unwrap()

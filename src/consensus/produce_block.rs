@@ -10,12 +10,12 @@ use fastrace::Span;
 use log::{info, warn};
 use static_assertions::const_assert;
 
-use crate::MAX_TRANSACTION_SIZE;
 use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
+use crate::{MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
 
 use super::{Alpenglow, DELTA_BLOCK};
 
@@ -44,7 +44,11 @@ where
     let parent_encoded_len = bincode::serde::encode_to_vec(parent, bincode::config::standard())
         .unwrap()
         .len();
-    let mut slice_capacity_left = MAX_DATA_PER_SLICE - parent_encoded_len;
+
+    // Super hacky!!!  As long as the size of the txs vec fits in a single byte,
+    // bincode encoding seems to take a single byte so account for that here.
+    assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
+    let mut slice_capacity_left = MAX_DATA_PER_SLICE - parent_encoded_len - 1;
     let mut txs = Vec::new();
 
     let cont_prod = loop {
