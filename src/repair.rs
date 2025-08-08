@@ -158,13 +158,14 @@ impl<N: Network> Repair<N> {
                 let RepairRequest::SliceCount(_, _) = req else {
                     return;
                 };
-                // TODO: include & check proof
+                // TODO: include & check proof:
                 // self.slice_counts.insert((slot, block_hash), count);
             }
             RepairResponse::SliceRoot(req, _slice_root, _proof) => {
                 let RepairRequest::SliceRoot(_, _, _slice) = req else {
                     return;
                 };
+                // TODO: check Merkle proof & cache it:
                 // if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
                 //     return;
                 // }
@@ -181,9 +182,8 @@ impl<N: Network> Repair<N> {
                 {
                     return;
                 }
-                // TODO: make sure shred is checked against correct merkle_root
-                //
-                /* if !shred.merkle_root ... { return; } */
+                // TODO: make sure shred is checked against correct merkle_root:
+                // if !shred.merkle_root ... { return; }
                 self.blockstore
                     .write()
                     .await
