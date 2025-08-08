@@ -123,14 +123,13 @@ impl From<Vec<u8>> for SlicePayload {
         assert!(payload.len() <= MAX_DATA_PER_SLICE);
         let (ret, bytes): (SlicePayload, usize) =
             bincode::serde::decode_from_slice(&payload, bincode::config::standard()).unwrap();
-        println!("from: ret.data.len={} bytes={}", ret.data.len(), bytes);
-        // XXX: add an assertion that return bytes is equal to teh size of payload.
+        assert_eq!(payload.len(), bytes);
         ret
     }
 }
 
-// Returns the number of bytes that are actually set in the `val`
-fn num_bytes_set(mut val: usize) -> usize {
+/// Returns the highest non-zero byte in `val`.
+fn highest_non_zero_byte(mut val: usize) -> usize {
     let mut cnt = 0;
     while val != 0 {
         val /= 256;
@@ -139,7 +138,7 @@ fn num_bytes_set(mut val: usize) -> usize {
     cnt
 }
 
-/// Creates a [`Slice`] with a random payload of the desired size.
+/// Creates a [`SlicePayload`] with a random payload of desired size.
 ///
 /// This function should only be used for testing and benchmarking.
 //
@@ -155,11 +154,15 @@ pub fn create_random_slice_payload(
     let left = desired_size.checked_sub(used).unwrap();
 
     // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`
-    let size = left
-        .checked_sub(num_bytes_set(desired_size))
-        .unwrap()
-        .checked_sub(1)
-        .unwrap();
+    let highest_byte = highest_non_zero_byte(desired_size);
+    let size = if highest_byte == 1 {
+        left.checked_sub(highest_byte).unwrap()
+    } else {
+        left.checked_sub(highest_byte)
+            .unwrap()
+            .checked_sub(1)
+            .unwrap()
+    };
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
@@ -169,6 +172,10 @@ pub fn create_random_slice_payload(
     payload.into()
 }
 
+/// Create a [`Slice`] with a random payload of desired size.
+///
+/// This function should only be used for testing and benchmarking.
+//
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_random_slice(desired_size: usize) -> Slice {
     let payload = create_random_slice_payload(None, desired_size);
