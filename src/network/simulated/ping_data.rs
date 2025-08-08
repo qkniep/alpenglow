@@ -150,3 +150,25 @@ impl PingServer {
         (self.latitude, self.longitude)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let frankfurt_coords = coordinates_for_city("Frankfurt").unwrap();
+        let singapore_coords = coordinates_for_city("Singapore").unwrap();
+        let frankfurt = find_closest_ping_server(frankfurt_coords.0, frankfurt_coords.1);
+        let singapore = find_closest_ping_server(singapore_coords.0, singapore_coords.1);
+        assert_eq!(frankfurt.location, "Frankfurt");
+        assert_eq!(singapore.location, "Singapore");
+        assert_eq!(frankfurt.coordinates(), frankfurt_coords);
+        assert_eq!(singapore.coordinates(), singapore_coords);
+        assert_ne!(frankfurt.coordinates(), singapore.coordinates());
+
+        let ping = get_ping(frankfurt.id, singapore.id).unwrap();
+        // ping is at least speed of light
+        assert!(ping > 34.0);
+    }
+}
