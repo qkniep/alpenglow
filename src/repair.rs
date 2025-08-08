@@ -42,6 +42,7 @@ pub enum RepairRequest {
     SliceRoot(Slot, Hash, usize),
     /// Request for shred, identified by block hash, slice index and shred index.
     Shred(Slot, Hash, usize, usize),
+    // TODO: remove or replace with variant that includes proof
     Parent(Slot, Hash),
 }
 
@@ -58,6 +59,7 @@ pub enum RepairResponse {
     SliceRoot(RepairRequest, Hash, Vec<Hash>),
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
+    // TODO: remove or replace with variant that includes proof
     Parent(RepairRequest, Slot, Hash),
 }
 
@@ -359,6 +361,82 @@ impl RepairResponse {
 mod tests {
     use super::*;
 
-    #[test]
-    fn basic() {}
+    use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
+    use crate::test_utils::generate_validators;
+
+    use tokio::sync::mpsc::Sender;
+
+    async fn create_repair_instance() -> (Sender<BlockId>, SimulatedNetwork, Arc<RwLock<Blockstore>>)
+    {
+        let (_, epoch_info) = generate_validators(2);
+        let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
+        epoch_info.validators.get_mut(0).unwrap().repair_address = "0".to_string();
+        epoch_info.validators.get_mut(1).unwrap().repair_address = "1".to_string();
+        let epoch_info = Arc::new(epoch_info);
+
+        let (votor_tx, _) = tokio::sync::mpsc::channel(100);
+        let blockstore = Arc::new(RwLock::new(Blockstore::new(
+            epoch_info.clone(),
+            votor_tx.clone(),
+        )));
+
+        let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
+        let pool = Arc::new(RwLock::new(Pool::new(
+            epoch_info.clone(),
+            votor_tx,
+            repair_tx.clone(),
+        )));
+
+        let core = Arc::new(
+            SimulatedNetworkCore::default()
+                .with_jitter(0.0)
+                .with_packet_loss(0.0),
+        );
+        let network0 = core.join_unlimited(0).await;
+        let network1 = core.join_unlimited(1).await;
+
+        let repair = Repair::new(
+            Arc::clone(&blockstore),
+            pool,
+            network0,
+            (repair_tx.clone(), repair_rx),
+            epoch_info,
+        );
+
+        tokio::spawn(async move { repair.repair_loop().await });
+
+        (repair_tx, network1, blockstore)
+    }
+
+    #[tokio::test]
+    async fn basic() {
+        let (repair_channel, other_network, _) = create_repair_instance().await;
+        repair_channel.send((Slot::new(1), [1; 32])).await.unwrap();
+        let Ok(msg) = other_network.receive().await else {
+            panic!("failed to receive");
+        };
+        let NetworkMessage::Repair(repair_msg) = msg else {
+            panic!("not a repair msg");
+        };
+        let RepairMessage::Request(req) = repair_msg else {
+            panic!("not a request");
+        };
+        if let RepairRequest::Parent(slot, hash) = req {
+            assert_eq!(slot, Slot::new(1));
+            assert_eq!(hash, [1; 32]);
+        } else {
+            panic!("not a parent request");
+        };
+        other_network
+            .send(
+                &NetworkMessage::Repair(RepairMessage::Response(RepairResponse::Parent(
+                    req,
+                    Slot::genesis(),
+                    Hash::default(),
+                ))),
+                "0",
+            )
+            .await
+            .unwrap();
+    }
 }
