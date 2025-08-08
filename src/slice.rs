@@ -25,12 +25,15 @@ pub struct Slice {
     pub is_last: bool,
     /// Merkle root hash over all shreds in this slice.
     pub merkle_root: Option<Hash>,
+    /// If first slice in the block or parent changed due to optimistic handover,
+    /// then indicates which block is the parent of the block this slice is part of.
     pub parent: Option<(Slot, Hash)>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
 
 impl Slice {
+    /// Constructs a [`Slice`] from its component parts.
     pub(crate) fn from_parts(
         header: SliceHeader,
         payload: SlicePayload,
@@ -136,6 +139,10 @@ fn num_bytes_set(mut val: usize) -> usize {
     cnt
 }
 
+/// Creates a [`Slice`] with a random payload of the desired size.
+///
+/// This function should only be used for testing and benchmarking.
+//
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_random_slice_payload(desired_size: usize) -> SlicePayload {
     let mut payload = vec![0; desired_size];
