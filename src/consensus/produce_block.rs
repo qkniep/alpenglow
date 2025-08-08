@@ -48,7 +48,11 @@ where
     // Super hacky!!!  As long as the size of the txs vec fits in a single byte,
     // bincode encoding seems to take a single byte so account for that here.
     assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
-    let mut slice_capacity_left = MAX_DATA_PER_SLICE - parent_encoded_len - 1;
+    let mut slice_capacity_left = MAX_DATA_PER_SLICE
+        .checked_sub(parent_encoded_len)
+        .unwrap()
+        .checked_sub(1)
+        .unwrap();
     let mut txs = Vec::new();
 
     let cont_prod = loop {
