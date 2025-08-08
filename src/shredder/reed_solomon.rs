@@ -126,20 +126,20 @@ mod tests {
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
-    use crate::slice::{SlicePayload, create_random_slice};
+    use crate::slice::create_random_slice;
 
     use static_assertions::const_assert;
 
     #[test]
     fn restore_full() {
         let (header, payload) = create_random_slice(MAX_DATA_PER_SLICE).deconstruct();
-        shred_deshred_restore(header, payload);
+        shred_deshred_restore(header, payload.into());
     }
 
     #[test]
     fn restore_tiny() {
         let (header, payload) = create_random_slice(DATA_SHREDS - 1).deconstruct();
-        shred_deshred_restore(header, payload);
+        shred_deshred_restore(header, payload.into());
     }
 
     #[test]
@@ -150,11 +150,7 @@ mod tests {
             is_last: true,
         };
         let payload = vec![0];
-        let (data, coding) =
-            reed_solomon_shred(header, payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
-        let shreds = take_and_map_enough_shreds(data, coding);
-        let restored = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS).unwrap();
-        assert_eq!(restored, payload);
+        shred_deshred_restore(header, payload);
     }
 
     #[test]
@@ -163,7 +159,7 @@ mod tests {
         let slice_bytes = MAX_DATA_PER_SLICE / 2;
         for offset in 0..DATA_SHREDS {
             let (header, payload) = create_random_slice(slice_bytes + offset).deconstruct();
-            shred_deshred_restore(header, payload);
+            shred_deshred_restore(header, payload.into());
         }
     }
 
@@ -206,12 +202,11 @@ mod tests {
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
     }
 
-    fn shred_deshred_restore(header: SliceHeader, payload: SlicePayload) {
+    fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
         let (data, coding) =
-            reed_solomon_shred(header, payload.clone().into(), DATA_SHREDS, DATA_SHREDS).unwrap();
+            reed_solomon_shred(header, payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
         let shreds = take_and_map_enough_shreds(data, coding);
         let restored = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS).unwrap();
-        let payload: Vec<u8> = payload.into();
         assert_eq!(restored, payload);
     }
 
