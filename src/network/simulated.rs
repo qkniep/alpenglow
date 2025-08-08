@@ -148,7 +148,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..2 {
-            let payload = create_random_slice_payload(MAX_DATA_PER_SLICE);
+            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
@@ -207,7 +207,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..1000 {
-            let payload = create_random_slice_payload(MAX_DATA_PER_SLICE);
+            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
@@ -266,7 +266,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..10_000 {
-            let payload = create_random_slice_payload(MAX_DATA_PER_SLICE);
+            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,

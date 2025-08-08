@@ -263,7 +263,12 @@ mod tests {
     fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         let mut slices = Vec::new();
         for slice_index in 0..num_slices {
-            let payload = create_random_slice_payload(MAX_DATA_PER_SLICE);
+            let parent = if slice_index == 0 {
+                Some((Slot::new(0), Hash::default()))
+            } else {
+                None
+            };
+            let payload = create_random_slice_payload(parent, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot,
                 slice_index,

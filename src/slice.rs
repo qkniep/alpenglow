@@ -144,10 +144,12 @@ fn num_bytes_set(mut val: usize) -> usize {
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
-pub fn create_random_slice_payload(desired_size: usize) -> SlicePayload {
+pub fn create_random_slice_payload(
+    parent: Option<(Slot, Hash)>,
+    desired_size: usize,
+) -> SlicePayload {
     let mut payload = vec![0; desired_size];
 
-    let parent: Option<(Slot, Hash)> = None;
     let used = bincode::serde::encode_into_slice(parent, &mut payload, bincode::config::standard())
         .unwrap();
     let left = desired_size.checked_sub(used).unwrap();
@@ -169,7 +171,7 @@ pub fn create_random_slice_payload(desired_size: usize) -> SlicePayload {
 
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_random_slice(desired_size: usize) -> Slice {
-    let payload = create_random_slice_payload(desired_size);
+    let payload = create_random_slice_payload(None, desired_size);
     let header = SliceHeader {
         slot: Slot::new(0),
         slice_index: 0,
