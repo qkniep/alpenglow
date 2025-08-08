@@ -17,7 +17,9 @@
 //! - [`StakeWeightedSampler`] samples validators proportional to their stake.
 //! - [`DecayingAcceptanceSampler`] samples validators less as they approach maximum.
 //! - [`TurbineSampler`] simulates the workload of Turbine.
+//! - [`PartitionSampler`] splits validators into bins and samples from each bin.
 //! - [`FaitAccompli1Sampler`] uses the FA1-F committee sampling strategy.
+//! - [`FaitAccompli2Sampler`] uses the FA2 committee sampling strategy.
 
 use std::sync::Mutex;
 
@@ -39,9 +41,18 @@ pub trait SamplingStrategy {
     ///
     /// Implementations may panic if the sampler has reached an invalid state
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId;
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        self.sample_info(rng).id
+    }
 
-    /// Samples a validator's info ...
+    /// Samples a validator's `ValidatorInfo` with this probability distribution.
+    ///
+    /// Depending on the implementor, this may or may not be stateless.
+    ///
+    /// # Panics
+    ///
+    /// Implementations may panic if the sampler has reached an invalid state
+    /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo;
 
     /// Samples `k` validators with this probability distribution.
