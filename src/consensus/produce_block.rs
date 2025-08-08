@@ -71,6 +71,8 @@ where
                                 .expect("serialization should not panic");
                             slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
                             txs.push(tx);
+                            // subtract from time left should be the final action to ensure it accounts for all work done in the loop.
+                            time_left = time_left.saturating_sub(Instant::now() - start_time);
                             if slice_capacity_left < MAX_TRANSACTION_SIZE {
                                 break Continue::Continue { left: time_left };
                             }
@@ -80,7 +82,6 @@ where
                         }
                     },
                 }
-                time_left = time_left.saturating_sub(Instant::now() - start_time);
             }
         }
     };
