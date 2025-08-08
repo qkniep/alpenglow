@@ -755,6 +755,14 @@ mod tests {
         let sampled_set: HashSet<_> = sampled.iter().copied().collect();
         assert_eq!(sampled_set.len(), 100);
 
+        // heavy node sampled at most max_samples times
+        let mut validators = create_validator_info(100);
+        validators[0].stake = 10_000;
+        let sampler = DecayingAcceptanceSampler::new(validators, 5.0);
+        let sampled = sampler.sample_multiple(100, &mut rand::rng());
+        let sampled0 = sampled.into_iter().filter(|v| *v == 0).count();
+        assert!(sampled0 <= 5);
+
         // max_samples = inf equivalent to sampling with replacement
         let mut validators = create_validator_info(100);
         validators[0].stake = 1_000_000_000;
@@ -764,16 +772,10 @@ mod tests {
         let sampled0 = sampled.into_iter().filter(|v| *v == 0).count();
         assert_eq!(sampled0, 100);
 
-        // otherwise, heavy node sampled at most max_samples times
-        let mut validators = create_validator_info(100);
-        validators[0].stake = 10_000;
-        let sampler = DecayingAcceptanceSampler::new(validators, 5.0);
-        let sampled = sampler.sample_multiple(100, &mut rand::rng());
-        let sampled0 = sampled.into_iter().filter(|v| *v == 0).count();
-        assert!(sampled0 <= 5);
-
         // test `clone` and `reset`
-        let sampler = sampler.clone();
+        // resetting after each iteration should behave the same as `max_samples = inf`
+        let mut sampler = sampler.clone();
+        sampler.max_samples = 5.0;
         for _ in 0..100 {
             sampler.reset();
             let id = sampler.sample(&mut rand::rng());
