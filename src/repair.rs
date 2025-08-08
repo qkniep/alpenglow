@@ -314,3 +314,11 @@ impl RepairResponse {
         self.request().block_hash()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {}
+}
