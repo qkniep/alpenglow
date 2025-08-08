@@ -278,7 +278,7 @@ impl RepairRequest {
         }
     }
 
-    /// Returns the block hash this response refers to.
+    /// Returns the block hash this request refers to.
     #[must_use]
     pub const fn block_hash(&self) -> Hash {
         match self {
