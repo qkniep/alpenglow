@@ -3,7 +3,12 @@
 
 //! Block repair sub-protocol.
 //!
-//!
+//! This module implements the double-Merkle based block repair protocol.
+//! It uses the fact that the block hash is the root of a Merkle tree, where
+//! the leaves of this tree are the Merkle roots of each of the block's slices.
+//! Each repair response is accompanied by a Merkle proof and can thus be
+//! individually verified.
+
 // WARN: this is incomplete!
 
 use std::sync::Arc;
