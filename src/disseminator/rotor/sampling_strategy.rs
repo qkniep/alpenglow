@@ -242,7 +242,7 @@ impl TurbineSampler {
                 let root_work = (turbine_fanout as f64).min(validators_left as f64);
                 expected_work[root.id as usize] += prob * root_work;
                 let stake_left = stake_left - root.stake;
-                let validators_left = validators_left - turbine_fanout;
+                let validators_left = validators_left.saturating_sub(turbine_fanout);
                 for maybe_level1 in &validators {
                     if maybe_level1.id == leader.id || maybe_level1.id == root.id {
                         continue;
@@ -914,6 +914,20 @@ mod tests {
     }
 
     #[test]
+    fn partition_sampler() {
+        // with k equal-weight nodes this deterministically selects all nodes
+        let validators = create_validator_info(64);
+        let sampler = PartitionSampler::new(validators, 64);
+        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled.len(), 64);
+        let sampled: HashSet<_> = sampled.into_iter().collect();
+        assert_eq!(sampled.len(), 64);
+        for id in 0..64 {
+            assert!(sampled.contains(&id));
+        }
+    }
+
+    #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
@@ -970,12 +984,49 @@ mod tests {
     }
 
     #[test]
-    fn partition_sampler() {
-        // TODO: add tests
+    fn fa2_sampler() {
+        // with k equal-weight nodes this deterministically selects all nodes
+        let validators = create_validator_info(64);
+        let sampler = FaitAccompli2Sampler::new(validators, 64);
+        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled.len(), 64);
+        let sampled: HashSet<_> = sampled.into_iter().collect();
+        assert_eq!(sampled.len(), 64);
+        for id in 0..64 {
+            assert!(sampled.contains(&id));
+        }
     }
 
     #[test]
-    fn fa2_sampler() {
-        // TODO: add test
+    fn completeness() {
+        let validators = create_validator_info(10);
+        sample_all_validators(&UniformSampler::new(validators.clone()));
+        sample_all_validators(&StakeWeightedSampler::new(validators.clone()));
+        sample_all_validators(&DecayingAcceptanceSampler::new(validators.clone(), 1000.0));
+        sample_all_validators(&TurbineSampler::new(validators.clone()));
+        // sample_all_validators(&PartitionSampler::new(validators.clone(), 10));
+        // sample_all_validators(&FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+        //     validators.clone(),
+        //     10,
+        // ));
+        // sample_all_validators(&FaitAccompli1Sampler::new_with_partition_fallback(
+        //     validators.clone(),
+        //     10,
+        // ));
+        // sample_all_validators(&FaitAccompli2Sampler::new(validators.clone(), 10));
+    }
+
+    fn sample_all_validators<S: SamplingStrategy>(sampler: &S) {
+        let mut rng = rand::rng();
+        let mut sampled1 = HashSet::new();
+        let mut sampled2 = HashSet::new();
+        for _ in 0..1000 {
+            sampled1.insert(sampler.sample(&mut rng));
+            sampled2.insert(sampler.sample_info(&mut rng).id);
+        }
+        for id in 0..10 {
+            assert!(sampled1.contains(&id));
+            assert!(sampled2.contains(&id));
+        }
     }
 }
