@@ -152,7 +152,7 @@ mod tests {
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
-                is_last: i == 4,
+                is_last: i == 1,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
