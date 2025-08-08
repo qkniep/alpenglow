@@ -86,6 +86,7 @@ where
         }
     };
 
+    // TODO: not accounting for this potentially operation in block production time above.
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
 
