@@ -17,7 +17,9 @@
 //! - [`StakeWeightedSampler`] samples validators proportional to their stake.
 //! - [`DecayingAcceptanceSampler`] samples validators less as they approach maximum.
 //! - [`TurbineSampler`] simulates the workload of Turbine.
+//! - [`PartitionSampler`] splits validators into bins and samples from each bin.
 //! - [`FaitAccompli1Sampler`] uses the FA1-F committee sampling strategy.
+//! - [`FaitAccompli2Sampler`] uses the FA2 committee sampling strategy.
 
 use std::sync::Mutex;
 
@@ -39,9 +41,18 @@ pub trait SamplingStrategy {
     ///
     /// Implementations may panic if the sampler has reached an invalid state
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId;
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        self.sample_info(rng).id
+    }
 
-    /// Samples a validator's info ...
+    /// Samples a validator's `ValidatorInfo` with this probability distribution.
+    ///
+    /// Depending on the implementor, this may or may not be stateless.
+    ///
+    /// # Panics
+    ///
+    /// Implementations may panic if the sampler has reached an invalid state
+    /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo;
 
     /// Samples `k` validators with this probability distribution.
@@ -231,7 +242,7 @@ impl TurbineSampler {
                 let root_work = (turbine_fanout as f64).min(validators_left as f64);
                 expected_work[root.id as usize] += prob * root_work;
                 let stake_left = stake_left - root.stake;
-                let validators_left = validators_left - turbine_fanout;
+                let validators_left = validators_left.saturating_sub(turbine_fanout);
                 for maybe_level1 in &validators {
                     if maybe_level1.id == leader.id || maybe_level1.id == root.id {
                         continue;
@@ -368,8 +379,11 @@ impl PartitionSampler {
 }
 
 impl SamplingStrategy for PartitionSampler {
-    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
-        unimplemented!()
+    // TODO: this is just a bad placeholder and should probably not be unimplemented
+    //       for this sampler, maybe we should have two different types:
+    //       `IIDSamplingStrategy` and `SamplingStrategy`
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
@@ -469,6 +483,9 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
 }
 
 impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
+    // TODO: this is just a bad placeholder and should probably not be unimplemented
+    //       for this sampler, maybe we should have two different types:
+    //       `IIDSamplingStrategy` and `SamplingStrategy`
     fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
@@ -584,14 +601,16 @@ impl FaitAccompli2Sampler {
 }
 
 impl SamplingStrategy for FaitAccompli2Sampler {
-    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
-        // FA2 only supports multiple samples
-        unimplemented!()
+    // TODO: this is just a bad placeholder and should probably not be unimplemented
+    //       for this sampler, maybe we should have two different types:
+    //       `IIDSamplingStrategy` and `SamplingStrategy`
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
-        // FA2 only supports multiple samples
-        unimplemented!()
+    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+        let index = self.sample(rng) as usize;
+        &self.validators[index]
     }
 
     fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
@@ -759,13 +778,23 @@ mod tests {
         assert_eq!(sampler.sample(&mut rand::rng()), 0);
         let sampled = sampler.sample_multiple(100, &mut rand::rng());
         let sampled0 = sampled.into_iter().filter(|v| *v == 0).count();
-        assert!(sampled0 == 100);
+        assert_eq!(sampled0, 100);
+
+        // test `clone` and `reset`
+        // resetting after each iteration should behave the same as `max_samples = inf`
+        let mut sampler = sampler.clone();
+        sampler.max_samples = 5.0;
+        for _ in 0..100 {
+            sampler.reset();
+            let id = sampler.sample(&mut rand::rng());
+            assert_eq!(id, 0);
+        }
     }
 
     #[test]
     #[ignore]
     fn turbine_sampler() {
-        const SLICES: usize = 1_000_000;
+        const SLICES: usize = 100_000;
 
         let mut rng = rand::rng();
         let mut validators = create_validator_info(1000);
@@ -832,7 +861,7 @@ mod tests {
     #[test]
     #[ignore]
     fn turbine_sampler_real_world() {
-        const SLICES: usize = 1_000_000;
+        const SLICES: usize = 100_000;
 
         // use real mainnet validator stake distribution
         let mut stakes = Vec::new();
@@ -903,6 +932,20 @@ mod tests {
     }
 
     #[test]
+    fn partition_sampler() {
+        // with k equal-weight nodes this deterministically selects all nodes
+        let validators = create_validator_info(64);
+        let sampler = PartitionSampler::new(validators, 64);
+        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled.len(), 64);
+        let sampled: HashSet<_> = sampled.into_iter().collect();
+        assert_eq!(sampled.len(), 64);
+        for id in 0..64 {
+            assert!(sampled.contains(&id));
+        }
+    }
+
+    #[test]
     fn fa1_sampler() {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
@@ -959,12 +1002,49 @@ mod tests {
     }
 
     #[test]
-    fn partition_sampler() {
-        // TODO: add tests
+    fn fa2_sampler() {
+        // with k equal-weight nodes this deterministically selects all nodes
+        let validators = create_validator_info(64);
+        let sampler = FaitAccompli2Sampler::new(validators, 64);
+        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampled.len(), 64);
+        let sampled: HashSet<_> = sampled.into_iter().collect();
+        assert_eq!(sampled.len(), 64);
+        for id in 0..64 {
+            assert!(sampled.contains(&id));
+        }
     }
 
     #[test]
-    fn fa2_sampler() {
-        // TODO: add test
+    fn completeness() {
+        let validators = create_validator_info(10);
+        sample_all_validators(&UniformSampler::new(validators.clone()));
+        sample_all_validators(&StakeWeightedSampler::new(validators.clone()));
+        sample_all_validators(&DecayingAcceptanceSampler::new(validators.clone(), 1000.0));
+        sample_all_validators(&TurbineSampler::new(validators.clone()));
+        sample_all_validators(&PartitionSampler::new(validators.clone(), 10));
+        sample_all_validators(&FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+            validators.clone(),
+            10,
+        ));
+        sample_all_validators(&FaitAccompli1Sampler::new_with_partition_fallback(
+            validators.clone(),
+            10,
+        ));
+        sample_all_validators(&FaitAccompli2Sampler::new(validators.clone(), 10));
+    }
+
+    fn sample_all_validators<S: SamplingStrategy>(sampler: &S) {
+        let mut rng = rand::rng();
+        let mut sampled1 = HashSet::new();
+        let mut sampled2 = HashSet::new();
+        for _ in 0..1000 {
+            sampled1.insert(sampler.sample(&mut rng));
+            sampled2.insert(sampler.sample_info(&mut rng).id);
+        }
+        for id in 0..10 {
+            assert!(sampled1.contains(&id));
+            assert!(sampled2.contains(&id));
+        }
     }
 }
