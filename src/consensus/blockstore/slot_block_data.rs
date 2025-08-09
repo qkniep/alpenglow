@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
-use crate::shredder::{self, RegularShredder, Shred, Shredder};
+use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
 use crate::slice::Slice;
 use crate::{Block, Slot};
 
@@ -217,11 +217,24 @@ impl BlockData {
     /// Returns `true` if a slice was reconstructed, `false` otherwise.
     fn try_reconstruct_slice(&mut self, slice: usize) -> bool {
         let slice_shreds = self.shreds.get(&slice).unwrap();
-        if slice_shreds.len() < shredder::DATA_SHREDS || self.slices.contains_key(&slice) {
+        if self.slices.contains_key(&slice) {
             return false;
         }
-
-        let reconstructed_slice = RegularShredder::deshred(slice_shreds).unwrap();
+        let reconstructed_slice = match RegularShredder::deshred(slice_shreds) {
+            Ok(s) => s,
+            Err(DeshredError::NotEnoughShreds) => return false,
+            rest => {
+                warn!("deshreding failed with {rest:?}");
+                return false;
+            }
+        };
+        if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index == 0 {
+            warn!(
+                "reconstructed slice {} in slot {} expected to contain parent",
+                slice, self.slot
+            );
+            return false;
+        }
         self.slices.insert(slice, reconstructed_slice);
         trace!("reconstructed slice {} in slot {}", slice, self.slot);
         true
@@ -229,7 +242,7 @@ impl BlockData {
 
     /// Reconstructs the block if the blockstore contains all slices.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
+    /// Returns `Some(block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     fn try_reconstruct_block(&mut self) -> Option<BlockInfo> {
         if self.completed.is_some() {
@@ -254,7 +267,7 @@ impl BlockData {
 
         // reconstruct block header
         let first_slice = self.slices.get(&0).unwrap();
-        // TODO: maybe return an error if first slice does not have parent info?
+        // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
         let (parent_slot, parent_hash) = first_slice.parent.unwrap();
         // TODO: reconstruct actual block content
         let block = Block {
