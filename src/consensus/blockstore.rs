@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structure holding blocks for each slot.
-//!
-//!
 
 mod slot_block_data;
 
