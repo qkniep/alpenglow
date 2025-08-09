@@ -28,11 +28,12 @@ async fn produce_slice<T>(
     txs_receiver: &T,
     slot: Slot,
     slice_index: Either<(Slot, Hash, usize), NonZeroUsize>,
-    mut time_left: Duration,
+    duration_left: Duration,
 ) -> (Slice, Continue)
 where
     T: Network + Sync + Send + 'static,
 {
+    let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
     let (parent, slice_index) = match slice_index {
         Either::Left((parent_slot, parent_hash, slice_index)) => {
@@ -56,37 +57,38 @@ where
     let mut txs = Vec::new();
 
     let cont_prod = loop {
-        let start_time = Instant::now();
-        tokio::select! {
-            () = tokio::time::sleep(time_left) => {
+        let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
+        let res = tokio::select! {
+            () = tokio::time::sleep(sleep_duration) => {
                 break Continue::Stop;
             }
-
-            val = txs_receiver.receive() => {
-                match val {
-                    Err(err) => panic!("Unexpected error {err}"),
-                    Ok(msg) => match msg {
-                        NetworkMessage::Transaction(tx) => {
-                            let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-                                .expect("serialization should not panic");
-                            slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
-                            txs.push(tx);
-                            // subtract from time left should be the final action to ensure it accounts for all work done in the loop.
-                            time_left = time_left.saturating_sub(Instant::now() - start_time);
-                            if slice_capacity_left < MAX_TRANSACTION_SIZE {
-                                break Continue::Continue { left: time_left };
-                            }
-                        }
-                        msg => {
-                            panic!("Unexpected msg {msg:?}");
-                        }
-                    },
-                }
+            res = txs_receiver.receive() => {
+                res
             }
+        };
+        match res {
+            Err(err) => panic!("Unexpected error {err}"),
+            Ok(msg) => match msg {
+                NetworkMessage::Transaction(tx) => {
+                    let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+                        .expect("serialization should not panic");
+                    slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
+                    txs.push(tx);
+                }
+                msg => {
+                    panic!("Unexpected msg: {msg:?}");
+                }
+            },
+        }
+        if slice_capacity_left < MAX_TRANSACTION_SIZE {
+            let duration_left = duration_left.saturating_sub(Instant::now() - start_time);
+            break Continue::Continue {
+                left: duration_left,
+            };
         }
     };
 
-    // TODO: not accounting for this potentially operation in block production time above.
+    // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
 
