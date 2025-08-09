@@ -53,12 +53,11 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
 mod tests {
     use super::*;
 
-    use crate::Slot;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
-    use crate::slice::Slice;
+    use crate::slice::create_random_slice;
 
     use tokio::{sync::Mutex, task};
 
@@ -96,13 +95,7 @@ mod tests {
     #[tokio::test]
     async fn dissemination() {
         let (sks, mut disseminators) = create_disseminator_instances(20, 5000);
-        let slice = Slice {
-            slot: Slot::new(0),
-            slice_index: 0,
-            is_last: true,
-            merkle_root: None,
-            data: vec![42; MAX_DATA_PER_SLICE],
-        };
+        let slice = create_random_slice(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
