@@ -379,8 +379,11 @@ impl PartitionSampler {
 }
 
 impl SamplingStrategy for PartitionSampler {
-    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
-        unimplemented!()
+    // TODO: this is just a bad placeholder and should probably not be unimplemented
+    //       for this sampler, maybe we should have two different types:
+    //       `IIDSamplingStrategy` and `SamplingStrategy`
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
@@ -480,6 +483,9 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
 }
 
 impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
+    // TODO: this is just a bad placeholder and should probably not be unimplemented
+    //       for this sampler, maybe we should have two different types:
+    //       `IIDSamplingStrategy` and `SamplingStrategy`
     fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
@@ -595,14 +601,16 @@ impl FaitAccompli2Sampler {
 }
 
 impl SamplingStrategy for FaitAccompli2Sampler {
-    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
-        // FA2 only supports multiple samples
-        unimplemented!()
+    // TODO: this is just a bad placeholder and should probably not be unimplemented
+    //       for this sampler, maybe we should have two different types:
+    //       `IIDSamplingStrategy` and `SamplingStrategy`
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
-        // FA2 only supports multiple samples
-        unimplemented!()
+    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+        let index = self.sample(rng) as usize;
+        &self.validators[index]
     }
 
     fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
@@ -1014,16 +1022,16 @@ mod tests {
         sample_all_validators(&StakeWeightedSampler::new(validators.clone()));
         sample_all_validators(&DecayingAcceptanceSampler::new(validators.clone(), 1000.0));
         sample_all_validators(&TurbineSampler::new(validators.clone()));
-        // sample_all_validators(&PartitionSampler::new(validators.clone(), 10));
-        // sample_all_validators(&FaitAccompli1Sampler::new_with_stake_weighted_fallback(
-        //     validators.clone(),
-        //     10,
-        // ));
-        // sample_all_validators(&FaitAccompli1Sampler::new_with_partition_fallback(
-        //     validators.clone(),
-        //     10,
-        // ));
-        // sample_all_validators(&FaitAccompli2Sampler::new(validators.clone(), 10));
+        sample_all_validators(&PartitionSampler::new(validators.clone(), 10));
+        sample_all_validators(&FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+            validators.clone(),
+            10,
+        ));
+        sample_all_validators(&FaitAccompli1Sampler::new_with_partition_fallback(
+            validators.clone(),
+            10,
+        ));
+        sample_all_validators(&FaitAccompli2Sampler::new(validators.clone(), 10));
     }
 
     fn sample_all_validators<S: SamplingStrategy>(sampler: &S) {
