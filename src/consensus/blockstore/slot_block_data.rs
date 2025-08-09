@@ -222,6 +222,11 @@ impl BlockData {
         }
 
         let reconstructed_slice = RegularShredder::deshred(slice_shreds).unwrap();
+        // TODO: emit an error here to mark the leader window as bad and try skipping
+        if reconstructed_slice.slice_index == 0 && reconstructed_slice.parent.is_none() {
+            warn!("invalid slice: first slice without parent info");
+            return false;
+        }
         self.slices.insert(slice, reconstructed_slice);
         trace!("reconstructed slice {} in slot {}", slice, self.slot);
         true
@@ -229,7 +234,7 @@ impl BlockData {
 
     /// Reconstructs the block if the blockstore contains all slices.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
+    /// Returns `Some(block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     fn try_reconstruct_block(&mut self) -> Option<BlockInfo> {
         if self.completed.is_some() {
@@ -254,8 +259,9 @@ impl BlockData {
 
         // reconstruct block header
         let first_slice = self.slices.get(&0).unwrap();
-        // TODO: maybe return an error if first slice does not have parent info?
-        let (parent_slot, parent_hash) = first_slice.parent.unwrap();
+        let (parent_slot, parent_hash) = first_slice
+            .parent
+            .expect("first slice should have parent: checked in `try_reconstruct_slice`");
         // TODO: reconstruct actual block content
         let block = Block {
             slot: self.slot,
@@ -268,9 +274,7 @@ impl BlockData {
         self.completed = Some((block_hash, block));
 
         // clean up raw slices
-        for slice_index in 0..=last_slice {
-            self.slices.remove(&slice_index);
-        }
+        self.slices = BTreeMap::new();
 
         Some(block_info)
     }
