@@ -6,7 +6,7 @@ use alpenglow::consensus::Vote;
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::NetworkMessage;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use alpenglow::slice::Slice;
+use alpenglow::slice::create_random_slice;
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
 
@@ -50,16 +50,8 @@ fn serialize_slice(bencher: divan::Bencher) {
         .counter(ItemsCount::new(1_usize))
         .counter(BytesCount::new(MAX_DATA_PER_SLICE))
         .with_inputs(|| {
+            let slice = create_random_slice(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
-            let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut slice_data);
-            let slice = Slice {
-                slot: Slot::new(0),
-                slice_index: 0,
-                is_last: true,
-                merkle_root: None,
-                data: slice_data,
-            };
             let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.into_iter().map(NetworkMessage::Shred).collect()
@@ -78,15 +70,7 @@ fn serialize_slice_into(bencher: divan::Bencher) {
         .counter(BytesCount::new(MAX_DATA_PER_SLICE))
         .with_inputs(|| {
             let mut rng = rand::rng();
-            let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut slice_data);
-            let slice = Slice {
-                slot: Slot::new(0),
-                slice_index: 0,
-                is_last: true,
-                merkle_root: None,
-                data: slice_data,
-            };
+            let slice = create_random_slice(MAX_DATA_PER_SLICE);
             let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             let buf = vec![0; 1500];
@@ -109,15 +93,7 @@ fn deserialize_slice(bencher: divan::Bencher) {
         .counter(BytesCount::new(MAX_DATA_PER_SLICE))
         .with_inputs(|| {
             let mut rng = rand::rng();
-            let mut slice_data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut slice_data);
-            let slice = Slice {
-                slot: Slot::new(0),
-                slice_index: 0,
-                is_last: true,
-                merkle_root: None,
-                data: slice_data,
-            };
+            let slice = create_random_slice(MAX_DATA_PER_SLICE);
             let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             let msgs: Vec<_> = shreds.into_iter().map(NetworkMessage::Shred).collect();

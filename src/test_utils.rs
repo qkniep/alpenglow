@@ -1,7 +1,5 @@
-#[cfg(test)]
 use std::sync::Arc;
 
-#[cfg(test)]
 use crate::{
     ValidatorId, ValidatorInfo,
     all2all::TrivialAll2All,
@@ -11,7 +9,6 @@ use crate::{
     network::simulated::SimulatedNetworkCore,
 };
 
-#[cfg(test)]
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
     let mut rng = rand::rng();
     let mut sks = Vec::new();
@@ -34,7 +31,6 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
     (voting_sks, epoch_info)
 }
 
-#[cfg(test)]
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
 ) -> Vec<TrivialAll2All<SimulatedNetwork>> {

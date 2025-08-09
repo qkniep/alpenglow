@@ -107,9 +107,7 @@ mod tests {
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
-    use crate::slice::Slice;
-
-    use rand::RngCore;
+    use crate::slice::{Slice, SliceHeader, create_random_slice_payload};
 
     use std::time::Instant;
 
@@ -150,15 +148,13 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..2 {
-            let mut data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut data);
-            let slice = Slice {
+            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+            let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
-                is_last: i == 4,
-                merkle_root: None,
-                data,
+                is_last: i == 1,
             };
+            let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
@@ -211,15 +207,13 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..1000 {
-            let mut data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut data);
-            let slice = Slice {
+            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+            let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 999,
-                merkle_root: None,
-                data,
             };
+            let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
@@ -272,15 +266,13 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..10_000 {
-            let mut data = vec![0; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut data);
-            let slice = Slice {
+            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+            let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
                 is_last: i == 9999,
-                merkle_root: None,
-                data,
             };
+            let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }

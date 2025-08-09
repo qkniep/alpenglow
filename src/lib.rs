@@ -37,6 +37,8 @@ pub type BlockId = (Slot, Hash);
 
 const MAX_TRANSACTION_SIZE: usize = 512;
 
+const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
+
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
@@ -64,4 +66,14 @@ pub struct ValidatorInfo {
     pub all2all_address: String,
     pub disseminator_address: String,
     pub repair_address: String,
+}
+
+/// Returns the highest non-zero byte in `val`.
+pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
+    let mut cnt = 0;
+    while val != 0 {
+        val /= 256;
+        cnt += 1;
+    }
+    cnt
 }
