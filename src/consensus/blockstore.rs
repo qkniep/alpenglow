@@ -238,9 +238,9 @@ mod tests {
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
+    use crate::slice::{SliceHeader, create_random_slice_payload};
 
     use color_eyre::Result;
-    use rand::RngCore;
     use tokio::sync::mpsc;
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, Blockstore) {
@@ -262,17 +262,19 @@ mod tests {
 
     fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         let mut slices = Vec::new();
-        let mut rng = rand::rng();
         for slice_index in 0..num_slices {
-            let mut buf = vec![0u8; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut buf);
-            slices.push(Slice {
+            let parent = if slice_index == 0 {
+                Some((Slot::new(0), Hash::default()))
+            } else {
+                None
+            };
+            let payload = create_random_slice_payload(parent, MAX_DATA_PER_SLICE);
+            let header = SliceHeader {
                 slot,
                 slice_index,
                 is_last: slice_index == num_slices - 1,
-                merkle_root: None,
-                data: buf,
-            });
+            };
+            slices.push(Slice::from_parts(header, payload, None));
         }
         slices
     }
