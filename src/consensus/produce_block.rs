@@ -7,15 +7,16 @@ use std::time::{Duration, Instant};
 use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
-use log::{info, warn};
+use log::info;
 use static_assertions::const_assert;
+use tokio::{pin, sync::oneshot};
 
 use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
-use crate::{MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
+use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
 
 use super::{Alpenglow, DELTA_BLOCK};
 
@@ -116,28 +117,58 @@ where
     pub(crate) async fn produce_block(
         &self,
         slot: Slot,
-        parent: (Slot, Hash),
-        parent_ready: bool,
+        parent: BlockId,
+        parent_ready: &mut Option<oneshot::Receiver<BlockId>>,
     ) -> Result<()> {
         let (parent_slot, parent_hash) = parent;
+        if parent_ready.is_some() {
+            assert!(slot.is_start_of_window());
+        }
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         info!(
             "producing block in slot {} with parent {} in slot {} (parent ready: {})",
             slot,
             &hex::encode(parent_hash)[..8],
             parent_slot,
-            parent_ready,
+            parent_ready.is_none(),
         );
 
         let mut sleep_duration = DELTA_BLOCK;
+        let mut parent_changed = None;
         for slice_index in 0.. {
-            let slice_index = match NonZeroUsize::new(slice_index) {
-                None => Either::Left((parent_slot, parent_hash, 0)),
-                Some(ind) => Either::Right(ind),
+            let slice_index = if slice_index == 0 {
+                assert!(parent_changed.is_none());
+                Either::Left((parent_slot, parent_hash, 0))
+            } else {
+                match parent_changed.take() {
+                    None => Either::Right(NonZeroUsize::new(slice_index).unwrap()),
+                    Some((s, h)) => Either::Left((s, h, slice_index)),
+                }
             };
-            let (slice, cont_prod) =
-                produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration).await;
-            // shred and disseminate slice
+
+            let future = produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration);
+            let (mut slice, cont_prod) = match parent_ready {
+                None => future.await,
+                Some(channel) => {
+                    pin!(future);
+                    tokio::select! {
+                        res = &mut future => res,
+                        res = channel => {
+                            parent_changed = Some(res.unwrap());
+                            future.await
+                        }
+                    }
+                }
+            };
+
+            // If this is the last slice produced and still haven't seen ParentReady, block till the event is emitted.
+            if let Continue::Stop = &cont_prod
+                && let Some(channel) = parent_ready
+            {
+                let (slot, hash) = channel.await.unwrap();
+                slice.parent = Some((slot, hash));
+            }
+
             let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
             for s in shreds {
                 self.disseminator.send(&s).await?;
@@ -150,23 +181,6 @@ where
                     .await;
                 if let Ok(Some((slot, block_info))) = block {
                     self.pool.write().await.add_block(slot, block_info).await;
-                }
-            }
-
-            // switch parent if necessary (for optimistic handover)
-            if !parent_ready {
-                let pool = self.pool.read().await;
-                if let Some(p) = pool.parents_ready(slot).first()
-                    && *p != parent
-                {
-                    warn!(
-                        "switching block production parent from {} in slot {} to {} in slot {}",
-                        &hex::encode(parent.1)[..8],
-                        parent.0,
-                        &hex::encode(p.1)[..8],
-                        p.0,
-                    );
-                    unimplemented!("have to switch parents");
                 }
             }
 
