@@ -23,7 +23,7 @@ mod epoch_info;
 mod pool;
 mod produce_block;
 mod vote;
-mod votor;
+pub(crate) mod votor;
 
 use std::marker::{Send, Sync};
 use std::time::Instant;

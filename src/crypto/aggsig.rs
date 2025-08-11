@@ -76,13 +76,13 @@ impl PublicKey {
 /// An individual signature as part of the aggregate signature scheme.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IndividualSignature(pub BlstSignature);
 
 /// An aggregated signature that contains a bitmask of signers.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AggregateSignature {
     sig: BlstSignature,
     bitmask: BitVec,
