@@ -320,7 +320,7 @@ mod tests {
                         parent_slot: _,
                         parent_hash: _,
                     },
-            } => hash.clone(),
+            } => *hash,
             _ => panic!(),
         }
     }
@@ -332,7 +332,7 @@ mod tests {
 
         // manage to construct a valid block.
         let slices = create_random_block(slot, 1);
-        let (parent_slot, parent_hash) = slices[0].parent.clone().unwrap();
+        let (parent_slot, parent_hash) = slices[0].parent.unwrap();
         let events = handle_slice(slices[0].clone(), &sk);
         assert_eq!(events.len(), 2);
         let first_shred_event = VotorEvent::FirstShred(slot);
