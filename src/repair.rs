@@ -3,7 +3,12 @@
 
 //! Block repair sub-protocol.
 //!
-//!
+//! This module implements the double-Merkle based block repair protocol.
+//! It uses the fact that the block hash is the root of a Merkle tree, where
+//! the leaves of this tree are the Merkle roots of each of the block's slices.
+//! Each repair response is accompanied by a Merkle proof and can thus be
+//! individually verified.
+
 // WARN: this is incomplete!
 
 use std::sync::Arc;
@@ -12,12 +17,12 @@ use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::Slot;
 use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::{BlockId, Slot};
 
 /// Message types for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +42,7 @@ pub enum RepairRequest {
     SliceRoot(Slot, Hash, usize),
     /// Request for shred, identified by block hash, slice index and shred index.
     Shred(Slot, Hash, usize, usize),
+    // TODO: remove or replace with variant that includes proof
     Parent(Slot, Hash),
 }
 
@@ -53,6 +59,7 @@ pub enum RepairResponse {
     SliceRoot(RepairRequest, Hash, Vec<Hash>),
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
+    // TODO: remove or replace with variant that includes proof
     Parent(RepairRequest, Slot, Hash),
 }
 
@@ -61,6 +68,10 @@ pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Blockstore>>,
     pool: Arc<RwLock<Pool>>,
     network: N,
+    repair_channel: (
+        tokio::sync::mpsc::Sender<BlockId>,
+        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<BlockId>>,
+    ),
     sampler: StakeWeightedSampler,
 }
 
@@ -73,15 +84,33 @@ impl<N: Network> Repair<N> {
         blockstore: Arc<RwLock<Blockstore>>,
         pool: Arc<RwLock<Pool>>,
         network: N,
+        repair_channel: (
+            tokio::sync::mpsc::Sender<BlockId>,
+            tokio::sync::mpsc::Receiver<BlockId>,
+        ),
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler = StakeWeightedSampler::new(validators);
+        let repair_channel = (repair_channel.0, tokio::sync::Mutex::new(repair_channel.1));
         Self {
             blockstore,
             pool,
             network,
+            repair_channel,
             sampler,
+        }
+    }
+
+    /// The main repair loop.
+    ///
+    /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
+    /// Inititates the corresponding repair process and handles ongoing repairs.
+    pub async fn repair_loop(&self) {
+        // only this loop uses the receiver
+        let mut guard = self.repair_channel.1.lock().await;
+        while let Some((slot, hash)) = guard.recv().await {
+            self.repair_block(slot, hash).await;
         }
     }
 
@@ -158,13 +187,14 @@ impl<N: Network> Repair<N> {
                 let RepairRequest::SliceCount(_, _) = req else {
                     return;
                 };
-                // TODO: include & check proof
+                // TODO: include & check proof:
                 // self.slice_counts.insert((slot, block_hash), count);
             }
             RepairResponse::SliceRoot(req, _slice_root, _proof) => {
                 let RepairRequest::SliceRoot(_, _, _slice) = req else {
                     return;
                 };
+                // TODO: check Merkle proof & cache it:
                 // if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
                 //     return;
                 // }
@@ -181,9 +211,8 @@ impl<N: Network> Repair<N> {
                 {
                     return;
                 }
-                // TODO: make sure shred is checked against correct merkle_root
-                //
-                /* if !shred.merkle_root ... { return; } */
+                // TODO: make sure shred is checked against correct merkle_root:
+                // if !shred.merkle_root ... { return; }
                 self.blockstore
                     .write()
                     .await
@@ -198,11 +227,24 @@ impl<N: Network> Repair<N> {
                     parent_hash,
                 };
                 self.pool.write().await.add_block(slot, block_info).await;
+                if self
+                    .blockstore
+                    .read()
+                    .await
+                    .get_block(slot, block_hash)
+                    .is_none()
+                {
+                    self.repair_channel
+                        .0
+                        .send((slot, block_hash))
+                        .await
+                        .unwrap();
+                }
             }
         }
     }
 
-    /// Tries to receive and deserialize messages from the underlying network.
+    /// Tries to receive a repair message from the underlying [`Network`].
     ///
     /// Resolves to the next successfully deserialized [`RepairMessage`].
     /// Ignores any potentially received [`NetworkMessage`] of a different type.
@@ -278,7 +320,7 @@ impl RepairRequest {
         }
     }
 
-    /// Returns the block hash this response refers to.
+    /// Returns the block hash this request refers to.
     #[must_use]
     pub const fn block_hash(&self) -> Hash {
         match self {
@@ -312,5 +354,89 @@ impl RepairResponse {
     #[must_use]
     pub const fn block_hash(&self) -> Hash {
         self.request().block_hash()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
+    use crate::test_utils::generate_validators;
+
+    use tokio::sync::mpsc::Sender;
+
+    async fn create_repair_instance() -> (Sender<BlockId>, SimulatedNetwork, Arc<RwLock<Blockstore>>)
+    {
+        let (_, epoch_info) = generate_validators(2);
+        let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
+        epoch_info.validators.get_mut(0).unwrap().repair_address = "0".to_string();
+        epoch_info.validators.get_mut(1).unwrap().repair_address = "1".to_string();
+        let epoch_info = Arc::new(epoch_info);
+
+        let (votor_tx, _) = tokio::sync::mpsc::channel(100);
+        let blockstore = Arc::new(RwLock::new(Blockstore::new(
+            epoch_info.clone(),
+            votor_tx.clone(),
+        )));
+
+        let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
+        let pool = Arc::new(RwLock::new(Pool::new(
+            epoch_info.clone(),
+            votor_tx,
+            repair_tx.clone(),
+        )));
+
+        let core = Arc::new(
+            SimulatedNetworkCore::default()
+                .with_jitter(0.0)
+                .with_packet_loss(0.0),
+        );
+        let network0 = core.join_unlimited(0).await;
+        let network1 = core.join_unlimited(1).await;
+
+        let repair = Repair::new(
+            Arc::clone(&blockstore),
+            pool,
+            network0,
+            (repair_tx.clone(), repair_rx),
+            epoch_info,
+        );
+
+        tokio::spawn(async move { repair.repair_loop().await });
+
+        (repair_tx, network1, blockstore)
+    }
+
+    #[tokio::test]
+    async fn basic() {
+        let (repair_channel, other_network, _) = create_repair_instance().await;
+        repair_channel.send((Slot::new(1), [1; 32])).await.unwrap();
+        let Ok(msg) = other_network.receive().await else {
+            panic!("failed to receive");
+        };
+        let NetworkMessage::Repair(repair_msg) = msg else {
+            panic!("not a repair msg");
+        };
+        let RepairMessage::Request(req) = repair_msg else {
+            panic!("not a request");
+        };
+        if let RepairRequest::Parent(slot, hash) = req {
+            assert_eq!(slot, Slot::new(1));
+            assert_eq!(hash, [1; 32]);
+        } else {
+            panic!("not a parent request");
+        };
+        other_network
+            .send(
+                &NetworkMessage::Repair(RepairMessage::Response(RepairResponse::Parent(
+                    req,
+                    Slot::genesis(),
+                    Hash::default(),
+                ))),
+                "0",
+            )
+            .await
+            .unwrap();
     }
 }
