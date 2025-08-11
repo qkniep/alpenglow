@@ -356,7 +356,8 @@ where
                 continue;
             }
 
-            let (parent, parent_hash, mut parent_ready) = match wait_for_first_slot(
+            // produce first block.
+            match wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
@@ -364,31 +365,35 @@ where
             .await
             {
                 SlotReady::Skip => continue,
-                SlotReady::Ready(parent, parent_hash) => (parent, parent_hash, None),
-                SlotReady::ParentReadyNotSeen(s, h, r) => (s, h, Some(r)),
-            };
-
-            // produce blocks for all slots in window
-            let mut block = parent;
-            let mut block_hash = parent_hash;
-            for slot in first_slot_in_window.slots_in_window() {
-                if slot.is_genesis() {
-                    continue;
+                SlotReady::Ready(parent, parent_hash) => {
+                    let () = self
+                        .produce_block_parent_ready(first_slot_in_window, parent, parent_hash)
+                        .await?;
                 }
-                self.produce_block(slot, (block, block_hash), &mut parent_ready)
+                SlotReady::ParentReadyNotSeen(parent, parent_hash, channel) => {
+                    let () = self
+                        .produce_block_parent_not_ready(
+                            first_slot_in_window,
+                            parent,
+                            parent_hash,
+                            channel,
+                        )
+                        .await?;
+                }
+            }
+
+            // produce remaining blocks
+            let parent_slot = first_slot_in_window;
+            let parent_hash = self
+                .blockstore
+                .read()
+                .await
+                .canonical_block_hash(parent_slot)
+                .unwrap();
+            for slot in first_slot_in_window.slots_in_window().skip(1) {
+                let () = self
+                    .produce_block_parent_ready(slot, parent_slot, parent_hash)
                     .await?;
-
-                // build off own block next
-                block = slot;
-                block_hash = self
-                    .blockstore
-                    .read()
-                    .await
-                    .canonical_block_hash(slot)
-                    .expect("missing own block during block production");
-                if let Some(channel) = parent_ready.take() {
-                    assert!(channel.is_terminated());
-                }
             }
         }
 

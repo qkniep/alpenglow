@@ -16,7 +16,7 @@ use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
-use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
+use crate::{MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
 
 use super::{Alpenglow, DELTA_BLOCK};
 
@@ -114,76 +114,112 @@ where
     R: Network + Sync + Send + 'static,
     T: Network + Sync + Send + 'static,
 {
-    pub(crate) async fn produce_block(
+    async fn shred_and_disseminate(&self, slice: Slice) -> Result<()> {
+        let slice_slot = slice.slot;
+        let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
+        for s in shreds {
+            self.disseminator.send(&s).await?;
+            // PERF: move expensive add_shred() call out of block production
+            let block = self
+                .blockstore
+                .write()
+                .await
+                .add_shred_from_disseminator(s)
+                .await;
+            if let Ok(Some((slot, block_info))) = block {
+                assert_eq!(slot, slice_slot);
+                self.pool.write().await.add_block(slot, block_info).await;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) async fn produce_block_parent_not_ready(
         &self,
         slot: Slot,
-        parent: BlockId,
-        parent_ready: &mut Option<oneshot::Receiver<BlockId>>,
+        parent_slot: Slot,
+        parent_hash: Hash,
+        mut receiver: oneshot::Receiver<(Slot, Hash)>,
     ) -> Result<()> {
-        let (parent_slot, parent_hash) = parent;
-        if parent_ready.is_some() {
-            assert!(slot.is_start_of_window());
-        }
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+        assert!(slot.is_start_of_window());
         info!(
-            "producing block in slot {} with parent {} in slot {} (parent ready: {})",
+            "produce_block_parent_not_ready slot {} with parent {} in slot {}",
             slot,
             &hex::encode(parent_hash)[..8],
             parent_slot,
-            parent_ready.is_none(),
         );
 
         let mut sleep_duration = DELTA_BLOCK;
         let mut parent_changed = None;
-        for slice_index in 0.. {
-            let slice_index = if slice_index == 0 {
-                assert!(parent_changed.is_none());
-                Either::Left((parent_slot, parent_hash, 0))
-            } else {
-                match parent_changed.take() {
-                    None => Either::Right(NonZeroUsize::new(slice_index).unwrap()),
-                    Some((s, h)) => Either::Left((s, h, slice_index)),
-                }
+        for ind in 0.. {
+            let slice_index = match (ind, parent_changed.take()) {
+                (0, None) => Either::Left((parent_slot, parent_hash, 0)),
+                (0, _) => unreachable!(),
+                (ind, Some((new_slot, new_hash))) => Either::Left((new_slot, new_hash, ind)),
+                (ind, None) => Either::Right(NonZeroUsize::new(ind).unwrap()),
             };
 
             let future = produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration);
-            let (mut slice, cont_prod) = match parent_ready {
-                None => future.await,
-                Some(channel) => {
-                    pin!(future);
-                    tokio::select! {
-                        res = &mut future => res,
-                        res = channel => {
-                            parent_changed = Some(res.unwrap());
-                            future.await
+            let (mut slice, cont_prod) = if receiver.is_terminated() {
+                future.await
+            } else {
+                pin!(future);
+                tokio::select! {
+                    res = &mut future => res,
+                    res = &mut receiver => {
+                        let (new_slot, new_hash) = res.unwrap();
+                        if new_slot != parent_slot && new_hash != parent_hash {
+                            parent_changed = Some((new_slot, new_hash));
                         }
-                    }
+                        future.await
+                  }
                 }
             };
-
-            // If this is the last slice produced and still haven't seen ParentReady, block till the event is emitted.
             if let Continue::Stop = &cont_prod
-                && let Some(channel) = parent_ready
+                && let Some((parent_slot, parent_hash)) = parent_changed
             {
-                let (slot, hash) = channel.await.unwrap();
-                slice.parent = Some((slot, hash));
+                assert!(slice.parent.is_none());
+                slice.parent = Some((parent_slot, parent_hash));
             }
-
-            let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
-            for s in shreds {
-                self.disseminator.send(&s).await?;
-                // PERF: move expensive add_shred() call out of block production
-                let block = self
-                    .blockstore
-                    .write()
-                    .await
-                    .add_shred_from_disseminator(s)
-                    .await;
-                if let Ok(Some((slot, block_info))) = block {
-                    self.pool.write().await.add_block(slot, block_info).await;
-                }
+            self.shred_and_disseminate(slice).await?;
+            match cont_prod {
+                Continue::Stop => break,
+                Continue::Continue {
+                    left: left_duration,
+                } => sleep_duration = left_duration,
             }
+        }
+        Ok(())
+    }
 
+    pub(crate) async fn produce_block_parent_ready(
+        &self,
+        slot: Slot,
+        parent_slot: Slot,
+        parent_hash: Hash,
+    ) -> Result<()> {
+        let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+        info!(
+            "produce_block_parent_ready slot {} with parent {} in slot {}",
+            slot,
+            &hex::encode(parent_hash)[..8],
+            parent_slot,
+        );
+
+        let mut sleep_duration = DELTA_BLOCK;
+        for ind in 0.. {
+            let slice_index = if ind == 0 {
+                Either::Left((parent_slot, parent_hash, 0))
+            } else {
+                Either::Right(NonZeroUsize::new(ind).unwrap())
+            };
+            let (slice, cont_prod) =
+                produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration).await;
+            if ind == 0 {
+                assert!(slice.parent.is_some());
+            }
+            self.shred_and_disseminate(slice).await?;
             match cont_prod {
                 Continue::Stop => break,
                 Continue::Continue {
