@@ -258,12 +258,12 @@ mod tests {
 
     #[tokio::test]
     async fn store_simple_block() -> Result<()> {
-        let slot = Slot::new(1);
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         assert!(blockstore.slot_data(slot).is_none());
 
-        // generate two slices for slot 1
+        // generate two slices for slot picked above
         let slices = create_random_block(slot, 2);
 
         // first slice is not enough
@@ -286,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn out_of_order_shreds() -> Result<()> {
-        let slot = Slot::new(1);
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         assert!(blockstore.canonical_block_hash(slot).is_none());
@@ -307,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn just_enough_shreds() -> Result<()> {
-        let slot = Slot::new(1);
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         assert!(blockstore.canonical_block_hash(slot).is_none());
@@ -357,7 +357,7 @@ mod tests {
 
     #[tokio::test]
     async fn out_of_order_slices() -> Result<()> {
-        let slot = Slot::new(1);
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         assert!(blockstore.canonical_block_hash(slot).is_none());
@@ -391,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_shreds() -> Result<()> {
-        let slot = Slot::new(1);
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         let slices = create_random_block(slot, 1);
@@ -412,9 +412,10 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_shreds() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        let slices = create_random_block(Slot::new(1), 1);
+        let slices = create_random_block(slot, 1);
 
         // insert shreds with wrong Merkle root
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
@@ -431,10 +432,11 @@ mod tests {
 
     #[tokio::test]
     async fn pruning() -> Result<()> {
-        let block0_slot = Slot::new(1);
-        let block1_slot = Slot::new(2);
-        let block2_slot = Slot::new(3);
-        let future_slot = Slot::new(4);
+        let block0_slot = Slot::genesis().next();
+        let block1_slot = block0_slot.next();
+        let block2_slot = block1_slot.next();
+        let block3_slot = block2_slot.next();
+        let future_slot = block3_slot.next();
         let (tx, rx) = mpsc::channel(1000);
         let (sk, mut blockstore) = test_setup(tx);
         let block0 = create_random_block(block0_slot, 1);

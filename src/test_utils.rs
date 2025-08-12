@@ -52,7 +52,7 @@ pub async fn generate_all2all_instances(
 }
 
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
-    let parent_slot = Slot::new(0);
+    let parent_slot = Slot::genesis();
     assert_ne!(slot, parent_slot);
     let mut slices = Vec::new();
     for slice_index in 0..num_slices {
