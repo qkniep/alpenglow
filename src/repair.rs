@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::Slot;
-use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
+use crate::consensus::{BlockInfo, EpochInfo};
+use crate::consensus::{Blockstore, Pool};
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
@@ -58,8 +59,8 @@ pub enum RepairResponse {
 
 /// Instance of double-Merkle based block repair protocol.
 pub struct Repair<N: Network> {
-    blockstore: Arc<RwLock<Blockstore>>,
-    pool: Arc<RwLock<Pool>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
     network: N,
     sampler: StakeWeightedSampler,
 }
@@ -70,8 +71,8 @@ impl<N: Network> Repair<N> {
     /// Given `network` will be used for sending and receiving repair messages.
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
-        blockstore: Arc<RwLock<Blockstore>>,
-        pool: Arc<RwLock<Pool>>,
+        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         network: N,
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
