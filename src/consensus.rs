@@ -34,7 +34,7 @@ use either::Either;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{debug, trace, warn};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
@@ -42,7 +42,7 @@ use crate::crypto::{Hash, aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::Shred;
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, BlockId, Disseminator, Slot, ValidatorInfo};
 
 pub use blockstore::{BlockInfo, Blockstore};
 pub use cert::Cert;
@@ -88,11 +88,20 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
+enum SlotReady {
+    /// Window should be skipped.
+    Skip,
+    /// Pool emitted a parent ready event.
+    Ready(BlockId),
+    /// Canonical block for previous slot seen but pool has not emitted ParentReady yet.
+    ParentReadyNotSeen(BlockId, oneshot::Receiver<BlockId>),
+}
+
 /// Waits for first slot in the given window to become ready for block production.
 ///
 /// Ready here can mean:
 /// - Pool emitted the `ParentReady` event for it, OR
-/// - the blockstore has stored a canonical block for the previous slot.
+/// - the blockstore has stored a block for the previous slot.
 ///
 /// If the slot became ready, returns `Some((parent_slot, parent_hash, is_parent-ready))`.
 /// Else returns `None` if the window should be skipped.
@@ -100,19 +109,20 @@ async fn wait_for_first_slot(
     pool: Arc<RwLock<Pool>>,
     blockstore: Arc<RwLock<Blockstore>>,
     first_slot_in_window: Slot,
-) -> Option<(Slot, Hash, bool)> {
+) -> SlotReady {
+    assert!(first_slot_in_window.is_start_of_window());
     if first_slot_in_window.is_genesis_window() {
-        return Some((Slot::new(0), Hash::default(), false));
+        return SlotReady::Ready((Slot::genesis(), Hash::default()));
     }
 
     let last_slot_in_window = first_slot_in_window.last_slot_in_window();
 
     // if already have parent ready, return it, otherwise get a channel to await on
-    let rx = {
+    let mut rx = {
         let mut guard = pool.write().await;
         match guard.wait_for_parent_ready(first_slot_in_window) {
             Either::Left((slot, hash)) => {
-                return Some((slot, hash, true));
+                return SlotReady::Ready((slot, hash));
             }
             Either::Right(rx) => rx,
         }
@@ -120,12 +130,12 @@ async fn wait_for_first_slot(
 
     // Concurrently wait for:
     // - `ParentReady` event,
-    // - canonical block reconstruction in blockstore, OR
+    // - block reconstruction in blockstore, OR
     // - notification that a later slot was finalized.
     tokio::select! {
-        res = rx => {
+        res = &mut rx => {
             let (slot, hash) = res.expect("Sender dropped channel.");
-            Some((slot, hash, true))
+            SlotReady::Ready((slot, hash))
         }
 
         res = async {
@@ -143,7 +153,7 @@ async fn wait_for_first_slot(
                             &hex::encode(hash)[..8],
                             last_slot_in_prev_window,
                         );
-                        return Some((last_slot_in_prev_window, hash, false));
+                        return Some((last_slot_in_prev_window, hash));
                     }
                     if pool.read().await.finalized_slot() >= last_slot_in_window {
                         warn!(
@@ -156,7 +166,10 @@ async fn wait_for_first_slot(
             });
             handle.await.expect("Error in task")
         } => {
-            res
+            match res {
+                None => SlotReady::Skip,
+                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
+            }
         }
     }
 }
@@ -344,37 +357,39 @@ where
                 continue;
             }
 
-            let (parent, parent_hash, mut parent_ready) = match wait_for_first_slot(
+            // produce first block.
+            match wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
             )
             .await
             {
-                Some(res) => res,
-                None => continue,
-            };
-
-            // produce blocks for all slots in window
-            let mut block = parent;
-            let mut block_hash = parent_hash;
-            for slot in first_slot_in_window.slots_in_window() {
-                if slot.is_genesis() {
-                    parent_ready = true;
-                    continue;
+                SlotReady::Skip => continue,
+                SlotReady::Ready(parent) => {
+                    let () = self
+                        .produce_block_parent_ready(first_slot_in_window, parent)
+                        .await?;
                 }
-                self.produce_block(slot, (block, block_hash), parent_ready)
-                    .await?;
+                SlotReady::ParentReadyNotSeen(parent, channel) => {
+                    let () = self
+                        .produce_block_parent_not_ready(first_slot_in_window, parent, channel)
+                        .await?;
+                }
+            }
 
-                // build off own block next
-                block = slot;
-                block_hash = self
-                    .blockstore
-                    .read()
-                    .await
-                    .canonical_block_hash(slot)
-                    .expect("missing own block during block production");
-                parent_ready = true;
+            // produce remaining blocks
+            let parent_slot = first_slot_in_window;
+            let parent_hash = self
+                .blockstore
+                .read()
+                .await
+                .canonical_block_hash(parent_slot)
+                .unwrap();
+            for slot in first_slot_in_window.slots_in_window().skip(1) {
+                let () = self
+                    .produce_block_parent_ready(slot, (parent_slot, parent_hash))
+                    .await?;
             }
         }
 
