@@ -11,12 +11,11 @@ use log::info;
 use static_assertions::const_assert;
 use tokio::{pin, sync::oneshot};
 
-use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
-use crate::{MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
+use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
 
 use super::{Alpenglow, DELTA_BLOCK};
 
@@ -28,7 +27,7 @@ enum Continue {
 async fn produce_slice<T>(
     txs_receiver: &T,
     slot: Slot,
-    slice_index: Either<(Slot, Hash, usize), NonZeroUsize>,
+    slice_index: Either<(BlockId, usize), NonZeroUsize>,
     duration_left: Duration,
 ) -> (Slice, Continue)
 where
@@ -37,9 +36,7 @@ where
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
     let (parent, slice_index) = match slice_index {
-        Either::Left((parent_slot, parent_hash, slice_index)) => {
-            (Some((parent_slot, parent_hash)), slice_index)
-        }
+        Either::Left((parent_block_id, slice_index)) => (Some(parent_block_id), slice_index),
         Either::Right(ind) => (None, ind.get()),
     };
 
@@ -67,19 +64,16 @@ where
                 res
             }
         };
-        match res {
-            Err(err) => panic!("Unexpected error {err}"),
-            Ok(msg) => match msg {
-                NetworkMessage::Transaction(tx) => {
-                    let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-                        .expect("serialization should not panic");
-                    slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
-                    txs.push(tx);
-                }
-                msg => {
-                    panic!("Unexpected msg: {msg:?}");
-                }
-            },
+        match res.expect("Unexpected error") {
+            NetworkMessage::Transaction(tx) => {
+                let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+                    .expect("serialization should not panic");
+                slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
+                txs.push(tx);
+            }
+            msg => {
+                panic!("Unexpected msg: {msg:?}");
+            }
         }
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
             let duration_left = duration_left.saturating_sub(Instant::now() - start_time);
@@ -134,14 +128,18 @@ where
         Ok(())
     }
 
+    /// Produces a block in the situation where we have not yet seen the Parent-Ready event.
+    ///
+    /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
     pub(super) async fn produce_block_parent_not_ready(
         &self,
         slot: Slot,
-        parent_slot: Slot,
-        parent_hash: Hash,
-        mut receiver: oneshot::Receiver<(Slot, Hash)>,
+        parent_block_id: BlockId,
+        mut receiver: oneshot::Receiver<BlockId>,
     ) -> Result<()> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+        let (parent_slot, parent_hash) = parent_block_id;
+        assert_eq!(parent_slot, slot.prev());
         assert!(slot.is_start_of_window());
         info!(
             "produce_block_parent_not_ready slot {} with parent {} in slot {}",
@@ -151,36 +149,41 @@ where
         );
 
         let mut sleep_duration = DELTA_BLOCK;
-        let mut parent_changed = None;
         for ind in 0.. {
-            let slice_index = match (ind, parent_changed.take()) {
-                (0, None) => Either::Left((parent_slot, parent_hash, 0)),
-                (0, _) => unreachable!(),
-                (ind, Some((new_slot, new_hash))) => Either::Left((new_slot, new_hash, ind)),
-                (ind, None) => Either::Right(NonZeroUsize::new(ind).unwrap()),
+            let slice_index = match NonZeroUsize::new(ind) {
+                None => Either::Left((parent_block_id, 0)),
+                Some(ind) => Either::Right(ind),
             };
 
-            let future = produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration);
-            let (mut slice, cont_prod) = if receiver.is_terminated() {
-                future.await
+            let produce_slice_future =
+                produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration);
+            let (slice, cont_prod) = if receiver.is_terminated() {
+                produce_slice_future.await
             } else {
-                pin!(future);
+                pin!(produce_slice_future);
                 tokio::select! {
-                    res = &mut future => res,
+                    res = &mut produce_slice_future => res,
                     res = &mut receiver => {
                         let (new_slot, new_hash) = res.unwrap();
-                        if new_slot != parent_slot && new_hash != parent_hash {
-                            parent_changed = Some((new_slot, new_hash));
-                        }
-                        future.await
+                        // TODO: implement optimistic handover.
+                        assert_eq!(new_slot, parent_slot);
+                        assert_eq!(new_hash, parent_hash);
+                        produce_slice_future.await
                   }
                 }
             };
+
             if let Continue::Stop = &cont_prod
-                && let Some((parent_slot, parent_hash)) = parent_changed
+                && !receiver.is_terminated()
             {
-                assert!(slice.parent.is_none());
-                slice.parent = Some((parent_slot, parent_hash));
+                let (new_slot, new_hash) = (&mut receiver).await.unwrap();
+                // TODO: implement optimistic handover.
+                assert_eq!(new_slot, parent_slot);
+                assert_eq!(new_hash, parent_hash);
+            }
+
+            if ind == 0 {
+                assert!(slice.parent.is_some());
             }
             self.shred_and_disseminate(slice).await?;
             match cont_prod {
@@ -196,10 +199,10 @@ where
     pub(crate) async fn produce_block_parent_ready(
         &self,
         slot: Slot,
-        parent_slot: Slot,
-        parent_hash: Hash,
+        parent_block_id: BlockId,
     ) -> Result<()> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+        let (parent_slot, parent_hash) = parent_block_id;
         info!(
             "produce_block_parent_ready slot {} with parent {} in slot {}",
             slot,
@@ -210,7 +213,7 @@ where
         let mut sleep_duration = DELTA_BLOCK;
         for ind in 0.. {
             let slice_index = if ind == 0 {
-                Either::Left((parent_slot, parent_hash, 0))
+                Either::Left((parent_block_id, 0))
             } else {
                 Either::Right(NonZeroUsize::new(ind).unwrap())
             };
@@ -235,7 +238,7 @@ where
 mod tests {
     use super::*;
 
-    use crate::{Transaction, network::UdpNetwork};
+    use crate::{Transaction, crypto::Hash, network::UdpNetwork};
 
     use std::time::Duration;
 
@@ -273,12 +276,11 @@ mod tests {
             }
         }
 
-        let parent_slot = slot.prev();
-        let parent_hash = Hash::default();
+        let parent_block_id = (slot.prev(), Hash::default());
         let (slice, cont) = produce_slice(
             &txs_receiver,
             slot,
-            Either::Left((parent_slot, parent_hash, 0)),
+            Either::Left((parent_block_id, 0)),
             sleep_duration,
         )
         .await;
@@ -297,7 +299,7 @@ mod tests {
                 assert_eq!(slice_index, 0);
                 assert!(is_last);
                 assert!(merkle_root.is_none());
-                assert_eq!(parent, Some((parent_slot, parent_hash)));
+                assert_eq!(parent, Some(parent_block_id));
                 assert_eq!(data.len(), 1);
             }
         }
