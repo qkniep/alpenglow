@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
-use crate::{Slot, highest_non_zero_byte};
+use crate::{MAX_TRANSACTION_SIZE, Slot};
 
 /// A slice is the unit of data between block and shred.
 ///
@@ -128,38 +128,52 @@ impl From<Vec<u8>> for SlicePayload {
     }
 }
 
+/// Helper function for [`create_random_slice_payload`].
+/// Creates a Vec of [`Transaction`], binencodes it, and returns the resulting byte vector.
+/// The number of transactions used and their lens are picked so that the resulting byte vector is of size `desired_size`.
+//
+// NOTE: This function is terribly hacky and making assumptions about how bincode works.
+fn create_txs(desired_size: usize) -> Vec<u8> {
+    let mut rng = rng();
+    let mut used = 1;
+    let mut txs = vec![];
+    while used + MAX_TRANSACTION_SIZE < desired_size {
+        let mut tx = vec![0; MAX_TRANSACTION_SIZE - 3];
+        used += tx.len() + 6;
+        rng.fill_bytes(&mut tx);
+        let tx = bincode::serde::encode_to_vec(tx, bincode::config::standard()).unwrap();
+        txs.push(tx);
+    }
+    if used < desired_size {
+        let tx_len = desired_size - used - 6;
+        let mut tx = vec![0; tx_len];
+        used += tx.len() + 6;
+        rng.fill_bytes(&mut tx);
+        let tx = bincode::serde::encode_to_vec(tx, bincode::config::standard()).unwrap();
+        txs.push(tx);
+    }
+    assert_eq!(used, desired_size);
+    let txs = bincode::serde::encode_to_vec(txs, bincode::config::standard()).unwrap();
+    assert_eq!(txs.len(), desired_size);
+    txs
+}
+
 /// Creates a [`SlicePayload`] with a random payload of desired size.
 ///
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
+//
+// NOTE: This function is terribly hacky and making assumptions about how bincode works.
 pub fn create_random_slice_payload(
     parent: Option<(Slot, Hash)>,
     desired_size: usize,
 ) -> SlicePayload {
-    let mut payload = vec![0; desired_size];
-
-    let used = bincode::serde::encode_into_slice(parent, &mut payload, bincode::config::standard())
-        .unwrap();
-    let left = desired_size.checked_sub(used).unwrap();
-
-    // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`.  If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.  Otherwise, it takes number of non-zero bytes minus 1.
-    let highest_byte = highest_non_zero_byte(desired_size);
-    let size = if highest_byte == 1 {
-        left.checked_sub(highest_byte).unwrap()
-    } else {
-        left.checked_sub(highest_byte)
-            .unwrap()
-            .checked_sub(1)
-            .unwrap()
-    };
-    let mut data = vec![0; size];
-    let mut rng = rng();
-    rng.fill_bytes(&mut data);
-    bincode::serde::encode_into_slice(data, &mut payload[used..], bincode::config::standard())
-        .unwrap();
-
-    payload.into()
+    let parent_payload =
+        bincode::serde::encode_to_vec(parent, bincode::config::standard()).unwrap();
+    let used = parent_payload.len();
+    let txs = create_txs(desired_size - used - 3);
+    SlicePayload::new(parent, txs)
 }
 
 /// Create a [`Slice`] with a random payload of desired size.
@@ -175,4 +189,24 @@ pub fn create_random_slice(desired_size: usize) -> Slice {
         is_last: true,
     };
     Slice::from_parts(header, payload, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_random_slice_without_parent() {
+        let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+        let data: Vec<u8> = payload.into();
+        assert_eq!(data.len(), MAX_DATA_PER_SLICE);
+    }
+
+    #[test]
+    fn create_random_slice_with_parent() {
+        let parent = Some((Slot::new(123), Hash::default()));
+        let payload = create_random_slice_payload(parent, MAX_DATA_PER_SLICE);
+        let data: Vec<u8> = payload.into();
+        assert_eq!(data.len(), MAX_DATA_PER_SLICE);
+    }
 }
