@@ -26,7 +26,7 @@ pub enum CertError {
 }
 
 /// Certificate types used for the consensus protocol.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Cert {
     Notar(NotarCert),
     NotarFallback(NotarFallbackCert),
@@ -151,7 +151,7 @@ impl Cert {
 }
 
 /// A notarization certificate is an aggregate of a quorum of notar votes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotarCert {
     slot: Slot,
     block_hash: Hash,
@@ -217,7 +217,7 @@ impl NotarCert {
 }
 
 /// A notar-fallback certificate is an aggregate of a quorum of notar(-fallback) votes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotarFallbackCert {
     slot: Slot,
     block_hash: Hash,
@@ -315,7 +315,7 @@ impl NotarFallbackCert {
 }
 
 /// A skip certificate is an aggregate of a quorum of skip(-fallback) votes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkipCert {
     slot: Slot,
     agg_sig_skip: Option<AggregateSignature>,
@@ -403,7 +403,7 @@ impl SkipCert {
 }
 
 /// A fast finalization certificate is an aggregate of a strong quorun of notar votes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FastFinalCert {
     slot: Slot,
     block_hash: Hash,
@@ -469,7 +469,7 @@ impl FastFinalCert {
 }
 
 /// A finalization certificate is an aggregate of a quorum of finalization votes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FinalCert {
     slot: Slot,
     agg_sig: AggregateSignature,

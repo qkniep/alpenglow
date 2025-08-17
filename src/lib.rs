@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 pub use all2all::All2All;
 pub use consensus::Alpenglow;
+pub use consensus::votor::VotorEvent;
 use crypto::{Hash, aggsig, signature};
 pub use disseminator::Disseminator;
 pub use slot::Slot;

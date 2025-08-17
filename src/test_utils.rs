@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use crate::{
-    ValidatorId, ValidatorInfo,
+    Slot, ValidatorId, ValidatorInfo, VotorEvent,
     all2all::TrivialAll2All,
     consensus::EpochInfo,
-    crypto::{aggsig::SecretKey, signature},
-    network::SimulatedNetwork,
-    network::simulated::SimulatedNetworkCore,
+    crypto::{Hash, aggsig::SecretKey, signature},
+    network::{SimulatedNetwork, simulated::SimulatedNetworkCore},
+    shredder::MAX_DATA_PER_SLICE,
+    slice::{Slice, SliceHeader, create_random_slice_payload},
 };
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
@@ -48,4 +49,78 @@ pub async fn generate_all2all_instances(
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all
+}
+
+pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
+    let parent_slot = Slot::genesis();
+    assert_ne!(slot, parent_slot);
+    let mut slices = Vec::new();
+    for slice_index in 0..num_slices {
+        let parent = if slice_index == 0 {
+            Some((parent_slot, Hash::default()))
+        } else {
+            None
+        };
+        let payload = create_random_slice_payload(parent, MAX_DATA_PER_SLICE);
+        let header = SliceHeader {
+            slot,
+            slice_index,
+            is_last: slice_index == num_slices - 1,
+        };
+        slices.push(Slice::from_parts(header, payload, None));
+    }
+    slices
+}
+
+pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
+    match (ev0, ev1) {
+        (
+            VotorEvent::ParentReady {
+                slot: s0,
+                parent_slot: ps0,
+                parent_hash: ph0,
+            },
+            VotorEvent::ParentReady {
+                slot: s1,
+                parent_slot: ps1,
+                parent_hash: ph1,
+            },
+        ) => {
+            assert_eq!(s0, s1);
+            assert_eq!(ps0, ps1);
+            assert_eq!(ph0, ph1);
+        }
+        (VotorEvent::CertCreated(c0), VotorEvent::CertCreated(c1)) => assert_eq!(c0, c1),
+        (VotorEvent::Standstill(s0, c0, v0), VotorEvent::Standstill(s1, c1, v1)) => {
+            assert_eq!(s0, s1);
+            assert_eq!(c0, c1);
+            assert_eq!(v0, v1);
+        }
+        (VotorEvent::SafeToNotar(s0, h0), VotorEvent::SafeToNotar(s1, h1)) => {
+            assert_eq!(s0, s1);
+            assert_eq!(h0, h1);
+        }
+        (
+            VotorEvent::Block {
+                slot: s0,
+                block_info: b0,
+            },
+            VotorEvent::Block {
+                slot: s1,
+                block_info: b1,
+            },
+        ) => {
+            assert_eq!(s0, s1);
+            assert_eq!(b0, b1);
+        }
+
+        (VotorEvent::Timeout(s0), VotorEvent::Timeout(s1))
+        | (VotorEvent::TimeoutCrashedLeader(s0), VotorEvent::TimeoutCrashedLeader(s1))
+        | (VotorEvent::SafeToSkip(s0), VotorEvent::SafeToSkip(s1)) => assert_eq!(s0, s1),
+        (VotorEvent::FirstShred(s0), VotorEvent::FirstShred(s1)) => assert_eq!(s0, s1),
+
+        (ev0, ev1) => {
+            panic!("{ev0:?} does not match {ev1:?}");
+        }
+    }
 }
