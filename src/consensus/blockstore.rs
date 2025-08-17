@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structure holding blocks for each slot.
-//!
-//!
 
 mod slot_block_data;
 
@@ -24,7 +22,7 @@ use super::votor::VotorEvent;
 use slot_block_data::{AddShredError, SlotBlockData};
 
 /// Information about a block within a slot.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockInfo {
     pub(crate) hash: Hash,
     pub(crate) parent_slot: Slot,
@@ -250,12 +248,10 @@ mod tests {
     use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{
-        DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
-    };
+    use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::test_utils::create_random_block;
 
     use color_eyre::Result;
-    use rand::RngCore;
     use tokio::sync::mpsc;
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, Blockstore) {
@@ -275,45 +271,29 @@ mod tests {
         (sk, Blockstore::new(Arc::new(epoch_info), tx))
     }
 
-    fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
-        let mut slices = Vec::new();
-        let mut rng = rand::rng();
-        for slice_index in 0..num_slices {
-            let mut buf = vec![0u8; MAX_DATA_PER_SLICE];
-            rng.fill_bytes(&mut buf);
-            slices.push(Slice {
-                slot,
-                slice_index,
-                is_last: slice_index == num_slices - 1,
-                merkle_root: None,
-                data: buf,
-            });
-        }
-        slices
-    }
-
     #[tokio::test]
     async fn store_simple_block() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.slot_data(Slot::new(0)).is_none());
+        assert!(blockstore.slot_data(slot).is_none());
 
-        // generate two slices for slot 0
-        let slices = create_random_block(Slot::new(0), 2);
+        // generate two slices for slot picked above
+        let slices = create_random_block(slot, 2);
 
         // first slice is not enough
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_none());
+        assert!(blockstore.canonical_block_hash(slot).is_none());
 
         // after second slice we should have the block
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_some());
+        assert!(blockstore.canonical_block_hash(slot).is_some());
 
         drop(rx);
         Ok(())
@@ -321,19 +301,20 @@ mod tests {
 
     #[tokio::test]
     async fn out_of_order_shreds() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_none());
+        assert!(blockstore.canonical_block_hash(slot).is_none());
 
         // generate a single slice for slot 0
-        let slices = create_random_block(Slot::new(0), 1);
+        let slices = create_random_block(slot, 1);
 
         // insert shreds in reverse order
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().rev() {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_some());
+        assert!(blockstore.canonical_block_hash(slot).is_some());
 
         drop(rx);
         Ok(())
@@ -341,34 +322,35 @@ mod tests {
 
     #[tokio::test]
     async fn just_enough_shreds() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_none());
+        assert!(blockstore.canonical_block_hash(slot).is_none());
 
         // generate a larger block for slot 0
-        let slices = create_random_block(Slot::new(0), 4);
-        assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 0);
+        let slices = create_random_block(slot, 4);
+        assert_eq!(blockstore.stored_slices_for_slot(slot), 0);
 
         // insert just enough shreds to reconstruct slice 0 (from beginning)
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().take(DATA_SHREDS) {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 1);
+        assert_eq!(blockstore.stored_slices_for_slot(slot), 1);
 
         // insert just enough shreds to reconstruct slice 1 (from end)
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 2);
+        assert_eq!(blockstore.stored_slices_for_slot(slot), 2);
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
         let shreds = RegularShredder::shred(slices[2].clone(), &sk)?;
         for shred in shreds.into_iter().skip(DATA_SHREDS / 2) {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 3);
+        assert_eq!(blockstore.stored_slices_for_slot(slot), 3);
 
         // insert just enough shreds to reconstruct slice 3 (split)
         let shreds = RegularShredder::shred(slices[3].clone(), &sk)?;
@@ -379,10 +361,10 @@ mod tests {
         {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_some());
+        assert!(blockstore.canonical_block_hash(slot).is_some());
 
         // slices are deleted after reconstruction
-        assert_eq!(blockstore.stored_slices_for_slot(Slot::new(0)), 0);
+        assert_eq!(blockstore.stored_slices_for_slot(slot), 0);
 
         drop(rx);
         Ok(())
@@ -390,38 +372,33 @@ mod tests {
 
     #[tokio::test]
     async fn out_of_order_slices() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_none());
+        assert!(blockstore.canonical_block_hash(slot).is_none());
 
         // generate two slices for slot 0
-        let slices = create_random_block(Slot::new(0), 2);
+        let slices = create_random_block(slot, 2);
 
         // second slice alone is not enough
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_none());
+        assert!(blockstore.canonical_block_hash(slot).is_none());
 
         // stored all shreds for slot 0
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(0)),
-            TOTAL_SHREDS
-        );
+        assert_eq!(blockstore.stored_shreds_for_slot(slot), TOTAL_SHREDS);
 
         // after also also inserting first slice we should have the block
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_some());
+        assert!(blockstore.canonical_block_hash(slot).is_some());
 
         // stored all shreds
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(0)),
-            2 * TOTAL_SHREDS
-        );
+        assert_eq!(blockstore.stored_shreds_for_slot(slot), 2 * TOTAL_SHREDS);
 
         drop(rx);
         Ok(())
@@ -429,9 +406,10 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_shreds() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        let slices = create_random_block(Slot::new(0), 1);
+        let slices = create_random_block(slot, 1);
 
         // insert many duplicate shreds
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
@@ -441,7 +419,7 @@ mod tests {
         }
 
         // should only store one copy
-        assert_eq!(blockstore.stored_shreds_for_slot(Slot::new(0)), 1);
+        assert_eq!(blockstore.stored_shreds_for_slot(slot), 1);
 
         drop(rx);
         Ok(())
@@ -449,9 +427,10 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_shreds() -> Result<()> {
+        let slot = Slot::genesis().next();
         let (tx, rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        let slices = create_random_block(Slot::new(0), 1);
+        let slices = create_random_block(slot, 1);
 
         // insert shreds with wrong Merkle root
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
@@ -468,11 +447,16 @@ mod tests {
 
     #[tokio::test]
     async fn pruning() -> Result<()> {
+        let block0_slot = Slot::genesis().next();
+        let block1_slot = block0_slot.next();
+        let block2_slot = block1_slot.next();
+        let block3_slot = block2_slot.next();
+        let future_slot = block3_slot.next();
         let (tx, rx) = mpsc::channel(1000);
         let (sk, mut blockstore) = test_setup(tx);
-        let block0 = create_random_block(Slot::new(0), 1);
-        let block1 = create_random_block(Slot::new(1), 1);
-        let block2 = create_random_block(Slot::new(2), 1);
+        let block0 = create_random_block(block0_slot, 1);
+        let block1 = create_random_block(block1_slot, 1);
+        let block2 = create_random_block(block2_slot, 1);
 
         // insert shreds
         let mut shreds = RegularShredder::shred(block0[0].clone(), &sk)?;
@@ -481,41 +465,26 @@ mod tests {
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(Slot::new(0)).is_some());
-        assert!(blockstore.canonical_block_hash(Slot::new(1)).is_some());
-        assert!(blockstore.canonical_block_hash(Slot::new(2)).is_some());
+        assert!(blockstore.canonical_block_hash(block0_slot).is_some());
+        assert!(blockstore.canonical_block_hash(block1_slot).is_some());
+        assert!(blockstore.canonical_block_hash(block2_slot).is_some());
 
         // stored all shreds
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(0)),
-            TOTAL_SHREDS
-        );
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(1)),
-            TOTAL_SHREDS
-        );
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(2)),
-            TOTAL_SHREDS
-        );
+        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), TOTAL_SHREDS);
+        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), TOTAL_SHREDS);
+        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), TOTAL_SHREDS);
 
         // some (and only some) shreds deleted after partial pruning
-        blockstore.prune(Slot::new(1));
-        assert_eq!(blockstore.stored_shreds_for_slot(Slot::new(0)), 0);
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(1)),
-            TOTAL_SHREDS
-        );
-        assert_eq!(
-            blockstore.stored_shreds_for_slot(Slot::new(2)),
-            TOTAL_SHREDS
-        );
+        blockstore.prune(block1_slot);
+        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), 0);
+        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), TOTAL_SHREDS);
+        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), TOTAL_SHREDS);
 
         // no shreds left after full pruning
-        blockstore.prune(Slot::new(3));
-        assert_eq!(blockstore.stored_shreds_for_slot(Slot::new(0)), 0);
-        assert_eq!(blockstore.stored_shreds_for_slot(Slot::new(1)), 0);
-        assert_eq!(blockstore.stored_shreds_for_slot(Slot::new(2)), 0);
+        blockstore.prune(future_slot);
+        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), 0);
+        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), 0);
+        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), 0);
         let shred_count = blockstore
             .block_data
             .values()

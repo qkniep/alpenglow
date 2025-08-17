@@ -1,14 +1,12 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::Slot;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
     AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shred, Shredder,
 };
-use alpenglow::slice::Slice;
+use alpenglow::slice::{Slice, create_random_slice};
 use divan::counter::BytesCount;
-use rand::prelude::*;
 
 fn main() {
     divan::main();
@@ -21,16 +19,8 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
     bencher
         .counter(BytesCount::new(size))
         .with_inputs(|| {
+            let slice = create_random_slice(size);
             let mut rng = rand::rng();
-            let mut slice_data = vec![0; size];
-            rng.fill_bytes(&mut slice_data);
-            let slice = Slice {
-                slot: Slot::new(0),
-                slice_index: 0,
-                is_last: true,
-                merkle_root: None,
-                data: slice_data,
-            };
             let sk = SecretKey::new(&mut rng);
             (slice, sk)
         })
@@ -46,16 +36,8 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
     bencher
         .counter(BytesCount::new(size))
         .with_inputs(|| {
+            let slice = create_random_slice(size);
             let mut rng = rand::rng();
-            let mut slice_data = vec![0; size];
-            rng.fill_bytes(&mut slice_data);
-            let slice = Slice {
-                slot: Slot::new(0),
-                slice_index: 0,
-                is_last: true,
-                merkle_root: None,
-                data: slice_data,
-            };
             let sk = SecretKey::new(&mut rng);
             S::shred(slice, &sk).unwrap()
         })

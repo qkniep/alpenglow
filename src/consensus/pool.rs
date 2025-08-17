@@ -118,7 +118,7 @@ impl Pool {
         //       use correct validator set & stake distribution
         let slot_far_in_future =
             Slot::new(self.highest_finalized_slot.inner() + 2 * SLOTS_PER_EPOCH);
-        if slot < self.highest_finalized_slot || slot >= slot_far_in_future {
+        if slot <= self.highest_finalized_slot || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
@@ -946,23 +946,20 @@ mod tests {
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = Pool::new(epoch_info.clone(), votor_tx, repair_tx);
 
-        // insert a notar cert for slot 0
+        // insert a notar cert for first slot
         let mut votes = Vec::new();
+        let first_slot = Slot::genesis().next();
         for v in 0..11 {
-            votes.push(Vote::new_notar(
-                Slot::new(0),
-                Hash::default(),
-                &sks[v as usize],
-                v,
-            ));
+            votes.push(Vote::new_notar(first_slot, [1; 32], &sks[v as usize], v));
         }
         let notar_cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
 
         // insert a skip cert for slot 1
         let mut votes = Vec::new();
+        let second_slot = first_slot.next();
         for v in 0..11 {
-            votes.push(Vote::new_skip(Slot::new(1), &sks[v as usize], v));
+            votes.push(Vote::new_skip(second_slot, &sks[v as usize], v));
         }
         let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
