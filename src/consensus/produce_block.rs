@@ -39,7 +39,7 @@ where
         &self,
         slot: Slot,
         parent_block_id: BlockId,
-        mut receiver: oneshot::Receiver<BlockId>,
+        mut parent_ready_receiver: oneshot::Receiver<BlockId>,
     ) -> Result<()> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent_block_id;
@@ -53,23 +53,26 @@ where
         );
 
         let mut sleep_duration = DELTA_BLOCK;
-        for ind in 0.. {
-            let slice_index = match NonZeroUsize::new(ind) {
+        for i in 0.. {
+            let slice_index = match NonZeroUsize::new(i) {
                 None => Either::Left((parent_block_id, 0)),
                 Some(ind) => Either::Right(ind),
             };
 
+            // If we have not yet received the `ParentReady` event, wait for it concurrently while producing the next slice.
             let produce_slice_future =
                 produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration);
-            let (slice, cont_prod) = if receiver.is_terminated() {
+            let (slice, cont_prod) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
                 pin!(produce_slice_future);
                 tokio::select! {
                     res = &mut produce_slice_future => res,
-                    res = &mut receiver => {
+                    res = &mut parent_ready_receiver => {
+                        // Got `ParentReady` event while producing slice.
+                        // It's a NOP if we have been using the same parent as before.
+                        // TODO: if parent is different, then implement optimistic handover.
                         let (new_slot, new_hash) = res.unwrap();
-                        // TODO: implement optimistic handover.
                         assert_eq!(new_slot, parent_slot);
                         assert_eq!(new_hash, parent_hash);
                         produce_slice_future.await
@@ -78,15 +81,15 @@ where
             };
 
             if let Continue::Stop = &cont_prod
-                && !receiver.is_terminated()
+                && !parent_ready_receiver.is_terminated()
             {
-                let (new_slot, new_hash) = (&mut receiver).await.unwrap();
+                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
                 // TODO: implement optimistic handover.
                 assert_eq!(new_slot, parent_slot);
                 assert_eq!(new_hash, parent_hash);
             }
 
-            if ind == 0 {
+            if i == 0 {
                 assert!(slice.parent.is_some());
             }
             self.shred_and_disseminate(slice).await?;
@@ -115,15 +118,15 @@ where
         );
 
         let mut sleep_duration = DELTA_BLOCK;
-        for ind in 0.. {
-            let slice_index = if ind == 0 {
+        for i in 0.. {
+            let slice_index = if i == 0 {
                 Either::Left((parent_block_id, 0))
             } else {
-                Either::Right(NonZeroUsize::new(ind).unwrap())
+                Either::Right(NonZeroUsize::new(i).unwrap())
             };
             let (slice, cont_prod) =
                 produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration).await;
-            if ind == 0 {
+            if i == 0 {
                 assert!(slice.parent.is_some());
             }
             self.shred_and_disseminate(slice).await?;
