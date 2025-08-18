@@ -428,16 +428,8 @@ mod tests {
         } else {
             panic!("not a parent request");
         };
-        other_network
-            .send(
-                &NetworkMessage::Repair(RepairMessage::Response(RepairResponse::Parent(
-                    req,
-                    Slot::genesis(),
-                    Hash::default(),
-                ))),
-                "0",
-            )
-            .await
-            .unwrap();
+        let response = RepairResponse::Parent(req, Slot::genesis(), Hash::default());
+        let msg = NetworkMessage::Repair(RepairMessage::Response(response));
+        other_network.send(&msg, "0").await.unwrap();
     }
 }
