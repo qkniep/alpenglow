@@ -12,6 +12,7 @@ use static_assertions::const_assert;
 use tokio::pin;
 use tokio::sync::oneshot;
 
+use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
@@ -92,22 +93,23 @@ where
             if i == 0 {
                 assert!(slice.parent.is_some());
             }
-            self.shred_and_disseminate(slice).await?;
+
+            let is_last = slice.is_last;
+            let maybe_block_hash = self.shred_and_disseminate(slice).await?;
             match cont_prod {
-                Continue::Stop => break,
-                Continue::Continue {
-                    left: left_duration,
-                } => sleep_duration = left_duration,
+                Continue::Stop => {
+                    assert!(is_last);
+                    let block_hash = maybe_block_hash.unwrap();
+                    return Ok((slot, block_hash));
+                }
+                Continue::Continue { left } => {
+                    assert!(!is_last);
+                    assert!(maybe_block_hash.is_none());
+                    sleep_duration = left;
+                }
             }
         }
-
-        let hash = self
-            .blockstore
-            .read()
-            .await
-            .canonical_block_hash(slot)
-            .unwrap();
-        Ok((slot, hash))
+        unreachable!()
     }
 
     pub(crate) async fn produce_block_parent_ready(
@@ -136,26 +138,33 @@ where
             if i == 0 {
                 assert!(slice.parent.is_some());
             }
-            self.shred_and_disseminate(slice).await?;
+
+            let is_last = slice.is_last;
+            let maybe_block_hash = self.shred_and_disseminate(slice).await?;
             match cont_prod {
-                Continue::Stop => break,
-                Continue::Continue {
-                    left: left_duration,
-                } => sleep_duration = left_duration,
+                Continue::Stop => {
+                    assert!(is_last);
+                    let block_hash = maybe_block_hash.unwrap();
+                    return Ok((slot, block_hash));
+                }
+                Continue::Continue { left } => {
+                    assert!(!is_last);
+                    assert!(maybe_block_hash.is_none());
+                    sleep_duration = left;
+                }
             }
         }
-
-        let hash = self
-            .blockstore
-            .read()
-            .await
-            .canonical_block_hash(slot)
-            .unwrap();
-        Ok((slot, hash))
+        unreachable!()
     }
 
-    async fn shred_and_disseminate(&self, slice: Slice) -> Result<()> {
+    /// Shreds and disseminates the slice.
+    ///
+    /// Returns Ok(Some(Hash)) if slice.is_last == true.
+    /// Returns Ok(None) if slice.is_last == false.
+    async fn shred_and_disseminate(&self, slice: Slice) -> Result<Option<Hash>> {
+        let mut maybe_block_hash = None;
         let slice_slot = slice.slot;
+        let is_last = slice.is_last;
         let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
         for s in shreds {
             self.disseminator.send(&s).await?;
@@ -168,10 +177,16 @@ where
                 .await;
             if let Ok(Some((slot, block_info))) = block {
                 assert_eq!(slot, slice_slot);
+                maybe_block_hash = Some(block_info.hash);
                 self.pool.write().await.add_block(slot, block_info).await;
             }
         }
-        Ok(())
+        if is_last {
+            assert!(maybe_block_hash.is_some());
+        } else {
+            assert!(maybe_block_hash.is_none());
+        }
+        Ok(maybe_block_hash)
     }
 }
 
