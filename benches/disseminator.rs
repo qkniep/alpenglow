@@ -5,7 +5,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use alpenglow::slice::create_random_slice;
+use alpenglow::slice::create_slice_with_invalid_txs;
 use divan::counter::ItemsCount;
 
 fn main() {
@@ -24,7 +24,7 @@ fn turbine_tree(bencher: divan::Bencher) {
             let turbine1 = Turbine::new(0, Vec::new(), net1);
             let turbine2 = Turbine::new(1, Vec::new(), net2);
 
-            let slice = create_random_slice(MAX_DATA_PER_SLICE);
+            let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
             let mut shreds = RegularShredder::shred(slice, &sk).unwrap();

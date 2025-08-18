@@ -269,13 +269,34 @@ impl BlockData {
         let first_slice = self.slices.get(&0).unwrap();
         // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
         let (parent_slot, parent_hash) = first_slice.parent.unwrap();
-        // TODO: reconstruct actual block content
+
+        let mut transactions = vec![];
+        for (ind, slice) in &self.slices {
+            let (mut txs, bytes_read) =
+                match bincode::serde::decode_from_slice(&slice.data, bincode::config::standard()) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        warn!("decoding slice {ind} failed with {err:?}");
+                        return None;
+                    }
+                };
+            if bytes_read != slice.data.len() {
+                warn!(
+                    "decoding slice {}: read {} but actual length is {}",
+                    ind,
+                    bytes_read,
+                    slice.data.len()
+                );
+                return None;
+            }
+            transactions.append(&mut txs);
+        }
         let block = Block {
             slot: self.slot,
             block_hash,
             parent: parent_slot,
             parent_hash,
-            transactions: vec![],
+            transactions,
         };
         let block_info = BlockInfo::from(&block);
         self.completed = Some((block_hash, block));

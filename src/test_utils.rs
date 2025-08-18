@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
+use rand::RngCore;
+
 use crate::{
-    Slot, ValidatorId, ValidatorInfo, VotorEvent,
+    BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
     all2all::TrivialAll2All,
     consensus::EpochInfo,
     crypto::{Hash, aggsig::SecretKey, signature},
     network::{SimulatedNetwork, simulated::SimulatedNetworkCore},
     shredder::MAX_DATA_PER_SLICE,
-    slice::{Slice, SliceHeader, create_random_slice_payload},
+    slice::{Slice, SliceHeader, SlicePayload},
 };
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
@@ -61,7 +63,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         } else {
             None
         };
-        let payload = create_random_slice_payload(parent, MAX_DATA_PER_SLICE);
+        let payload = create_random_slice_payload_valid_txs(parent);
         let header = SliceHeader {
             slot,
             slice_index,
@@ -123,4 +125,22 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
             panic!("{ev0:?} does not match {ev1:?}");
         }
     }
+}
+
+/// Creates a valid [`SlicePayload`] which contains valid transactions that can  be decoded.
+///
+// HACK: Packs manually picked number of maximally sized transactions in the slice that results in creating the largest slice possible without going over the [`MAX_DATA_PER_SLICE`] limit.
+fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayload {
+    let mut data = vec![0; MAX_TRANSACTION_SIZE];
+    rand::rng().fill_bytes(&mut data);
+    let tx = Transaction(data);
+    let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+        .expect("serialization should not panic");
+    let txs = vec![tx; 63];
+    let txs = bincode::serde::encode_to_vec(txs, bincode::config::standard())
+        .expect("serialization should not panic");
+    let payload = SlicePayload::new(parent, txs);
+    let payload: Vec<u8> = payload.into();
+    assert!(payload.len() <= MAX_DATA_PER_SLICE);
+    payload.into()
 }

@@ -57,7 +57,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
-    use crate::slice::create_random_slice;
+    use crate::slice::create_slice_with_invalid_txs;
 
     use tokio::{sync::Mutex, task};
 
@@ -95,7 +95,7 @@ mod tests {
     #[tokio::test]
     async fn dissemination() {
         let (sks, mut disseminators) = create_disseminator_instances(20, 5000);
-        let slice = create_random_slice(MAX_DATA_PER_SLICE);
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
