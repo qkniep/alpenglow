@@ -362,8 +362,13 @@ where
             {
                 SlotReady::Skip => continue,
                 SlotReady::Ready(parent) => {
-                    self.produce_block_parent_ready(first_slot_in_window, parent)
-                        .await?
+                    if first_slot_in_window.is_genesis() {
+                        // genesis block is already produced so skip it
+                        (first_slot_in_window, Hash::default())
+                    } else {
+                        self.produce_block_parent_ready(first_slot_in_window, parent)
+                            .await?
+                    }
                 }
                 SlotReady::ParentReadyNotSeen(parent, channel) => {
                     self.produce_block_parent_not_ready(first_slot_in_window, parent, channel)
