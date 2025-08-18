@@ -9,7 +9,8 @@ use either::Either;
 use fastrace::Span;
 use log::info;
 use static_assertions::const_assert;
-use tokio::{pin, sync::oneshot};
+use tokio::sync::oneshot;
+use tokio::pin;
 
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
