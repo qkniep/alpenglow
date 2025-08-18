@@ -85,6 +85,16 @@ impl BlockstoreImpl {
         }
     }
 
+    /// Gives the number of stored slices for a given `slot`.
+    pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
+        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
+    }
+
+    /// Deletes everything before the given `slot` from the blockstore.
+    pub fn prune(&mut self, slot: Slot) {
+        self.block_data = self.block_data.split_off(&slot);
+    }
+
     async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
         match event {
             VotorEvent::FirstShred(_) => {
@@ -105,16 +115,6 @@ impl BlockstoreImpl {
             }
             ev => panic!("unexpected event {ev:?}"),
         }
-    }
-
-    /// Gives the number of stored slices for a given `slot`.
-    pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
-    }
-
-    /// Deletes everything before the given `slot` from the blockstore.
-    pub fn prune(&mut self, slot: Slot) {
-        self.block_data = self.block_data.split_off(&slot);
     }
 
     /// Reads slot data for the given `slot`.
