@@ -31,7 +31,7 @@ futures = "0.3"
 geo = "0.30"
 hex = "0.4"
 log = "0.4"
-logforth = { version = "0.26", features = ["colored", "append-fastrace"] }
+logforth = { version = "0.27", features = ["colored", "append-fastrace"] }
 moka = { version = "0.12", features = ["future"] }
 opentelemetry = "0.30"
 opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic"] }
