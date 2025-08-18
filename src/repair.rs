@@ -220,7 +220,7 @@ impl<N: Network> Repair<N> {
                 self.blockstore
                     .write()
                     .await
-                    .add_shred_from_repair(req.block_hash(), shred)
+                    .add_shred_from_repair(block_hash, shred)
                     .await
                     .unwrap();
             }
