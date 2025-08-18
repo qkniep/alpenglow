@@ -235,6 +235,8 @@ impl<N: Network> Repair<N> {
                     parent_hash,
                 };
                 self.pool.write().await.add_block(slot, block_info).await;
+
+                // request repair of the parent block if necessary
                 if self
                     .blockstore
                     .read()
