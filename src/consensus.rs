@@ -93,7 +93,7 @@ enum SlotReady {
     Skip,
     /// Pool emitted a parent ready event.
     Ready(BlockId),
-    /// Canonical block for previous slot seen but pool has not emitted ParentReady yet.
+    /// Canonical block for previous slot seen but Pool has not emitted `ParentReady` yet.
     ParentReadyNotSeen(BlockId, oneshot::Receiver<BlockId>),
 }
 
