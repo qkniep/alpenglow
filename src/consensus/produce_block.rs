@@ -143,7 +143,7 @@ where
         assert_eq!(parent_slot, slot.prev());
         assert!(slot.is_start_of_window());
         info!(
-            "produce_block_parent_not_ready slot {} with parent {} in slot {}",
+            "optimistically producing block in slot {} with parent {} in slot {}",
             slot,
             &hex::encode(parent_hash)[..8],
             parent_slot,
