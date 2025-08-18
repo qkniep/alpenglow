@@ -44,10 +44,10 @@ use crate::repair::{Repair, RepairMessage};
 use crate::shredder::Shred;
 use crate::{All2All, BlockId, Disseminator, Slot, ValidatorInfo};
 
-pub use blockstore::{BlockInfo, Blockstore};
+pub use blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
-pub use pool::{AddVoteError, Pool};
+pub use pool::{AddVoteError, Pool, PoolImpl};
 pub use vote::Vote;
 use votor::Votor;
 
@@ -69,9 +69,9 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     epoch_info: Arc<EpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Blockstore>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Pool>>,
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
 
     /// All-to-all broadcast network protocol for consensus messages.
     all2all: Arc<A>,
@@ -106,8 +106,8 @@ enum SlotReady {
 ///
 /// See [`SlotReady`] for what is returned.
 async fn wait_for_first_slot(
-    pool: Arc<RwLock<Pool>>,
-    blockstore: Arc<RwLock<Blockstore>>,
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     first_slot_in_window: Slot,
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
@@ -192,10 +192,18 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore = Blockstore::new(epoch_info.clone(), votor_tx.clone());
+        let blockstore: Box<dyn Blockstore + Send + Sync> =
+            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone()));
         let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx.clone());
+
+
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
+            epoch_info.clone(),
+            votor_tx.clone(),
+            repair_tx.clone(),
+        ));
         let pool = Arc::new(RwLock::new(pool));
+
         let repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
@@ -276,7 +284,7 @@ where
         self.epoch_info.validator(self.epoch_info.own_id)
     }
 
-    pub fn get_pool(&self) -> Arc<RwLock<Pool>> {
+    pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
         Arc::clone(&self.pool)
     }
 
@@ -428,5 +436,30 @@ where
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Slot;
+    use crate::consensus::blockstore::MockBlockstore;
+    use crate::consensus::pool::MockPool;
+    use crate::consensus::{Blockstore, Pool, SlotReady, wait_for_first_slot};
+
+    use tokio::sync::RwLock;
+
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn wait_for_first_slot_genesis() {
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(MockPool::new());
+        let pool = Arc::new(RwLock::new(pool));
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
+        assert!(matches!(
+            wait_for_first_slot(pool, blockstore, Slot::genesis()).await,
+            SlotReady::Ready(_)
+        ));
     }
 }

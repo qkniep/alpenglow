@@ -65,8 +65,8 @@ pub enum RepairResponse {
 
 /// Instance of double-Merkle based block repair protocol.
 pub struct Repair<N: Network> {
-    blockstore: Arc<RwLock<Blockstore>>,
-    pool: Arc<RwLock<Pool>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
     network: N,
     repair_channel: (
         tokio::sync::mpsc::Sender<BlockId>,
@@ -81,8 +81,8 @@ impl<N: Network> Repair<N> {
     /// Given `network` will be used for sending and receiving repair messages.
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
-        blockstore: Arc<RwLock<Blockstore>>,
-        pool: Arc<RwLock<Pool>>,
+        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         network: N,
         repair_channel: (
             tokio::sync::mpsc::Sender<BlockId>,
@@ -375,13 +375,17 @@ impl RepairResponse {
 mod tests {
     use super::*;
 
+    use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
     use crate::test_utils::generate_validators;
 
     use tokio::sync::mpsc::Sender;
 
-    async fn create_repair_instance() -> (Sender<BlockId>, SimulatedNetwork, Arc<RwLock<Blockstore>>)
-    {
+    async fn create_repair_instance() -> (
+        Sender<BlockId>,
+        SimulatedNetwork,
+        Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    ) {
         let (_, epoch_info) = generate_validators(2);
         let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
         epoch_info.validators.get_mut(0).unwrap().repair_address = "0".to_string();
@@ -389,16 +393,13 @@ mod tests {
         let epoch_info = Arc::new(epoch_info);
 
         let (votor_tx, _) = tokio::sync::mpsc::channel(100);
-        let blockstore = Arc::new(RwLock::new(Blockstore::new(
-            epoch_info.clone(),
-            votor_tx.clone(),
-        )));
+        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
+            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone())),
+        ));
 
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
-        let pool = Arc::new(RwLock::new(Pool::new(
-            epoch_info.clone(),
-            votor_tx,
-            repair_tx.clone(),
+        let pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>> = Arc::new(RwLock::new(Box::new(
+            PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx.clone()),
         )));
 
         let core = Arc::new(

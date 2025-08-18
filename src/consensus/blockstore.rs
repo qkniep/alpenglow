@@ -8,12 +8,13 @@ mod slot_block_data;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use log::debug;
+use mockall::automock;
 use tokio::sync::mpsc::Sender;
 
 use crate::crypto::Hash;
 use crate::shredder::Shred;
-use crate::slice::Slice;
 use crate::{Block, Slot};
 
 use super::epoch_info::EpochInfo;
@@ -39,8 +40,29 @@ impl From<&Block> for BlockInfo {
     }
 }
 
+#[async_trait]
+#[automock]
+pub trait Blockstore {
+    async fn add_shred_from_disseminator(
+        &mut self,
+        shred: Shred,
+    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    async fn add_shred_from_repair(
+        &mut self,
+        hash: Hash,
+        shred: Shred,
+    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    fn canonical_block_hash(&self, slot: Slot) -> Option<Hash>;
+    fn stored_shreds_for_slot(&self, slot: Slot) -> usize;
+    #[allow(clippy::needless_lifetimes)]
+    fn get_block<'a>(&'a self, slot: Slot, hash: Hash) -> Option<&'a Block>;
+    #[allow(clippy::needless_lifetimes)]
+    fn get_shred<'a>(&'a self, slot: Slot, slice: usize, shred: usize) -> Option<&'a Shred>;
+    fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash>;
+}
+
 /// Blockstore is the fundamental data structure holding block data per slot.
-pub struct Blockstore {
+pub struct BlockstoreImpl {
     /// Data structure holding the actual block data per slot.
     block_data: BTreeMap<Slot, SlotBlockData>,
 
@@ -50,7 +72,7 @@ pub struct Blockstore {
     epoch_info: Arc<EpochInfo>,
 }
 
-impl Blockstore {
+impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
     /// For each later reconstructed block this blockstore will send a
@@ -63,48 +85,14 @@ impl Blockstore {
         }
     }
 
-    /// Stores a new shred in the blockstore.
-    ///
-    /// Shreds received by Rotor should set `check_equivocation` to `true`.
-    /// If `check_equivocation` is `true` and the leader was observed to equivocate,
-    /// i.e., produced conflicting blocks/slices, the shred is dropped.
-    ///
-    /// Reconstructs the corresponding slice and block if possible and necessary.
-    /// If the added shred belongs to the last slice, all later shreds are deleted.
-    ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
-    #[fastrace::trace(short_name = true)]
-    pub async fn add_shred_from_disseminator(
-        &mut self,
-        shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
-        let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.leader(slot).pubkey;
-        match self
-            .slot_data_mut(slot)
-            .add_shred_from_disseminator(shred, leader_pk)?
-        {
-            Some(event) => Ok(self.send_votor_event(event).await),
-            None => Ok(None),
-        }
+    /// Gives the number of stored slices for a given `slot`.
+    pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
+        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
     }
 
-    #[fastrace::trace(short_name = true)]
-    pub async fn add_shred_from_repair(
-        &mut self,
-        hash: Hash,
-        shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
-        let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.leader(slot).pubkey;
-        match self
-            .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, leader_pk)?
-        {
-            Some(event) => Ok(self.send_votor_event(event).await),
-            None => Ok(None),
-        }
+    /// Deletes everything before the given `slot` from the blockstore.
+    pub fn prune(&mut self, slot: Slot) {
+        self.block_data = self.block_data.split_off(&slot);
     }
 
     async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
@@ -129,12 +117,70 @@ impl Blockstore {
         }
     }
 
+    /// Reads slot data for the given `slot`.
+    fn slot_data(&self, slot: Slot) -> Option<&SlotBlockData> {
+        self.block_data.get(&slot)
+    }
+
+    /// Writes slot data for the given `slot`, initializing it if necessary.
+    fn slot_data_mut(&mut self, slot: Slot) -> &mut SlotBlockData {
+        self.block_data
+            .entry(slot)
+            .or_insert_with(|| SlotBlockData::new(slot))
+    }
+}
+
+#[async_trait]
+impl Blockstore for BlockstoreImpl {
+    /// Stores a new shred in the blockstore.
+    ///
+    /// Shreds received by Rotor should set `check_equivocation` to `true`.
+    /// If `check_equivocation` is `true` and the leader was observed to equivocate,
+    /// i.e., produced conflicting blocks/slices, the shred is dropped.
+    ///
+    /// Reconstructs the corresponding slice and block if possible and necessary.
+    /// If the added shred belongs to the last slice, all later shreds are deleted.
+    ///
+    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
+    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    #[fastrace::trace(short_name = true)]
+    async fn add_shred_from_disseminator(
+        &mut self,
+        shred: Shred,
+    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+        let slot = shred.payload().header.slot;
+        let leader_pk = self.epoch_info.leader(slot).pubkey;
+        match self
+            .slot_data_mut(slot)
+            .add_shred_from_disseminator(shred, leader_pk)?
+        {
+            Some(event) => Ok(self.send_votor_event(event).await),
+            None => Ok(None),
+        }
+    }
+
+    #[fastrace::trace(short_name = true)]
+    async fn add_shred_from_repair(
+        &mut self,
+        hash: Hash,
+        shred: Shred,
+    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+        let slot = shred.payload().header.slot;
+        let leader_pk = self.epoch_info.leader(slot).pubkey;
+        match self
+            .slot_data_mut(slot)
+            .add_shred_from_repair(hash, shred, leader_pk)?
+        {
+            Some(event) => Ok(self.send_votor_event(event).await),
+            None => Ok(None),
+        }
+    }
+
     /// Gives the canonical block hash for a given `slot`, if any.
     ///
     /// This is usually the first version of the block stored in the blockstore.
     /// Returns `None` if blockstore does not hold any version of the block yet.
-    #[must_use]
-    pub fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
+    fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
         self.slot_data(slot)?
             .canonical
             .completed
@@ -142,27 +188,16 @@ impl Blockstore {
             .map(|c| c.0)
     }
 
-    /// Gives the number of stored slices for a given `slot`.
-    pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
-    }
-
     /// Gives the number of stored shreds for a given `slot` (across all slices).
-    pub fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
+    fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
         self.slot_data(slot)
             .map_or(0, |s| s.canonical.shreds.values().map(Vec::len).sum())
-    }
-
-    /// Gives the number of stored shreds for a given slot and slice.
-    pub fn stored_shreds_for_slice(&self, slot: Slot, slice: usize) -> usize {
-        self.slot_data(slot)
-            .map_or(0, |s| s.canonical.shreds.get(&slice).map_or(0, Vec::len))
     }
 
     /// Gives reference to stored block for the given `slot` and `hash`.
     ///
     /// Returns `None` if blockstore does not hold that block yet.
-    pub fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
+    fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
         let slot_data = self.slot_data(slot)?;
         if let Some((h, block)) = slot_data.canonical.completed.as_ref()
             && *h == hash
@@ -176,18 +211,11 @@ impl Blockstore {
             .flatten()
     }
 
-    /// Gives reference to stored slice for the given `slot` and `slice` index.
-    ///
-    /// Returns `None` if blockstore does not hold that slice yet.
-    pub fn get_slice(&self, slot: Slot, slice: usize) -> Option<&Slice> {
-        self.slot_data(slot)?.canonical.slices.get(&slice)
-    }
-
     /// Gives reference to stored shred for the given `slot`, `slice` and `shred` index.
     ///
     /// Returns `None` if blockstore does not hold that shred yet.
     // TODO: support alternative/repaired blocks here
-    pub fn get_shred(&self, slot: Slot, slice: usize, shred: usize) -> Option<&Shred> {
+    fn get_shred(&self, slot: Slot, slice: usize, shred: usize) -> Option<&Shred> {
         self.slot_data(slot)?
             .canonical
             .shreds
@@ -201,28 +229,10 @@ impl Blockstore {
     ///
     /// Panics if the double-Merkle tree for the given `slot` does not exist.
     // TODO: support alternative/repaired blocks here
-    #[must_use]
-    pub fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash> {
+    fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash> {
         let slot_data = self.slot_data(slot).unwrap();
         let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
         tree.create_proof(slice)
-    }
-
-    /// Deletes everything before the given `slot` from the blockstore.
-    pub fn prune(&mut self, slot: Slot) {
-        self.block_data = self.block_data.split_off(&slot);
-    }
-
-    /// Reads slot data for the given `slot`.
-    fn slot_data(&self, slot: Slot) -> Option<&SlotBlockData> {
-        self.block_data.get(&slot)
-    }
-
-    /// Writes slot data for the given `slot`, initializing it if necessary.
-    fn slot_data_mut(&mut self, slot: Slot) -> &mut SlotBlockData {
-        self.block_data
-            .entry(slot)
-            .or_insert_with(|| SlotBlockData::new(slot))
     }
 }
 
@@ -239,7 +249,7 @@ mod tests {
     use color_eyre::Result;
     use tokio::sync::mpsc;
 
-    fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, Blockstore) {
+    fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         let info = ValidatorInfo {
@@ -253,7 +263,7 @@ mod tests {
         };
         let validators = vec![info];
         let epoch_info = EpochInfo::new(0, validators);
-        (sk, Blockstore::new(Arc::new(epoch_info), tx))
+        (sk, BlockstoreImpl::new(Arc::new(epoch_info), tx))
     }
 
     #[tokio::test]
