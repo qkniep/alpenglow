@@ -131,15 +131,12 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
 ///
 // HACK: Packs manually picked number of maximally sized transactions in the slice that results in creating the largest slice possible without going over the [`MAX_DATA_PER_SLICE`] limit.
 fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayload {
-    let mut txs = vec![];
-    for _ in 0..63 {
-        let mut data = vec![0; MAX_TRANSACTION_SIZE];
-        rand::rng().fill_bytes(&mut data);
-        let tx = Transaction(data);
-        let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-            .expect("serialization should not panic");
-        txs.push(tx);
-    }
+    let mut data = vec![0; MAX_TRANSACTION_SIZE];
+    rand::rng().fill_bytes(&mut data);
+    let tx = Transaction(data);
+    let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+        .expect("serialization should not panic");
+    let txs = vec![tx; 63];
     let txs = bincode::serde::encode_to_vec(txs, bincode::config::standard())
         .expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
