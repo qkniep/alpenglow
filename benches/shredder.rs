@@ -5,7 +5,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
     AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shred, Shredder,
 };
-use alpenglow::slice::{Slice, create_random_slice};
+use alpenglow::slice::{Slice, create_slice_with_invalid_txs};
 use divan::counter::BytesCount;
 
 fn main() {
@@ -19,7 +19,7 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
     bencher
         .counter(BytesCount::new(size))
         .with_inputs(|| {
-            let slice = create_random_slice(size);
+            let slice = create_slice_with_invalid_txs(size);
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
             (slice, sk)
@@ -36,7 +36,7 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
     bencher
         .counter(BytesCount::new(size))
         .with_inputs(|| {
-            let slice = create_random_slice(size);
+            let slice = create_slice_with_invalid_txs(size);
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
             S::shred(slice, &sk).unwrap()

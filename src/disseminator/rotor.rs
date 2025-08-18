@@ -140,7 +140,7 @@ mod tests {
     use crate::shredder::{
         MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, TOTAL_SHREDS,
     };
-    use crate::slice::create_random_slice;
+    use crate::slice::create_slice_with_invalid_txs;
 
     use tokio::sync::Mutex;
     use tokio::task;
@@ -182,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn two_instances() {
         let (sks, mut rotors) = create_rotor_instances(2, 3000);
-        let slice = create_random_slice(MAX_DATA_PER_SLICE);
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let data_shreds_received = Arc::new(Mutex::new(HashSet::new()));
@@ -247,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn many_instances() {
         let (sks, mut rotors) = create_rotor_instances(10, 3100);
-        let slice = create_random_slice(MAX_DATA_PER_SLICE);
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let mut data_shreds_received = Vec::with_capacity(rotors.len());
