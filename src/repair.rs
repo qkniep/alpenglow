@@ -186,6 +186,7 @@ impl<N: Network> Repair<N> {
         match response {
             RepairResponse::SliceCount(req, _count) => {
                 let RepairRequest::SliceCount(_, _) = req else {
+                    warn!("response to mismatching request type");
                     return;
                 };
                 // TODO: include & check proof:
@@ -193,6 +194,7 @@ impl<N: Network> Repair<N> {
             }
             RepairResponse::SliceRoot(req, _slice_root, _proof) => {
                 let RepairRequest::SliceRoot(_, _, _slice) = req else {
+                    warn!("response to mismatching request type");
                     return;
                 };
                 // TODO: check Merkle proof & cache it:
@@ -204,6 +206,7 @@ impl<N: Network> Repair<N> {
             }
             RepairResponse::Shred(req, shred) => {
                 let RepairRequest::Shred(_, _, slice, index) = req else {
+                    warn!("response to mismatching request type");
                     return;
                 };
                 if shred.payload().header.slot != slot
@@ -221,7 +224,11 @@ impl<N: Network> Repair<N> {
                     .await
                     .unwrap();
             }
-            RepairResponse::Parent(_, parent_slot, parent_hash) => {
+            RepairResponse::Parent(req, parent_slot, parent_hash) => {
+                let RepairRequest::Parent(_, _) = req else {
+                    warn!("response to mismatching request type");
+                    return;
+                };
                 let block_info = BlockInfo {
                     hash: block_hash,
                     parent_slot,
