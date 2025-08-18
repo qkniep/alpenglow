@@ -33,7 +33,7 @@ use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
@@ -353,7 +353,7 @@ where
             }
 
             // produce first block
-            match wait_for_first_slot(
+            let mut block_id = match wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
@@ -362,29 +362,18 @@ where
             {
                 SlotReady::Skip => continue,
                 SlotReady::Ready(parent) => {
-                    let () = self
-                        .produce_block_parent_ready(first_slot_in_window, parent)
-                        .await?;
+                    self.produce_block_parent_ready(first_slot_in_window, parent)
+                        .await?
                 }
                 SlotReady::ParentReadyNotSeen(parent, channel) => {
-                    let () = self
-                        .produce_block_parent_not_ready(first_slot_in_window, parent, channel)
-                        .await?;
+                    self.produce_block_parent_not_ready(first_slot_in_window, parent, channel)
+                        .await?
                 }
-            }
+            };
 
             // produce remaining blocks
-            let parent_slot = first_slot_in_window;
-            let parent_hash = self
-                .blockstore
-                .read()
-                .await
-                .canonical_block_hash(parent_slot)
-                .unwrap();
             for slot in first_slot_in_window.slots_in_window().skip(1) {
-                let () = self
-                    .produce_block_parent_ready(slot, (parent_slot, parent_hash))
-                    .await?;
+                block_id = self.produce_block_parent_ready(slot, block_id).await?;
             }
         }
 

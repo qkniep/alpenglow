@@ -40,7 +40,7 @@ where
         slot: Slot,
         parent_block_id: BlockId,
         mut parent_ready_receiver: oneshot::Receiver<BlockId>,
-    ) -> Result<()> {
+    ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent_block_id;
         assert_eq!(parent_slot, slot.prev());
@@ -100,14 +100,21 @@ where
                 } => sleep_duration = left_duration,
             }
         }
-        Ok(())
+
+        let hash = self
+            .blockstore
+            .read()
+            .await
+            .canonical_block_hash(slot)
+            .unwrap();
+        Ok((slot, hash))
     }
 
     pub(crate) async fn produce_block_parent_ready(
         &self,
         slot: Slot,
         parent_block_id: BlockId,
-    ) -> Result<()> {
+    ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
@@ -137,7 +144,14 @@ where
                 } => sleep_duration = left_duration,
             }
         }
-        Ok(())
+
+        let hash = self
+            .blockstore
+            .read()
+            .await
+            .canonical_block_hash(slot)
+            .unwrap();
+        Ok((slot, hash))
     }
 
     async fn shred_and_disseminate(&self, slice: Slice) -> Result<()> {
