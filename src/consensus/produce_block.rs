@@ -205,7 +205,7 @@ where
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
-            "produce_block_parent_ready slot {} with parent {} in slot {}",
+            "producing block in slot {} with ready parent {} in slot {}",
             slot,
             &hex::encode(parent_hash)[..8],
             parent_slot,
