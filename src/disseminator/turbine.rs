@@ -230,7 +230,7 @@ mod tests {
     use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
-    use crate::slice::create_random_slice;
+    use crate::slice::create_slice_with_invalid_txs;
 
     use tokio::{sync::Mutex, task};
 
@@ -335,7 +335,7 @@ mod tests {
     async fn dissemination() {
         let (sks, mut validators) = create_validator_info(10);
         let mut disseminators = create_turbine_instances(&mut validators).await;
-        let slice = create_random_slice(MAX_DATA_PER_SLICE);
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
