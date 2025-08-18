@@ -49,9 +49,11 @@ jobs:
       - name: Run tests
         run: ./test.sh ci
 
+      # linting
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -Dwarnings
 
+      # test coverage
       - name: Collect coverage data
         run: cargo llvm-cov --lcov --workspace --ignore-filename-regex='(benches|src/bin)' --release --output-path lcov.info nextest
 
@@ -62,3 +64,14 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
+
+      # rustfmt
+      - name: Install Rust (nightly + rustfmt)
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          components: rustfmt
+          profile: minimal
+
+      - name: Run rustfmt
+        run: cargo +nightly fmt --all -- --check
