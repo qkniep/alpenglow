@@ -238,7 +238,9 @@ where
 mod tests {
     use super::*;
 
-    use crate::{Transaction, crypto::Hash, network::UdpNetwork};
+    use crate::crypto::Hash;
+    use crate::network::UdpNetwork;
+    use crate::Transaction;
 
     use std::time::Duration;
 
