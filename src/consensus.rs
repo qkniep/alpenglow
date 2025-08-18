@@ -91,7 +91,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
 enum SlotReady {
     /// Window was already skipped.
     Skip,
-    /// Pool emitted a parent ready event.
+    /// Pool emitted a `ParentReady` for given `BlockId`.
     Ready(BlockId),
     /// Canonical block for previous slot seen but Pool has not emitted `ParentReady` yet.
     ParentReadyNotSeen(BlockId, oneshot::Receiver<BlockId>),
