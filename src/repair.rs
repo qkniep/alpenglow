@@ -116,11 +116,15 @@ impl<N: Network> Repair<N> {
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
-        let blockstore = self.blockstore.read().await;
-        if blockstore.get_block(slot, block_hash).is_some() {
+        if self
+            .blockstore
+            .read()
+            .await
+            .get_block(slot, block_hash)
+            .is_some()
+        {
             return;
         }
-        drop(blockstore);
 
         let h = &hex::encode(block_hash)[..8];
         debug!("repairing block {h} in slot {slot}");
