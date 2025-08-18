@@ -470,14 +470,14 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 mod tests {
     use color_eyre::Result;
 
-    use crate::slice::create_random_slice;
+    use crate::slice::create_slice_with_invalid_txs;
 
     use super::*;
 
     #[test]
     fn regular_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(MAX_DATA_PER_SLICE);
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn coding_only_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(MAX_DATA_PER_SLICE);
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = CodingOnlyShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn aont_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(MAX_DATA_PER_SLICE - 16);
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
         let shreds = AontShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn pets_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(MAX_DATA_PER_SLICE - 16);
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
         let shreds = PetsShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 

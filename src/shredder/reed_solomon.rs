@@ -126,19 +126,19 @@ mod tests {
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
-    use crate::slice::create_random_slice;
+    use crate::slice::create_slice_with_invalid_txs;
 
     use static_assertions::const_assert;
 
     #[test]
     fn restore_full() {
-        let (header, payload) = create_random_slice(MAX_DATA_PER_SLICE).deconstruct();
+        let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
         shred_deshred_restore(header, payload.into());
     }
 
     #[test]
     fn restore_tiny() {
-        let (header, payload) = create_random_slice(DATA_SHREDS - 1).deconstruct();
+        let (header, payload) = create_slice_with_invalid_txs(DATA_SHREDS - 1).deconstruct();
         shred_deshred_restore(header, payload.into());
     }
 
@@ -158,7 +158,8 @@ mod tests {
         const_assert!(MAX_DATA_PER_SLICE >= 2 * DATA_SHREDS);
         let slice_bytes = MAX_DATA_PER_SLICE / 2;
         for offset in 0..DATA_SHREDS {
-            let (header, payload) = create_random_slice(slice_bytes + offset).deconstruct();
+            let (header, payload) =
+                create_slice_with_invalid_txs(slice_bytes + offset).deconstruct();
             shred_deshred_restore(header, payload.into());
         }
     }
@@ -179,7 +180,7 @@ mod tests {
     #[test]
     fn deshred_too_many_shreds() {
         const CODING_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
-        let (header, payload) = create_random_slice(MAX_DATA_PER_SLICE).deconstruct();
+        let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
         let (data, coding) =
             reed_solomon_shred(header, payload.clone().into(), DATA_SHREDS, CODING_SHREDS).unwrap();
         let sk = SecretKey::new(&mut rand::rng());
@@ -191,7 +192,7 @@ mod tests {
 
     #[test]
     fn deshred_not_enough_shreds() {
-        let (header, payload) = create_random_slice(MAX_DATA_PER_SLICE).deconstruct();
+        let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
         let (data, coding) =
             reed_solomon_shred(header, payload.clone().into(), DATA_SHREDS, DATA_SHREDS).unwrap();
         let sk = SecretKey::new(&mut rand::rng());

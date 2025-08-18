@@ -107,7 +107,7 @@ mod tests {
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
-    use crate::slice::{Slice, SliceHeader, create_random_slice_payload};
+    use crate::slice::{Slice, SliceHeader, create_slice_payload_with_invalid_txs};
 
     use std::time::Instant;
 
@@ -148,7 +148,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..2 {
-            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+            let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
@@ -207,7 +207,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..1000 {
-            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+            let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
@@ -266,7 +266,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
         for i in 0..10_000 {
-            let payload = create_random_slice_payload(None, MAX_DATA_PER_SLICE);
+            let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
                 slice_index: i,
