@@ -134,6 +134,7 @@ impl From<Vec<u8>> for SlicePayload {
 
 /// Creates a [`SlicePayload`] with a random payload of desired size.
 ///
+/// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
@@ -168,6 +169,7 @@ pub fn create_slice_payload_with_invalid_txs(
 
 /// Create a [`Slice`] with a random payload of desired size.
 ///
+/// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
