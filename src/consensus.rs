@@ -439,16 +439,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use crate::consensus::{Blockstore, Pool,  wait_for_first_slot};
+    use crate::consensus::blockstore::MockBlockstore;
+    use crate::consensus::pool::MockPool;
+    use crate::Slot;
+    
     use tokio::sync::RwLock;
-
-    use crate::{
-        Slot,
-        consensus::{
-            Blockstore, Pool, blockstore::MockBlockstore, pool::MockPool, wait_for_first_slot,
-        },
-    };
+    
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn wait_for_first_slot_genesis() {
