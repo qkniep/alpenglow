@@ -88,12 +88,13 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
 enum SlotReady {
     /// Window was already skipped.
     Skip,
-    /// Pool emitted a `ParentReady` for given `BlockId`.
+    /// Slot is ready and the Pool emitted a `ParentReady` for given `BlockId`.
     Ready(BlockId),
-    /// Canonical block for previous slot seen but Pool has not emitted `ParentReady` yet.
+    /// Slot is ready as a block for the previous slot was seen but the Pool has not emitted `ParentReady` yet.
     ParentReadyNotSeen(BlockId, oneshot::Receiver<BlockId>),
 }
 
@@ -103,8 +104,7 @@ enum SlotReady {
 /// - Pool emitted the `ParentReady` event for it, OR
 /// - the blockstore has stored a block for the previous slot.
 ///
-/// If the slot became ready, returns `Some((parent_slot, parent_hash, is_parent-ready))`.
-/// Else returns `None` if the window should be skipped.
+/// See [`SlotReady`] for what is returned.
 async fn wait_for_first_slot(
     pool: Arc<RwLock<Pool>>,
     blockstore: Arc<RwLock<Blockstore>>,
