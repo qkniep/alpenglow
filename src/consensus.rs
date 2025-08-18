@@ -89,7 +89,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
 }
 
 enum SlotReady {
-    /// Window should be skipped.
+    /// Window was already skipped.
     Skip,
     /// Pool emitted a parent ready event.
     Ready(BlockId),
