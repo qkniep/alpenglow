@@ -419,7 +419,8 @@ mod tests {
     #[tokio::test]
     async fn basic() {
         let (repair_channel, other_network, _) = create_repair_instance().await;
-        repair_channel.send((Slot::new(1), [1; 32])).await.unwrap();
+        let block_to_repair = (Slot::genesis().next(), [1; 32]);
+        repair_channel.send(block_to_repair).await.unwrap();
         let Ok(msg) = other_network.receive().await else {
             panic!("failed to receive");
         };
@@ -432,8 +433,7 @@ mod tests {
         let RepairRequest::Parent(slot, hash) = req else {
             panic!("not a parent request");
         };
-        assert_eq!(slot, Slot::new(1));
-        assert_eq!(hash, [1; 32]);
+        assert_eq!((slot, hash), block_to_repair);
         let response = RepairResponse::Parent(req, Slot::genesis(), Hash::default());
         let msg = NetworkMessage::Repair(RepairMessage::Response(response));
         other_network.send(&msg, "0").await.unwrap();
