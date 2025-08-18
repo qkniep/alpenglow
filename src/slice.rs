@@ -120,7 +120,11 @@ impl From<SlicePayload> for Vec<u8> {
 
 impl From<Vec<u8>> for SlicePayload {
     fn from(payload: Vec<u8>) -> Self {
-        assert!(payload.len() <= MAX_DATA_PER_SLICE);
+        assert!(
+            payload.len() <= MAX_DATA_PER_SLICE,
+            "payload.len()={} {MAX_DATA_PER_SLICE}",
+            payload.len()
+        );
         let (ret, bytes): (SlicePayload, usize) =
             bincode::serde::decode_from_slice(&payload, bincode::config::standard()).unwrap();
         assert_eq!(payload.len(), bytes);
@@ -133,7 +137,7 @@ impl From<Vec<u8>> for SlicePayload {
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
-pub fn create_random_slice_payload(
+pub fn create_slice_payload_with_invalid_txs(
     parent: Option<(Slot, Hash)>,
     desired_size: usize,
 ) -> SlicePayload {
@@ -167,8 +171,8 @@ pub fn create_random_slice_payload(
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
-pub fn create_random_slice(desired_size: usize) -> Slice {
-    let payload = create_random_slice_payload(None, desired_size);
+pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
+    let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
         slot: Slot::new(0),
         slice_index: 0,
