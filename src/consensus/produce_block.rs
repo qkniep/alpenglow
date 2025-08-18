@@ -65,7 +65,7 @@ where
                 res
             }
         };
-        match res.expect("Unexpected error") {
+        match res.expect("unexpected error") {
             NetworkMessage::Transaction(tx) => {
                 let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
                     .expect("serialization should not panic");
