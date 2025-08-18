@@ -357,7 +357,7 @@ where
                 continue;
             }
 
-            // produce first block.
+            // produce first block
             match wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
