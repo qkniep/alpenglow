@@ -167,7 +167,7 @@ pub fn create_slice_payload_with_invalid_txs(
     payload.into()
 }
 
-/// Create a [`Slice`] with a random payload of desired size.
+/// Creates a [`Slice`] with a random payload of desired size.
 ///
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
