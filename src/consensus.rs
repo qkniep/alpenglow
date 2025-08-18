@@ -443,13 +443,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::consensus::{Blockstore, Pool,  wait_for_first_slot};
+    use crate::Slot;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
-    use crate::Slot;
-    
+    use crate::consensus::{Blockstore, Pool, SlotReady, wait_for_first_slot};
+
     use tokio::sync::RwLock;
-    
+
     use std::sync::Arc;
 
     #[tokio::test]
@@ -459,12 +459,9 @@ mod tests {
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
         let blockstore = Arc::new(RwLock::new(blockstore));
 
-        assert_eq!(
-            wait_for_first_slot(pool, blockstore, Slot::genesis())
-                .await
-                .unwrap()
-                .0,
-            Slot::genesis()
-        );
+        assert!(matches!(
+            wait_for_first_slot(pool, blockstore, Slot::genesis()).await,
+            SlotReady::Ready(_)
+        ));
     }
 }
