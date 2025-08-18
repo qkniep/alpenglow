@@ -125,6 +125,7 @@ impl<N: Network> Repair<N> {
         let h = &hex::encode(block_hash)[..8];
         debug!("repairing block {h} in slot {slot}");
         // TODO: perform actual repair
+        // HACK: magic number of 10 requests (to ensure it can handle some failures)
         for _ in 0..10 {
             self.request_parent(slot, block_hash).await.unwrap();
         }
