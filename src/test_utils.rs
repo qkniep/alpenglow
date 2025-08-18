@@ -129,7 +129,7 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
 
 /// Creates a valid [`SlicePayload`] which contains valid transactions that can  be decoded.
 ///
-/// HACK: Packs manually picked number of maximally sized transactions in the slice that results in creating the largest slice possible without going over the [`MAX_DATA_PER_SLICE`] limit.
+// HACK: Packs manually picked number of maximally sized transactions in the slice that results in creating the largest slice possible without going over the [`MAX_DATA_PER_SLICE`] limit.
 fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayload {
     let mut txs = vec![];
     for _ in 0..63 {
