@@ -189,17 +189,18 @@ where
     ) -> Self {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, mut repair_rx) = mpsc::channel(1024);
+        let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
         let blockstore: Box<dyn Blockstore + Send + Sync> =
             Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone()));
         let blockstore = Arc::new(RwLock::new(blockstore));
 
+
         let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
             epoch_info.clone(),
             votor_tx.clone(),
-            repair_tx,
+            repair_tx.clone(),
         ));
         let pool = Arc::new(RwLock::new(pool));
 
@@ -207,18 +208,15 @@ where
             Arc::clone(&blockstore),
             Arc::clone(&pool),
             repair_network,
+            (repair_tx, repair_rx),
             epoch_info.clone(),
         );
         let repair = Arc::new(repair);
 
         let r = Arc::clone(&repair);
         let _repair_handle = tokio::spawn(
-            async move {
-                while let Some((slot, hash)) = repair_rx.recv().await {
-                    r.repair_block(slot, hash).await;
-                }
-            }
-            .in_span(Span::enter_with_local_parent("repair loop")),
+            async move { r.repair_loop().await }
+                .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
         let mut votor = Votor::new(
