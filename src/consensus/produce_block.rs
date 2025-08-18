@@ -72,7 +72,7 @@ where
                 txs.push(tx);
             }
             msg => {
-                panic!("Unexpected msg: {msg:?}");
+                panic!("unexpected msg: {msg:?}");
             }
         }
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
