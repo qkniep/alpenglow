@@ -239,12 +239,12 @@ impl<N: Network> Repair<N> {
                     .blockstore
                     .read()
                     .await
-                    .get_block(slot, block_hash)
+                    .get_block(parent_slot, parent_hash)
                     .is_none()
                 {
                     self.repair_channel
                         .0
-                        .send((slot, block_hash))
+                        .send((parent_slot, parent_hash))
                         .await
                         .unwrap();
                 }
@@ -429,12 +429,11 @@ mod tests {
         let RepairMessage::Request(req) = repair_msg else {
             panic!("not a request");
         };
-        if let RepairRequest::Parent(slot, hash) = req {
-            assert_eq!(slot, Slot::new(1));
-            assert_eq!(hash, [1; 32]);
-        } else {
+        let RepairRequest::Parent(slot, hash) = req else {
             panic!("not a parent request");
         };
+        assert_eq!(slot, Slot::new(1));
+        assert_eq!(hash, [1; 32]);
         let response = RepairResponse::Parent(req, Slot::genesis(), Hash::default());
         let msg = NetworkMessage::Repair(RepairMessage::Response(response));
         other_network.send(&msg, "0").await.unwrap();
