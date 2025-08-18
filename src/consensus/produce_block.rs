@@ -128,7 +128,7 @@ where
         Ok(())
     }
 
-    /// Produces a block in the situation where we have not yet seen the Parent-Ready event.
+    /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
     ///
     /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
     pub(super) async fn produce_block_parent_not_ready(
