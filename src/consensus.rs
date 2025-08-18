@@ -121,8 +121,8 @@ async fn wait_for_first_slot(
     let mut rx = {
         let mut guard = pool.write().await;
         match guard.wait_for_parent_ready(first_slot_in_window) {
-            Either::Left((slot, hash)) => {
-                return SlotReady::Ready((slot, hash));
+            Either::Left(parent) => {
+                return SlotReady::Ready(parent);
             }
             Either::Right(rx) => rx,
         }
@@ -134,8 +134,8 @@ async fn wait_for_first_slot(
     // - notification that a later slot was finalized.
     tokio::select! {
         res = &mut rx => {
-            let (slot, hash) = res.expect("Sender dropped channel.");
-            SlotReady::Ready((slot, hash))
+            let parent = res.expect("Sender dropped channel.");
+            SlotReady::Ready(parent)
         }
 
         res = async {
@@ -148,11 +148,6 @@ async fn wait_for_first_slot(
                         .await
                         .canonical_block_hash(last_slot_in_prev_window)
                     {
-                        debug!(
-                            "optimistically building block on parent {} in slot {}",
-                            &hex::encode(hash)[..8],
-                            last_slot_in_prev_window,
-                        );
                         return Some((last_slot_in_prev_window, hash));
                     }
                     if pool.read().await.finalized_slot() >= last_slot_in_window {
