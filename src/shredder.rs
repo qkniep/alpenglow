@@ -237,7 +237,8 @@ impl Shredder for RegularShredder {
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        let slice = Slice::from_shreds(payload.into(), &shreds[0]);
+        // XXX: handle error
+        let slice = Slice::from_shreds(payload.into(), &shreds[0]).unwrap();
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
@@ -272,7 +273,8 @@ impl Shredder for CodingOnlyShredder {
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS)?;
-        let slice = Slice::from_shreds(payload.into(), &shreds[0]);
+        // XXX: handle error
+        let slice = Slice::from_shreds(payload.into(), &shreds[0]).unwrap();
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
@@ -348,7 +350,8 @@ impl Shredder for PetsShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        Ok(Slice::from_shreds(buffer.into(), &shreds[0]))
+        // XXX: handle error
+        Ok(Slice::from_shreds(buffer.into(), &shreds[0]).unwrap())
     }
 }
 
@@ -419,7 +422,8 @@ impl Shredder for AontShredder {
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
 
-        Ok(Slice::from_shreds(buffer.into(), &shreds[0]))
+        // XXX: handle error
+        Ok(Slice::from_shreds(buffer.into(), &shreds[0]).unwrap())
     }
 }
 

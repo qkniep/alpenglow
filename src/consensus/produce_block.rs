@@ -102,7 +102,7 @@ where
         is_last,
     };
     let payload = SlicePayload::new(parent, txs);
-    let slice = Slice::from_parts(header, payload, None);
+    let slice = Slice::from_parts(header, payload, None).unwrap();
     (slice, cont_prod)
 }
 

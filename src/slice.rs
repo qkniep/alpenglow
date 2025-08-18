@@ -3,34 +3,146 @@
 
 //! Defines the [`Slice`] and related data structures.
 
+use std::num::NonZeroUsize;
+
 use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
-use crate::{Slot, highest_non_zero_byte};
+use crate::{BlockId, Slot, highest_non_zero_byte};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Metadata {
+    /// Slot number this slice is part of.
+    pub slot: Slot,
+    /// Merkle root hash over all shreds in this slice.
+    pub merkle_root: Option<Hash>,
+    /// Payload bytes.
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SingleSlice {
+    pub parent: BlockId,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FirstSlice {
+    pub parent: BlockId,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MiddleSlice {
+    pub slice_index: NonZeroUsize,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MiddleSliceWithParent {
+    pub slice_index: NonZeroUsize,
+    pub parent: BlockId,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastSlice {
+    pub slice_index: NonZeroUsize,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastSliceWithParent {
+    pub slice_index: NonZeroUsize,
+    pub parent: BlockId,
+    pub metadata: Metadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Slice {
+    Single(SingleSlice),
+    First(FirstSlice),
+    Middle(MiddleSlice),
+    MiddleWithParent(MiddleSliceWithParent),
+    Last(LastSlice),
+    LastWithParent(LastSliceWithParent),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SliceType {
+    /// Block contains a single slice.
+    FirstOnly { parent: BlockId },
+    /// First slice in the block and there are more slices in the block.
+    FirstMore { parent: BlockId },
+    /// A slice in middle, parent did not switch.
+    Middle { index: NonZeroUsize },
+    /// A slice in middle and Parent switched.
+    MiddleParent {
+        parent: BlockId,
+        index: NonZeroUsize,
+    },
+    /// Parent did not switch and last.
+    Last { index: NonZeroUsize },
+    /// Parent switched and last.
+    LastParent {
+        parent: BlockId,
+        index: NonZeroUsize,
+    },
+}
+
+impl SliceType {
+    fn new(parent: Option<BlockId>, is_last: bool, index: usize) -> Option<Self> {
+        match (parent, is_last, NonZeroUsize::new(index)) {
+            (Some(parent), true, None) => Some(Self::FirstOnly { parent }),
+            (Some(parent), true, Some(index)) => Some(Self::LastParent { parent, index }),
+            (None, true, Some(index)) => Some(Self::Last { index }),
+            (Some(parent), false, None) => Some(Self::FirstMore { parent }),
+            (Some(parent), false, Some(index)) => Some(Self::MiddleParent { parent, index }),
+            (None, false, Some(index)) => Some(Self::Middle { index }),
+            // Not a valid slice if it does not contain a parent and index is 0.
+            (None, _, None) => None,
+        }
+    }
+
+    fn deconstruct(self) -> (Option<BlockId>, bool, usize) {
+        unimplemented!()
+    }
+
+    pub fn is_first(&self) -> Option<&BlockId> {
+        use SliceType::*;
+        match self {
+            FirstOnly { parent } | FirstMore { parent } => Some(parent),
+            Middle { index: _ }
+            | MiddleParent {
+                parent: _,
+                index: _,
+            }
+            | Last { index: _ }
+            | LastParent {
+                parent: _,
+                index: _,
+            } => None,
+        }
+    }
+}
 
 /// A slice is the unit of data between block and shred.
 ///
 /// It corresponds to a single batch of data that is disseminated by the leader.
 /// During shredding, a slice is turned into multiple shreds.
 /// During deshredding, multiple shreds are turned into a slice.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Slice {
-    /// Slot number this slice is part of.
-    pub slot: Slot,
-    /// Index of the slice within its slot.
-    pub slice_index: usize,
-    /// Indicates whether this is the last slice in the slot.
-    pub is_last: bool,
-    /// Merkle root hash over all shreds in this slice.
-    pub merkle_root: Option<Hash>,
-    /// If first slice in the block or parent changed due to optimistic handover,
-    /// then indicates which block is the parent of the block this slice is part of.
-    pub parent: Option<(Slot, Hash)>,
-    /// Payload bytes.
-    pub data: Vec<u8>,
-}
+// #[derive(Clone, Debug, PartialEq, Eq)]
+// pub struct Slice {
+//     /// Slot number this slice is part of.
+//     pub slot: Slot,
+//     pub slice_type: SliceType,
+//     /// Merkle root hash over all shreds in this slice.
+//     pub merkle_root: Option<Hash>,
+//     /// Payload bytes.
+//     pub data: Vec<u8>,
+// }
 
 impl Slice {
     /// Constructs a [`Slice`] from its component parts.
@@ -38,49 +150,61 @@ impl Slice {
         header: SliceHeader,
         payload: SlicePayload,
         merkle_root: Option<[u8; 32]>,
-    ) -> Self {
-        let SliceHeader {
-            slot,
-            slice_index,
-            is_last,
-        } = header;
-        let SlicePayload { parent, data } = payload;
-        Self {
-            slot,
-            slice_index,
-            is_last,
-            merkle_root,
-            parent,
-            data,
-        }
+    ) -> Option<Self> {
+        // let SliceHeader {
+        //     slot,
+        //     slice_index,
+        //     is_last,
+        // } = header;
+        // let SlicePayload { parent, data } = payload;
+        // SliceType::new(parent, is_last, slice_index).map(|slice_type| Self {
+        //     slot,
+        //     slice_type,
+        //     merkle_root,
+        //     data,
+        // })
+        unimplemented!()
     }
 
     /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
-    pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &Shred) -> Self {
-        let header = any_shred.payload().header.clone();
-        let merkle_root = Some(any_shred.merkle_root);
-        Self::from_parts(header, payload, merkle_root)
+    pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &Shred) -> Option<Self> {
+        // let header = any_shred.payload().header.clone();
+        // let merkle_root = Some(any_shred.merkle_root);
+        // Self::from_parts(header, payload, merkle_root)
+        unimplemented!()
     }
 
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
     pub(crate) fn deconstruct(self) -> (SliceHeader, SlicePayload) {
-        let Slice {
-            slot,
-            slice_index,
-            is_last,
-            merkle_root: _,
-            parent,
-            data,
-        } = self;
-        (
-            SliceHeader {
-                slot,
-                slice_index,
-                is_last,
-            },
-            SlicePayload { parent, data },
-        )
+        // let Slice {
+        //     slot,
+        //     slice_type,
+        //     merkle_root: _,
+        //     data,
+        // } = self;
+        // let (parent, is_last, slice_index) = slice_type.deconstruct();
+        // (
+        //     SliceHeader {
+        //         slot,
+        //         slice_index,
+        //         is_last,
+        //     },
+        //     SlicePayload { parent, data },
+        // )
+        unimplemented!()
+    }
+
+    pub(crate) fn parent(&self) -> Option<BlockId> {
+        unimplemented!()
+    }
+
+    pub(crate) fn is_first(&self) -> bool {
+        unimplemented!()
+    }
+
+    pub(crate) fn metadata(&self) -> &Metadata {
+        unimplemented!()
     }
 }
 
@@ -180,5 +304,5 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
         slice_index: 0,
         is_last: true,
     };
-    Slice::from_parts(header, payload, None)
+    Slice::from_parts(header, payload, None).unwrap()
 }

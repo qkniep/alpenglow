@@ -215,9 +215,9 @@ impl BlockData {
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
     /// Returns `true` if a slice was reconstructed, `false` otherwise.
-    fn try_reconstruct_slice(&mut self, slice: usize) -> bool {
-        let slice_shreds = self.shreds.get(&slice).unwrap();
-        if self.slices.contains_key(&slice) {
+    fn try_reconstruct_slice(&mut self, slice_index: usize) -> bool {
+        let slice_shreds = self.shreds.get(&slice_index).unwrap();
+        if self.slices.contains_key(&slice_index) {
             return false;
         }
         let reconstructed_slice = match RegularShredder::deshred(slice_shreds) {
@@ -228,15 +228,15 @@ impl BlockData {
                 return false;
             }
         };
-        if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index == 0 {
+        if slice_index == 0 && reconstructed_slice.is_first() {
             warn!(
                 "reconstructed slice {} in slot {} expected to contain parent",
-                slice, self.slot
+                slice_index, self.slot
             );
             return false;
         }
-        self.slices.insert(slice, reconstructed_slice);
-        trace!("reconstructed slice {} in slot {}", slice, self.slot);
+        self.slices.insert(slice_index, reconstructed_slice);
+        trace!("reconstructed slice {} in slot {}", slice_index, self.slot);
         true
     }
 
@@ -259,7 +259,7 @@ impl BlockData {
         let merkle_roots = self
             .slices
             .values()
-            .map(|s| s.merkle_root.as_ref().unwrap())
+            .map(|s| s.metadata().merkle_root.as_ref().unwrap())
             .collect::<Vec<_>>();
         let tree = MerkleTree::new(&merkle_roots);
         let block_hash = tree.get_root();
@@ -268,24 +268,26 @@ impl BlockData {
         // reconstruct block header
         let first_slice = self.slices.get(&0).unwrap();
         // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let (parent_slot, parent_hash) = first_slice.parent.unwrap();
+        let (parent_slot, parent_hash) = first_slice.parent().unwrap().clone();
 
         let mut transactions = vec![];
         for (ind, slice) in &self.slices {
-            let (mut txs, bytes_read) =
-                match bincode::serde::decode_from_slice(&slice.data, bincode::config::standard()) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        warn!("decoding slice {ind} failed with {err:?}");
-                        return None;
-                    }
-                };
-            if bytes_read != slice.data.len() {
+            let (mut txs, bytes_read) = match bincode::serde::decode_from_slice(
+                &slice.metadata().data,
+                bincode::config::standard(),
+            ) {
+                Ok(r) => r,
+                Err(err) => {
+                    warn!("decoding slice {ind} failed with {err:?}");
+                    return None;
+                }
+            };
+            if bytes_read != slice.metadata().data.len() {
                 warn!(
                     "decoding slice {}: read {} but actual length is {}",
                     ind,
                     bytes_read,
-                    slice.data.len()
+                    slice.metadata().data.len()
                 );
                 return None;
             }
@@ -320,7 +322,7 @@ mod tests {
     use super::*;
 
     fn handle_slice(slice: Slice, sk: &SecretKey) -> Vec<VotorEvent> {
-        let mut block_data = BlockData::new(slice.slot);
+        let mut block_data = BlockData::new(slice.metadata().slot);
         let shreds = RegularShredder::shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
@@ -353,7 +355,7 @@ mod tests {
 
         // manage to construct a valid block.
         let slices = create_random_block(slot, 1);
-        let (parent_slot, parent_hash) = slices[0].parent.unwrap();
+        let (parent_slot, parent_hash) = slices[0].parent().unwrap();
         let events = handle_slice(slices[0].clone(), &sk);
         assert_eq!(events.len(), 2);
         let first_shred_event = VotorEvent::FirstShred(slot);
@@ -371,10 +373,11 @@ mod tests {
 
         // do not construct a valid block when slice is invalid.
         let mut slices = create_random_block(slot, 1);
-        slices[0].parent = None;
-        let events = handle_slice(slices[0].clone(), &sk);
-        assert_eq!(events.len(), 1);
-        let first_shred_event = VotorEvent::FirstShred(slot);
-        assert_votor_events_match(events[0].clone(), first_shred_event);
+        unimplemented!()
+        // slices[0].parent = None;
+        // let events = handle_slice(slices[0].clone(), &sk);
+        // assert_eq!(events.len(), 1);
+        // let first_shred_event = VotorEvent::FirstShred(slot);
+        // assert_votor_events_match(events[0].clone(), first_shred_event);
     }
 }
