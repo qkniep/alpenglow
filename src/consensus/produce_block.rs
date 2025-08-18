@@ -9,8 +9,8 @@ use either::Either;
 use fastrace::Span;
 use log::info;
 use static_assertions::const_assert;
-use tokio::sync::oneshot;
 use tokio::pin;
+use tokio::sync::oneshot;
 
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
@@ -25,83 +25,6 @@ enum Continue {
     Stop,
 }
 
-async fn produce_slice<T>(
-    txs_receiver: &T,
-    slot: Slot,
-    slice_index: Either<(BlockId, usize), NonZeroUsize>,
-    duration_left: Duration,
-) -> (Slice, Continue)
-where
-    T: Network + Sync + Send + 'static,
-{
-    let start_time = Instant::now();
-    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
-    let (parent, slice_index) = match slice_index {
-        Either::Left((parent_block_id, slice_index)) => (Some(parent_block_id), slice_index),
-        Either::Right(ind) => (None, ind.get()),
-    };
-
-    let parent_encoded_len = bincode::serde::encode_to_vec(parent, bincode::config::standard())
-        .unwrap()
-        .len();
-
-    // Super hacky!!!  As long as the size of the txs vec fits in a single byte,
-    // bincode encoding seems to take a single byte so account for that here.
-    assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
-    let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len)
-        .unwrap()
-        .checked_sub(1)
-        .unwrap();
-    let mut txs = Vec::new();
-
-    let cont_prod = loop {
-        let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
-        let res = tokio::select! {
-            () = tokio::time::sleep(sleep_duration) => {
-                break Continue::Stop;
-            }
-            res = txs_receiver.receive() => {
-                res
-            }
-        };
-        match res.expect("unexpected error") {
-            NetworkMessage::Transaction(tx) => {
-                let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-                    .expect("serialization should not panic");
-                slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
-                txs.push(tx);
-            }
-            msg => {
-                panic!("unexpected msg: {msg:?}");
-            }
-        }
-        if slice_capacity_left < MAX_TRANSACTION_SIZE {
-            let duration_left = duration_left.saturating_sub(Instant::now() - start_time);
-            break Continue::Continue {
-                left: duration_left,
-            };
-        }
-    };
-
-    // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
-    let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
-        .expect("serialization should not panic");
-
-    let is_last = match &cont_prod {
-        Continue::Stop => true,
-        Continue::Continue { .. } => false,
-    };
-    let header = SliceHeader {
-        slot,
-        slice_index,
-        is_last,
-    };
-    let payload = SlicePayload::new(parent, txs);
-    let slice = Slice::from_parts(header, payload, None);
-    (slice, cont_prod)
-}
-
 impl<A, D, R, T> Alpenglow<A, D, R, T>
 where
     A: All2All + Sync + Send + 'static,
@@ -109,26 +32,6 @@ where
     R: Network + Sync + Send + 'static,
     T: Network + Sync + Send + 'static,
 {
-    async fn shred_and_disseminate(&self, slice: Slice) -> Result<()> {
-        let slice_slot = slice.slot;
-        let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
-        for s in shreds {
-            self.disseminator.send(&s).await?;
-            // PERF: move expensive add_shred() call out of block production
-            let block = self
-                .blockstore
-                .write()
-                .await
-                .add_shred_from_disseminator(s)
-                .await;
-            if let Ok(Some((slot, block_info))) = block {
-                assert_eq!(slot, slice_slot);
-                self.pool.write().await.add_block(slot, block_info).await;
-            }
-        }
-        Ok(())
-    }
-
     /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
     ///
     /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
@@ -233,15 +136,112 @@ where
         }
         Ok(())
     }
+
+    async fn shred_and_disseminate(&self, slice: Slice) -> Result<()> {
+        let slice_slot = slice.slot;
+        let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
+        for s in shreds {
+            self.disseminator.send(&s).await?;
+            // PERF: move expensive add_shred() call out of block production
+            let block = self
+                .blockstore
+                .write()
+                .await
+                .add_shred_from_disseminator(s)
+                .await;
+            if let Ok(Some((slot, block_info))) = block {
+                assert_eq!(slot, slice_slot);
+                self.pool.write().await.add_block(slot, block_info).await;
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn produce_slice<T>(
+    txs_receiver: &T,
+    slot: Slot,
+    slice_index: Either<(BlockId, usize), NonZeroUsize>,
+    duration_left: Duration,
+) -> (Slice, Continue)
+where
+    T: Network + Sync + Send + 'static,
+{
+    let start_time = Instant::now();
+    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
+    let (parent, slice_index) = match slice_index {
+        Either::Left((parent_block_id, slice_index)) => (Some(parent_block_id), slice_index),
+        Either::Right(ind) => (None, ind.get()),
+    };
+
+    let parent_encoded_len = bincode::serde::encode_to_vec(parent, bincode::config::standard())
+        .unwrap()
+        .len();
+
+    // Super hacky!!!  As long as the size of the txs vec fits in a single byte,
+    // bincode encoding seems to take a single byte so account for that here.
+    assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
+    let mut slice_capacity_left = MAX_DATA_PER_SLICE
+        .checked_sub(parent_encoded_len)
+        .unwrap()
+        .checked_sub(1)
+        .unwrap();
+    let mut txs = Vec::new();
+
+    let cont_prod = loop {
+        let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
+        let res = tokio::select! {
+            () = tokio::time::sleep(sleep_duration) => {
+                break Continue::Stop;
+            }
+            res = txs_receiver.receive() => {
+                res
+            }
+        };
+        match res.expect("unexpected error") {
+            NetworkMessage::Transaction(tx) => {
+                let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+                    .expect("serialization should not panic");
+                slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
+                txs.push(tx);
+            }
+            msg => {
+                panic!("unexpected msg: {msg:?}");
+            }
+        }
+        if slice_capacity_left < MAX_TRANSACTION_SIZE {
+            let duration_left = duration_left.saturating_sub(Instant::now() - start_time);
+            break Continue::Continue {
+                left: duration_left,
+            };
+        }
+    };
+
+    // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
+    let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
+        .expect("serialization should not panic");
+
+    let is_last = match &cont_prod {
+        Continue::Stop => true,
+        Continue::Continue { .. } => false,
+    };
+    let header = SliceHeader {
+        slot,
+        slice_index,
+        is_last,
+    };
+    let payload = SlicePayload::new(parent, txs);
+    let slice = Slice::from_parts(header, payload, None);
+    (slice, cont_prod)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::Transaction;
     use crate::crypto::Hash;
     use crate::network::UdpNetwork;
-    use crate::Transaction;
 
     use std::time::Duration;
 
