@@ -77,7 +77,7 @@ where
                 }
             };
 
-            let is_last = slice_index.is_last() || maybe_duration.is_none();
+            let is_last = slice_index.is_max() || maybe_duration.is_none();
             if is_last && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
                 // TODO: implement optimistic handover.
@@ -124,7 +124,7 @@ where
             };
             let (payload, maybe_duration) =
                 produce_slice_payload(&self.txs_receiver, parent, duration_left).await;
-            let is_last = slice_index.is_last() || maybe_duration.is_none();
+            let is_last = slice_index.is_max() || maybe_duration.is_none();
             let header = SliceHeader {
                 slot,
                 slice_index,

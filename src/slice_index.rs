@@ -49,8 +49,8 @@ impl SliceIndex {
         self.0 == 0
     }
 
-    /// Returns `true` if self is the last, i.e. `MAX_SLICES_PER_BLOCK - 1`, SliceIndex.
-    pub(crate) fn is_last(&self) -> bool {
+    /// Returns `true` if self is the max possible, i.e. `MAX_SLICES_PER_BLOCK - 1`, SliceIndex.
+    pub(crate) fn is_max(&self) -> bool {
         self.0 == MAX_SLICES_PER_BLOCK - 1
     }
 
