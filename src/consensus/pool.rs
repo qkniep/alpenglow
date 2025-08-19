@@ -196,11 +196,17 @@ impl PoolImpl {
             Cert::FastFinal(_) => {
                 info!("fast finalized slot {slot}");
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
+                // TODO: get actual parent here
+                let parent = (Slot::genesis(), Hash::default());
+                self.parent_ready_tracker.mark_finalized(slot, parent);
                 self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
+                // TODO: get actual parent here
+                let parent = (Slot::genesis(), Hash::default());
+                self.parent_ready_tracker.mark_finalized(slot, parent);
                 self.prune();
             }
         }
@@ -295,6 +301,17 @@ impl PoolImpl {
     /// Gives the current tip of the chain for block production.
     pub fn get_tip(&self) -> Slot {
         self.highest_notarized_fallback_slot
+    }
+
+    /// Returns the hash of the notarized block for the given slot, if any.
+    pub fn get_notarized_block(&self, slot: Slot) -> Option<Hash> {
+        self.slot_states.get(&slot).and_then(|state| {
+            state
+                .certificates
+                .notar
+                .as_ref()
+                .map(|cert| *cert.block_hash())
+        })
     }
 
     /// Returns `true` iff the pool contains a (fast) finalization certificate for the slot.

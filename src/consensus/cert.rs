@@ -214,6 +214,11 @@ impl NotarCert {
         let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
+
+    /// Returns the block hash of the notarized block.
+    pub const fn block_hash(&self) -> &Hash {
+        &self.block_hash
+    }
 }
 
 /// A notar-fallback certificate is an aggregate of a quorum of notar(-fallback) votes.
@@ -309,6 +314,7 @@ impl NotarFallbackCert {
         sig1_valid && sig2_valid
     }
 
+    /// Returns the block hash of the notarized-fallback block.
     pub const fn block_hash(&self) -> &Hash {
         &self.block_hash
     }
