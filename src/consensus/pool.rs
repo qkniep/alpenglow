@@ -210,12 +210,16 @@ impl PoolImpl {
         self.votor_event_channel.send(event).await.unwrap();
     }
 
+    /// Mutably accesses the [`SlotState`] for the given `slot`.
+    ///
+    /// Creates a new [`SlotState`] if none exists yet.
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
         self.slot_states
             .entry(slot)
             .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 
+    /// Fetches all certficates for the given `slot` from Pool.
     fn get_certs(&self, slot: Slot) -> Vec<Cert> {
         let mut certs = Vec::new();
         for (_, slot_state) in self.slot_states.range(slot..) {
