@@ -24,7 +24,7 @@ impl SliceIndex {
         self.0
     }
 
-    /// Returns the first i.e. smallest SliceIndex.
+    /// Returns the first, i.e. smallest, `SliceIndex`.
     pub(crate) fn first() -> Self {
         Self(0)
     }
