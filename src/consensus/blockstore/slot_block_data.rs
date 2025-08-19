@@ -14,8 +14,7 @@ use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
-use crate::slice::Slice;
-use crate::slice_index::SliceIndex;
+use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
 
 use super::BlockInfo;

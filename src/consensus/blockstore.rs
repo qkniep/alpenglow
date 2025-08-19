@@ -15,7 +15,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::crypto::Hash;
 use crate::shredder::Shred;
-use crate::slice_index::SliceIndex;
+use crate::types::SliceIndex;
 use crate::{Block, Slot};
 
 use super::epoch_info::EpochInfo;

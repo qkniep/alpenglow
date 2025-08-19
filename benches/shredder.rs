@@ -5,7 +5,8 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
     AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shred, Shredder,
 };
-use alpenglow::slice::{Slice, create_slice_with_invalid_txs};
+use alpenglow::types::Slice;
+use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::BytesCount;
 
 fn main() {

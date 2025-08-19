@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
-use crate::slice_index::SliceIndex;
+use crate::types::SliceIndex;
 use crate::{Slot, highest_non_zero_byte};
 
 /// A slice is the unit of data between block and shred.

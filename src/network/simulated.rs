@@ -107,8 +107,8 @@ mod tests {
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
-    use crate::slice::{Slice, SliceHeader, create_slice_payload_with_invalid_txs};
-    use crate::slice_index::SliceIndex;
+    use crate::types::slice::create_slice_payload_with_invalid_txs;
+    use crate::types::{Slice, SliceHeader, SliceIndex};
 
     use std::time::Instant;
 

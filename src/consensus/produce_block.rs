@@ -14,8 +14,7 @@ use tokio::sync::oneshot;
 use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use crate::slice::{Slice, SliceHeader, SlicePayload};
-use crate::slice_index::SliceIndex;
+use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
 use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
 

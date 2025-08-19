@@ -57,7 +57,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
-    use crate::slice::create_slice_with_invalid_txs;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     use tokio::{sync::Mutex, task};
 

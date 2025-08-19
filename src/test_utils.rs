@@ -9,8 +9,7 @@ use crate::{
     crypto::{Hash, aggsig::SecretKey, signature},
     network::{SimulatedNetwork, simulated::SimulatedNetworkCore},
     shredder::MAX_DATA_PER_SLICE,
-    slice::{Slice, SliceHeader, SlicePayload},
-    slice_index::SliceIndex,
+    types::{Slice, SliceHeader, SliceIndex, SlicePayload},
 };
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {

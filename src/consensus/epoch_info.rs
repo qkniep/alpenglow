@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Slot, Stake, ValidatorId, ValidatorInfo, slot::SLOTS_PER_WINDOW};
+use crate::{Slot, Stake, ValidatorId, ValidatorInfo, types::SLOTS_PER_WINDOW};
 
 /// Epoch-specfic validator information.
 #[derive(Clone, Debug)]

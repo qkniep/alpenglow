@@ -126,8 +126,8 @@ mod tests {
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
-    use crate::slice::create_slice_with_invalid_txs;
-    use crate::slice_index::SliceIndex;
+    use crate::types::SliceIndex;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     use static_assertions::const_assert;
 

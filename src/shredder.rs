@@ -28,7 +28,7 @@ use thiserror::Error;
 
 use crate::crypto::signature::{PublicKey, SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
-use crate::slice::{Slice, SliceHeader};
+use crate::types::{Slice, SliceHeader};
 
 use reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
@@ -470,7 +470,7 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 mod tests {
     use color_eyre::Result;
 
-    use crate::slice::create_slice_with_invalid_txs;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     use super::*;
 

@@ -13,11 +13,9 @@ pub mod logging;
 pub mod network;
 pub mod repair;
 pub mod shredder;
-pub mod slice;
-pub mod slice_index;
-pub mod slot;
 #[cfg(test)]
 pub mod test_utils;
+pub mod types;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};
@@ -27,8 +25,9 @@ pub use consensus::Alpenglow;
 pub use consensus::votor::VotorEvent;
 use crypto::{Hash, aggsig, signature};
 pub use disseminator::Disseminator;
-pub use slot::Slot;
 pub use validator::Validator;
+
+use crate::types::Slot;
 
 /// Validator ID number type.
 pub type ValidatorId = u64;

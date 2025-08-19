@@ -22,7 +22,7 @@ use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
-use crate::slice_index::SliceIndex;
+use crate::types::SliceIndex;
 use crate::{BlockId, Slot};
 
 /// Message types for the repair sub-protocol.
