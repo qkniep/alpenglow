@@ -265,7 +265,7 @@ mod tests {
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
         assert!(maybe_duration.is_none());
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty vec takes 1 byte.
+        // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
     }
 
