@@ -256,7 +256,7 @@ mod tests {
     #[tokio::test]
     async fn produce_slice_empty_slices() {
         let txs_receiver = UdpNetwork::new_with_any_port();
-        let duration_left = Duration::from_micros(1);
+        let duration_left = Duration::from_micros(0);
 
         let parent = None;
         let (payload, maybe_duration) =
