@@ -46,13 +46,13 @@ impl Default for ParentReadyTracker {
 }
 
 impl ParentReadyTracker {
-    /// Marks the given block as notar-fallback.
+    /// Marks the given block as notarized-fallback.
     ///
     /// Returns a list of any newly connected parents.
     /// All of these will have the given block ID as the parent.
     pub fn mark_notar_fallback(&mut self, id: BlockId) -> Vec<(Slot, BlockId)> {
         let (slot, hash) = id;
-        let state = self.0.entry(slot).or_default();
+        let state = self.slot_state(slot);
         if state.notar_fallbacks.contains(&hash) {
             return Vec::new();
         }
@@ -61,7 +61,7 @@ impl ParentReadyTracker {
         // add this block as valid parent to any skip-connected future windows
         let mut newly_certified = Vec::new();
         for slot in slot.future_slots() {
-            let state = self.0.entry(slot).or_default();
+            let state = self.slot_state(slot);
             if slot.is_start_of_window() {
                 state.add_to_ready(id);
                 newly_certified.push((slot, id));
@@ -80,8 +80,7 @@ impl ParentReadyTracker {
     ///
     /// This should only ever be called once for any specific slot!
     pub fn mark_skipped(&mut self, slot: Slot) -> Vec<(Slot, BlockId)> {
-        let state = self.0.entry(slot).or_default();
-        state.skip = true;
+        self.slot_state(slot).skip = true;
 
         // get newly connected future windows
         let mut future_windows = SmallVec::<[Slot; 1]>::new();
@@ -89,8 +88,7 @@ impl ParentReadyTracker {
             if slot.is_start_of_window() {
                 future_windows.push(slot);
             }
-            let state = self.0.entry(slot).or_default();
-            if !state.skip {
+            if !self.slot_state(slot).skip {
                 break;
             }
         }
@@ -99,7 +97,7 @@ impl ParentReadyTracker {
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
 
         for s in slot.slots_in_window().filter(|s| *s <= slot).rev() {
-            let state = self.0.entry(s).or_default();
+            let state = self.slot_state(s);
             if s < slot {
                 for nf in &state.notar_fallbacks {
                     potential_parents.push((s, *nf));
@@ -115,7 +113,7 @@ impl ParentReadyTracker {
         // add these as valid parents to future windows
         let mut newly_certified = Vec::new();
         for first_slot in future_windows {
-            let state = self.0.entry(first_slot).or_default();
+            let state = self.slot_state(first_slot);
             for p in potential_parents.iter() {
                 state.add_to_ready(*p);
             }
@@ -144,6 +142,13 @@ impl ParentReadyTracker {
     ) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         let state = self.0.entry(slot).or_default();
         state.wait_for_parent_ready()
+    }
+
+    /// Mutably accesses the [`ParentReadyState`] for the given `slot`.
+    ///
+    /// Initializes the state with [`Default`] if necessary.
+    fn slot_state(&mut self, slot: Slot) -> &mut ParentReadyState {
+        self.0.entry(slot).or_default()
     }
 }
 
