@@ -136,7 +136,7 @@ where
     /// Shreds and disseminates the slice payload.
     ///
     /// Returns Ok(Either::Left(hash of the block)) if this is the last slice.
-    /// Returns Ok(Either::Right(duration left in block)) if this is not the last slice.
+    /// Returns Ok(Either::Right(duration left in slot)) if this is not the last slice.
     async fn shred_and_disseminate(
         &self,
         slice_index: usize,
