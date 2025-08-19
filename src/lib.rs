@@ -14,6 +14,7 @@ pub mod network;
 pub mod repair;
 pub mod shredder;
 pub mod slice;
+pub mod slice_index;
 pub mod slot;
 #[cfg(test)]
 pub mod test_utils;
@@ -39,8 +40,6 @@ pub type BlockId = (Slot, Hash);
 const MAX_TRANSACTION_SIZE: usize = 512;
 
 const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
-
-const MAX_SLICES_PER_BLOCK: usize = 1024;
 
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]

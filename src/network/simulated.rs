@@ -108,6 +108,7 @@ mod tests {
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
     use crate::slice::{Slice, SliceHeader, create_slice_payload_with_invalid_txs};
+    use crate::slice_index::SliceIndex;
 
     use std::time::Instant;
 
@@ -151,7 +152,7 @@ mod tests {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: i,
+                slice_index: SliceIndex::new(i),
                 is_last: i == 1,
             };
             let slice = Slice::from_parts(header, payload, None);
@@ -210,7 +211,7 @@ mod tests {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: i,
+                slice_index: SliceIndex::new(i),
                 is_last: i == 999,
             };
             let slice = Slice::from_parts(header, payload, None);
@@ -269,7 +270,7 @@ mod tests {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: i,
+                slice_index: SliceIndex::new(i),
                 is_last: i == 9999,
             };
             let slice = Slice::from_parts(header, payload, None);

@@ -10,6 +10,7 @@ use crate::{
     network::{SimulatedNetwork, simulated::SimulatedNetworkCore},
     shredder::MAX_DATA_PER_SLICE,
     slice::{Slice, SliceHeader, SlicePayload},
+    slice_index::SliceIndex,
 };
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
@@ -66,7 +67,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         let payload = create_random_slice_payload_valid_txs(parent);
         let header = SliceHeader {
             slot,
-            slice_index,
+            slice_index: SliceIndex::new(slice_index),
             is_last: slice_index == num_slices - 1,
         };
         slices.push(Slice::from_parts(header, payload, None));

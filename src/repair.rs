@@ -22,6 +22,7 @@ use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::slice_index::SliceIndex;
 use crate::{BlockId, Slot};
 
 /// Message types for the repair sub-protocol.
@@ -39,9 +40,9 @@ pub enum RepairRequest {
     /// Request for the total number of slices in block with a given hash.
     SliceCount(Slot, Hash),
     /// Request for the root hash of a slice, identified by block hash and slice index.
-    SliceRoot(Slot, Hash, usize),
+    SliceRoot(Slot, Hash, SliceIndex),
     /// Request for shred, identified by block hash, slice index and shred index.
-    Shred(Slot, Hash, usize, usize),
+    Shred(Slot, Hash, SliceIndex, usize),
     // TODO: remove or replace with variant that includes proof
     Parent(Slot, Hash),
 }
@@ -153,7 +154,7 @@ impl<N: Network> Repair<N> {
                 RepairResponse::SliceCount(request, k)
             }
             RepairRequest::SliceRoot(_, _, slice) => {
-                let shred_index = slice * TOTAL_SHREDS;
+                let shred_index = slice.inner() * TOTAL_SHREDS;
                 let Some(shred) = blockstore.get_shred(slot, slice, shred_index) else {
                     return Ok(());
                 };
@@ -284,7 +285,7 @@ impl<N: Network> Repair<N> {
         &self,
         slot: Slot,
         hash: Hash,
-        slice: usize,
+        slice: SliceIndex,
     ) -> Result<(), NetworkError> {
         let req = RepairRequest::SliceRoot(slot, hash, slice);
         self.send_request(req).await
@@ -294,7 +295,7 @@ impl<N: Network> Repair<N> {
         &self,
         slot: Slot,
         hash: Hash,
-        slice: usize,
+        slice: SliceIndex,
         shred: usize,
     ) -> Result<(), NetworkError> {
         let req = RepairRequest::Shred(slot, hash, slice, shred);

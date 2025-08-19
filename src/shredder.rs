@@ -174,8 +174,8 @@ pub struct ShredPayload {
 impl ShredPayload {
     /// Returns the index of this shred within the entire slot.
     #[must_use]
-    pub const fn index_in_slot(&self) -> usize {
-        self.header.slice_index * DATA_SHREDS + self.index_in_slice
+    pub fn index_in_slot(&self) -> usize {
+        self.header.slice_index.inner() * DATA_SHREDS + self.index_in_slice
     }
 }
 

@@ -15,11 +15,9 @@ use crate::crypto::Hash;
 use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
+use crate::slice_index::SliceIndex;
 use crate::{All2All, Disseminator, Slot, network::Network};
-use crate::{
-    BlockId, MAX_SLICES_PER_BLOCK, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE,
-    highest_non_zero_byte,
-};
+use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
 
 use super::{Alpenglow, DELTA_BLOCK};
 
@@ -51,8 +49,8 @@ where
         );
 
         let mut duration_left = DELTA_BLOCK;
-        for slice_index in 0..MAX_SLICES_PER_BLOCK {
-            let parent = if slice_index == 0 {
+        for slice_index in SliceIndex::all() {
+            let parent = if slice_index.is_first() {
                 Some(parent_block_id)
             } else {
                 None
@@ -79,7 +77,7 @@ where
                 }
             };
 
-            let is_last = slice_index == MAX_SLICES_PER_BLOCK - 1 || maybe_duration.is_none();
+            let is_last = slice_index.is_last() || maybe_duration.is_none();
             if is_last && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
                 // TODO: implement optimistic handover.
@@ -118,15 +116,15 @@ where
         );
 
         let mut duration_left = DELTA_BLOCK;
-        for slice_index in 0.. {
-            let parent = if slice_index == 0 {
+        for slice_index in SliceIndex::all() {
+            let parent = if slice_index.is_first() {
                 Some(parent_block_id)
             } else {
                 None
             };
             let (payload, maybe_duration) =
                 produce_slice_payload(&self.txs_receiver, parent, duration_left).await;
-            let is_last = slice_index == MAX_SLICES_PER_BLOCK - 1 || maybe_duration.is_none();
+            let is_last = slice_index.is_last() || maybe_duration.is_none();
             let header = SliceHeader {
                 slot,
                 slice_index,
