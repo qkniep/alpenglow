@@ -40,6 +40,8 @@ const MAX_TRANSACTION_SIZE: usize = 512;
 
 const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
 
+const MAX_SLICES_PER_BLOCK: usize = 1024;
+
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {

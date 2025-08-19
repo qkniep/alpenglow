@@ -1,7 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
 use color_eyre::Result;
@@ -17,14 +16,12 @@ use crate::network::NetworkMessage;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::slice::{Slice, SliceHeader, SlicePayload};
 use crate::{All2All, Disseminator, Slot, network::Network};
-use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
+use crate::{
+    BlockId, MAX_SLICES_PER_BLOCK, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE,
+    highest_non_zero_byte,
+};
 
 use super::{Alpenglow, DELTA_BLOCK};
-
-enum Continue {
-    Continue { left: Duration },
-    Stop,
-}
 
 impl<A, D, R, T> Alpenglow<A, D, R, T>
 where
@@ -53,17 +50,18 @@ where
             parent_slot,
         );
 
-        let mut sleep_duration = DELTA_BLOCK;
-        for i in 0.. {
-            let slice_index = match NonZeroUsize::new(i) {
-                None => Either::Left((parent_block_id, 0)),
-                Some(ind) => Either::Right(ind),
+        let mut duration_left = DELTA_BLOCK;
+        for slice_index in 0..MAX_SLICES_PER_BLOCK {
+            let parent = if slice_index == 0 {
+                Some(parent_block_id)
+            } else {
+                None
             };
 
             // If we have not yet received the `ParentReady` event, wait for it concurrently while producing the next slice.
             let produce_slice_future =
-                produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration);
-            let (slice, cont_prod) = if parent_ready_receiver.is_terminated() {
+                produce_slice_payload(&self.txs_receiver, parent, duration_left);
+            let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
                 pin!(produce_slice_future);
@@ -81,32 +79,20 @@ where
                 }
             };
 
-            if let Continue::Stop = &cont_prod
-                && !parent_ready_receiver.is_terminated()
-            {
+            let is_last = slice_index == MAX_SLICES_PER_BLOCK - 1 || maybe_duration.is_none();
+            if is_last && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
                 // TODO: implement optimistic handover.
                 assert_eq!(new_slot, parent_slot);
                 assert_eq!(new_hash, parent_hash);
             }
 
-            if i == 0 {
-                assert!(slice.parent.is_some());
-            }
-
-            let is_last = slice.is_last;
-            let maybe_block_hash = self.shred_and_disseminate(slice).await?;
-            match cont_prod {
-                Continue::Stop => {
-                    assert!(is_last);
-                    let block_hash = maybe_block_hash.unwrap();
-                    return Ok((slot, block_hash));
-                }
-                Continue::Continue { left } => {
-                    assert!(!is_last);
-                    assert!(maybe_block_hash.is_none());
-                    sleep_duration = left;
-                }
+            match self
+                .shred_and_disseminate(slice_index, slot, payload, maybe_duration)
+                .await?
+            {
+                Either::Left(block_hash) => return Ok((slot, block_hash)),
+                Either::Right(duration) => duration_left = duration,
             }
         }
         unreachable!()
@@ -126,45 +112,46 @@ where
             parent_slot,
         );
 
-        let mut sleep_duration = DELTA_BLOCK;
-        for i in 0.. {
-            let slice_index = if i == 0 {
-                Either::Left((parent_block_id, 0))
+        let mut duration_left = DELTA_BLOCK;
+        for slice_index in 0.. {
+            let parent = if slice_index == 0 {
+                Some(parent_block_id)
             } else {
-                Either::Right(NonZeroUsize::new(i).unwrap())
+                None
             };
-            let (slice, cont_prod) =
-                produce_slice(&self.txs_receiver, slot, slice_index, sleep_duration).await;
-            if i == 0 {
-                assert!(slice.parent.is_some());
-            }
+            let (payload, maybe_duration) =
+                produce_slice_payload(&self.txs_receiver, parent, duration_left).await;
 
-            let is_last = slice.is_last;
-            let maybe_block_hash = self.shred_and_disseminate(slice).await?;
-            match cont_prod {
-                Continue::Stop => {
-                    assert!(is_last);
-                    let block_hash = maybe_block_hash.unwrap();
-                    return Ok((slot, block_hash));
-                }
-                Continue::Continue { left } => {
-                    assert!(!is_last);
-                    assert!(maybe_block_hash.is_none());
-                    sleep_duration = left;
-                }
+            match self
+                .shred_and_disseminate(slice_index, slot, payload, maybe_duration)
+                .await?
+            {
+                Either::Left(block_hash) => return Ok((slot, block_hash)),
+                Either::Right(duration) => duration_left = duration,
             }
         }
         unreachable!()
     }
 
-    /// Shreds and disseminates the slice.
+    /// Shreds and disseminates the slice payload.
     ///
-    /// Returns Ok(Some(Hash)) if slice.is_last == true.
-    /// Returns Ok(None) if slice.is_last == false.
-    async fn shred_and_disseminate(&self, slice: Slice) -> Result<Option<Hash>> {
+    /// Returns Ok(Either::Left(hash of the block)) if this is the last slice.
+    /// Returns Ok(Either::Right(duration left in block)) if this is not the last slice.
+    async fn shred_and_disseminate(
+        &self,
+        slice_index: usize,
+        slot: Slot,
+        payload: SlicePayload,
+        maybe_duration: Option<Duration>,
+    ) -> Result<Either<Hash, Duration>> {
+        let is_last = slice_index == MAX_SLICES_PER_BLOCK - 1 || maybe_duration.is_none();
+        let header = SliceHeader {
+            is_last,
+            slot,
+            slice_index,
+        };
+        let slice = Slice::from_parts(header, payload, None);
         let mut maybe_block_hash = None;
-        let slice_slot = slice.slot;
-        let is_last = slice.is_last;
         let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
         for s in shreds {
             self.disseminator.send(&s).await?;
@@ -175,36 +162,32 @@ where
                 .await
                 .add_shred_from_disseminator(s)
                 .await;
-            if let Ok(Some((slot, block_info))) = block {
-                assert_eq!(slot, slice_slot);
+            if let Ok(Some((block_slot, block_info))) = block {
+                assert_eq!(block_slot, slot);
                 maybe_block_hash = Some(block_info.hash);
                 self.pool.write().await.add_block(slot, block_info).await;
             }
         }
-        if is_last {
-            assert!(maybe_block_hash.is_some());
+        let ret = if is_last {
+            Either::Left(maybe_block_hash.unwrap())
         } else {
             assert!(maybe_block_hash.is_none());
-        }
-        Ok(maybe_block_hash)
+            Either::Right(maybe_duration.unwrap())
+        };
+        Ok(ret)
     }
 }
 
-async fn produce_slice<T>(
+async fn produce_slice_payload<T>(
     txs_receiver: &T,
-    slot: Slot,
-    slice_index: Either<(BlockId, usize), NonZeroUsize>,
+    parent: Option<BlockId>,
     duration_left: Duration,
-) -> (Slice, Continue)
+) -> (SlicePayload, Option<Duration>)
 where
     T: Network + Sync + Send + 'static,
 {
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
-    let (parent, slice_index) = match slice_index {
-        Either::Left((parent_block_id, slice_index)) => (Some(parent_block_id), slice_index),
-        Either::Right(ind) => (None, ind.get()),
-    };
 
     let parent_encoded_len = bincode::serde::encode_to_vec(parent, bincode::config::standard())
         .unwrap()
@@ -220,11 +203,11 @@ where
         .unwrap();
     let mut txs = Vec::new();
 
-    let cont_prod = loop {
+    let ret = loop {
         let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
         let res = tokio::select! {
             () = tokio::time::sleep(sleep_duration) => {
-                break Continue::Stop;
+                break None;
             }
             res = txs_receiver.receive() => {
                 res
@@ -243,28 +226,15 @@ where
         }
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
             let duration_left = duration_left.saturating_sub(Instant::now() - start_time);
-            break Continue::Continue {
-                left: duration_left,
-            };
+            break Some(duration_left);
         }
     };
 
     // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
-
-    let is_last = match &cont_prod {
-        Continue::Stop => true,
-        Continue::Continue { .. } => false,
-    };
-    let header = SliceHeader {
-        slot,
-        slice_index,
-        is_last,
-    };
     let payload = SlicePayload::new(parent, txs);
-    let slice = Slice::from_parts(header, payload, None);
-    (slice, cont_prod)
+    (payload, ret)
 }
 
 #[cfg(test)]
@@ -280,64 +250,23 @@ mod tests {
     #[tokio::test]
     async fn produce_slice_empty_slices() {
         let txs_receiver = UdpNetwork::new_with_any_port();
-        let sleep_duration = Duration::from_micros(1);
-        let slot = Slot::new(1);
-        // setting != 0 so that parent info is not included in slice
-        let slice_index = 123;
-        let (slice, cont) = produce_slice(
-            &txs_receiver,
-            slot,
-            Either::Right(NonZeroUsize::new(slice_index).unwrap()),
-            sleep_duration,
-        )
-        .await;
-        match cont {
-            Continue::Continue { .. } => panic!("Should not happen"),
-            Continue::Stop => {
-                let Slice {
-                    slot,
-                    slice_index,
-                    is_last,
-                    merkle_root,
-                    parent,
-                    data,
-                } = slice;
-                assert_eq!(slot, slot);
-                assert_eq!(slice_index, slice_index);
-                assert!(is_last);
-                assert!(merkle_root.is_none());
-                assert!(parent.is_none());
-                assert_eq!(data.len(), 1);
-            }
-        }
+        let duration_left = Duration::from_micros(1);
 
-        let parent_block_id = (slot.prev(), Hash::default());
-        let (slice, cont) = produce_slice(
-            &txs_receiver,
-            slot,
-            Either::Left((parent_block_id, 0)),
-            sleep_duration,
-        )
-        .await;
-        match cont {
-            Continue::Continue { .. } => panic!("Should not happen"),
-            Continue::Stop => {
-                let Slice {
-                    slot,
-                    slice_index,
-                    is_last,
-                    merkle_root,
-                    parent,
-                    data,
-                } = slice;
-                assert_eq!(slot, slot);
-                assert_eq!(slice_index, 0);
-                assert!(is_last);
-                assert!(merkle_root.is_none());
-                assert_eq!(parent, Some(parent_block_id));
-                assert_eq!(data.len(), 1);
-            }
-        }
+        let parent = None;
+        let (payload, maybe_duration) =
+            produce_slice_payload(&txs_receiver, parent, duration_left).await;
+        assert!(maybe_duration.is_none());
+        assert_eq!(payload.parent, parent);
+        // bin encoding an empty vec takes 1 byte.
+        assert_eq!(payload.data.len(), 1);
+
+        let parent = Some((Slot::genesis(), Hash::default()));
+        let (payload, maybe_duration) =
+            produce_slice_payload(&txs_receiver, parent, duration_left).await;
+        assert!(maybe_duration.is_none());
+        assert_eq!(payload.parent, parent);
+        // bin encoding an empty vec takes 1 byte.
+        assert_eq!(payload.data.len(), 1);
     }
 
     #[tokio::test]
@@ -346,9 +275,7 @@ mod tests {
         let addr = format!("127.0.0.1:{}", txs_receiver.port());
         let txs_sender = UdpNetwork::new_with_any_port();
         // long enough duration so hopefully doesn't fire while collecting txs
-        let sleep_duration = Duration::from_secs(100);
-        let slot = Slot::new(1);
-        let slice_index = 123;
+        let duration_left = Duration::from_secs(100);
 
         tokio::spawn(async move {
             for i in 0..255 {
@@ -358,32 +285,12 @@ mod tests {
             }
         });
 
-        let (slice, cont) = produce_slice(
-            &txs_receiver,
-            slot,
-            Either::Right(NonZeroUsize::new(slice_index).unwrap()),
-            sleep_duration,
-        )
-        .await;
-        match cont {
-            Continue::Stop => panic!("Should not happen"),
-            Continue::Continue { .. } => {
-                let Slice {
-                    slot,
-                    slice_index,
-                    is_last,
-                    merkle_root,
-                    parent,
-                    data,
-                } = slice;
-                assert_eq!(slot, slot);
-                assert_eq!(slice_index, slice_index);
-                assert!(!is_last);
-                assert!(merkle_root.is_none());
-                assert!(parent.is_none());
-                assert!(data.len() <= MAX_DATA_PER_SLICE);
-                assert!(data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
-            }
-        }
+        let parent = None;
+        let (payload, maybe_duration) =
+            produce_slice_payload(&txs_receiver, parent, duration_left).await;
+        assert!(maybe_duration.is_some());
+        assert_eq!(payload.parent, parent);
+        assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
+        assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
     }
 }
