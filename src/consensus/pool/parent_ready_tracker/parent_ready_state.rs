@@ -15,8 +15,10 @@ enum IsReady {
     ///
     /// Might have someone waiting to hear when the slot does become ready.
     NotReady(Option<oneshot::Sender<BlockId>>),
-    // We can potentially have multiple parents ready per slot,
-    // but we optimize for the common case where there will only be one.
+    /// Have at least one parent ready for this slot.
+    ///
+    /// We can potentially have multiple parents ready per slot, but we
+    /// optimize for the common case where there will only be one.
     Ready(SmallVec<[BlockId; 1]>),
 }
 
@@ -29,12 +31,16 @@ impl Default for IsReady {
 /// Holds the relevant state for a single slot.
 #[derive(Default)]
 pub(super) struct ParentReadyState {
+    /// Whether this slot is skip-certified.
     // XXX: consider making this field private
     pub(super) skip: bool,
-    // We can potentially have multiple notar fallbacks per slot,
-    // but we optimize for the common case where there will only be one.
+    /// Blocks that are notarized-fallback for this slot, if any.
+    ///
+    /// We can potentially have multiple notar fallbacks per slot,
+    /// but we optimize for the common case where there will only be one.
     // XXX: consider making this field private
     pub(super) notar_fallbacks: SmallVec<[Hash; 1]>,
+    /// Current status of the parent-ready condition for this slot.
     // NOTE: Do not make this field more visible.
     // Updating it must sometimes produce additional actions.
     is_ready: IsReady,
