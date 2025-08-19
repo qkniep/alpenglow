@@ -58,6 +58,10 @@ impl ParentReadyState {
     /// Adds a [`BlockId`] to the parents ready list.
     ///
     /// Additionally, will inform any waiters.
+    ///
+    /// # Panics
+    ///
+    /// If the specific parent is already marked ready for this slot.
     pub(super) fn add_to_ready(&mut self, id: BlockId) {
         match &mut self.is_ready {
             IsReady::NotReady(sender) => {
