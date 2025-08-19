@@ -472,6 +472,11 @@ impl FastFinalCert {
         let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
+
+    /// Returns the block hash of the fast-finalized block.
+    pub const fn block_hash(&self) -> &Hash {
+        &self.block_hash
+    }
 }
 
 /// A finalization certificate is an aggregate of a quorum of finalization votes.

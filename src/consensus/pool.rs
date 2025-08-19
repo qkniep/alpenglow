@@ -193,13 +193,12 @@ impl PoolImpl {
                     self.votor_event_channel.send(event).await.unwrap();
                 }
             }
-            Cert::FastFinal(_) => {
+            Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
-                // FIXME: dangerous unwrap, may not have notar cert yet
-                let hash = self.get_notarized_block(slot).unwrap();
+                let hash = ff_cert.block_hash();
                 // FIXME: dangerous unwrap, may not know parent yet
-                let parent = self.slot_state(slot).get_parent(&hash).unwrap();
+                let parent = self.slot_state(slot).get_parent(hash).unwrap();
                 self.parent_ready_tracker.mark_finalized(slot, parent);
                 self.prune();
             }
