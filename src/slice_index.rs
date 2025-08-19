@@ -19,7 +19,7 @@ impl SliceIndex {
         Self(index)
     }
 
-    /// Returns the inner usize.
+    /// Returns the inner `usize`.
     pub(crate) fn inner(self) -> usize {
         self.0
     }
