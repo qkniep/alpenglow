@@ -471,7 +471,7 @@ mod tests {
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
         let blockstore = Arc::new(RwLock::new(blockstore));
 
-        let slot = Slot::windows().skip(10).next().unwrap();
+        let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), Hash::default());
 
         let mut pool = MockPool::new();
