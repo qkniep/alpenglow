@@ -6,7 +6,7 @@
 //! The parent-ready condition pertains to a slot `s` and a block hash `hash(b)`,
 //! where `s` is the first slot of a leader window and `s > slot(b)`.
 //! Specifically, it is defined as the following:
-//!   - Block `b` is notarized or notarized-fallback, and
+//!   - Block `b` is notarized or notarized-fallback, AND
 //!   - slots `slot(b) + 1` (inclusive) to `s` (non-inclusive) are skip-certified.
 //!
 //! Additional restriction on notarization votes ensure that the parent-ready
@@ -78,7 +78,7 @@ impl ParentReadyTracker {
     ///
     /// Returns a list of any newly connected parents.
     ///
-    /// This should only ever be called once for any specific slot.
+    /// This should only ever be called once for any specific slot!
     pub fn mark_skipped(&mut self, slot: Slot) -> Vec<(Slot, BlockId)> {
         let state = self.0.entry(slot).or_default();
         state.skip = true;
@@ -127,15 +127,17 @@ impl ParentReadyTracker {
     }
 
     /// Returns list of all valid parents for the given slot, as of now.
-    /// The list can be empty.
+    ///
+    /// The list can be empty if there are no valid parents yet.
     pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.0
             .get(&slot)
             .map_or(&[], |state| state.ready_block_ids())
     }
 
-    /// If the slot has a parent ready, then returns it right away or else
-    /// blocks till a parent ready.
+    /// Returns a ready parent if available, otherwise returns a oneshot channel.
+    ///
+    /// The oneshot channel will receive the first ready parent once it becomes available.
     pub fn wait_for_parent_ready(
         &mut self,
         slot: Slot,
