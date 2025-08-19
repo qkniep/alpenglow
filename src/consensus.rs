@@ -89,6 +89,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
 }
 
 /// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
+#[derive(Debug)]
 enum SlotReady {
     /// Window was already skipped.
     Skip,
@@ -195,7 +196,6 @@ where
         let blockstore: Box<dyn Blockstore + Send + Sync> =
             Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone()));
         let blockstore = Arc::new(RwLock::new(blockstore));
-
 
         let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
             epoch_info.clone(),
@@ -445,7 +445,10 @@ mod tests {
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
     use crate::consensus::{Blockstore, Pool, SlotReady, wait_for_first_slot};
+    use crate::crypto::Hash;
 
+    use either::Either;
+    use mockall::predicate;
     use tokio::sync::RwLock;
 
     use std::sync::Arc;
@@ -461,5 +464,27 @@ mod tests {
             wait_for_first_slot(pool, blockstore, Slot::genesis()).await,
             SlotReady::Ready(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn wait_for_first_slot_parent_already_ready() {
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
+        let slot = Slot::windows().skip(10).next().unwrap();
+        let parent = (slot.prev(), Hash::default());
+
+        let mut pool = MockPool::new();
+        pool.expect_wait_for_parent_ready()
+            .with(predicate::eq(slot))
+            .returning(move |_slot| Either::Left(parent));
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
+        let pool = Arc::new(RwLock::new(pool));
+
+        let res = wait_for_first_slot(pool, blockstore, slot).await;
+        match res {
+            SlotReady::Ready(p) => assert_eq!(p, parent),
+            rest => panic!("unexpected {rest:?}"),
+        }
     }
 }
