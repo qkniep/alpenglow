@@ -29,7 +29,7 @@ impl SliceIndex {
         Self(0)
     }
 
-    /// Returns true if self is the first i.e. the smallest SliceIndex.
+    /// Returns `true` if self is the first, i.e. smallest, `SliceIndex`.
     pub(crate) fn is_first(&self) -> bool {
         self.0 == 0
     }
