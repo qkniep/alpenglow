@@ -234,6 +234,11 @@ impl SlotState {
         }
     }
 
+    /// Returns the parent of the block given by `hash`, if known.
+    pub(super) fn get_parent(&self, hash: &Hash) -> Option<BlockId> {
+        self.parents.get(hash).map(|p| p.parent)
+    }
+
     fn is_weakest_quorum(&self, stake: Stake) -> bool {
         stake >= (self.epoch_info.total_stake()).div_ceil(5)
     }

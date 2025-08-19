@@ -196,16 +196,20 @@ impl PoolImpl {
             Cert::FastFinal(_) => {
                 info!("fast finalized slot {slot}");
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
-                // TODO: get actual parent here
-                let parent = (Slot::genesis(), Hash::default());
+                // TODO: dangerous unwrap, may not have notar cert yet
+                let hash = self.get_notarized_block(slot).unwrap();
+                // TODO: dangerous unwrap, may not know parent yet
+                let parent = self.slot_state(slot).get_parent(&hash).unwrap();
                 self.parent_ready_tracker.mark_finalized(slot, parent);
                 self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
-                // TODO: get actual parent here
-                let parent = (Slot::genesis(), Hash::default());
+                // TODO: dangerous unwrap, may not have notar cert yet
+                let hash = self.get_notarized_block(slot).unwrap();
+                // TODO: dangerous unwrap, may not know parent yet
+                let parent = self.slot_state(slot).get_parent(&hash).unwrap();
                 self.parent_ready_tracker.mark_finalized(slot, parent);
                 self.prune();
             }
