@@ -46,6 +46,25 @@ impl Default for ParentReadyTracker {
 }
 
 impl ParentReadyTracker {
+    /// Considers the given slot as finalized with the provided parent.
+    ///
+    /// This implies that (and is treated exactly the same as if):
+    /// 1. The parent of the finalized block is notarized-fallback, AND
+    /// 2. all slots between the parent and the finalized block are skip-certified.
+    ///
+    /// Returns a list of any newly connected parents.
+    pub fn mark_finalized(&mut self, slot: Slot, parent: BlockId) -> Vec<(Slot, BlockId)> {
+        let mut parents_ready = Vec::new();
+        parents_ready.extend(self.mark_notar_fallback(parent));
+        for s in parent.0.future_slots() {
+            if s == slot {
+                break;
+            }
+            parents_ready.extend(self.mark_skipped(s));
+        }
+        parents_ready
+    }
+
     /// Marks the given block as notarized-fallback.
     ///
     /// Returns a list of any newly connected parents.
@@ -77,10 +96,12 @@ impl ParentReadyTracker {
     /// Marks the given slot as skipped.
     ///
     /// Returns a list of any newly connected parents.
-    ///
-    /// This should only ever be called once for any specific slot!
     pub fn mark_skipped(&mut self, slot: Slot) -> Vec<(Slot, BlockId)> {
-        self.slot_state(slot).skip = true;
+        let state = self.slot_state(slot);
+        if state.skip {
+            return Vec::new();
+        }
+        state.skip = true;
 
         // get newly connected future windows
         let mut future_windows = SmallVec::<[Slot; 1]>::new();
