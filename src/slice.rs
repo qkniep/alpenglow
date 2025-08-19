@@ -101,9 +101,9 @@ pub(crate) struct SliceHeader {
 ///
 /// This is what actually gets "shredded" into different [`Shred`]s.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SlicePayload {
-    parent: Option<(Slot, Hash)>,
-    data: Vec<u8>,
+pub(crate) struct SlicePayload {
+    pub(crate) parent: Option<(Slot, Hash)>,
+    pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
@@ -138,7 +138,7 @@ impl From<Vec<u8>> for SlicePayload {
 /// This function should only be used for testing and benchmarking.
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
-pub fn create_slice_payload_with_invalid_txs(
+pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<(Slot, Hash)>,
     desired_size: usize,
 ) -> SlicePayload {
