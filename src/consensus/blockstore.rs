@@ -256,8 +256,8 @@ mod tests {
     use super::*;
 
     use crate::ValidatorInfo;
-    use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
+    use crate::crypto::{MerkleTree, aggsig};
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::test_utils::create_random_block;
 
@@ -302,6 +302,39 @@ mod tests {
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
+        }
+        assert!(blockstore.canonical_block_hash(slot).is_some());
+
+        drop(rx);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_block_from_repair() -> Result<()> {
+        let slot = Slot::genesis().next();
+        let (tx, rx) = mpsc::channel(100);
+        let (sk, mut blockstore) = test_setup(tx);
+        assert!(blockstore.slot_data(slot).is_none());
+
+        // generate and shred two slices
+        let slices = create_random_block(slot, 2);
+        let slice0_shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let slice1_shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
+
+        // calculate block hash
+        let merkle_roots = vec![slice0_shreds[0].merkle_root, slice1_shreds[0].merkle_root];
+        let tree = MerkleTree::new(&merkle_roots);
+        let block_hash = tree.get_root();
+
+        // first slice is not enough
+        for shred in slice0_shreds {
+            blockstore.add_shred_from_repair(block_hash, shred).await?;
+        }
+        assert!(blockstore.canonical_block_hash(slot).is_none());
+
+        // after second slice we should have the block
+        for shred in slice1_shreds {
+            blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
         assert!(blockstore.canonical_block_hash(slot).is_some());
 
