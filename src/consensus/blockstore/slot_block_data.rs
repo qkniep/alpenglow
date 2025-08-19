@@ -231,13 +231,13 @@ impl BlockData {
         };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
             warn!(
-                "reconstructed slice {:?} in slot {} expected to contain parent",
+                "reconstructed slice {} in slot {} expected to contain parent",
                 slice, self.slot
             );
             return false;
         }
         self.slices.insert(slice, reconstructed_slice);
-        trace!("reconstructed slice {:?} in slot {}", slice, self.slot);
+        trace!("reconstructed slice {} in slot {}", slice, self.slot);
         true
     }
 
@@ -277,13 +277,13 @@ impl BlockData {
                 match bincode::serde::decode_from_slice(&slice.data, bincode::config::standard()) {
                     Ok(r) => r,
                     Err(err) => {
-                        warn!("decoding slice {ind:?} failed with {err:?}");
+                        warn!("decoding slice {ind} failed with {err:?}");
                         return None;
                     }
                 };
             if bytes_read != slice.data.len() {
                 warn!(
-                    "decoding slice {:?}: read {} but actual length is {}",
+                    "decoding slice {}: read {} but actual length is {}",
                     ind,
                     bytes_read,
                     slice.data.len()
