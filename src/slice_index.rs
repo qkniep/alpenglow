@@ -1,3 +1,6 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use serde::{Deserialize, Serialize};
 
 const MAX_SLICES_PER_BLOCK: usize = 1024;
