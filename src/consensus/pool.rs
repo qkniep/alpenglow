@@ -432,7 +432,9 @@ impl Pool for PoolImpl {
             parent_slot,
             parent_hash,
         } = block_info;
-        self.slot_state(slot).notify_parent_known(block_hash);
+        let parent = (parent_slot, parent_hash);
+        self.slot_state(slot)
+            .notify_parent_known(block_hash, parent);
         if let Some(parent_state) = self.slot_states.get(&parent_slot)
             && parent_state.is_notar_fallback(&parent_hash)
             && let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash)
