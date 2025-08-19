@@ -83,12 +83,21 @@ impl ParentReadyState {
     /// Requests to know a valid parent for this slot.
     ///
     /// Returns either:
-    /// - The block ID of an (arbitrary) parent if a parent is already ready.
+    /// - The block ID of a parent if at least one parent is already ready.
+    ///   Always returns a parent with minimal slot number if multiple parents are ready.
     /// - A receiver of a oneshot channel that will receive the first parent's block ID.
-    // TODO: always return the parent with the lowest slot number if there are multiple
     pub(super) fn wait_for_parent_ready(&mut self) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         match &mut self.is_ready {
-            IsReady::Ready(block_ids) => Either::Left(*block_ids.first().unwrap()),
+            IsReady::Ready(block_ids) => {
+                assert!(!block_ids.is_empty());
+                if block_ids.len() == 1 {
+                    Either::Left(block_ids[0])
+                } else {
+                    let mut block_ids = block_ids.to_vec();
+                    block_ids.sort();
+                    Either::Left(block_ids[0])
+                }
+            }
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
                 let (tx, rx) = oneshot::channel();
