@@ -148,12 +148,13 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        for i in 0..2 {
+        let final_slice_index = SliceIndex::new_unchecked(1);
+        for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: SliceIndex::new_unchecked(i),
-                is_last: i == 1,
+                slice_index,
+                is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
@@ -207,12 +208,13 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        for i in 0..1000 {
+        let final_slice_index = SliceIndex::new_unchecked(999);
+        for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: SliceIndex::new_unchecked(i),
-                is_last: i == 999,
+                slice_index,
+                is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
@@ -266,12 +268,13 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        for i in 0..10_000 {
+        let final_slice_index = SliceIndex::new_unchecked(9_999);
+        for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: SliceIndex::new_unchecked(i),
-                is_last: i == 9999,
+                slice_index,
+                is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
