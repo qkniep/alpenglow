@@ -11,11 +11,12 @@ use crate::crypto::Hash;
 
 /// Tracks the status of whether an individual slot has a parent ready.
 enum IsReady {
-    /// Do not have a parent ready for this slot.
+    /// Do not have a parent ready for this slot yet.
+    ///
     /// Might have someone waiting to hear when the slot does become ready.
     NotReady(Option<oneshot::Sender<BlockId>>),
-    // we can potentially have multiple parents ready per slot,
-    // but we optimize the common case where there will only be one
+    // We can potentially have multiple parents ready per slot,
+    // but we optimize for the common case where there will only be one.
     Ready(SmallVec<[BlockId; 1]>),
 }
 
@@ -30,8 +31,8 @@ impl Default for IsReady {
 pub(super) struct ParentReadyState {
     // XXX: consider making this field private
     pub(super) skip: bool,
-    // we can potentially have multiple notar fallbacks per slot,
-    // but we optimize the common case where there will only be one
+    // We can potentially have multiple notar fallbacks per slot,
+    // but we optimize for the common case where there will only be one.
     // XXX: consider making this field private
     pub(super) notar_fallbacks: SmallVec<[Hash; 1]>,
     // NOTE: Do not make this field more visible.
@@ -40,7 +41,7 @@ pub(super) struct ParentReadyState {
 }
 
 impl ParentReadyState {
-    /// Creates a new `ParentReadyState` with the given `block_ids` as valid parents.
+    /// Creates a new [`ParentReadyState`] with the given `block_ids` as valid parents.
     pub(super) fn new<T: Into<SmallVec<[BlockId; 1]>>>(block_ids: T) -> Self {
         Self {
             is_ready: IsReady::Ready(block_ids.into()),
@@ -48,7 +49,8 @@ impl ParentReadyState {
         }
     }
 
-    /// Adds a `BlockId` to the parents ready list.
+    /// Adds a [`BlockId`] to the parents ready list.
+    ///
     /// Additionally, will inform any waiters.
     pub(super) fn add_to_ready(&mut self, id: BlockId) {
         match &mut self.is_ready {
