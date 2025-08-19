@@ -86,9 +86,14 @@ where
                 assert_eq!(new_slot, parent_slot);
                 assert_eq!(new_hash, parent_hash);
             }
+            let header = SliceHeader {
+                slot,
+                slice_index,
+                is_last,
+            };
 
             match self
-                .shred_and_disseminate(slice_index, slot, payload, maybe_duration)
+                .shred_and_disseminate(header, payload, maybe_duration)
                 .await?
             {
                 Either::Left(block_hash) => return Ok((slot, block_hash)),
@@ -121,9 +126,15 @@ where
             };
             let (payload, maybe_duration) =
                 produce_slice_payload(&self.txs_receiver, parent, duration_left).await;
+            let is_last = slice_index == MAX_SLICES_PER_BLOCK - 1 || maybe_duration.is_none();
+            let header = SliceHeader {
+                slot,
+                slice_index,
+                is_last,
+            };
 
             match self
-                .shred_and_disseminate(slice_index, slot, payload, maybe_duration)
+                .shred_and_disseminate(header, payload, maybe_duration)
                 .await?
             {
                 Either::Left(block_hash) => return Ok((slot, block_hash)),
@@ -139,17 +150,12 @@ where
     /// Returns Ok(Either::Right(duration left in slot)) if this is not the last slice.
     async fn shred_and_disseminate(
         &self,
-        slice_index: usize,
-        slot: Slot,
+        header: SliceHeader,
         payload: SlicePayload,
         maybe_duration: Option<Duration>,
     ) -> Result<Either<Hash, Duration>> {
-        let is_last = slice_index == MAX_SLICES_PER_BLOCK - 1 || maybe_duration.is_none();
-        let header = SliceHeader {
-            is_last,
-            slot,
-            slice_index,
-        };
+        let slot = header.slot;
+        let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
         let mut maybe_block_hash = None;
         let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
