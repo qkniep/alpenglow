@@ -19,7 +19,14 @@ enum IsReady {
     Ready(SmallVec<[BlockId; 1]>),
 }
 
+impl Default for IsReady {
+    fn default() -> Self {
+        IsReady::NotReady(None)
+    }
+}
+
 /// Holds the relevant state for a single slot.
+#[derive(Default)]
 pub(super) struct ParentReadyState {
     // XXX: consider making this field private
     pub(super) skip: bool,
@@ -30,16 +37,6 @@ pub(super) struct ParentReadyState {
     // NOTE: Do not make this field more visible.
     // Updating it must sometimes produce additional actions.
     is_ready: IsReady,
-}
-
-impl Default for ParentReadyState {
-    fn default() -> Self {
-        Self {
-            skip: false,
-            notar_fallbacks: SmallVec::new(),
-            is_ready: IsReady::NotReady(None),
-        }
-    }
 }
 
 impl ParentReadyState {
