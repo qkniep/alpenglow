@@ -204,11 +204,11 @@ mod tests {
         let net1 = core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
         let net2 = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
-        // create 1000 slices
+        // create a full block (1024 slices)
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(999);
+        let final_slice_index = SliceIndex::new_unchecked(1023);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
@@ -221,7 +221,7 @@ mod tests {
             shreds.extend(slice_shreds);
         }
 
-        let t_latency = 1000.0 * MAX_DATA_PER_SLICE as f64 / 100.0 / 1024.0 / 1024.0;
+        let t_latency = 1024.0 * MAX_DATA_PER_SLICE as f64 / 100.0 / 1024.0 / 1024.0;
         let p_latency = 0.1;
         let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
         let min = p_latency + t_latency * expansion_ratio; // account for erasure coding
@@ -234,7 +234,7 @@ mod tests {
             while let Ok(msg) = net2.receive().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
-                    if shreds_received == 1000 * TOTAL_SHREDS {
+                    if shreds_received == 1024 * TOTAL_SHREDS {
                         return now.elapsed().as_secs_f64();
                     }
                 }
@@ -264,11 +264,11 @@ mod tests {
         let net1 = core.join_unlimited(0).await;
         let net2 = core.join_unlimited(1).await;
 
-        // create 10,000 slices
+        // create a full block (1024 slices)
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(9_999);
+        let final_slice_index = SliceIndex::new_unchecked(1023);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
@@ -282,7 +282,7 @@ mod tests {
         }
 
         // achieving at least 256 MiB/s
-        let t_latency = 10_000.0 * MAX_DATA_PER_SLICE as f64 / 256.0 / 1024.0 / 1024.0;
+        let t_latency = 1024.0 * MAX_DATA_PER_SLICE as f64 / 256.0 / 1024.0 / 1024.0;
         let p_latency = 0.1;
         let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
         let max = p_latency + t_latency * expansion_ratio * 1.41; // account for erasure coding + 36% metadata overhead + 5% margin
@@ -294,7 +294,7 @@ mod tests {
             while let Ok(msg) = net2.receive().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
-                    if shreds_received == 10_000 * TOTAL_SHREDS {
+                    if shreds_received == 1024 * TOTAL_SHREDS {
                         return now.elapsed().as_secs_f64();
                     }
                 }
