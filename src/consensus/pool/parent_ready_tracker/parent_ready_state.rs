@@ -122,9 +122,9 @@ impl ParentReadyState {
 
 #[cfg(test)]
 mod tests {
-    use crate::Slot;
-
     use super::*;
+
+    use crate::Slot;
 
     #[test]
     fn wait_for_parent_ready_no_blocking() {
