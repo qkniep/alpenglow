@@ -97,7 +97,7 @@ impl<'de> Visitor<'de> for SliceIndexVisitor {
         E: serde::de::Error,
     {
         SliceIndex::new(v as usize).ok_or(de::Error::custom(
-            "input {v} is not in the range [0:MAX_SLICES_PER_BLOCK)",
+            "input {v} is not in the range [0:{MAX_SLICES_PER_BLOCK})",
         ))
     }
 }
