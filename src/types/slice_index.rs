@@ -3,17 +3,15 @@
 
 use std::fmt::Display;
 
-use serde::{
-    Deserialize, Serialize,
-    de::{self, Visitor},
-};
+use serde:de::{self, Visitor};
+use serde::{Deserialize, Serialize};
 
 const MAX_SLICES_PER_BLOCK: usize = 1024;
 
 /// Slice index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= MAX_SLICES_PER_BLOCK.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct SliceIndex(usize);
 
 impl SliceIndex {
@@ -104,7 +102,6 @@ impl<'de> Visitor<'de> for SliceIndexVisitor {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
