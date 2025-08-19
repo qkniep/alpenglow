@@ -449,7 +449,7 @@ mod tests {
 
     use either::Either;
     use mockall::predicate;
-    use tokio::sync::RwLock;
+    use tokio::sync::{RwLock, oneshot};
 
     use std::sync::Arc;
 
@@ -477,7 +477,31 @@ mod tests {
         let mut pool = MockPool::new();
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
-            .returning(move |_slot| Either::Left(parent));
+            .return_once(move |_slot| Either::Left(parent));
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
+        let pool = Arc::new(RwLock::new(pool));
+
+        let res = wait_for_first_slot(pool, blockstore, slot).await;
+        match res {
+            SlotReady::Ready(p) => assert_eq!(p, parent),
+            rest => panic!("unexpected {rest:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_for_first_slot_parent_ready_later() {
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
+        let slot = Slot::windows().nth(10).unwrap();
+        let parent = (slot.prev(), Hash::default());
+        let (tx, rx) = oneshot::channel();
+        tx.send(parent).unwrap();
+
+        let mut pool = MockPool::new();
+        pool.expect_wait_for_parent_ready()
+            .with(predicate::eq(slot))
+            .return_once(move |_slot| Either::Right(rx));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
         let pool = Arc::new(RwLock::new(pool));
 
