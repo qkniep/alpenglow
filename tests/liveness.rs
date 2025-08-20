@@ -11,7 +11,8 @@ use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::{Rotor, rotor::StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
-use alpenglow::{Alpenglow, Slot, ValidatorInfo};
+use alpenglow::types::Slot;
+use alpenglow::{Alpenglow, ValidatorInfo};
 use rand::prelude::*;
 
 #[tokio::test]

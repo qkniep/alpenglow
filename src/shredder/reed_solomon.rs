@@ -126,7 +126,8 @@ mod tests {
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
-    use crate::slice::create_slice_with_invalid_txs;
+    use crate::types::SliceIndex;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     use static_assertions::const_assert;
 
@@ -146,7 +147,7 @@ mod tests {
     fn restore_empty() {
         let header = SliceHeader {
             slot: Slot::new(0),
-            slice_index: 0,
+            slice_index: SliceIndex::first(),
             is_last: true,
         };
         let payload = vec![0];
@@ -168,7 +169,7 @@ mod tests {
     fn shred_too_much_data() {
         let header = SliceHeader {
             slot: Slot::new(0),
-            slice_index: 0,
+            slice_index: SliceIndex::first(),
             is_last: true,
         };
         let payload = vec![0; MAX_DATA_PER_SLICE + 1];
