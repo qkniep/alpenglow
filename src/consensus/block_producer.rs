@@ -1,8 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use ::std::sync::Arc;
-use ::std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use either::Either;
