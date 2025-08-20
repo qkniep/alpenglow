@@ -284,13 +284,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn store_slice() -> Result<()> {
+    async fn store_one_slice_block() -> Result<()> {
         let slot = Slot::genesis().next();
         let (tx, _rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         assert!(blockstore.slot_data(slot).is_none());
 
-        // generate two slices for slot picked above
+        // generate single-slice block
         let slice = create_random_block(slot, 1)[0].clone();
 
         let shreds = RegularShredder::shred(slice, &sk)?;
@@ -321,13 +321,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn store_simple_block() -> Result<()> {
+    async fn store_two_slice_block() -> Result<()> {
         let slot = Slot::genesis().next();
         let (tx, _rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
         assert!(blockstore.slot_data(slot).is_none());
 
-        // generate two slices for slot picked above
+        // generate two-slice block
         let slices = create_random_block(slot, 2);
 
         // first slice is not enough
