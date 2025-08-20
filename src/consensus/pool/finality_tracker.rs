@@ -34,7 +34,7 @@ pub enum FinalizationStatus {
 }
 
 /// Information about newly finalized slots.
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FinalizationEvent {
     /// Directly finalized block, if any.
     pub(super) finalized: Option<BlockId>,
@@ -189,6 +189,7 @@ impl FinalityTracker {
             // TODO: add assertions
             self.status
                 .insert(slot, FinalizationStatus::ImplicitlySkipped);
+            event.implicitly_skipped.push(slot);
         }
 
         // mark block as implicitly finalized
@@ -213,7 +214,46 @@ mod tests {
     #[test]
     fn basic() {
         let mut tracker = FinalityTracker::default();
+
+        // slow finalize a block
+        let slot = Slot::genesis().next();
+        let event = tracker.mark_notarized(slot, [1; 32]);
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_finalized(slot);
+        assert_eq!(event.finalized, Some((slot, [1; 32])));
+
+        // fast finalize a block
+        let slot = slot.next();
+        let event = tracker.mark_fast_finalized(slot, [2; 32]);
+        assert_eq!(event.finalized, Some((slot, [2; 32])));
+        assert_eq!(event.implicitly_finalized, vec![]);
+        assert_eq!(event.implicitly_skipped, vec![]);
+
+        // implicitly finalize a block WITHOUT skips
+        let slot = slot.next().next();
+        let event = tracker.add_parent((slot, [4; 32]), (slot.prev(), [3; 32]));
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_fast_finalized(slot, [4; 32]);
+        assert_eq!(event.finalized, Some((slot, [4; 32])));
+        assert_eq!(event.implicitly_finalized, vec![(slot.prev(), [3; 32])]);
+        assert_eq!(event.implicitly_skipped, vec![]);
+
+        // implicitly finalize a block WITH skips
+        let slot = slot.next().next().next();
+        let event = tracker.add_parent((slot, [6; 32]), (slot.prev().prev(), [5; 32]));
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_fast_finalized(slot, [6; 32]);
+        assert_eq!(event.finalized, Some((slot, [6; 32])));
+        assert_eq!(
+            event.implicitly_finalized,
+            vec![(slot.prev().prev(), [5; 32])]
+        );
+        assert_eq!(event.implicitly_skipped, vec![slot.prev()]);
     }
 
-    // TODO: to check: do not emit blocks multiple times
+    #[test]
+    fn no_duplicates() {
+        let mut tracker = FinalityTracker::default();
+        // TODO: to check: do not emit blocks multiple times
+    }
 }
