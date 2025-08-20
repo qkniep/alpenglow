@@ -36,13 +36,20 @@ pub enum FinalizationStatus {
 ///
 #[derive(Default)]
 pub struct FinalizationEvent {
+    /// Directly finalized block, if any.
     pub(super) finalized: Option<BlockId>,
+    /// Any implicitly finalized blocks.
     pub(super) implicitly_finalized: Vec<BlockId>,
+    /// Any implicitly skipped slots.
     pub(super) implicitly_skipped: Vec<Slot>,
 }
 
 impl FinalityTracker {
+    /// Adds the given `parent` for the given `block`.
     ///
+    /// Handles possibly resulting implicit finalizations.
+    ///
+    /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
         self.parents.insert(block, parent);
@@ -56,7 +63,11 @@ impl FinalityTracker {
         event
     }
 
+    /// Marks the given block as fast finalized.
     ///
+    /// If the block was newly finalized, handles resulting implicit finalizations.
+    ///
+    /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
@@ -78,7 +89,12 @@ impl FinalityTracker {
         event
     }
 
+    /// Marks the given block as notarized.
     ///
+    /// Handles possibly resulting direct finalization of the block.
+    /// Further, also handles any possibly resulting implicit finalizations.
+    ///
+    /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_notarized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
@@ -86,14 +102,12 @@ impl FinalityTracker {
                 FinalizationStatus::Notarized(_)
                 | FinalizationStatus::FinalizedAndNotarized(_)
                 | FinalizationStatus::ImplicitlyFinalized(_)
-                | FinalizationStatus::ImplicitlySkipped => {
-                    return event;
-                }
+                | FinalizationStatus::ImplicitlySkipped => event,
                 FinalizationStatus::Finalized => {
                     self.status
                         .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
                     self.handle_finalized((slot, block_hash), &mut event);
-                    return event;
+                    event
                 }
             }
         } else {
@@ -103,20 +117,23 @@ impl FinalityTracker {
         }
     }
 
+    /// Marks the given slot as finalized.
     ///
+    /// Handles possibly resulting direct finalization of a block in this slot.
+    /// Further, also handles any possibly resulting implicit finalizations.
+    ///
+    /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_finalized(&mut self, slot: Slot) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
             match status {
                 FinalizationStatus::Finalized
                 | FinalizationStatus::FinalizedAndNotarized(_)
-                | FinalizationStatus::ImplicitlyFinalized(_) => {
-                    return event;
-                }
+                | FinalizationStatus::ImplicitlyFinalized(_) => event,
                 FinalizationStatus::Notarized(block_hash) => {
                     self.handle_finalized((slot, *block_hash), &mut event);
                     self.highest_finalized = slot.max(self.highest_finalized);
-                    return event;
+                    event
                 }
                 FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
             }
@@ -127,12 +144,21 @@ impl FinalityTracker {
         }
     }
 
+    /// Returns the highest finalized slot.
     ///
+    /// Does not consider whether we have the block, or even know the hash.
     pub fn highest_finalized(&self) -> Slot {
         self.highest_finalized
     }
 
+    /// Handles the direct finalization of the given block.
     ///
+    /// Recurses through ancestors, potentially implicitly finalizing them.
+    ///
+    /// Updates the `event` all along the way with:
+    /// - The finalized block,
+    /// - any potentially implicitly finalized blocks, AND
+    /// - any implicitly skipped slots.
     fn handle_finalized(&mut self, finalized: BlockId, event: &mut FinalizationEvent) {
         event.finalized = Some(finalized);
         if let Some(parent) = self.parents.get(&finalized) {
@@ -140,7 +166,13 @@ impl FinalityTracker {
         }
     }
 
+    /// Handles the indirect finalization of the given block.
     ///
+    /// Recurses through ancestors, potentially implicitly finalizing them as well.
+    ///
+    /// Updates the `event` all along the way with:
+    /// - Any potentially implicitly finalized blocks, AND
+    /// - any implicitly skipped slots.
     fn handle_implicitly_finalized(
         &mut self,
         source_slot: Slot,
@@ -177,4 +209,6 @@ mod tests {
     fn basic() {
         let mut tracker = FinalityTracker::default();
     }
+
+    // TODO: to check: do not emit blocks multiple times
 }
