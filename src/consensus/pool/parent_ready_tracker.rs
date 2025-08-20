@@ -325,6 +325,38 @@ mod tests {
 
     #[test]
     fn parent_ready_finalized() {
+        let mut windows = Slot::windows();
+        let window2 = windows.nth(1).unwrap();
+        let window3 = windows.nth(2).unwrap();
+        let window4 = windows.nth(3).unwrap();
+        let window5 = windows.nth(4).unwrap();
         let mut tracker = ParentReadyTracker::default();
+
+        // basic case where finalized slot is first in its window
+        let slot = window2.first_slot_in_window();
+        let parent = (slot.prev(), [1; 32]);
+        let parents = tracker.mark_finalized(slot, parent);
+        assert_eq!(parents.len(), 1);
+        let parent_ready = parents[0];
+        assert_eq!(parent_ready.0, slot);
+        assert_eq!(parent_ready.1, parent);
+
+        // case where an entire window is skipped between parent and finalized block
+        let slot = window4.first_slot_in_window();
+        let parent = (window3.first_slot_in_window().prev(), [2; 32]);
+        let parents = tracker.mark_finalized(slot, parent);
+        assert_eq!(parents.len(), 1);
+        let parent_ready = parents[0];
+        assert_eq!(parent_ready.0, slot);
+        assert_eq!(parent_ready.1, parent);
+
+        // case where finalized slot is NOT first in its window
+        let slot = window5.first_slot_in_window().next();
+        let parent = (slot.prev(), [3; 32]);
+        let parents = tracker.mark_finalized(slot, parent);
+        assert_eq!(parents.len(), 1);
+        let parent_ready = parents[0];
+        // assert_eq!(parent_ready.0, slot);
+        // assert_eq!(parent_ready.1, parent);
     }
 }
