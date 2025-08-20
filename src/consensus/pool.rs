@@ -230,7 +230,9 @@ impl PoolImpl {
             .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 
-    /// Fetches all certficates for the given `slot` from Pool.
+    /// Fetches all certficates for any slots starting from `slot`.
+    // TODO: only return finalization for first slot, instead of all certs
+    // (need to update `standstill_recovery` test below)
     fn get_certs(&self, slot: Slot) -> Vec<Cert> {
         let mut certs = Vec::new();
         for (_, slot_state) in self.slot_states.range(slot..) {
@@ -253,6 +255,7 @@ impl PoolImpl {
         certs
     }
 
+    /// Fetches all votes cast by myself for any slots starting from `slot`.
     fn get_own_votes(&self, slot: Slot) -> Vec<Vote> {
         let mut votes = Vec::new();
         let own_id = self.epoch_info.own_id;
@@ -499,6 +502,7 @@ mod tests {
     use super::*;
 
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
+    use crate::consensus::vote::VoteKind;
     use crate::crypto::aggsig::SecretKey;
     use crate::test_utils::generate_validators;
     use crate::types::SLOTS_PER_WINDOW;
@@ -598,7 +602,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(Slot::new(0)));
-        assert!(pool.highest_finalized_slot == Slot::new(0));
+        assert_eq!(pool.finalized_slot(), Slot::new(0));
 
         // just enough nodes vote finalize on slot 1
         assert!(!pool.is_finalized(Slot::new(1)));
@@ -607,7 +611,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(Slot::new(1)));
-        assert!(pool.highest_finalized_slot == Slot::new(1));
+        assert_eq!(pool.finalized_slot(), Slot::new(1));
 
         // just NOT enough nodes vote finalize on slot 2
         assert!(!pool.is_finalized(Slot::new(2)));
@@ -616,7 +620,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(!pool.is_finalized(Slot::new(2)));
-        assert!(pool.highest_finalized_slot == Slot::new(1));
+        assert_eq!(pool.finalized_slot(), Slot::new(1));
     }
 
     #[tokio::test]
@@ -633,7 +637,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(Slot::new(0)));
-        assert!(pool.highest_finalized_slot == Slot::new(0));
+        assert_eq!(pool.finalized_slot(), Slot::new(0));
 
         // just enough nodes to fast finalize slot 1
         assert!(!pool.is_finalized(Slot::new(1)));
@@ -642,7 +646,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.is_finalized(Slot::new(1)));
-        assert!(pool.highest_finalized_slot == Slot::new(1));
+        assert_eq!(pool.finalized_slot(), Slot::new(1));
 
         // just NOT enough nodes to fast finalize slot 2
         assert!(!pool.is_finalized(Slot::new(2)));
@@ -651,7 +655,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(!pool.is_finalized(Slot::new(2)));
-        assert!(pool.highest_finalized_slot == Slot::new(1));
+        assert_eq!(pool.finalized_slot(), Slot::new(1));
     }
 
     #[tokio::test]
@@ -909,7 +913,7 @@ mod tests {
             assert!(pool.is_finalized(slot));
         }
         let last_slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
-        assert_eq!(pool.highest_finalized_slot, last_slot);
+        assert_eq!(pool.finalized_slot(), last_slot);
 
         // finalization triggers pruning, only last slot should be there
         for slot in 0..last_slot.inner() {
@@ -927,7 +931,7 @@ mod tests {
             }
             assert!(!pool.is_finalized(slot));
         }
-        assert_eq!(pool.highest_finalized_slot, last_slot);
+        assert_eq!(pool.finalized_slot(), last_slot);
 
         // these slots should still be there
         for s in 0..=10 {
@@ -1026,7 +1030,7 @@ mod tests {
             let vote = Vote::new_notar(slot, Hash::default(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert_eq!(pool.highest_finalized_slot, slot);
+        assert_eq!(pool.finalized_slot(), slot);
 
         // dismiss old votes
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
@@ -1093,5 +1097,59 @@ mod tests {
             pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
         );
+    }
+
+    #[tokio::test]
+    async fn standstill_recovery() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, mut votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
+        let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
+
+        // all nodes vote for first slot
+        let slot1 = Slot::genesis().next();
+        for v in 0..11 {
+            let vote = Vote::new_notar(slot1, [1; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert_eq!(pool.finalized_slot(), slot1);
+
+        // we also vote for next slot, see only enough votes to notarize
+        let slot2 = slot1.next();
+        for v in 0..7 {
+            let vote = Vote::new_notar(slot2, [2; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+        assert_eq!(pool.get_notarized_block(slot2), Some([2; 32]));
+
+        // we also vote for next slot, see no other votes
+        let slot3 = slot2.next();
+        let vote = Vote::new_notar(slot3, [3; 32], &sks[0], 0);
+        assert_eq!(pool.add_vote(vote).await, Ok(()));
+
+        // initiate standstill
+        pool.recover_from_standstill().await;
+
+        // check against expected response
+        let (slot, certs, votes) = loop {
+            let event = votor_rx.recv().await.unwrap();
+            match event {
+                VotorEvent::CertCreated(_) => {
+                    continue;
+                }
+                VotorEvent::Standstill(slot, certs, votes) => {
+                    break (slot, certs, votes);
+                }
+                _ => unreachable!("unexpected event {event:?}"),
+            }
+        };
+        assert_eq!(slot, slot2);
+        assert_eq!(certs.len(), 5);
+        assert_eq!(votes.len(), 2);
+        for vote in votes {
+            assert_eq!(vote.signer(), 0);
+            assert!([slot2, slot3].contains(&vote.kind().slot()));
+            assert!(matches!(vote.kind(), VoteKind::Notar(_, _)));
+        }
     }
 }
