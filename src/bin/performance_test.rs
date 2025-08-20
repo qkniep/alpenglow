@@ -13,7 +13,8 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork};
-use alpenglow::{Alpenglow, Slot, ValidatorInfo, logging};
+use alpenglow::types::Slot;
+use alpenglow::{Alpenglow, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 

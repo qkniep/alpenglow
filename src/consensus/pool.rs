@@ -21,7 +21,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
 use crate::crypto::Hash;
-use crate::slot::SLOTS_PER_EPOCH;
+use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
 use super::blockstore::BlockInfo;
@@ -476,8 +476,8 @@ mod tests {
 
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::crypto::aggsig::SecretKey;
-    use crate::slot::SLOTS_PER_WINDOW;
     use crate::test_utils::generate_validators;
+    use crate::types::SLOTS_PER_WINDOW;
 
     use tokio::sync::mpsc;
 
