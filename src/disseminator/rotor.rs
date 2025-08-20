@@ -179,74 +179,8 @@ mod tests {
         (sks, rotors)
     }
 
-    #[tokio::test]
-    async fn two_instances() {
-        let (sks, mut rotors) = create_rotor_instances(2, 3000);
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
-
-        let data_shreds_received = Arc::new(Mutex::new(HashSet::new()));
-        let code_shreds_received = Arc::new(Mutex::new(HashSet::new()));
-        let mut rotor_tasks = Vec::new();
-
-        // forward & receive shreds on "non-leader" Rotor instance
-        for _ in 0..rotors.len() - 1 {
-            let dsr = data_shreds_received.clone();
-            let csr = code_shreds_received.clone();
-            let rotor_non_leader = rotors.pop().unwrap();
-            rotor_tasks.push(task::spawn(async move {
-                loop {
-                    match rotor_non_leader.receive().await {
-                        Ok(shred) => {
-                            rotor_non_leader.forward(&shred).await.unwrap();
-                            let mut guard = match shred.payload_type {
-                                ShredPayloadType::Data(_) => dsr.lock().await,
-                                ShredPayloadType::Coding(_) => csr.lock().await,
-                            };
-                            assert!(!guard.contains(&shred.payload().index_in_slice));
-                            guard.insert(shred.payload().index_in_slice);
-                        }
-                        _ => continue,
-                    }
-                }
-            }));
-        }
-
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        for shred in shreds {
-            rotors[0].send(&shred).await.unwrap();
-        }
-
-        // forward shreds on the "leader" Rotor instance
-        assert_eq!(rotors.len(), 1);
-        let rotor_leader = rotors.pop().unwrap();
-        let rotor_task_leader = task::spawn(async move {
-            loop {
-                match rotor_leader.receive().await {
-                    Ok(shred) => {
-                        rotor_leader.forward(&shred).await.unwrap();
-                    }
-                    _ => continue,
-                }
-            }
-        });
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // non-leader should have received all shreds via Rotor
-        assert_eq!(
-            data_shreds_received.lock().await.len() + code_shreds_received.lock().await.len(),
-            TOTAL_SHREDS
-        );
-        rotor_task_leader.abort();
-        for task in rotor_tasks {
-            task.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn many_instances() {
-        let (sks, mut rotors) = create_rotor_instances(10, 3100);
+    async fn test_rotor_dissemination(count: u64, base_port: u16) {
+        let (sks, mut rotors) = create_rotor_instances(count, base_port);
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
@@ -282,12 +216,13 @@ mod tests {
         }
 
         tokio::time::sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(rotors.len(), 1);
         for shred in shreds {
             rotors[0].send(&shred).await.unwrap();
         }
 
         // forward shreds on the "leader" Rotor instance
-        assert_eq!(rotors.len(), 1);
         let rotor_leader = rotors.pop().unwrap();
         let rotor_task_leader = task::spawn(async move {
             loop {
@@ -303,10 +238,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // non-leader instances should have received all shreds via Rotor
-        for i in 0..9 {
+        for i in 0..(count - 1) {
             assert_eq!(
-                data_shreds_received[i].lock().await.len()
-                    + code_shreds_received[i].lock().await.len(),
+                data_shreds_received[i as usize].lock().await.len()
+                    + code_shreds_received[i as usize].lock().await.len(),
                 TOTAL_SHREDS
             );
         }
@@ -314,5 +249,15 @@ mod tests {
         for task in rotor_tasks {
             task.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn two_instances() {
+        test_rotor_dissemination(2, 3000).await
+    }
+
+    #[tokio::test]
+    async fn many_instances() {
+        test_rotor_dissemination(10, 3100).await
     }
 }
