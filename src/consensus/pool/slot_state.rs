@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use either::Either;
+use log::warn;
 use smallvec::SmallVec;
 
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
@@ -203,12 +204,16 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
-    ///
-    /// # Panics
-    ///
-    /// If this function has already been called for this block.
     pub fn notify_parent_known(&mut self, hash: Hash, parent: BlockId) {
-        assert!(!self.parents.contains_key(&hash));
+        // TODO: maybe turn this back into a panic once repair is fully implemented
+        if self.parents.contains_key(&hash) {
+            warn!(
+                "parent of block {} in slot {} was alredy known",
+                &hex::encode(hash)[..8],
+                self.slot
+            );
+            return;
+        }
         self.parents.insert(
             hash,
             ParentInfo {
