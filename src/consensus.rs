@@ -22,7 +22,7 @@ mod cert;
 mod epoch_info;
 mod pool;
 mod produce_block;
-mod vote;
+pub mod vote;
 pub(crate) mod votor;
 
 use std::marker::{Send, Sync};
