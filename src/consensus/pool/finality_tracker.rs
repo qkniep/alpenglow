@@ -295,7 +295,7 @@ mod tests {
         let event = tracker.mark_fast_finalized(slot, [1; 32]);
         assert_eq!(event, FinalizationEvent::default());
 
-        // do NOT implicitly finalize parent, that is already finalized
+        // do NOT implicitly finalize parent, that is already directly finalized
         let slot = slot.next();
         let event = tracker.add_parent((slot, [2; 32]), (slot.prev(), [1; 32]));
         assert_eq!(event, FinalizationEvent::default());
@@ -303,7 +303,5 @@ mod tests {
         assert_eq!(event.finalized, Some((slot, [2; 32])));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
-
-        // TODO: more test cases
     }
 }
