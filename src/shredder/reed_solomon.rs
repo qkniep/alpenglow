@@ -74,7 +74,9 @@ pub(super) fn reed_solomon_deshred(
     shreds: &[Shred],
     num_data: usize,
     num_coding: usize,
+    coding_offset: usize,
 ) -> Result<Vec<u8>, ReedSolomonDeshredError> {
+    assert!(coding_offset <= DATA_SHREDS);
     if shreds.len() < DATA_SHREDS {
         return Err(ReedSolomonDeshredError::NotEnoughShreds);
     }
@@ -88,7 +90,7 @@ pub(super) fn reed_solomon_deshred(
         ShredPayloadType::Coding(_) => None,
     });
     let coding = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Coding(c) => Some((c.index_in_slice, &c.data)),
+        ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
         ShredPayloadType::Data(_) => None,
     });
 
@@ -186,7 +188,7 @@ mod tests {
             reed_solomon_shred(header, payload.clone().into(), DATA_SHREDS, CODING_SHREDS).unwrap();
         let sk = SecretKey::new(&mut rand::rng());
         let shreds = data_and_coding_to_output_shreds(data, coding, &sk);
-        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS);
+        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::TooManyShreds);
     }
@@ -199,7 +201,7 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let mut shreds = data_and_coding_to_output_shreds(data, coding, &sk);
         shreds.truncate(DATA_SHREDS - 1);
-        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS);
+        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
     }
@@ -208,7 +210,8 @@ mod tests {
         let (data, coding) =
             reed_solomon_shred(header, payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
         let shreds = take_and_map_enough_shreds(data, coding);
-        let restored = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS).unwrap();
+        let restored =
+            reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS).unwrap();
         assert_eq!(restored, payload);
     }
 

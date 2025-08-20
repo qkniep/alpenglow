@@ -127,14 +127,9 @@ impl Shred {
     /// Verifies the proof and signature of this shred.
     #[must_use]
     pub fn verify(&self, pk: &PublicKey, cached_merkle_root: Option<&Hash>) -> bool {
-        // FIX: make this work for all shredders
-        let index = match self.payload_type {
-            ShredPayloadType::Coding(_) => DATA_SHREDS + self.payload().index_in_slice,
-            ShredPayloadType::Data(_) => self.payload().index_in_slice,
-        };
         if !MerkleTree::check_proof(
             &self.payload().data,
-            index,
+            self.payload().index_in_slice,
             self.merkle_root,
             &self.merkle_path,
         ) {
@@ -175,7 +170,7 @@ impl ShredPayload {
     /// Returns the index of this shred within the entire slot.
     #[must_use]
     pub fn index_in_slot(&self) -> usize {
-        self.header.slice_index.inner() * DATA_SHREDS + self.index_in_slice
+        self.header.slice_index.inner() * TOTAL_SHREDS + self.index_in_slice
     }
 }
 
@@ -236,7 +231,8 @@ impl Shredder for RegularShredder {
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
-        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let payload =
+            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         let slice = Slice::from_shreds(payload.into(), &shreds[0]);
 
         // additional Merkle tree validity check
@@ -271,7 +267,7 @@ impl Shredder for CodingOnlyShredder {
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
-        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS)?;
+        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
         let slice = Slice::from_shreds(payload.into(), &shreds[0]);
 
         // additional Merkle tree validity check
@@ -322,7 +318,12 @@ impl Shredder for PetsShredder {
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
-        let mut buffer = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
+        let mut buffer = reed_solomon_deshred(
+            shreds,
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS + 1,
+            DATA_SHREDS - 1,
+        )?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -389,7 +390,8 @@ impl Shredder for AontShredder {
     }
 
     fn deshred(shreds: &[Shred]) -> Result<Slice, DeshredError> {
-        let mut buffer = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let mut buffer =
+            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -439,20 +441,23 @@ pub fn data_and_coding_to_output_shreds(
     let merkle_root = tree.get_root();
     let sig = sk.sign(&merkle_root);
 
-    for (i, d) in data.into_iter().enumerate() {
+    for d in data.into_iter() {
+        let merkle_path = tree.create_proof(d.0.index_in_slice);
         shreds.push(Shred {
             payload_type: ShredPayloadType::Data(d.0),
             merkle_root,
             merkle_root_sig: sig,
-            merkle_path: tree.create_proof(i),
+            merkle_path,
         });
     }
-    for (i, c) in coding.into_iter().enumerate() {
+    for mut c in coding.into_iter() {
+        c.0.index_in_slice += num_data_shreds;
+        let merkle_path = tree.create_proof(c.0.index_in_slice);
         shreds.push(Shred {
             payload_type: ShredPayloadType::Coding(c.0),
             merkle_root,
             merkle_root_sig: sig,
-            merkle_path: tree.create_proof(num_data_shreds + i),
+            merkle_path,
         });
     }
 

@@ -137,9 +137,7 @@ mod tests {
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
-    use crate::shredder::{
-        MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, TOTAL_SHREDS,
-    };
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
     use tokio::sync::Mutex;
@@ -184,28 +182,20 @@ mod tests {
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
-        let mut data_shreds_received = Vec::with_capacity(rotors.len());
-        (0..rotors.len())
-            .for_each(|_| data_shreds_received.push(Arc::new(Mutex::new(HashSet::new()))));
-        let mut code_shreds_received = Vec::with_capacity(rotors.len());
-        (0..rotors.len())
-            .for_each(|_| code_shreds_received.push(Arc::new(Mutex::new(HashSet::new()))));
-        let mut rotor_tasks = Vec::new();
+        let mut shreds_received = Vec::with_capacity(rotors.len());
+        (0..rotors.len()).for_each(|_| shreds_received.push(Arc::new(Mutex::new(HashSet::new()))));
+        let mut rotor_tasks = Vec::with_capacity(rotors.len());
 
         // forward & receive shreds on "non-leader" Rotor instance
         for i in 0..rotors.len() - 1 {
-            let dsr = data_shreds_received[i].clone();
-            let csr = code_shreds_received[i].clone();
+            let shreds_received = shreds_received[i].clone();
             let rotor_non_leader = rotors.pop().unwrap();
             rotor_tasks.push(task::spawn(async move {
                 loop {
                     match rotor_non_leader.receive().await {
                         Ok(shred) => {
                             rotor_non_leader.forward(&shred).await.unwrap();
-                            let mut guard = match shred.payload_type {
-                                ShredPayloadType::Data(_) => dsr.lock().await,
-                                ShredPayloadType::Coding(_) => csr.lock().await,
-                            };
+                            let mut guard = shreds_received.lock().await;
                             assert!(!guard.contains(&shred.payload().index_in_slice));
                             guard.insert(shred.payload().index_in_slice);
                         }
@@ -239,11 +229,7 @@ mod tests {
 
         // non-leader instances should have received all shreds via Rotor
         for i in 0..(count - 1) {
-            assert_eq!(
-                data_shreds_received[i as usize].lock().await.len()
-                    + code_shreds_received[i as usize].lock().await.len(),
-                TOTAL_SHREDS
-            );
+            assert_eq!(shreds_received[i as usize].lock().await.len(), TOTAL_SHREDS);
         }
         rotor_task_leader.abort();
         for task in rotor_tasks {
