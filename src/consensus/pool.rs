@@ -6,6 +6,7 @@
 //! Any received votes or certificates are placed into the pool.
 //! The pool then tracks status for each slot and sends notification to votor.
 
+mod finality_tracker;
 mod parent_ready_tracker;
 mod slot_state;
 
@@ -27,6 +28,7 @@ use crate::{BlockId, Slot, ValidatorId};
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, Vote};
 
+use finality_tracker::FinalityTracker;
 use parent_ready_tracker::ParentReadyTracker;
 use slot_state::SlotState;
 
@@ -86,6 +88,8 @@ pub struct PoolImpl {
     slot_states: BTreeMap<Slot, SlotState>,
     /// Keeps track of which slots have a parent ready.
     parent_ready_tracker: ParentReadyTracker,
+    ///
+    finality_tracker: FinalityTracker,
     /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
     s2n_waiting_parent_cert: BTreeMap<(Slot, Hash), (Slot, Hash)>,
 
@@ -114,9 +118,10 @@ impl PoolImpl {
         Self {
             slot_states: BTreeMap::new(),
             parent_ready_tracker: ParentReadyTracker::default(),
+            finality_tracker: FinalityTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
-            highest_notarized_fallback_slot: Slot::new(0),
-            highest_finalized_slot: Slot::new(0),
+            highest_notarized_fallback_slot: Slot::genesis(),
+            highest_finalized_slot: Slot::genesis(),
             epoch_info,
             votor_event_channel,
             repair_channel,
@@ -145,6 +150,14 @@ impl PoolImpl {
                     &hex::encode(block_hash)[..8],
                     slot
                 );
+                if matches!(cert, Cert::Notar(_)) {
+                    let res = self.finality_tracker.mark_notarized(slot, block_hash);
+                    if let Some((slot, block_info)) = res {
+                        self.parent_ready_tracker
+                            .mark_finalized(slot, block_info.parent);
+                    }
+                }
+                // TODO: maybe remove
                 self.highest_notarized_fallback_slot =
                     slot.max(self.highest_notarized_fallback_slot);
 
@@ -198,19 +211,23 @@ impl PoolImpl {
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash();
-                if let Some(parent) = self.slot_state(slot).get_parent(hash) {
-                    self.parent_ready_tracker.mark_finalized(slot, parent);
+                if let Some((slot, block_info)) =
+                    self.finality_tracker.mark_fast_finalized(slot, *hash)
+                {
+                    self.parent_ready_tracker
+                        .mark_finalized(slot, block_info.parent);
                 }
+                // TODO: remove
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                 self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
-                if let Some(hash) = self.get_notarized_block(slot)
-                    && let Some(parent) = self.slot_state(slot).get_parent(&hash)
-                {
-                    self.parent_ready_tracker.mark_finalized(slot, parent);
+                if let Some((slot, block_info)) = self.finality_tracker.mark_finalized(slot) {
+                    self.parent_ready_tracker
+                        .mark_finalized(slot, block_info.parent);
                 }
+                // TODO: remove
                 self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                 self.prune();
             }
@@ -437,6 +454,13 @@ impl Pool for PoolImpl {
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
         let (slot, block_hash) = block_id;
         let (parent_slot, parent_hash) = parent_id;
+        if let Some((slot, block_info)) = self
+            .finality_tracker
+            .add_parent(slot, block_hash, parent_id)
+        {
+            self.parent_ready_tracker
+                .mark_finalized(slot, block_info.parent);
+        }
         self.slot_state(slot)
             .notify_parent_known(block_hash, parent_id);
         if let Some(parent_state) = self.slot_states.get(&parent_slot)
