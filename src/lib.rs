@@ -10,6 +10,7 @@ pub mod consensus;
 pub mod crypto;
 pub mod disseminator;
 pub mod logging;
+pub mod metrics;
 pub mod network;
 pub mod repair;
 pub mod shredder;
