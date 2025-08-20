@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structures handling votes and certificates for a single slot.
+//!
+//! The main data structure defined here is [`SlotState`], which has components:
+//! - [`SlotVotes`] for all votes in a single slot.
+//! - [`SlotVotedStake`] for all running stake totals in a single slot.
+//! - [`SlotCertificates`] for all certificates in a single slot.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -222,6 +227,8 @@ impl SlotState {
             panic!("parent not known")
         };
         parent_info.certified = true;
+
+        // potentially emit safe-to-notar
         if self.sent_safe_to_notar.contains(&hash) {
             return None;
         }
