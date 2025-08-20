@@ -71,6 +71,7 @@ impl FinalityTracker {
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
+            println!("status: {status:?}");
             match status {
                 FinalizationStatus::FinalizedAndNotarized(_) => {
                     return event;
@@ -131,7 +132,10 @@ impl FinalityTracker {
                 | FinalizationStatus::FinalizedAndNotarized(_)
                 | FinalizationStatus::ImplicitlyFinalized(_) => event,
                 FinalizationStatus::Notarized(block_hash) => {
-                    self.handle_finalized((slot, *block_hash), &mut event);
+                    let block_hash = *block_hash;
+                    self.status
+                        .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
+                    self.handle_finalized((slot, block_hash), &mut event);
                     self.highest_finalized = slot.max(self.highest_finalized);
                     event
                 }
@@ -186,14 +190,37 @@ impl FinalityTracker {
             if slot == source_slot {
                 break;
             }
-            // TODO: add assertions
+            if let Some(status) = self.status.get(&slot) {
+                match status {
+                    FinalizationStatus::ImplicitlySkipped => {
+                        return;
+                    }
+                    FinalizationStatus::Notarized(_)
+                    | FinalizationStatus::ImplicitlyFinalized(_) => {}
+                    FinalizationStatus::Finalized
+                    | FinalizationStatus::FinalizedAndNotarized(_) => {
+                        unreachable!("consensus safety violation")
+                    }
+                }
+            }
             self.status
                 .insert(slot, FinalizationStatus::ImplicitlySkipped);
             event.implicitly_skipped.push(slot);
         }
 
         // mark block as implicitly finalized
-        // TODO: add assertions
+        if let Some(status) = self.status.get(&implicitly_finalized.0) {
+            match status {
+                FinalizationStatus::Notarized(_) | FinalizationStatus::Finalized => {}
+                FinalizationStatus::FinalizedAndNotarized(_)
+                | FinalizationStatus::ImplicitlyFinalized(_) => {
+                    return;
+                }
+                FinalizationStatus::ImplicitlySkipped => {
+                    unreachable!("consensus safety violation")
+                }
+            }
+        }
         self.status.insert(
             implicitly_finalized.0,
             FinalizationStatus::ImplicitlyFinalized(implicitly_finalized.1),
@@ -221,6 +248,8 @@ mod tests {
         assert_eq!(event, FinalizationEvent::default());
         let event = tracker.mark_finalized(slot);
         assert_eq!(event.finalized, Some((slot, [1; 32])));
+        assert_eq!(event.implicitly_finalized, vec![]);
+        assert_eq!(event.implicitly_skipped, vec![]);
 
         // fast finalize a block
         let slot = slot.next();
@@ -254,6 +283,27 @@ mod tests {
     #[test]
     fn no_duplicates() {
         let mut tracker = FinalityTracker::default();
-        // TODO: to check: do not emit blocks multiple times
+
+        // slow finalize + fast finalize a block
+        let slot = Slot::genesis().next();
+        let event = tracker.mark_finalized(slot);
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_notarized(slot, [1; 32]);
+        assert_eq!(event.finalized, Some((slot, [1; 32])));
+        assert_eq!(event.implicitly_finalized, vec![]);
+        assert_eq!(event.implicitly_skipped, vec![]);
+        let event = tracker.mark_fast_finalized(slot, [1; 32]);
+        assert_eq!(event, FinalizationEvent::default());
+
+        // do NOT implicitly finalize parent, that is already finalized
+        let slot = slot.next();
+        let event = tracker.add_parent((slot, [2; 32]), (slot.prev(), [1; 32]));
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_fast_finalized(slot, [2; 32]);
+        assert_eq!(event.finalized, Some((slot, [2; 32])));
+        assert_eq!(event.implicitly_finalized, vec![]);
+        assert_eq!(event.implicitly_skipped, vec![]);
+
+        // TODO: more test cases
     }
 }
