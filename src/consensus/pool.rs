@@ -69,6 +69,9 @@ pub enum SlashableOffence {
     NotarFallbackAndFinalize(ValidatorId, Slot),
 }
 
+/// Interface for the Pool.
+///
+/// This is only used for mocking of [`PoolImpl`].
 #[async_trait]
 #[automock]
 pub trait Pool {
@@ -82,21 +85,17 @@ pub trait Pool {
 }
 
 /// Pool is the central consensus data structure.
+///
 /// It holds votes and certificates for each slot.
 pub struct PoolImpl {
     /// State for each slot. Stores all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
     /// Keeps track of which slots have a parent ready.
     parent_ready_tracker: ParentReadyTracker,
-    ///
+    /// Keeps track of which slots are finalized.
     finality_tracker: FinalityTracker,
     /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
     s2n_waiting_parent_cert: BTreeMap<(Slot, Hash), (Slot, Hash)>,
-
-    /// Highest slot that is at least notarized fallabck.
-    highest_notarized_fallback_slot: Slot,
-    /// Highest slot that was finalized (slow or fast).
-    highest_finalized_slot: Slot,
 
     /// Information about all active validators.
     epoch_info: Arc<EpochInfo>,
@@ -120,8 +119,6 @@ impl PoolImpl {
             parent_ready_tracker: ParentReadyTracker::default(),
             finality_tracker: FinalityTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
-            highest_notarized_fallback_slot: Slot::genesis(),
-            highest_finalized_slot: Slot::genesis(),
             epoch_info,
             votor_event_channel,
             repair_channel,
@@ -157,9 +154,6 @@ impl PoolImpl {
                             .mark_finalized(slot, block_info.parent);
                     }
                 }
-                // TODO: maybe remove
-                self.highest_notarized_fallback_slot =
-                    slot.max(self.highest_notarized_fallback_slot);
 
                 // potentially notify child waiting for safe-to-notar
                 if let Some((child_slot, child_hash)) =
@@ -217,8 +211,6 @@ impl PoolImpl {
                     self.parent_ready_tracker
                         .mark_finalized(slot, block_info.parent);
                 }
-                // TODO: remove
-                self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                 self.prune();
             }
             Cert::Final(_) => {
@@ -227,8 +219,6 @@ impl PoolImpl {
                     self.parent_ready_tracker
                         .mark_finalized(slot, block_info.parent);
                 }
-                // TODO: remove
-                self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                 self.prune();
             }
         }
@@ -301,7 +291,7 @@ impl PoolImpl {
     /// After this, [`Self::slot_states`] will only contain entries for slots
     /// >= [`Self::highest_finalized_slot`].
     fn prune(&mut self) {
-        let last_slot = self.highest_finalized_slot;
+        let last_slot = self.finalized_slot();
         self.slot_states = self.slot_states.split_off(&last_slot);
     }
 
@@ -321,11 +311,6 @@ impl PoolImpl {
         self.slot_states.get(&slot).is_some_and(|state| {
             state.certificates.notar.is_some() || !state.certificates.notar_fallback.is_empty()
         })
-    }
-
-    /// Gives the current tip of the chain for block production.
-    pub fn get_tip(&self) -> Slot {
-        self.highest_notarized_fallback_slot
     }
 
     /// Returns the hash of the notarized block for the given slot, if any.
@@ -369,9 +354,8 @@ impl Pool for PoolImpl {
         let slot = cert.slot();
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
-        let slot_far_in_future =
-            Slot::new(self.highest_finalized_slot.inner() + 2 * SLOTS_PER_EPOCH);
-        if slot <= self.highest_finalized_slot || slot >= slot_far_in_future {
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        if slot <= self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
@@ -408,9 +392,8 @@ impl Pool for PoolImpl {
         let slot = vote.slot();
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
-        let slot_far_in_future =
-            Slot::new(self.highest_finalized_slot.inner() + 2 * SLOTS_PER_EPOCH);
-        if slot < self.highest_finalized_slot || slot >= slot_far_in_future {
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        if slot < self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
@@ -487,7 +470,7 @@ impl Pool for PoolImpl {
     /// Emits the corresponding [`VotorEvent::Standstill`] event for Votor.
     /// Should be called after not seeing any progress for the standstill duration.
     async fn recover_from_standstill(&self) {
-        let slot = self.highest_finalized_slot;
+        let slot = self.finalized_slot();
         let certs = self.get_certs(slot);
         let votes = self.get_own_votes(slot.next());
 
@@ -508,7 +491,7 @@ impl Pool for PoolImpl {
 
     /// Gives the currently highest finalized (fast or slow) slot.
     fn finalized_slot(&self) -> Slot {
-        self.highest_finalized_slot
+        self.finality_tracker.highest_finalized()
     }
 
     /// Returns all possible parents for the given slot that are ready.
@@ -970,7 +953,7 @@ mod tests {
             assert_eq!(pool.add_vote(vote).await, Ok(()));
             assert!(pool.is_finalized(slot));
         }
-        assert_eq!(pool.highest_finalized_slot.inner(), last_slot.inner() + 10);
+        assert_eq!(pool.finalized_slot().inner(), last_slot.inner() + 10);
 
         // NOW first 10 slots should be gone
         for s in 0..10 {

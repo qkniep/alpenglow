@@ -39,6 +39,9 @@ impl From<&Block> for BlockInfo {
     }
 }
 
+/// Interface for the blockstore.
+///
+/// This is only used for mocking of [`BlockstoreImpl`].
 #[async_trait]
 #[automock]
 pub trait Blockstore {

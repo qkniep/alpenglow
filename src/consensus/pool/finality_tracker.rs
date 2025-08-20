@@ -57,13 +57,19 @@ impl FinalityTracker {
         self.check_finalized(slot)
     }
 
+    ///
+    pub fn highest_finalized(&self) -> Slot {
+        self.highest_finalized
+    }
+
+    ///
     fn check_finalized(&mut self, slot: Slot) -> Option<(Slot, BlockInfo)> {
         if !self.finalized.contains(&slot) {
             return None;
         }
+        self.highest_finalized = slot.max(self.highest_finalized);
         let hash = *self.notarized.get(&slot)?;
         let parent = *self.parents.get(&(slot, hash))?;
-        self.highest_finalized = slot.max(self.highest_finalized);
         Some((slot, BlockInfo { hash, parent }))
     }
 }
@@ -74,6 +80,6 @@ mod tests {
 
     #[test]
     fn basic() {
-        // TODO: add some test
+        let mut tracker = FinalityTracker::default();
     }
 }
