@@ -24,7 +24,6 @@ use crate::crypto::Hash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
-use super::blockstore::BlockInfo;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, Vote};
 
@@ -73,7 +72,7 @@ pub enum SlashableOffence {
 pub trait Pool {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError>;
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError>;
-    async fn add_block(&mut self, slot: Slot, block_info: BlockInfo);
+    async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
     async fn recover_from_standstill(&self);
     fn finalized_slot(&self) -> Slot;
     fn parents_ready(&self, slot: Slot) -> &[(Slot, Hash)];
@@ -429,15 +428,11 @@ impl Pool for PoolImpl {
     ///
     /// This should be called once for every valid block (e.g. directly by blockstore).
     /// Ensures that the parent information is available for safe-to-notar checks.
-    async fn add_block(&mut self, slot: Slot, block_info: BlockInfo) {
-        let BlockInfo {
-            hash: block_hash,
-            parent_slot,
-            parent_hash,
-        } = block_info;
-        let parent = (parent_slot, parent_hash);
+    async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
+        let (slot, block_hash) = block_id;
+        let (parent_slot, parent_hash) = parent_id;
         self.slot_state(slot)
-            .notify_parent_known(block_hash, parent);
+            .notify_parent_known(block_hash, parent_id);
         if let Some(parent_state) = self.slot_states.get(&parent_slot)
             && parent_state.is_notar_fallback(&parent_hash)
             && let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash)

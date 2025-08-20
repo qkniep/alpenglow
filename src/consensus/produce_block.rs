@@ -168,7 +168,12 @@ where
             if let Ok(Some((block_slot, block_info))) = block {
                 assert_eq!(block_slot, slot);
                 maybe_block_hash = Some(block_info.hash);
-                self.pool.write().await.add_block(slot, block_info).await;
+                let block_id = (block_slot, block_info.hash);
+                self.pool
+                    .write()
+                    .await
+                    .add_block(block_id, block_info.parent)
+                    .await;
             }
         }
         let ret = if is_last {

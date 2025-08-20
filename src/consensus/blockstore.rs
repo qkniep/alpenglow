@@ -16,7 +16,7 @@ use tokio::sync::mpsc::Sender;
 use crate::crypto::Hash;
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
-use crate::{Block, Slot};
+use crate::{Block, BlockId, Slot};
 
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
@@ -27,16 +27,14 @@ use slot_block_data::{AddShredError, SlotBlockData};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockInfo {
     pub(crate) hash: Hash,
-    pub(crate) parent_slot: Slot,
-    pub(crate) parent_hash: Hash,
+    pub(crate) parent: BlockId,
 }
 
 impl From<&Block> for BlockInfo {
     fn from(block: &Block) -> Self {
         BlockInfo {
             hash: block.block_hash,
-            parent_slot: block.parent,
-            parent_hash: block.parent_hash,
+            parent: (block.parent, block.parent_hash),
         }
     }
 }
@@ -110,8 +108,8 @@ impl BlockstoreImpl {
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     &hex::encode(block_info.hash)[..8],
                     slot,
-                    &hex::encode(block_info.parent_hash)[..8],
-                    block_info.parent_slot,
+                    &hex::encode(block_info.parent.1)[..8],
+                    block_info.parent.0,
                 );
 
                 Some((slot, block_info))
