@@ -215,8 +215,8 @@ impl<N: Network> Repair<N> {
                     return;
                 };
                 if shred.payload().header.slot != slot
-                    || shred.payload().header.slice_index == slice
-                    || shred.payload().index_in_slice == index
+                    || shred.payload().header.slice_index != slice
+                    || shred.payload().index_in_slice != index
                 {
                     return;
                 }
