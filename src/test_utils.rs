@@ -9,7 +9,7 @@ use crate::{
     crypto::{Hash, aggsig::SecretKey, signature},
     network::{SimulatedNetwork, simulated::SimulatedNetworkCore},
     shredder::MAX_DATA_PER_SLICE,
-    slice::{Slice, SliceHeader, SlicePayload},
+    types::{Slice, SliceHeader, SliceIndex, SlicePayload},
 };
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
@@ -54,11 +54,12 @@ pub async fn generate_all2all_instances(
 }
 
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
+    let final_slice_index = SliceIndex::new_unchecked(num_slices - 1);
     let parent_slot = Slot::genesis();
     assert_ne!(slot, parent_slot);
     let mut slices = Vec::new();
-    for slice_index in 0..num_slices {
-        let parent = if slice_index == 0 {
+    for slice_index in final_slice_index.until() {
+        let parent = if slice_index.is_first() {
             Some((parent_slot, Hash::default()))
         } else {
             None
@@ -67,7 +68,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         let header = SliceHeader {
             slot,
             slice_index,
-            is_last: slice_index == num_slices - 1,
+            is_last: slice_index == final_slice_index,
         };
         slices.push(Slice::from_parts(header, payload, None));
     }

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
+use crate::types::SliceIndex;
 use crate::{Slot, highest_non_zero_byte};
 
 /// A slice is the unit of data between block and shred.
@@ -20,7 +21,7 @@ pub struct Slice {
     /// Slot number this slice is part of.
     pub slot: Slot,
     /// Index of the slice within its slot.
-    pub slice_index: usize,
+    pub slice_index: SliceIndex,
     /// Indicates whether this is the last slice in the slot.
     pub is_last: bool,
     /// Merkle root hash over all shreds in this slice.
@@ -92,7 +93,7 @@ pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,
     /// Same as [`Slice::slice_index`].
-    pub(crate) slice_index: usize,
+    pub(crate) slice_index: SliceIndex,
     /// Same as [`Slice::is_last`].
     pub(crate) is_last: bool,
 }
@@ -177,7 +178,7 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
         slot: Slot::new(0),
-        slice_index: 0,
+        slice_index: SliceIndex::first(),
         is_last: true,
     };
     Slice::from_parts(header, payload, None)

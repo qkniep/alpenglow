@@ -28,7 +28,7 @@ use thiserror::Error;
 
 use crate::crypto::signature::{PublicKey, SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
-use crate::slice::{Slice, SliceHeader};
+use crate::types::{Slice, SliceHeader};
 
 use reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
@@ -174,8 +174,8 @@ pub struct ShredPayload {
 impl ShredPayload {
     /// Returns the index of this shred within the entire slot.
     #[must_use]
-    pub const fn index_in_slot(&self) -> usize {
-        self.header.slice_index * DATA_SHREDS + self.index_in_slice
+    pub fn index_in_slot(&self) -> usize {
+        self.header.slice_index.inner() * DATA_SHREDS + self.index_in_slice
     }
 }
 
@@ -470,7 +470,7 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 mod tests {
     use color_eyre::Result;
 
-    use crate::slice::create_slice_with_invalid_txs;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     use super::*;
 

@@ -1,12 +1,12 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::Slot;
 use alpenglow::consensus::Vote;
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::NetworkMessage;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use alpenglow::slice::create_slice_with_invalid_txs;
+use alpenglow::types::Slot;
+use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
 

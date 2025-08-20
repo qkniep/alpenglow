@@ -140,7 +140,7 @@ mod tests {
     use crate::shredder::{
         MAX_DATA_PER_SLICE, RegularShredder, ShredPayloadType, Shredder, TOTAL_SHREDS,
     };
-    use crate::slice::create_slice_with_invalid_txs;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     use tokio::sync::Mutex;
     use tokio::task;
