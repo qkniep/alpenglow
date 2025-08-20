@@ -5,7 +5,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use alpenglow::slice::create_slice_with_invalid_txs;
+use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::ItemsCount;
 
 fn main() {

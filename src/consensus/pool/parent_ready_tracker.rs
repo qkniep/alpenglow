@@ -175,9 +175,9 @@ impl ParentReadyTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::types::SLOTS_PER_WINDOW;
 
-    use crate::slot::SLOTS_PER_WINDOW;
+    use super::*;
 
     #[test]
     fn basic() {

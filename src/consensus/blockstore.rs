@@ -15,6 +15,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::crypto::Hash;
 use crate::shredder::Shred;
+use crate::types::SliceIndex;
 use crate::{Block, Slot};
 
 use super::epoch_info::EpochInfo;
@@ -57,8 +58,8 @@ pub trait Blockstore {
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, slot: Slot, hash: Hash) -> Option<&'a Block>;
     #[allow(clippy::needless_lifetimes)]
-    fn get_shred<'a>(&'a self, slot: Slot, slice: usize, shred: usize) -> Option<&'a Shred>;
-    fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash>;
+    fn get_shred<'a>(&'a self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&'a Shred>;
+    fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash>;
 }
 
 /// Blockstore is the fundamental data structure holding block data per slot.
@@ -215,7 +216,7 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// Returns `None` if blockstore does not hold that shred yet.
     // TODO: support alternative/repaired blocks here
-    fn get_shred(&self, slot: Slot, slice: usize, shred: usize) -> Option<&Shred> {
+    fn get_shred(&self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&Shred> {
         self.slot_data(slot)?
             .canonical
             .shreds
@@ -229,10 +230,10 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// Panics if the double-Merkle tree for the given `slot` does not exist.
     // TODO: support alternative/repaired blocks here
-    fn create_double_merkle_proof(&self, slot: Slot, slice: usize) -> Vec<Hash> {
+    fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash> {
         let slot_data = self.slot_data(slot).unwrap();
         let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
-        tree.create_proof(slice)
+        tree.create_proof(slice.inner())
     }
 }
 
