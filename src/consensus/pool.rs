@@ -140,8 +140,11 @@ impl PoolImpl {
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
                 let block_hash = cert.block_hash().unwrap();
-                let h = &hex::encode(block_hash)[..8];
-                info!("notarized(-fallback) block {h} in slot {slot}");
+                info!(
+                    "notarized(-fallback) block {} in slot {}",
+                    &hex::encode(block_hash)[..8],
+                    slot
+                );
                 self.highest_notarized_fallback_slot =
                     slot.max(self.highest_notarized_fallback_slot);
 
@@ -468,8 +471,8 @@ impl Pool for PoolImpl {
             votes.len()
         );
 
-        // NOTE: This event corresponds to the slot after the last finalized one,
-        //       this way it is ignored by `Votor` iff a new slot was finalized.
+        // NOTE: This event corresponds to the slot after the last finalized one.
+        // This way it is ignored by `Votor` iff a new slot was finalized.
         let event = VotorEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
