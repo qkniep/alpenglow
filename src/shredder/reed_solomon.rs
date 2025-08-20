@@ -150,7 +150,7 @@ mod tests {
             slice_index: SliceIndex::first(),
             is_last: true,
         };
-        let payload = vec![0];
+        let payload = Vec::new();
         shred_deshred_restore(header, payload);
     }
 
