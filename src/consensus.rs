@@ -69,6 +69,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     /// Pool of votes and certificates.
     pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
 
+    /// Block production (i.e. leader side) component of the consensus protocol.
     block_producer: Arc<BlockProducer<D, T>>,
 
     /// All-to-all broadcast network protocol for consensus messages.
