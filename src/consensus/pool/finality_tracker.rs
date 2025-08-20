@@ -18,7 +18,6 @@ pub struct FinalityTracker {
     status: BTreeMap<Slot, FinalizationStatus>,
     /// Maps blocks to their parents.
     parents: BTreeMap<BlockId, BlockId>,
-
     /// The highest finalized slot so far.
     highest_finalized: Slot,
 }
