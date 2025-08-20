@@ -460,10 +460,8 @@ mod tests {
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
         let blockstore = Arc::new(RwLock::new(blockstore));
 
-        assert!(matches!(
-            wait_for_first_slot(pool, blockstore, Slot::genesis()).await,
-            SlotReady::Ready(_)
-        ));
+        let status = wait_for_first_slot(pool, blockstore, Slot::genesis()).await;
+        assert!(matches!(status, SlotReady::Ready(_)));
     }
 
     #[tokio::test]
@@ -481,10 +479,10 @@ mod tests {
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
         let pool = Arc::new(RwLock::new(pool));
 
-        let res = wait_for_first_slot(pool, blockstore, slot).await;
-        match res {
+        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
-            rest => panic!("unexpected {rest:?}"),
+            other => panic!("unexpected {other:?}"),
         }
     }
 
@@ -505,10 +503,10 @@ mod tests {
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
         let pool = Arc::new(RwLock::new(pool));
 
-        let res = wait_for_first_slot(pool, blockstore, slot).await;
-        match res {
+        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
-            rest => panic!("unexpected {rest:?}"),
+            other => panic!("unexpected {other:?}"),
         }
     }
 }
