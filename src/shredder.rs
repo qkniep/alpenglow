@@ -296,6 +296,7 @@ impl Shredder for CodingOnlyShredder {
 pub struct PetsShredder;
 
 impl Shredder for PetsShredder {
+    // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
@@ -361,6 +362,7 @@ impl Shredder for PetsShredder {
 pub struct AontShredder;
 
 impl Shredder for AontShredder {
+    // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
