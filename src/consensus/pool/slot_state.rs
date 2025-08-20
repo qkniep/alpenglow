@@ -203,6 +203,10 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
+    ///
+    /// # Panics
+    ///
+    /// If this function has already been called for this block.
     pub fn notify_parent_known(&mut self, hash: Hash, parent: BlockId) {
         assert!(!self.parents.contains_key(&hash));
         self.parents.insert(
