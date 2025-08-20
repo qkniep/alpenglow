@@ -34,3 +34,18 @@ fn enable_logforth_append<A: logforth::Append>(to_append: A) {
         .dispatch(|d| d.filter(EnvFilter::from_default_env()).append(to_append))
         .apply();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        enable_logforth();
+        log::trace!("trace");
+        log::debug!("debug");
+        log::info!("info");
+        log::warn!("warn");
+        log::error!("error");
+    }
+}
