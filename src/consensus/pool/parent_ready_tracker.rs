@@ -23,6 +23,7 @@ use either::Either;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
+use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::Hash;
 use crate::{BlockId, Slot};
 
@@ -143,6 +144,21 @@ impl ParentReadyTracker {
             }
         }
         newly_certified
+    }
+
+    ///
+    pub fn handle_finalization(&mut self, event: FinalizationEvent) -> Vec<(Slot, BlockId)> {
+        let mut parents_ready = Vec::new();
+        if let Some(finalized) = event.finalized {
+            parents_ready.extend(self.mark_notar_fallback(finalized));
+        }
+        for block_id in event.implicitly_finalized {
+            parents_ready.extend(self.mark_notar_fallback(block_id));
+        }
+        for slot in event.implicitly_skipped {
+            parents_ready.extend(self.mark_skipped(slot));
+        }
+        parents_ready
     }
 
     /// Returns list of all valid parents for the given slot, as of now.
