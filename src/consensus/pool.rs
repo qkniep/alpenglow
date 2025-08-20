@@ -431,9 +431,7 @@ impl Pool for PoolImpl {
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
         let (slot, block_hash) = block_id;
         let (parent_slot, parent_hash) = parent_id;
-        let finalization_event = self
-            .finality_tracker
-            .add_parent(slot, block_hash, parent_id);
+        let finalization_event = self.finality_tracker.add_parent(block_id, parent_id);
         self.parent_ready_tracker
             .handle_finalization(finalization_event);
         self.slot_state(slot)

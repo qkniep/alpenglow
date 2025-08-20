@@ -47,25 +47,6 @@ impl Default for ParentReadyTracker {
 }
 
 impl ParentReadyTracker {
-    /// Considers the given slot as finalized with the provided parent.
-    ///
-    /// This implies that (and is treated exactly the same as if):
-    /// 1. The parent of the finalized block is notarized-fallback, AND
-    /// 2. all slots between the parent and the finalized block are skip-certified.
-    ///
-    /// Returns a list of any newly connected parents.
-    pub fn mark_finalized(&mut self, slot: Slot, parent: BlockId) -> Vec<(Slot, BlockId)> {
-        let mut parents_ready = Vec::new();
-        parents_ready.extend(self.mark_notar_fallback(parent));
-        for s in parent.0.future_slots() {
-            if s == slot {
-                break;
-            }
-            parents_ready.extend(self.mark_skipped(s));
-        }
-        parents_ready
-    }
-
     /// Marks the given block as notarized-fallback.
     ///
     /// Returns a list of any newly connected parents.
@@ -158,6 +139,8 @@ impl ParentReadyTracker {
         for slot in event.implicitly_skipped {
             parents_ready.extend(self.mark_skipped(slot));
         }
+        parents_ready.sort_by_key(|(slot, _)| u64::MAX - slot.inner());
+        parents_ready.truncate(1);
         parents_ready
     }
 
@@ -343,36 +326,53 @@ mod tests {
     fn parent_ready_finalized() {
         let mut windows = Slot::windows();
         let window2 = windows.nth(1).unwrap();
-        let window3 = windows.nth(2).unwrap();
-        let window4 = windows.nth(3).unwrap();
-        let window5 = windows.nth(4).unwrap();
+        let window3 = windows.next().unwrap();
+        let window4 = windows.next().unwrap();
+        let window5 = windows.next().unwrap();
+        println!("windows: {window2}, {window3}, {window4}, {window5}");
         let mut tracker = ParentReadyTracker::default();
 
         // basic case where finalized slot is first in its window
-        let slot = window2.first_slot_in_window();
-        let parent = (slot.prev(), [1; 32]);
-        let parents = tracker.mark_finalized(slot, parent);
+        let block = (window2.first_slot_in_window(), [1; 32]);
+        let parent = (block.0.prev(), [2; 32]);
+        let event = FinalizationEvent {
+            finalized: Some(block),
+            implicitly_finalized: vec![parent],
+            implicitly_skipped: vec![],
+        };
+        let parents = tracker.handle_finalization(event);
         assert_eq!(parents.len(), 1);
         let parent_ready = parents[0];
-        assert_eq!(parent_ready.0, slot);
+        assert_eq!(parent_ready.0, block.0);
         assert_eq!(parent_ready.1, parent);
 
         // case where an entire window is skipped between parent and finalized block
-        let slot = window4.first_slot_in_window();
-        let parent = (window3.first_slot_in_window().prev(), [2; 32]);
-        let parents = tracker.mark_finalized(slot, parent);
+        let block = (window4.first_slot_in_window(), [3; 32]);
+        let parent = (window3.first_slot_in_window().prev(), [4; 32]);
+        let event = FinalizationEvent {
+            finalized: Some(block),
+            implicitly_finalized: vec![parent],
+            implicitly_skipped: window3.slots_in_window().collect(),
+        };
+        let parents = tracker.handle_finalization(event);
         assert_eq!(parents.len(), 1);
         let parent_ready = parents[0];
-        assert_eq!(parent_ready.0, slot);
+        assert_eq!(parent_ready.0, block.0);
         assert_eq!(parent_ready.1, parent);
 
         // case where finalized slot is NOT first in its window
-        let slot = window5.first_slot_in_window().next();
-        let parent = (slot.prev(), [3; 32]);
-        let parents = tracker.mark_finalized(slot, parent);
+        let block = (window5.first_slot_in_window().next(), [5; 32]);
+        let parent = (block.0.prev(), [6; 32]);
+        let parent_parent = (parent.0.prev(), [7; 32]);
+        let event = FinalizationEvent {
+            finalized: Some(block),
+            implicitly_finalized: vec![parent, parent_parent],
+            implicitly_skipped: vec![],
+        };
+        let parents = tracker.handle_finalization(event);
         assert_eq!(parents.len(), 1);
         let parent_ready = parents[0];
-        // assert_eq!(parent_ready.0, slot);
-        // assert_eq!(parent_ready.1, parent);
+        assert_eq!(parent_ready.0, parent.0);
+        assert_eq!(parent_ready.1, parent_parent);
     }
 }

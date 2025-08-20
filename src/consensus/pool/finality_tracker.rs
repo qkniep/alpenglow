@@ -44,14 +44,16 @@ pub struct FinalizationEvent {
 
 impl FinalityTracker {
     ///
-    pub fn add_parent(
-        &mut self,
-        slot: Slot,
-        block_hash: Hash,
-        parent: BlockId,
-    ) -> FinalizationEvent {
+    pub fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
-        self.parents.insert((slot, block_hash), parent);
+        self.parents.insert(block, parent);
+        if let Some(status) = self.status.get(&block.0)
+            && let FinalizationStatus::FinalizedAndNotarized(block_hash)
+            | FinalizationStatus::ImplicitlyFinalized(block_hash) = status
+            && block.1 == *block_hash
+        {
+            self.handle_implicitly_finalized(block.0, parent, &mut event);
+        }
         event
     }
 
