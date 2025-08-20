@@ -17,11 +17,11 @@
 //! - [`Vote`] represents a vote of a specific type.
 //! - [`EpochInfo`] holds information about the epoch and all validators.
 
+mod block_producer;
 mod blockstore;
 mod cert;
 mod epoch_info;
 mod pool;
-mod produce_block;
 mod vote;
 pub(crate) mod votor;
 
@@ -30,19 +30,18 @@ use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use either::Either;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
-use tokio::sync::{RwLock, mpsc, oneshot};
-use tokio::time::sleep;
+use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::crypto::{Hash, aggsig, signature};
+use crate::consensus::block_producer::BlockProducer;
+use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::Shred;
-use crate::{All2All, BlockId, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 pub use blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use cert::Cert;
@@ -62,9 +61,6 @@ const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
-    /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`Votor`].
-    secret_key: signature::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -73,101 +69,19 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     /// Pool of votes and certificates.
     pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
 
+    block_producer: Arc<BlockProducer<D, T>>,
+
     /// All-to-all broadcast network protocol for consensus messages.
     all2all: Arc<A>,
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
     /// Block repair protocol.
     repair: Arc<Repair<R>>,
-    /// Network connection to receive transactions from clients.
-    txs_receiver: T,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
     /// Votor task handle.
     votor_handle: tokio::task::JoinHandle<()>,
-}
-
-/// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
-#[derive(Debug)]
-enum SlotReady {
-    /// Window was already skipped.
-    Skip,
-    /// Slot is ready and the Pool emitted a `ParentReady` for given `BlockId`.
-    Ready(BlockId),
-    /// Slot is ready as a block for the previous slot was seen but the Pool has not emitted `ParentReady` yet.
-    ParentReadyNotSeen(BlockId, oneshot::Receiver<BlockId>),
-}
-
-/// Waits for first slot in the given window to become ready for block production.
-///
-/// Ready here can mean:
-/// - Pool emitted the `ParentReady` event for it, OR
-/// - the blockstore has stored a block for the previous slot.
-///
-/// See [`SlotReady`] for what is returned.
-async fn wait_for_first_slot(
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
-    first_slot_in_window: Slot,
-) -> SlotReady {
-    assert!(first_slot_in_window.is_start_of_window());
-    if first_slot_in_window.is_genesis_window() {
-        return SlotReady::Ready((Slot::genesis(), Hash::default()));
-    }
-
-    let last_slot_in_window = first_slot_in_window.last_slot_in_window();
-
-    // if already have parent ready, return it, otherwise get a channel to await on
-    let mut rx = {
-        let mut guard = pool.write().await;
-        match guard.wait_for_parent_ready(first_slot_in_window) {
-            Either::Left(parent) => {
-                return SlotReady::Ready(parent);
-            }
-            Either::Right(rx) => rx,
-        }
-    };
-
-    // Concurrently wait for:
-    // - `ParentReady` event,
-    // - block reconstruction in blockstore, OR
-    // - notification that a later slot was finalized.
-    tokio::select! {
-        res = &mut rx => {
-            let parent = res.expect("Sender dropped channel.");
-            SlotReady::Ready(parent)
-        }
-
-        res = async {
-            let handle = tokio::spawn(async move {
-                // PERF: These are burning a CPU. Can we use async here?
-                loop {
-                    let last_slot_in_prev_window = first_slot_in_window.prev();
-                    if let Some(hash) = blockstore
-                        .read()
-                        .await
-                        .canonical_block_hash(last_slot_in_prev_window)
-                    {
-                        return Some((last_slot_in_prev_window, hash));
-                    }
-                    if pool.read().await.finalized_slot() >= last_slot_in_window {
-                        warn!(
-                            "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
-                        );
-                        return None;
-                    }
-                    sleep(Duration::from_millis(1)).await;
-                }
-            });
-            handle.await.expect("Error in task")
-        } => {
-            match res {
-                None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
-            }
-        }
-    }
 }
 
 impl<A, D, R, T> Alpenglow<A, D, R, T>
@@ -231,17 +145,28 @@ where
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
-        Self {
+        let disseminator = Arc::new(disseminator);
+
+        let block_producer = Arc::new(BlockProducer::new(
             secret_key,
+            epoch_info.clone(),
+            disseminator.clone(),
+            txs_receiver,
+            blockstore.clone(),
+            pool.clone(),
+            cancel_token.clone(),
+        ));
+
+        Self {
             epoch_info,
             blockstore,
+            block_producer,
             pool,
             all2all,
-            disseminator: Arc::new(disseminator),
+            disseminator,
             repair,
             cancel_token,
             votor_handle,
-            txs_receiver,
         }
     }
 
@@ -263,9 +188,10 @@ where
             tokio::spawn(async move { nn.standstill_loop().await }.in_span(standstill_loop_span));
 
         let block_production_span = Span::enter_with_local_parent("block production");
-        let nn = node.clone();
+        let block_producer = Arc::clone(&node.block_producer);
         let prod_loop = tokio::spawn(
-            async move { nn.block_production_loop().await }.in_span(block_production_span),
+            async move { block_producer.block_production_loop().await }
+                .in_span(block_production_span),
         );
 
         node.cancel_token.cancelled().await;
@@ -332,64 +258,6 @@ where
         }
     }
 
-    /// Handles the leader side of the consensus protocol.
-    ///
-    /// Once all previous blocks have been notarized or skipped and the next
-    /// slot belongs to our leader window, we will produce a block.
-    async fn block_production_loop(&self) -> Result<()> {
-        for first_slot_in_window in Slot::windows() {
-            if self.cancel_token.is_cancelled() {
-                break;
-            }
-
-            let last_slot_in_window = first_slot_in_window.last_slot_in_window();
-
-            // don't do anything if we are not the leader
-            let leader = self.epoch_info.leader(first_slot_in_window);
-            if leader.id != self.epoch_info.own_id {
-                continue;
-            }
-
-            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
-                warn!(
-                    "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
-                );
-                continue;
-            }
-
-            // produce first block
-            let mut block_id = match wait_for_first_slot(
-                self.pool.clone(),
-                self.blockstore.clone(),
-                first_slot_in_window,
-            )
-            .await
-            {
-                SlotReady::Skip => continue,
-                SlotReady::Ready(parent) => {
-                    if first_slot_in_window.is_genesis() {
-                        // genesis block is already produced so skip it
-                        (first_slot_in_window, Hash::default())
-                    } else {
-                        self.produce_block_parent_ready(first_slot_in_window, parent)
-                            .await?
-                    }
-                }
-                SlotReady::ParentReadyNotSeen(parent, channel) => {
-                    self.produce_block_parent_not_ready(first_slot_in_window, parent, channel)
-                        .await?
-                }
-            };
-
-            // produce remaining blocks
-            for slot in first_slot_in_window.slots_in_window().skip(1) {
-                block_id = self.produce_block_parent_ready(slot, block_id).await?;
-            }
-        }
-
-        Ok(())
-    }
-
     #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
         trace!("received all2all msg: {msg:?}");
@@ -436,77 +304,5 @@ where
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::Slot;
-    use crate::consensus::blockstore::MockBlockstore;
-    use crate::consensus::pool::MockPool;
-    use crate::consensus::{Blockstore, Pool, SlotReady, wait_for_first_slot};
-    use crate::crypto::Hash;
-
-    use either::Either;
-    use mockall::predicate;
-    use tokio::sync::{RwLock, oneshot};
-
-    use std::sync::Arc;
-
-    #[tokio::test]
-    async fn wait_for_first_slot_genesis() {
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(MockPool::new());
-        let pool = Arc::new(RwLock::new(pool));
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
-
-        let status = wait_for_first_slot(pool, blockstore, Slot::genesis()).await;
-        assert!(matches!(status, SlotReady::Ready(_)));
-    }
-
-    #[tokio::test]
-    async fn wait_for_first_slot_parent_already_ready() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
-
-        let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default());
-
-        let mut pool = MockPool::new();
-        pool.expect_wait_for_parent_ready()
-            .with(predicate::eq(slot))
-            .return_once(move |_slot| Either::Left(parent));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
-
-        let status = wait_for_first_slot(pool, blockstore, slot).await;
-        match status {
-            SlotReady::Ready(p) => assert_eq!(p, parent),
-            other => panic!("unexpected {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn wait_for_first_slot_parent_ready_later() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
-
-        let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default());
-        let (tx, rx) = oneshot::channel();
-        tx.send(parent).unwrap();
-
-        let mut pool = MockPool::new();
-        pool.expect_wait_for_parent_ready()
-            .with(predicate::eq(slot))
-            .return_once(move |_slot| Either::Right(rx));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
-
-        let status = wait_for_first_slot(pool, blockstore, slot).await;
-        match status {
-            SlotReady::Ready(p) => assert_eq!(p, parent),
-            other => panic!("unexpected {other:?}"),
-        }
     }
 }

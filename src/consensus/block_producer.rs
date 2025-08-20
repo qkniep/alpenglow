@@ -1,32 +1,131 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::{Duration, Instant};
+use ::std::sync::Arc;
+use ::std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
-use log::info;
+use log::{info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
-use tokio::sync::oneshot;
+use tokio::sync::{RwLock, oneshot};
+use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 
-use crate::crypto::Hash;
-use crate::network::NetworkMessage;
+use crate::consensus::{Blockstore, DELTA_BLOCK, EpochInfo, Pool};
+use crate::crypto::{Hash, signature};
+use crate::highest_non_zero_byte;
+use crate::network::{Network, NetworkMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
-use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
-use crate::{All2All, Disseminator, Slot, network::Network};
-use crate::{BlockId, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte};
+use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
+use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE};
 
-use super::{Alpenglow, DELTA_BLOCK};
+pub(super) struct BlockProducer<D: Disseminator, T: Network> {
+    /// Own validator's secret key (used e.g. for block production).
+    /// This is not the same as the voting secret key, which is held by [`Votor`].
+    secret_key: signature::SecretKey,
+    /// Other validators' info.
+    epoch_info: Arc<EpochInfo>,
 
-impl<A, D, R, T> Alpenglow<A, D, R, T>
+    /// Blockstore for storing raw block data.
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    /// Pool of votes and certificates.
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+
+    /// Block dissemination network protocol for shreds.
+    disseminator: Arc<D>,
+    /// Network connection to receive transactions from clients.
+    txs_receiver: T,
+
+    /// Indicates whether the node is shutting down.
+    cancel_token: CancellationToken,
+}
+
+impl<D, T> BlockProducer<D, T>
 where
-    A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    R: Network + Sync + Send + 'static,
     T: Network + Sync + Send + 'static,
 {
+    pub(super) fn new(
+        secret_key: signature::SecretKey,
+        epoch_info: Arc<EpochInfo>,
+        disseminator: Arc<D>,
+        txs_receiver: T,
+        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+        cancel_token: CancellationToken,
+    ) -> Self {
+        Self {
+            secret_key,
+            epoch_info,
+            blockstore,
+            pool,
+            disseminator,
+            txs_receiver,
+            cancel_token,
+        }
+    }
+
+    /// Handles the leader side of the consensus protocol.
+    ///
+    /// Once all previous blocks have been notarized or skipped and the next
+    /// slot belongs to our leader window, we will produce a block.
+    pub(super) async fn block_production_loop(&self) -> Result<()> {
+        for first_slot_in_window in Slot::windows() {
+            if self.cancel_token.is_cancelled() {
+                break;
+            }
+
+            let last_slot_in_window = first_slot_in_window.last_slot_in_window();
+
+            // don't do anything if we are not the leader
+            let leader = self.epoch_info.leader(first_slot_in_window);
+            if leader.id != self.epoch_info.own_id {
+                continue;
+            }
+
+            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
+                warn!(
+                    "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
+                );
+                continue;
+            }
+
+            // produce first block
+            let mut block_id = match wait_for_first_slot(
+                self.pool.clone(),
+                self.blockstore.clone(),
+                first_slot_in_window,
+            )
+            .await
+            {
+                SlotReady::Skip => continue,
+                SlotReady::Ready(parent) => {
+                    if first_slot_in_window.is_genesis() {
+                        // genesis block is already produced so skip it
+                        (first_slot_in_window, Hash::default())
+                    } else {
+                        self.produce_block_parent_ready(first_slot_in_window, parent)
+                            .await?
+                    }
+                }
+                SlotReady::ParentReadyNotSeen(parent, channel) => {
+                    self.produce_block_parent_not_ready(first_slot_in_window, parent, channel)
+                        .await?
+                }
+            };
+
+            // produce remaining blocks
+            for slot in first_slot_in_window.slots_in_window().skip(1) {
+                block_id = self.produce_block_parent_ready(slot, block_id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
     ///
     /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
@@ -240,11 +339,97 @@ where
     (payload, ret)
 }
 
+/// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
+#[derive(Debug)]
+enum SlotReady {
+    /// Window was already skipped.
+    Skip,
+    /// Slot is ready and the Pool emitted a `ParentReady` for given `BlockId`.
+    Ready(BlockId),
+    /// Slot is ready as a block for the previous slot was seen but the Pool has not emitted `ParentReady` yet.
+    ParentReadyNotSeen(BlockId, oneshot::Receiver<BlockId>),
+}
+
+/// Waits for first slot in the given window to become ready for block production.
+///
+/// Ready here can mean:
+/// - Pool emitted the `ParentReady` event for it, OR
+/// - the blockstore has stored a block for the previous slot.
+///
+/// See [`SlotReady`] for what is returned.
+async fn wait_for_first_slot(
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    first_slot_in_window: Slot,
+) -> SlotReady {
+    assert!(first_slot_in_window.is_start_of_window());
+    if first_slot_in_window.is_genesis_window() {
+        return SlotReady::Ready((Slot::genesis(), Hash::default()));
+    }
+
+    let last_slot_in_window = first_slot_in_window.last_slot_in_window();
+
+    // if already have parent ready, return it, otherwise get a channel to await on
+    let mut rx = {
+        let mut guard = pool.write().await;
+        match guard.wait_for_parent_ready(first_slot_in_window) {
+            Either::Left(parent) => {
+                return SlotReady::Ready(parent);
+            }
+            Either::Right(rx) => rx,
+        }
+    };
+
+    // Concurrently wait for:
+    // - `ParentReady` event,
+    // - block reconstruction in blockstore, OR
+    // - notification that a later slot was finalized.
+    tokio::select! {
+        res = &mut rx => {
+            let parent = res.expect("Sender dropped channel.");
+            SlotReady::Ready(parent)
+        }
+
+        res = async {
+            let handle = tokio::spawn(async move {
+                // PERF: These are burning a CPU. Can we use async here?
+                loop {
+                    let last_slot_in_prev_window = first_slot_in_window.prev();
+                    if let Some(hash) = blockstore
+                        .read()
+                        .await
+                        .canonical_block_hash(last_slot_in_prev_window)
+                    {
+                        return Some((last_slot_in_prev_window, hash));
+                    }
+                    if pool.read().await.finalized_slot() >= last_slot_in_window {
+                        warn!(
+                            "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
+                        );
+                        return None;
+                    }
+                    sleep(Duration::from_millis(1)).await;
+                }
+            });
+            handle.await.expect("Error in task")
+        } => {
+            match res {
+                None => SlotReady::Skip,
+                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use mockall::predicate;
+
     use super::*;
 
     use crate::Transaction;
+    use crate::consensus::blockstore::MockBlockstore;
+    use crate::consensus::pool::MockPool;
     use crate::crypto::Hash;
     use crate::network::UdpNetwork;
 
@@ -295,5 +480,62 @@ mod tests {
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
         assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
+    }
+
+    #[tokio::test]
+    async fn wait_for_first_slot_genesis() {
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(MockPool::new());
+        let pool = Arc::new(RwLock::new(pool));
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
+        let status = wait_for_first_slot(pool, blockstore, Slot::genesis()).await;
+        assert!(matches!(status, SlotReady::Ready(_)));
+    }
+
+    #[tokio::test]
+    async fn wait_for_first_slot_parent_already_ready() {
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
+        let slot = Slot::windows().nth(10).unwrap();
+        let parent = (slot.prev(), Hash::default());
+
+        let mut pool = MockPool::new();
+        pool.expect_wait_for_parent_ready()
+            .with(predicate::eq(slot))
+            .return_once(move |_slot| Either::Left(parent));
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
+        let pool = Arc::new(RwLock::new(pool));
+
+        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        match status {
+            SlotReady::Ready(p) => assert_eq!(p, parent),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_for_first_slot_parent_ready_later() {
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
+        let slot = Slot::windows().nth(10).unwrap();
+        let parent = (slot.prev(), Hash::default());
+        let (tx, rx) = oneshot::channel();
+        tx.send(parent).unwrap();
+
+        let mut pool = MockPool::new();
+        pool.expect_wait_for_parent_ready()
+            .with(predicate::eq(slot))
+            .return_once(move |_slot| Either::Right(rx));
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
+        let pool = Arc::new(RwLock::new(pool));
+
+        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        match status {
+            SlotReady::Ready(p) => assert_eq!(p, parent),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }
