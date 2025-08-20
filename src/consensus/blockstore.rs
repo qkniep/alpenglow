@@ -261,6 +261,7 @@ mod tests {
     use crate::crypto::{MerkleTree, aggsig};
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::test_utils::create_random_block;
+    use crate::types::SliceIndex;
 
     use color_eyre::Result;
     use tokio::sync::mpsc;
@@ -301,7 +302,8 @@ mod tests {
                 .await?;
 
             // check shred is stored
-            let Some(stored_shred) = blockstore.get_shred(slot, 0, shred.payload().index_in_slice)
+            let Some(stored_shred) =
+                blockstore.get_shred(slot, SliceIndex::first(), shred.payload().index_in_slice)
             else {
                 panic!("shred not stored");
             };
@@ -309,7 +311,7 @@ mod tests {
         }
 
         // create and check double-Merkle proof
-        let proof = blockstore.create_double_merkle_proof(slot, 0);
+        let proof = blockstore.create_double_merkle_proof(slot, SliceIndex::first());
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
