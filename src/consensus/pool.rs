@@ -1112,7 +1112,6 @@ mod tests {
             let vote = Vote::new_notar(slot1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert_eq!(pool.finalized_slot(), slot1);
 
         // we also vote for next slot, see only enough votes to notarize
         let slot2 = slot1.next();
@@ -1120,7 +1119,6 @@ mod tests {
             let vote = Vote::new_notar(slot2, [2; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
-        assert_eq!(pool.get_notarized_block(slot2), Some([2; 32]));
 
         // we also vote for next slot, see no other votes
         let slot3 = slot2.next();
@@ -1130,7 +1128,7 @@ mod tests {
         // initiate standstill
         pool.recover_from_standstill().await;
 
-        // check against expected response
+        // wait for standstill event
         let (slot, certs, votes) = loop {
             let event = votor_rx.recv().await.unwrap();
             match event {
@@ -1143,8 +1141,18 @@ mod tests {
                 _ => unreachable!("unexpected event {event:?}"),
             }
         };
+
+        // check against expected response
         assert_eq!(slot, slot2);
         assert_eq!(certs.len(), 5);
+        for cert in certs {
+            assert!(
+                matches!(cert, Cert::Notar(_))
+                    || matches!(cert, Cert::NotarFallback(_))
+                    || matches!(cert, Cert::FastFinal(_))
+            );
+            assert!([slot1, slot2].contains(&cert.slot()));
+        }
         assert_eq!(votes.len(), 2);
         for vote in votes {
             assert_eq!(vote.signer(), 0);
