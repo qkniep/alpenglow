@@ -280,4 +280,51 @@ mod tests {
             vec![(Slot::new(8), block)]
         );
     }
+
+    #[test]
+    fn wait_for_parent_ready() {
+        let mut windows = Slot::windows();
+        let window1 = windows.next().unwrap();
+        let window2 = windows.next().unwrap();
+        let window3 = windows.next().unwrap();
+        let mut tracker = ParentReadyTracker::default();
+
+        // skip slots in first window
+        for slot in window1.slots_in_window() {
+            if slot.is_genesis() {
+                continue;
+            }
+            tracker.mark_skipped(slot);
+        }
+
+        // genesis should be valid parent for 2nd window
+        let res = tracker.wait_for_parent_ready(window2);
+        let Either::Left((slot, hash)) = res else {
+            panic!("unexpected result {res:?}");
+        };
+        assert_eq!(slot, Slot::genesis());
+        assert_eq!(hash, Hash::default());
+
+        // parent should not yet be ready
+        let res = tracker.wait_for_parent_ready(window3);
+        let Either::Right(mut rx) = res else {
+            panic!("unexpected result {res:?}");
+        };
+        let Err(oneshot::error::TryRecvError::Empty) = rx.try_recv() else {
+            panic!("parent should not yet be ready");
+        };
+
+        // skip slots in first window
+        for slot in window2.slots_in_window() {
+            tracker.mark_skipped(slot);
+        }
+
+        // now we should be notified of genesis as valid parent
+        assert_eq!(rx.try_recv(), Ok((Slot::genesis(), Hash::default())));
+    }
+
+    #[test]
+    fn parent_ready_finalized() {
+        let mut tracker = ParentReadyTracker::default();
+    }
 }
