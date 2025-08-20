@@ -171,7 +171,7 @@ impl Blockstore for BlockstoreImpl {
     /// Compared to that function, this one does not check for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
-    /// If the added shred belongs to the last slice, all later shreds are deleted.
+    /// If the added shred belongs to last slice, deletes later slices and their shreds.
     ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
