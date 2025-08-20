@@ -13,6 +13,7 @@ use crate::crypto::Hash;
 use crate::types::Slot;
 
 ///
+#[derive(Default)]
 pub struct FinalityTracker {
     parents: BTreeMap<BlockId, BlockId>,
     notarized: BTreeMap<Slot, Hash>,
@@ -64,17 +65,6 @@ impl FinalityTracker {
         let parent = *self.parents.get(&(slot, hash))?;
         self.highest_finalized = slot.max(self.highest_finalized);
         Some((slot, BlockInfo { hash, parent }))
-    }
-}
-
-impl Default for FinalityTracker {
-    fn default() -> Self {
-        Self {
-            parents: BTreeMap::new(),
-            notarized: BTreeMap::new(),
-            finalized: BTreeSet::new(),
-            highest_finalized: Slot::genesis(),
-        }
     }
 }
 
