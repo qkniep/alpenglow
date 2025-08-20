@@ -11,19 +11,19 @@ use crate::BlockId;
 use crate::crypto::Hash;
 use crate::types::Slot;
 
-///
+/// Tracks finality of blocks.
 #[derive(Default)]
 pub struct FinalityTracker {
-    ///
+    /// Current finalization status for each slot.
     status: BTreeMap<Slot, FinalizationStatus>,
-    ///
+    /// Maps blocks to their parents.
     parents: BTreeMap<BlockId, BlockId>,
 
-    ///
+    /// The highest finalized slot so far.
     highest_finalized: Slot,
 }
 
-///
+/// Possible states a slot can be in regarding finality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizationStatus {
     Notarized(Hash),
@@ -33,7 +33,7 @@ pub enum FinalizationStatus {
     ImplicitlySkipped,
 }
 
-///
+/// Information about newly finalized slots.
 #[derive(Default)]
 pub struct FinalizationEvent {
     /// Directly finalized block, if any.
@@ -180,6 +180,8 @@ impl FinalityTracker {
         event: &mut FinalizationEvent,
     ) {
         assert!(source_slot > implicitly_finalized.0);
+
+        // implicitly skip slots in between
         for slot in implicitly_finalized.0.future_slots() {
             if slot == source_slot {
                 break;
@@ -188,6 +190,8 @@ impl FinalityTracker {
             self.status
                 .insert(slot, FinalizationStatus::ImplicitlySkipped);
         }
+
+        // mark block as implicitly finalized
         // TODO: add assertions
         self.status.insert(
             implicitly_finalized.0,
@@ -195,6 +199,7 @@ impl FinalityTracker {
         );
         event.implicitly_finalized.push(implicitly_finalized);
 
+        // recurse through ancestors
         if let Some(parent) = self.parents.get(&implicitly_finalized) {
             self.handle_implicitly_finalized(implicitly_finalized.0, *parent, event);
         }
