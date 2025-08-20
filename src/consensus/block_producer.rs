@@ -423,8 +423,6 @@ async fn wait_for_first_slot(
 
 #[cfg(test)]
 mod tests {
-    use mockall::predicate;
-
     use super::*;
 
     use crate::Transaction;
@@ -432,6 +430,8 @@ mod tests {
     use crate::consensus::pool::MockPool;
     use crate::crypto::Hash;
     use crate::network::UdpNetwork;
+
+    use mockall::predicate;
 
     use std::time::Duration;
 
