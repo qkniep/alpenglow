@@ -5,10 +5,9 @@
 //!
 //!
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::BlockId;
-use crate::consensus::BlockInfo;
 use crate::crypto::Hash;
 use crate::types::Slot;
 

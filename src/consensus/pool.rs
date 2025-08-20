@@ -434,8 +434,7 @@ impl Pool for PoolImpl {
         let finalization_event = self.finality_tracker.add_parent(block_id, parent_id);
         self.parent_ready_tracker
             .handle_finalization(finalization_event);
-        self.slot_state(slot)
-            .notify_parent_known(block_hash, parent_id);
+        self.slot_state(slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(&parent_slot)
             && parent_state.is_notar_fallback(&parent_hash)
             && let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash)

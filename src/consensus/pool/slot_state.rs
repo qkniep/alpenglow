@@ -20,7 +20,7 @@ use crate::consensus::vote::VoteKind;
 use crate::consensus::votor::VotorEvent;
 use crate::consensus::{Cert, EpochInfo, Vote};
 use crate::crypto::Hash;
-use crate::{BlockId, Slot, Stake};
+use crate::{Slot, Stake};
 
 use super::SlashableOffence;
 
@@ -32,8 +32,8 @@ pub struct SlotState {
     pub(super) voted_stakes: SlotVotedStake,
     /// Certificates for this slot, contains all certificate types and validators.
     pub(super) certificates: SlotCertificates,
-    /// Indicates parents for blocks, if known.
-    parents: BTreeMap<Hash, ParentInfo>,
+    /// Indicates blocks for which we already know their parents.
+    parents: BTreeMap<Hash, ParentStatus>,
     /// Hashes of blocks that have reached the necessary votes for safe-to-notar
     /// and are only waiting for our only vote to arrive.
     pending_safe_to_notar: BTreeSet<Hash>,
@@ -94,9 +94,10 @@ pub struct SlotCertificates {
     pub(super) finalize: Option<FinalCert>,
 }
 
-struct ParentInfo {
-    parent: BlockId,
-    certified: bool,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParentStatus {
+    Known,
+    Certified,
 }
 
 /// Possible states for the safe-to-notar check.
@@ -204,7 +205,7 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
-    pub fn notify_parent_known(&mut self, hash: Hash, parent: BlockId) {
+    pub fn notify_parent_known(&mut self, hash: Hash) {
         // TODO: maybe turn this back into a panic once repair is fully implemented
         if self.parents.contains_key(&hash) {
             warn!(
@@ -214,13 +215,7 @@ impl SlotState {
             );
             return;
         }
-        self.parents.insert(
-            hash,
-            ParentInfo {
-                parent,
-                certified: false,
-            },
-        );
+        self.parents.insert(hash, ParentStatus::Known);
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.
@@ -235,7 +230,7 @@ impl SlotState {
         let Some(parent_info) = self.parents.get_mut(&hash) else {
             panic!("parent not known")
         };
-        parent_info.certified = true;
+        *parent_info = ParentStatus::Certified;
 
         // potentially emit safe-to-notar
         if self.sent_safe_to_notar.contains(&hash) {
@@ -248,11 +243,6 @@ impl SlotState {
             SafeToNotarStatus::MissingBlock => Some(Either::Right((self.slot, hash))),
             SafeToNotarStatus::AwaitingVotes => None,
         }
-    }
-
-    /// Returns the parent of the block given by `hash`, if known.
-    pub(super) fn get_parent(&self, hash: &Hash) -> Option<BlockId> {
-        self.parents.get(hash).map(|p| p.parent)
     }
 
     fn is_weakest_quorum(&self, stake: Stake) -> bool {
@@ -493,7 +483,7 @@ impl SlotState {
         // check parent condition
         if !self.parents.contains_key(block_hash) {
             return SafeToNotarStatus::MissingBlock;
-        } else if !self.parents.get(block_hash).unwrap().certified {
+        } else if *self.parents.get(block_hash).unwrap() != ParentStatus::Certified {
             return SafeToNotarStatus::AwaitingVotes;
         }
 
@@ -642,8 +632,7 @@ mod tests {
         let mut slot_state = SlotState::new(Slot::new(1), epoch_info.clone());
 
         // mark parent as notarized(-fallback)
-        let parent = (Slot::genesis(), Hash::default());
-        slot_state.notify_parent_known([1; 32], parent);
+        slot_state.notify_parent_known([1; 32]);
         slot_state.notify_parent_certified([1; 32]);
 
         // 33% notar alone has no effect
