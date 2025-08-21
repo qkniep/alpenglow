@@ -69,11 +69,10 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
-        let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
             match status {
                 FinalizationStatus::FinalizedAndNotarized(_) => {
-                    return event;
+                    return FinalizationEvent::default();
                 }
                 FinalizationStatus::Notarized(_)
                 | FinalizationStatus::Finalized
@@ -82,6 +81,7 @@ impl FinalityTracker {
             }
         }
 
+        let mut event = FinalizationEvent::default();
         self.status
             .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
         self.handle_finalized((slot, block_hash), &mut event);
