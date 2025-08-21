@@ -51,6 +51,10 @@ impl FinalityTracker {
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         assert!(block.0 > parent.0);
+        if let Some(p) = self.parents.get(&block) {
+            assert!(p == &parent);
+            return FinalizationEvent::default();
+        }
 
         let mut event = FinalizationEvent::default();
         self.parents.insert(block, parent);
