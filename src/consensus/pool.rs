@@ -1142,11 +1142,10 @@ mod tests {
         assert_eq!(slot, slot2);
         assert_eq!(certs.len(), 5);
         for cert in certs {
-            assert!(
-                matches!(cert, Cert::Notar(_))
-                    || matches!(cert, Cert::NotarFallback(_))
-                    || matches!(cert, Cert::FastFinal(_))
-            );
+            assert!(matches!(
+                cert,
+                Cert::Notar(_) | Cert::NotarFallback(_) | Cert::FastFinal(_)
+            ));
             assert!([slot1, slot2].contains(&cert.slot()));
         }
         assert_eq!(votes.len(), 2);
