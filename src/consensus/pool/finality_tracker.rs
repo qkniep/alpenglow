@@ -3,7 +3,19 @@
 
 //! Tracks finality of blocks.
 //!
+//! This is used as part of [`PoolImpl`].
 //!
+//! Keeps track of:
+//! - Direct finalization of blocks,
+//! - resulting indirect finalizations of blocks, AND
+//! - resulting implicit skipping of slots
+//!
+//! It does this based on:
+//! - Notarization of blocks,
+//! - finalization of slots, AND
+//! - availability of blocks and knowledge of their parents.
+//!
+//! [`PoolImpl`]: crate::consensus::pool::PoolImpl
 
 use std::collections::BTreeMap;
 

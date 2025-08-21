@@ -87,6 +87,8 @@ pub trait Pool {
 /// Pool is the central consensus data structure.
 ///
 /// It holds votes and certificates for each slot.
+///
+/// This is the main implementation to use when you require the [`Pool`] trait.
 pub struct PoolImpl {
     /// State for each slot. Stores all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
