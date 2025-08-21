@@ -271,8 +271,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     async fn try_notar(&mut self, slot: Slot, block_info: BlockInfo) -> bool {
         let BlockInfo {
             hash,
-            parent_slot,
-            parent_hash,
+            parent: (parent_slot, parent_hash),
         } = block_info;
         let first_slot_in_window = slot.first_slot_in_window();
         if slot == first_slot_in_window {
@@ -412,8 +411,7 @@ mod tests {
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
             hash: [1u8; 32],
-            parent_slot: Slot::genesis(),
-            parent_hash: Hash::default(),
+            parent: (Slot::genesis(), Hash::default()),
         };
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();

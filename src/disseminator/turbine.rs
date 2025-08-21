@@ -89,7 +89,7 @@ impl<N: Network> Turbine<N> {
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let msg = NetworkMessage::Shred(shred.clone());
+        let msg: NetworkMessage = shred.clone().into();
         let addr = &self.validators[root as usize].disseminator_address;
         self.network.send(&msg, &addr).await
     }
@@ -104,7 +104,7 @@ impl<N: Network> Turbine<N> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
-        let msg = NetworkMessage::Shred(shred.clone());
+        let msg: NetworkMessage = shred.clone().into();
         for child in tree.get_children() {
             let addr = &self.validators[*child as usize].disseminator_address;
             self.network.send(&msg, &addr).await?;
