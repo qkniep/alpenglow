@@ -51,9 +51,6 @@ impl FinalityTracker {
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         assert!(block.0 > parent.0);
-        if !self.parents.contains_key(&block) {
-            return FinalizationEvent::default();
-        }
 
         let mut event = FinalizationEvent::default();
         self.parents.insert(block, parent);
@@ -306,5 +303,18 @@ mod tests {
         assert_eq!(event.finalized, Some((slot, [2; 32])));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
+
+        // implicitly finalize a block WITHOUT skips
+        let slot = slot.next().next();
+        let event = tracker.add_parent((slot, [4; 32]), (slot.prev(), [3; 32]));
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_fast_finalized(slot, [4; 32]);
+        assert_eq!(event.finalized, Some((slot, [4; 32])));
+        assert_eq!(event.implicitly_finalized, vec![(slot.prev(), [3; 32])]);
+        assert_eq!(event.implicitly_skipped, vec![]);
+
+        // do NOT implicitly finalize parent again when adding parent again
+        let event = tracker.add_parent((slot, [4; 32]), (slot.prev(), [3; 32]));
+        assert_eq!(event, FinalizationEvent::default());
     }
 }
