@@ -104,12 +104,15 @@ impl FinalityTracker {
             .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
         if let Some(status) = old {
             match status {
-                FinalizationStatus::FinalizedAndNotarized(_) => {
+                FinalizationStatus::FinalizedAndNotarized(hash)
+                | FinalizationStatus::ImplicitlyFinalized(hash) => {
+                    assert_eq!(hash, block_hash, "consensus safety violation");
                     return FinalizationEvent::default();
                 }
-                FinalizationStatus::Notarized(_)
-                | FinalizationStatus::Finalized
-                | FinalizationStatus::ImplicitlyFinalized(_) => {}
+                FinalizationStatus::Notarized(hash) => {
+                    assert_eq!(hash, block_hash, "consensus safety violation");
+                }
+                FinalizationStatus::Finalized => {}
                 FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
             }
         };
@@ -132,10 +135,13 @@ impl FinalityTracker {
             .insert(slot, FinalizationStatus::Notarized(block_hash));
         if let Some(status) = old {
             match status {
-                FinalizationStatus::Notarized(_)
-                | FinalizationStatus::FinalizedAndNotarized(_)
-                | FinalizationStatus::ImplicitlyFinalized(_)
-                | FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
+                FinalizationStatus::Notarized(hash)
+                | FinalizationStatus::FinalizedAndNotarized(hash)
+                | FinalizationStatus::ImplicitlyFinalized(hash) => {
+                    assert_eq!(hash, block_hash, "consensus safety violation");
+                    FinalizationEvent::default()
+                }
+                FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
                 FinalizationStatus::Finalized => {
                     let mut event = FinalizationEvent::default();
                     self.status
@@ -246,8 +252,9 @@ impl FinalityTracker {
             .insert(slot, FinalizationStatus::ImplicitlyFinalized(block_hash));
         if let Some(status) = old {
             match status {
-                FinalizationStatus::FinalizedAndNotarized(_)
-                | FinalizationStatus::ImplicitlyFinalized(_) => {
+                FinalizationStatus::FinalizedAndNotarized(hash)
+                | FinalizationStatus::ImplicitlyFinalized(hash) => {
+                    assert_eq!(hash, block_hash, "consensus safety violation");
                     self.status.insert(slot, status);
                     return;
                 }
