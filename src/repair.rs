@@ -309,17 +309,15 @@ impl<N: Network> Repair<N> {
 
     async fn send_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
         let repair = RepairMessage::Request(request);
-        let msg = NetworkMessage::Repair(repair);
         let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
-        self.network.send(&msg, to).await
+        self.network.send(&repair.into(), to).await
     }
 
     async fn send_response(&self, response: RepairResponse) -> Result<(), NetworkError> {
         let repair = RepairMessage::Response(response);
-        let msg = NetworkMessage::Repair(repair);
         // TODO: send back to correct validator
         let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
-        self.network.send(&msg, to).await
+        self.network.send(&repair.into(), to).await
     }
 }
 
@@ -443,7 +441,7 @@ mod tests {
         };
         assert_eq!((slot, hash), block_to_repair);
         let response = RepairResponse::Parent(req, Slot::genesis(), Hash::default());
-        let msg = NetworkMessage::Repair(RepairMessage::Response(response));
+        let msg = RepairMessage::Response(response).into();
         other_network.send(&msg, "0").await.unwrap();
     }
 }
