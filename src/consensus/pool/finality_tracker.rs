@@ -97,14 +97,14 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_notarized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
-        let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
             match status {
                 FinalizationStatus::Notarized(_)
                 | FinalizationStatus::FinalizedAndNotarized(_)
                 | FinalizationStatus::ImplicitlyFinalized(_)
-                | FinalizationStatus::ImplicitlySkipped => event,
+                | FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
                 FinalizationStatus::Finalized => {
+                    let mut event = FinalizationEvent::default();
                     self.status
                         .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
                     self.handle_finalized((slot, block_hash), &mut event);
@@ -114,7 +114,7 @@ impl FinalityTracker {
         } else {
             self.status
                 .insert(slot, FinalizationStatus::Notarized(block_hash));
-            event
+            FinalizationEvent::default()
         }
     }
 
@@ -125,14 +125,14 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_finalized(&mut self, slot: Slot) -> FinalizationEvent {
-        let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
             match status {
                 FinalizationStatus::Finalized
                 | FinalizationStatus::FinalizedAndNotarized(_)
-                | FinalizationStatus::ImplicitlyFinalized(_) => event,
+                | FinalizationStatus::ImplicitlyFinalized(_) => FinalizationEvent::default(),
                 FinalizationStatus::Notarized(block_hash) => {
                     let block_hash = *block_hash;
+                    let mut event = FinalizationEvent::default();
                     self.status
                         .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
                     self.handle_finalized((slot, block_hash), &mut event);
@@ -144,7 +144,7 @@ impl FinalityTracker {
         } else {
             self.status.insert(slot, FinalizationStatus::Finalized);
             self.highest_finalized = slot.max(self.highest_finalized);
-            event
+            FinalizationEvent::default()
         }
     }
 
