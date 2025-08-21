@@ -30,7 +30,33 @@ pub fn enable_logforth_stderr() {
 }
 
 fn enable_logforth_append<A: logforth::Append>(to_append: A) {
+    let filter = EnvFilter::from_default_env_or("alpenglow=info");
     logforth::builder()
-        .dispatch(|d| d.filter(EnvFilter::from_default_env()).append(to_append))
+        .dispatch(|d| d.filter(filter).append(to_append))
         .apply();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use log::{Level, debug, error, info, log_enabled, trace, warn};
+
+    #[test]
+    fn basic() {
+        enable_logforth();
+
+        // check logger is enabled with default level of "info"
+        assert!(log_enabled!(Level::Error));
+        assert!(log_enabled!(Level::Warn));
+        assert!(log_enabled!(Level::Info));
+        assert!(!log_enabled!(Level::Debug));
+        assert!(!log_enabled!(Level::Trace));
+
+        trace!("trace");
+        debug!("debug");
+        info!("info");
+        warn!("warn");
+        error!("error");
+    }
 }
