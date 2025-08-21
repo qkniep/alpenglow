@@ -101,7 +101,7 @@ impl FinalityTracker {
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Notarized(block_hash));
+            .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
         if let Some(status) = old {
             match status {
                 FinalizationStatus::FinalizedAndNotarized(_) => {
@@ -248,6 +248,7 @@ impl FinalityTracker {
             match status {
                 FinalizationStatus::FinalizedAndNotarized(_)
                 | FinalizationStatus::ImplicitlyFinalized(_) => {
+                    self.status.insert(slot, status);
                     return;
                 }
                 FinalizationStatus::Notarized(_) | FinalizationStatus::Finalized => {}
