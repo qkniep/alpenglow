@@ -429,6 +429,7 @@ impl Pool for PoolImpl {
     /// This should be called once for every valid block (e.g. directly by blockstore).
     /// Ensures that the parent information is available for safe-to-notar checks.
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
+        assert!(block_id.0 > parent_id.0);
         let (slot, block_hash) = block_id;
         let (parent_slot, parent_hash) = parent_id;
 
