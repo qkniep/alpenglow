@@ -40,23 +40,23 @@ fn enable_logforth_append<A: logforth::Append>(to_append: A) {
 mod tests {
     use super::*;
 
-    use log::log_enabled;
+    use log::{Level, debug, error, info, log_enabled, trace, warn};
 
     #[test]
     fn basic() {
         enable_logforth();
 
         // check logger is enabled with default level of "info"
-        assert!(log_enabled!(log::Level::Error));
-        assert!(log_enabled!(log::Level::Warn));
-        assert!(log_enabled!(log::Level::Info));
-        assert!(!log_enabled!(log::Level::Debug));
-        assert!(!log_enabled!(log::Level::Trace));
+        assert!(log_enabled!(Level::Error));
+        assert!(log_enabled!(Level::Warn));
+        assert!(log_enabled!(Level::Info));
+        assert!(!log_enabled!(Level::Debug));
+        assert!(!log_enabled!(Level::Trace));
 
-        log::trace!("trace");
-        log::debug!("debug");
-        log::info!("info");
-        log::warn!("warn");
-        log::error!("error");
+        trace!("trace");
+        debug!("debug");
+        info!("info");
+        warn!("warn");
+        error!("error");
     }
 }
