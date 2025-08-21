@@ -32,20 +32,6 @@ use parent_ready_state::ParentReadyState;
 /// Keeps track of the parent-ready condition across slots.
 pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
 
-impl Default for ParentReadyTracker {
-    /// Creates a new empty tracker.
-    ///
-    /// Only the genesis block is considered a valid parent for the first leader window.
-    fn default() -> Self {
-        let genesis_block = (Slot::genesis(), Hash::default());
-        let mut map = HashMap::new();
-        let mut genesis_parent_state = ParentReadyState::new([genesis_block]);
-        genesis_parent_state.skip = true;
-        map.insert(Slot::genesis(), genesis_parent_state);
-        Self(map)
-    }
-}
-
 impl ParentReadyTracker {
     /// Marks the given block as notarized-fallback.
     ///
@@ -174,6 +160,20 @@ impl ParentReadyTracker {
     /// Initializes the state with [`Default`] if necessary.
     fn slot_state(&mut self, slot: Slot) -> &mut ParentReadyState {
         self.0.entry(slot).or_default()
+    }
+}
+
+impl Default for ParentReadyTracker {
+    /// Creates a new empty tracker.
+    ///
+    /// Only the genesis block is considered a valid parent for the first leader window.
+    fn default() -> Self {
+        let genesis_block = (Slot::genesis(), Hash::default());
+        let mut map = HashMap::new();
+        let mut genesis_parent_state = ParentReadyState::new([genesis_block]);
+        genesis_parent_state.skip = true;
+        map.insert(Slot::genesis(), genesis_parent_state);
+        Self(map)
     }
 }
 
