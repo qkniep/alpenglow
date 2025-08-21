@@ -174,45 +174,33 @@ impl PoolImpl {
                 let new_parents_ready = self
                     .parent_ready_tracker
                     .mark_notar_fallback((slot, block_hash));
-                for (slot, (parent_slot, parent_hash)) in new_parents_ready {
-                    debug_assert!(slot.is_start_of_window());
-                    let event = VotorEvent::ParentReady {
-                        slot,
-                        parent_slot,
-                        parent_hash,
-                    };
-                    self.votor_event_channel.send(event).await.unwrap();
-                }
+                self.send_parent_ready_events(&new_parents_ready).await;
 
                 // repair this block, if necessary
                 self.repair_channel.send((slot, block_hash)).await.unwrap();
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
-                let newly_certified = self.parent_ready_tracker.mark_skipped(slot);
-                for (slot, (parent_slot, parent_hash)) in newly_certified {
-                    debug_assert!(slot.is_start_of_window());
-                    let event = VotorEvent::ParentReady {
-                        slot,
-                        parent_slot,
-                        parent_hash,
-                    };
-                    self.votor_event_channel.send(event).await.unwrap();
-                }
+                let new_parents_ready = self.parent_ready_tracker.mark_skipped(slot);
+                self.send_parent_ready_events(&new_parents_ready).await;
             }
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash();
                 let finalization_event = self.finality_tracker.mark_fast_finalized(slot, *hash);
-                self.parent_ready_tracker
+                let new_parents_ready = self
+                    .parent_ready_tracker
                     .handle_finalization(finalization_event);
+                self.send_parent_ready_events(&new_parents_ready).await;
                 self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 let finalization_event = self.finality_tracker.mark_finalized(slot);
-                self.parent_ready_tracker
+                let new_parents_ready = self
+                    .parent_ready_tracker
                     .handle_finalization(finalization_event);
+                self.send_parent_ready_events(&new_parents_ready).await;
                 self.prune();
             }
         }
@@ -338,6 +326,18 @@ impl PoolImpl {
             .get(&slot)
             .is_some_and(|state| state.certificates.skip.is_some())
     }
+
+    async fn send_parent_ready_events(&self, parents: &[(Slot, BlockId)]) {
+        for &(slot, (parent_slot, parent_hash)) in parents {
+            debug_assert!(slot.is_start_of_window());
+            let event = VotorEvent::ParentReady {
+                slot,
+                parent_slot,
+                parent_hash,
+            };
+            self.votor_event_channel.send(event).await.unwrap();
+        }
+    }
 }
 
 #[async_trait]
@@ -431,9 +431,13 @@ impl Pool for PoolImpl {
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
         let (slot, block_hash) = block_id;
         let (parent_slot, parent_hash) = parent_id;
+
         let finalization_event = self.finality_tracker.add_parent(block_id, parent_id);
-        self.parent_ready_tracker
+        let new_parents_ready = self
+            .parent_ready_tracker
             .handle_finalization(finalization_event);
+        self.send_parent_ready_events(&new_parents_ready).await;
+
         self.slot_state(slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(&parent_slot)
             && parent_state.is_notar_fallback(&parent_hash)
