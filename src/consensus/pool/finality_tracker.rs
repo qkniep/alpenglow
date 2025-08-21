@@ -70,7 +70,6 @@ impl FinalityTracker {
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
         let mut event = FinalizationEvent::default();
         if let Some(status) = self.status.get(&slot) {
-            println!("status: {status:?}");
             match status {
                 FinalizationStatus::FinalizedAndNotarized(_) => {
                     return event;
