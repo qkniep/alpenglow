@@ -6,7 +6,7 @@
 //! The parent-ready condition pertains to a slot `s` and a block hash `hash(b)`,
 //! where `s` is the first slot of a leader window and `s > slot(b)`.
 //! Specifically, it is defined as the following:
-//!   - Block `b` is notarized or notarized-fallback, and
+//!   - Block `b` is notarized or notarized-fallback, AND
 //!   - slots `slot(b) + 1` (inclusive) to `s` (non-inclusive) are skip-certified.
 //!
 //! Additional restriction on notarization votes ensure that the parent-ready
@@ -23,6 +23,7 @@ use either::Either;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
+use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::Hash;
 use crate::{BlockId, Slot};
 
@@ -31,28 +32,14 @@ use parent_ready_state::ParentReadyState;
 /// Keeps track of the parent-ready condition across slots.
 pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
 
-impl Default for ParentReadyTracker {
-    /// Creates a new empty tracker.
-    ///
-    /// Only the genesis block is considered a valid parent for the first leader window.
-    fn default() -> Self {
-        let genesis_block = (Slot::genesis(), Hash::default());
-        let mut map = HashMap::new();
-        let mut genesis_parent_state = ParentReadyState::new([genesis_block]);
-        genesis_parent_state.skip = true;
-        map.insert(Slot::genesis(), genesis_parent_state);
-        Self(map)
-    }
-}
-
 impl ParentReadyTracker {
-    /// Marks the given block as notar-fallback.
+    /// Marks the given block as notarized-fallback.
     ///
     /// Returns a list of any newly connected parents.
     /// All of these will have the given block ID as the parent.
     pub fn mark_notar_fallback(&mut self, id: BlockId) -> Vec<(Slot, BlockId)> {
         let (slot, hash) = id;
-        let state = self.0.entry(slot).or_default();
+        let state = self.slot_state(slot);
         if state.notar_fallbacks.contains(&hash) {
             return Vec::new();
         }
@@ -61,7 +48,7 @@ impl ParentReadyTracker {
         // add this block as valid parent to any skip-connected future windows
         let mut newly_certified = Vec::new();
         for slot in slot.future_slots() {
-            let state = self.0.entry(slot).or_default();
+            let state = self.slot_state(slot);
             if slot.is_start_of_window() {
                 state.add_to_ready(id);
                 newly_certified.push((slot, id));
@@ -77,10 +64,11 @@ impl ParentReadyTracker {
     /// Marks the given slot as skipped.
     ///
     /// Returns a list of any newly connected parents.
-    ///
-    /// This should only ever be called once for any specific slot.
     pub fn mark_skipped(&mut self, slot: Slot) -> Vec<(Slot, BlockId)> {
-        let state = self.0.entry(slot).or_default();
+        let state = self.slot_state(slot);
+        if state.skip {
+            return Vec::new();
+        }
         state.skip = true;
 
         // get newly connected future windows
@@ -89,8 +77,7 @@ impl ParentReadyTracker {
             if slot.is_start_of_window() {
                 future_windows.push(slot);
             }
-            let state = self.0.entry(slot).or_default();
-            if !state.skip {
+            if !self.slot_state(slot).skip {
                 break;
             }
         }
@@ -99,7 +86,7 @@ impl ParentReadyTracker {
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
 
         for s in slot.slots_in_window().filter(|s| *s <= slot).rev() {
-            let state = self.0.entry(s).or_default();
+            let state = self.slot_state(s);
             if s < slot {
                 for nf in &state.notar_fallbacks {
                     potential_parents.push((s, *nf));
@@ -115,7 +102,7 @@ impl ParentReadyTracker {
         // add these as valid parents to future windows
         let mut newly_certified = Vec::new();
         for first_slot in future_windows {
-            let state = self.0.entry(first_slot).or_default();
+            let state = self.slot_state(first_slot);
             for p in potential_parents.iter() {
                 state.add_to_ready(*p);
             }
@@ -126,22 +113,67 @@ impl ParentReadyTracker {
         newly_certified
     }
 
+    /// Handles the given finalization event.
+    ///
+    /// Marks blocks as notarized-fallback and slots as skipped as appropriate.
+    ///
+    /// Returns at most one newly ready parent (for the highest slot).
+    /// For consistency with other functions it still returns a `Vec`.
+    pub fn handle_finalization(&mut self, event: FinalizationEvent) -> Vec<(Slot, BlockId)> {
+        let mut parents_ready = Vec::new();
+        if let Some(finalized) = event.finalized {
+            parents_ready.extend(self.mark_notar_fallback(finalized));
+        }
+        for block_id in event.implicitly_finalized {
+            parents_ready.extend(self.mark_notar_fallback(block_id));
+        }
+        for slot in event.implicitly_skipped {
+            parents_ready.extend(self.mark_skipped(slot));
+        }
+        parents_ready.sort_by_key(|(slot, _)| u64::MAX - slot.inner());
+        parents_ready.truncate(1);
+        parents_ready
+    }
+
     /// Returns list of all valid parents for the given slot, as of now.
-    /// The list can be empty.
+    ///
+    /// The list can be empty if there are no valid parents yet.
     pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.0
             .get(&slot)
             .map_or(&[], |state| state.ready_block_ids())
     }
 
-    /// If the slot has a parent ready, then returns it right away or else
-    /// blocks till a parent ready.
+    /// Returns a ready parent if available, otherwise returns a oneshot channel.
+    ///
+    /// The oneshot channel will receive the first ready parent once it becomes available.
     pub fn wait_for_parent_ready(
         &mut self,
         slot: Slot,
     ) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         let state = self.0.entry(slot).or_default();
         state.wait_for_parent_ready()
+    }
+
+    /// Mutably accesses the [`ParentReadyState`] for the given `slot`.
+    ///
+    /// Initializes the state with [`Default`] if necessary.
+    fn slot_state(&mut self, slot: Slot) -> &mut ParentReadyState {
+        self.0.entry(slot).or_default()
+    }
+}
+
+impl Default for ParentReadyTracker {
+    /// Creates a new empty tracker.
+    ///
+    /// Only the genesis block is considered a valid parent for the first leader window.
+    fn default() -> Self {
+        let genesis_block = (Slot::genesis(), Hash::default());
+        let mut map = HashMap::new();
+        let mut genesis_parent_state = ParentReadyState::new([genesis_block]);
+        genesis_parent_state.skip = true;
+        map.insert(Slot::genesis(), genesis_parent_state);
+        Self(map)
     }
 }
 
@@ -251,5 +283,101 @@ mod tests {
             tracker.mark_skipped(Slot::new(7)),
             vec![(Slot::new(8), block)]
         );
+    }
+
+    #[test]
+    fn wait_for_parent_ready() {
+        let mut windows = Slot::windows();
+        let window1 = windows.next().unwrap();
+        let window2 = windows.next().unwrap();
+        let window3 = windows.next().unwrap();
+        let mut tracker = ParentReadyTracker::default();
+
+        // skip slots in first window
+        for slot in window1.slots_in_window() {
+            if slot.is_genesis() {
+                continue;
+            }
+            tracker.mark_skipped(slot);
+        }
+
+        // genesis should be valid parent for 2nd window
+        let res = tracker.wait_for_parent_ready(window2);
+        let Either::Left((slot, hash)) = res else {
+            panic!("unexpected result {res:?}");
+        };
+        assert_eq!(slot, Slot::genesis());
+        assert_eq!(hash, Hash::default());
+
+        // parent should not yet be ready
+        let res = tracker.wait_for_parent_ready(window3);
+        let Either::Right(mut rx) = res else {
+            panic!("unexpected result {res:?}");
+        };
+        let Err(oneshot::error::TryRecvError::Empty) = rx.try_recv() else {
+            panic!("parent should not yet be ready");
+        };
+
+        // skip slots in first window
+        for slot in window2.slots_in_window() {
+            tracker.mark_skipped(slot);
+        }
+
+        // now we should be notified of genesis as valid parent
+        assert_eq!(rx.try_recv(), Ok((Slot::genesis(), Hash::default())));
+    }
+
+    #[test]
+    fn parent_ready_finalized() {
+        let mut windows = Slot::windows();
+        let window2 = windows.nth(1).unwrap();
+        let window3 = windows.next().unwrap();
+        let window4 = windows.next().unwrap();
+        let window5 = windows.next().unwrap();
+        println!("windows: {window2}, {window3}, {window4}, {window5}");
+        let mut tracker = ParentReadyTracker::default();
+
+        // basic case where finalized slot is first in its window
+        let block = (window2.first_slot_in_window(), [1; 32]);
+        let parent = (block.0.prev(), [2; 32]);
+        let event = FinalizationEvent {
+            finalized: Some(block),
+            implicitly_finalized: vec![parent],
+            implicitly_skipped: vec![],
+        };
+        let parents = tracker.handle_finalization(event);
+        assert_eq!(parents.len(), 1);
+        let parent_ready = parents[0];
+        assert_eq!(parent_ready.0, block.0);
+        assert_eq!(parent_ready.1, parent);
+
+        // case where an entire window is skipped between parent and finalized block
+        let block = (window4.first_slot_in_window(), [3; 32]);
+        let parent = (window3.first_slot_in_window().prev(), [4; 32]);
+        let event = FinalizationEvent {
+            finalized: Some(block),
+            implicitly_finalized: vec![parent],
+            implicitly_skipped: window3.slots_in_window().collect(),
+        };
+        let parents = tracker.handle_finalization(event);
+        assert_eq!(parents.len(), 1);
+        let parent_ready = parents[0];
+        assert_eq!(parent_ready.0, block.0);
+        assert_eq!(parent_ready.1, parent);
+
+        // case where finalized slot is NOT first in its window
+        let block = (window5.first_slot_in_window().next(), [5; 32]);
+        let parent = (block.0.prev(), [6; 32]);
+        let parent_parent = (parent.0.prev(), [7; 32]);
+        let event = FinalizationEvent {
+            finalized: Some(block),
+            implicitly_finalized: vec![parent, parent_parent],
+            implicitly_skipped: vec![],
+        };
+        let parents = tracker.handle_finalization(event);
+        assert_eq!(parents.len(), 1);
+        let parent_ready = parents[0];
+        assert_eq!(parent_ready.0, parent.0);
+        assert_eq!(parent_ready.1, parent_parent);
     }
 }

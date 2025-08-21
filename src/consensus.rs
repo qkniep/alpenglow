@@ -290,7 +290,8 @@ where
             .await;
         if let Ok(Some((slot, block_info))) = b {
             let mut guard = self.pool.write().await;
-            guard.add_block(slot, block_info).await;
+            let block_id = (slot, block_info.hash);
+            guard.add_block(block_id, block_info.parent).await;
         }
         Ok(())
     }

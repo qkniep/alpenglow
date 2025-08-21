@@ -183,7 +183,7 @@ mod tests {
         });
 
         for shred in shreds {
-            let msg = NetworkMessage::Shred(shred);
+            let msg: NetworkMessage = shred.into();
             net1.send(&msg, "1").await.unwrap();
         }
 
@@ -243,7 +243,7 @@ mod tests {
         });
 
         for shred in shreds {
-            let msg = NetworkMessage::Shred(shred);
+            let msg: NetworkMessage = shred.into();
             net1.send(&msg, "1").await.unwrap();
         }
 
@@ -303,7 +303,7 @@ mod tests {
         });
 
         for shred in shreds {
-            let msg = NetworkMessage::Shred(shred);
+            let msg: NetworkMessage = shred.into();
             net1.send(&msg, "1").await.unwrap();
         }
 

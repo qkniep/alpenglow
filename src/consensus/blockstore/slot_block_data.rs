@@ -335,12 +335,7 @@ mod tests {
         match event {
             VotorEvent::Block {
                 slot: _,
-                block_info:
-                    BlockInfo {
-                        hash,
-                        parent_slot: _,
-                        parent_hash: _,
-                    },
+                block_info: BlockInfo { hash, parent: _ },
             } => *hash,
             _ => panic!(),
         }
@@ -353,7 +348,6 @@ mod tests {
 
         // manage to construct a valid block.
         let slices = create_random_block(slot, 1);
-        let (parent_slot, parent_hash) = slices[0].parent.unwrap();
         let events = handle_slice(slices[0].clone(), &sk);
         assert_eq!(events.len(), 2);
         let first_shred_event = VotorEvent::FirstShred(slot);
@@ -363,8 +357,7 @@ mod tests {
             slot,
             block_info: BlockInfo {
                 hash,
-                parent_slot,
-                parent_hash,
+                parent: slices[0].parent.unwrap(),
             },
         };
         assert_votor_events_match(events[1].clone(), block_event);

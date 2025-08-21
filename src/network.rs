@@ -90,7 +90,6 @@ impl NetworkMessage {
     }
 
     /// Serializes this `NetworkMessage` into an existing buffer using [`bincode`].
-    #[must_use]
     pub fn write_bytes(&self, buf: &mut [u8]) -> usize {
         let written = bincode::serde::encode_into_slice(self, buf, bincode::config::standard())
             .expect("serialization should not panic");

@@ -11,39 +11,43 @@ use crate::crypto::Hash;
 
 /// Tracks the status of whether an individual slot has a parent ready.
 enum IsReady {
-    /// Do not have a parent ready for this slot.
+    /// Do not have a parent ready for this slot yet.
+    ///
     /// Might have someone waiting to hear when the slot does become ready.
     NotReady(Option<oneshot::Sender<BlockId>>),
-    // we can potentially have multiple parents ready per slot,
-    // but we optimize the common case where there will only be one
+    /// Have at least one parent ready for this slot.
+    ///
+    /// We can potentially have multiple parents ready per slot, but we
+    /// optimize for the common case where there will only be one.
     Ready(SmallVec<[BlockId; 1]>),
 }
 
+impl Default for IsReady {
+    fn default() -> Self {
+        IsReady::NotReady(None)
+    }
+}
+
 /// Holds the relevant state for a single slot.
+#[derive(Default)]
 pub(super) struct ParentReadyState {
+    /// Whether this slot is skip-certified.
     // XXX: consider making this field private
     pub(super) skip: bool,
-    // we can potentially have multiple notar fallbacks per slot,
-    // but we optimize the common case where there will only be one
+    /// Blocks that are notarized-fallback for this slot, if any.
+    ///
+    /// We can potentially have multiple notar fallbacks per slot,
+    /// but we optimize for the common case where there will only be one.
     // XXX: consider making this field private
     pub(super) notar_fallbacks: SmallVec<[Hash; 1]>,
+    /// Current status of the parent-ready condition for this slot.
     // NOTE: Do not make this field more visible.
     // Updating it must sometimes produce additional actions.
     is_ready: IsReady,
 }
 
-impl Default for ParentReadyState {
-    fn default() -> Self {
-        Self {
-            skip: false,
-            notar_fallbacks: SmallVec::new(),
-            is_ready: IsReady::NotReady(None),
-        }
-    }
-}
-
 impl ParentReadyState {
-    /// Creates a new `ParentReadyState` with the given `block_ids` as valid parents.
+    /// Creates a new [`ParentReadyState`] with the given `block_ids` as valid parents.
     pub(super) fn new<T: Into<SmallVec<[BlockId; 1]>>>(block_ids: T) -> Self {
         Self {
             is_ready: IsReady::Ready(block_ids.into()),
@@ -51,8 +55,13 @@ impl ParentReadyState {
         }
     }
 
-    /// Adds a `BlockId` to the parents ready list.
+    /// Adds a [`BlockId`] to the parents ready list.
+    ///
     /// Additionally, will inform any waiters.
+    ///
+    /// # Panics
+    ///
+    /// If the specific parent is already marked ready for this slot.
     pub(super) fn add_to_ready(&mut self, id: BlockId) {
         match &mut self.is_ready {
             IsReady::NotReady(sender) => {
@@ -86,12 +95,16 @@ impl ParentReadyState {
     /// Requests to know a valid parent for this slot.
     ///
     /// Returns either:
-    /// - The block ID of an (arbitrary) parent if a parent is already ready.
+    /// - The block ID of a parent if at least one parent is already ready.
+    ///   Always returns a parent with minimal slot number if multiple parents are ready.
     /// - A receiver of a oneshot channel that will receive the first parent's block ID.
-    // TODO: always return the parent with the lowest slot number if there are multiple
     pub(super) fn wait_for_parent_ready(&mut self) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         match &mut self.is_ready {
-            IsReady::Ready(block_ids) => Either::Left(*block_ids.first().unwrap()),
+            IsReady::Ready(block_ids) => {
+                assert!(!block_ids.is_empty());
+                block_ids.sort();
+                Either::Left(block_ids[0])
+            }
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
                 let (tx, rx) = oneshot::channel();
@@ -104,9 +117,9 @@ impl ParentReadyState {
 
 #[cfg(test)]
 mod tests {
-    use crate::Slot;
-
     use super::*;
+
+    use crate::Slot;
 
     #[test]
     fn wait_for_parent_ready_no_blocking() {

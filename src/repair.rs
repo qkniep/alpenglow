@@ -17,7 +17,7 @@ use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
+use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::Hash;
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
@@ -234,12 +234,9 @@ impl<N: Network> Repair<N> {
                     warn!("repair response (Parent) to mismatching request {req:?}");
                     return;
                 };
-                let block_info = BlockInfo {
-                    hash: block_hash,
-                    parent_slot,
-                    parent_hash,
-                };
-                self.pool.write().await.add_block(slot, block_info).await;
+                let block_id = (slot, block_hash);
+                let parent_id = (parent_slot, parent_hash);
+                self.pool.write().await.add_block(block_id, parent_id).await;
 
                 // request repair of the parent block if necessary
                 if self
