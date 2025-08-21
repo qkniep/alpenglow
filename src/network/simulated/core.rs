@@ -60,8 +60,9 @@ pub struct SimulatedNetworkCore {
     pending: Arc<Mutex<BinaryHeap<SimulatedPacket>>>,
 }
 
-impl Default for SimulatedNetworkCore {
-    fn default() -> Self {
+impl SimulatedNetworkCore {
+    /// Creates a new network core with the given latency and packet loss parameters.
+    pub fn new(latency_ms: u64, jitter_ms: f64, packet_loss: f64) -> Self {
         let pending = Arc::new(Mutex::new(BinaryHeap::<SimulatedPacket>::new()));
         let nodes = Arc::new(RwLock::new(HashMap::<
             ValidatorId,
@@ -87,15 +88,13 @@ impl Default for SimulatedNetworkCore {
         Self {
             nodes,
             latencies: RwLock::new(HashMap::new()),
-            default_latency: Duration::from_millis(100),
-            per_packet_jitter_ms: 5.0,
-            per_packet_loss_probability: 0.01,
+            default_latency: Duration::from_millis(latency_ms),
+            per_packet_jitter_ms: jitter_ms,
+            per_packet_loss_probability: packet_loss,
             pending,
         }
     }
-}
 
-impl SimulatedNetworkCore {
     /// Turns this instance into a new instance with a different default latency.
     #[must_use]
     pub const fn with_default_latency(mut self, latency: Duration) -> Self {
@@ -242,6 +241,12 @@ impl SimulatedNetworkCore {
         };
         let mut guard = self.pending.lock().await;
         guard.push(packet);
+    }
+}
+
+impl Default for SimulatedNetworkCore {
+    fn default() -> Self {
+        Self::new(100, 5.0, 0.01)
     }
 }
 

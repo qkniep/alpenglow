@@ -401,11 +401,7 @@ mod tests {
             PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx.clone()),
         )));
 
-        let core = Arc::new(
-            SimulatedNetworkCore::default()
-                .with_jitter(0.0)
-                .with_packet_loss(0.0),
-        );
+        let core = Arc::new(SimulatedNetworkCore::new(100, 0.0, 0.0));
         let network0 = core.join_unlimited(0).await;
         let network1 = core.join_unlimited(1).await;
 
