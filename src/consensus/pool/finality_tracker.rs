@@ -56,16 +56,23 @@ impl FinalityTracker {
             return FinalizationEvent::default();
         }
 
-        let mut event = FinalizationEvent::default();
-        self.parents.insert(block, parent);
-        if let Some(status) = self.status.get(&block.0)
-            && let FinalizationStatus::FinalizedAndNotarized(block_hash)
-            | FinalizationStatus::ImplicitlyFinalized(block_hash) = status
-            && &block.1 == block_hash
-        {
-            self.handle_implicitly_finalized(block.0, parent, &mut event);
+        let (slot, block_hash) = block;
+        let Some(status) = self.status.get(&slot) else {
+            return FinalizationEvent::default();
+        };
+        match status {
+            FinalizationStatus::FinalizedAndNotarized(hash)
+            | FinalizationStatus::ImplicitlyFinalized(hash) => {
+                let mut event = FinalizationEvent::default();
+                if &block_hash == hash {
+                    self.handle_implicitly_finalized(block.0, parent, &mut event);
+                }
+                event
+            }
+            FinalizationStatus::Notarized(_)
+            | FinalizationStatus::Finalized
+            | FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
         }
-        event
     }
 
     /// Marks the given block as fast finalized.
