@@ -21,6 +21,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
+use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::Hash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
@@ -151,8 +152,7 @@ impl PoolImpl {
                 );
                 if matches!(cert, Cert::Notar(_)) {
                     let finalization_event = self.finality_tracker.mark_notarized(slot, block_hash);
-                    self.parent_ready_tracker
-                        .handle_finalization(finalization_event);
+                    self.handle_finalization(finalization_event).await;
                 }
 
                 // potentially notify child waiting for safe-to-notar
@@ -190,19 +190,13 @@ impl PoolImpl {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash();
                 let finalization_event = self.finality_tracker.mark_fast_finalized(slot, *hash);
-                let new_parents_ready = self
-                    .parent_ready_tracker
-                    .handle_finalization(finalization_event);
-                self.send_parent_ready_events(&new_parents_ready).await;
+                self.handle_finalization(finalization_event).await;
                 self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 let finalization_event = self.finality_tracker.mark_finalized(slot);
-                let new_parents_ready = self
-                    .parent_ready_tracker
-                    .handle_finalization(finalization_event);
-                self.send_parent_ready_events(&new_parents_ready).await;
+                self.handle_finalization(finalization_event).await;
                 self.prune();
             }
         }
@@ -327,6 +321,11 @@ impl PoolImpl {
         self.slot_states
             .get(&slot)
             .is_some_and(|state| state.certificates.skip.is_some())
+    }
+
+    async fn handle_finalization(&mut self, event: FinalizationEvent) {
+        let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
+        self.send_parent_ready_events(&new_parents_ready).await;
     }
 
     async fn send_parent_ready_events(&self, parents: &[(Slot, BlockId)]) {
