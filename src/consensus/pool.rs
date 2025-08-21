@@ -1155,4 +1155,54 @@ mod tests {
             assert!(matches!(vote.kind(), VoteKind::Notar(_, _)));
         }
     }
+
+    #[tokio::test]
+    async fn parent_ready_upon_finalization() {
+        let (sks, epoch_info) = generate_validators(11);
+        let (votor_tx, mut votor_rx) = mpsc::channel(1024);
+        let (repair_tx, _repair_rx) = mpsc::channel(1024);
+        let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
+
+        // fast finalize block in 2nd slot of 2nd window
+        let slot1 = Slot::windows().nth(1).unwrap();
+        let slot0 = slot1.prev();
+        let slot2 = slot1.next();
+        for v in 0..11 {
+            let vote = Vote::new_notar(slot2, [2; 32], &sks[v as usize], v);
+            assert_eq!(pool.add_vote(vote).await, Ok(()));
+        }
+
+        // should construct 3 certs (notar-fallback + notar + fast-final)
+        for _ in 0..3 {
+            let event = votor_rx.recv().await;
+            assert!(matches!(event, Some(VotorEvent::CertCreated(_))));
+        }
+
+        // no ParentReady yet
+        assert_eq!(
+            votor_rx.try_recv().err(),
+            Some(mpsc::error::TryRecvError::Empty)
+        );
+
+        // add its ancestors
+        pool.add_block((slot2, [2; 32]), (slot1, [1; 32])).await;
+        pool.add_block((slot1, [1; 32]), (slot0, [0; 32])).await;
+
+        // should emit ParentReady as a result
+        let Ok(event) = votor_rx.try_recv() else {
+            panic!("expected to receive ParentReady event");
+        };
+        match event {
+            VotorEvent::ParentReady {
+                slot,
+                parent_slot,
+                parent_hash,
+            } => {
+                assert_eq!(slot, slot1);
+                assert_eq!(parent_slot, slot0);
+                assert_eq!(parent_hash, [0; 32]);
+            }
+            _ => unreachable!("unexpected event {event:?}"),
+        }
+    }
 }
