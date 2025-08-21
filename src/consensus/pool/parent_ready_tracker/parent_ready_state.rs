@@ -102,13 +102,8 @@ impl ParentReadyState {
         match &mut self.is_ready {
             IsReady::Ready(block_ids) => {
                 assert!(!block_ids.is_empty());
-                if block_ids.len() == 1 {
-                    Either::Left(block_ids[0])
-                } else {
-                    let mut block_ids = block_ids.to_vec();
-                    block_ids.sort();
-                    Either::Left(block_ids[0])
-                }
+                block_ids.sort();
+                Either::Left(block_ids[0])
             }
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
