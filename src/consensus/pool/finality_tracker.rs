@@ -56,7 +56,7 @@ impl FinalityTracker {
         if let Some(status) = self.status.get(&block.0)
             && let FinalizationStatus::FinalizedAndNotarized(block_hash)
             | FinalizationStatus::ImplicitlyFinalized(block_hash) = status
-            && block.1 == *block_hash
+            && &block.1 == block_hash
         {
             self.handle_implicitly_finalized(block.0, parent, &mut event);
         }
