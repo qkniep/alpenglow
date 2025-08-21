@@ -486,7 +486,7 @@ impl Pool for PoolImpl {
 
     /// Gives the currently highest finalized (fast or slow) slot.
     fn finalized_slot(&self) -> Slot {
-        self.finality_tracker.highest_finalized()
+        self.finality_tracker.highest_finalized_slot()
     }
 
     /// Returns all possible parents for the given slot that are ready.

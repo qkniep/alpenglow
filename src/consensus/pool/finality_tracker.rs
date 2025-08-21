@@ -32,16 +32,21 @@ pub struct FinalityTracker {
     /// Maps blocks to their parents.
     parents: BTreeMap<BlockId, BlockId>,
     /// The highest finalized slot so far.
-    highest_finalized: Slot,
+    highest_finalized_slot: Slot,
 }
 
 /// Possible states a slot can be in regarding finality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizationStatus {
+    /// Block with given hash is notarized, but slot is not yet (known to be) finalized.
     Notarized(Hash),
-    Finalized,
-    FinalizedAndNotarized(Hash),
+    /// Slot is finalized, but notarized block is not yet known.
+    FinalizedSlot,
+    /// Slot is finalized, and notarized block is known to have the given hash.
+    FinalizedBlock(Hash),
+    /// Block with given hash was implicitly finalized through later finalization.
     ImplicitlyFinalized(Hash),
+    /// Slot was implicitly skipped through later finalization.
     ImplicitlySkipped,
 }
 
@@ -79,7 +84,7 @@ impl FinalityTracker {
             return FinalizationEvent::default();
         };
         match status {
-            FinalizationStatus::FinalizedAndNotarized(hash)
+            FinalizationStatus::FinalizedBlock(hash)
             | FinalizationStatus::ImplicitlyFinalized(hash) => {
                 let mut event = FinalizationEvent::default();
                 if &block_hash == hash {
@@ -88,7 +93,7 @@ impl FinalityTracker {
                 event
             }
             FinalizationStatus::Notarized(_)
-            | FinalizationStatus::Finalized
+            | FinalizationStatus::FinalizedSlot
             | FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
         }
     }
@@ -101,10 +106,10 @@ impl FinalityTracker {
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
         let old = self
             .status
-            .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
+            .insert(slot, FinalizationStatus::FinalizedBlock(block_hash));
         if let Some(status) = old {
             match status {
-                FinalizationStatus::FinalizedAndNotarized(hash)
+                FinalizationStatus::FinalizedBlock(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
                     assert_eq!(hash, block_hash, "consensus safety violation");
                     return FinalizationEvent::default();
@@ -112,14 +117,14 @@ impl FinalityTracker {
                 FinalizationStatus::Notarized(hash) => {
                     assert_eq!(hash, block_hash, "consensus safety violation");
                 }
-                FinalizationStatus::Finalized => {}
+                FinalizationStatus::FinalizedSlot => {}
                 FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
             }
         };
 
         let mut event = FinalizationEvent::default();
-        self.handle_finalized((slot, block_hash), &mut event);
-        self.highest_finalized = slot.max(self.highest_finalized);
+        self.handle_finalized_block((slot, block_hash), &mut event);
+        self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
         event
     }
 
@@ -136,17 +141,17 @@ impl FinalityTracker {
         if let Some(status) = old {
             match status {
                 FinalizationStatus::Notarized(hash)
-                | FinalizationStatus::FinalizedAndNotarized(hash)
+                | FinalizationStatus::FinalizedBlock(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
                     assert_eq!(hash, block_hash, "consensus safety violation");
                     FinalizationEvent::default()
                 }
                 FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
-                FinalizationStatus::Finalized => {
+                FinalizationStatus::FinalizedSlot => {
                     let mut event = FinalizationEvent::default();
                     self.status
-                        .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
-                    self.handle_finalized((slot, block_hash), &mut event);
+                        .insert(slot, FinalizationStatus::FinalizedBlock(block_hash));
+                    self.handle_finalized_block((slot, block_hash), &mut event);
                     event
                 }
             }
@@ -162,24 +167,24 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn mark_finalized(&mut self, slot: Slot) -> FinalizationEvent {
-        let old = self.status.insert(slot, FinalizationStatus::Finalized);
+        let old = self.status.insert(slot, FinalizationStatus::FinalizedSlot);
         if let Some(status) = old {
             match status {
-                FinalizationStatus::Finalized
-                | FinalizationStatus::FinalizedAndNotarized(_)
+                FinalizationStatus::FinalizedSlot
+                | FinalizationStatus::FinalizedBlock(_)
                 | FinalizationStatus::ImplicitlyFinalized(_) => FinalizationEvent::default(),
                 FinalizationStatus::Notarized(block_hash) => {
                     let mut event = FinalizationEvent::default();
                     self.status
-                        .insert(slot, FinalizationStatus::FinalizedAndNotarized(block_hash));
-                    self.handle_finalized((slot, block_hash), &mut event);
-                    self.highest_finalized = slot.max(self.highest_finalized);
+                        .insert(slot, FinalizationStatus::FinalizedBlock(block_hash));
+                    self.handle_finalized_block((slot, block_hash), &mut event);
+                    self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
                     event
                 }
                 FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
             }
         } else {
-            self.highest_finalized = slot.max(self.highest_finalized);
+            self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
             FinalizationEvent::default()
         }
     }
@@ -187,8 +192,8 @@ impl FinalityTracker {
     /// Returns the highest finalized slot.
     ///
     /// Does not consider whether we have the block, or even know the hash.
-    pub fn highest_finalized(&self) -> Slot {
-        self.highest_finalized
+    pub fn highest_finalized_slot(&self) -> Slot {
+        self.highest_finalized_slot
     }
 
     /// Handles the direct finalization of the given block.
@@ -199,7 +204,7 @@ impl FinalityTracker {
     /// - The finalized block,
     /// - any potentially implicitly finalized blocks, AND
     /// - any implicitly skipped slots.
-    fn handle_finalized(&mut self, finalized: BlockId, event: &mut FinalizationEvent) {
+    fn handle_finalized_block(&mut self, finalized: BlockId, event: &mut FinalizationEvent) {
         event.finalized = Some(finalized);
         if let Some(parent) = self.parents.get(&finalized) {
             self.handle_implicitly_finalized(finalized.0, *parent, event);
@@ -235,8 +240,8 @@ impl FinalityTracker {
                         return;
                     }
                     FinalizationStatus::Notarized(_) => {}
-                    FinalizationStatus::Finalized
-                    | FinalizationStatus::FinalizedAndNotarized(_)
+                    FinalizationStatus::FinalizedSlot
+                    | FinalizationStatus::FinalizedBlock(_)
                     | FinalizationStatus::ImplicitlyFinalized(_) => {
                         unreachable!("consensus safety violation")
                     }
@@ -252,13 +257,13 @@ impl FinalityTracker {
             .insert(slot, FinalizationStatus::ImplicitlyFinalized(block_hash));
         if let Some(status) = old {
             match status {
-                FinalizationStatus::FinalizedAndNotarized(hash)
+                FinalizationStatus::FinalizedBlock(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
                     assert_eq!(hash, block_hash, "consensus safety violation");
                     self.status.insert(slot, status);
                     return;
                 }
-                FinalizationStatus::Notarized(_) | FinalizationStatus::Finalized => {}
+                FinalizationStatus::Notarized(_) | FinalizationStatus::FinalizedSlot => {}
                 FinalizationStatus::ImplicitlySkipped => {
                     unreachable!("consensus safety violation")
                 }
