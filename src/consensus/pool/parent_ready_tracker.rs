@@ -127,7 +127,12 @@ impl ParentReadyTracker {
         newly_certified
     }
 
+    /// Handles the given finalization event.
     ///
+    /// Marks blocks as notarized-fallback and slots as skipped as appropriate.
+    ///
+    /// Returns at most one newly ready parent (for the highest slot).
+    /// For consistency with other functions it still returns a `Vec`.
     pub fn handle_finalization(&mut self, event: FinalizationEvent) -> Vec<(Slot, BlockId)> {
         let mut parents_ready = Vec::new();
         if let Some(finalized) = event.finalized {
