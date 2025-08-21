@@ -55,6 +55,7 @@ impl FinalityTracker {
             assert!(p == &parent);
             return FinalizationEvent::default();
         }
+        self.parents.insert(block, parent);
 
         let (slot, block_hash) = block;
         let Some(status) = self.status.get(&slot) else {
