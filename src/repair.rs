@@ -117,6 +117,7 @@ impl<N: Network> Repair<N> {
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
     /// Inititates the corresponding repair process and handles ongoing repairs.
+    /// Also, listens to incoming repair messages from the network and handles them.
     pub async fn repair_loop(&mut self) {
         let mut repair_receiver = self.repair_channel.1.take().unwrap();
         loop {
@@ -156,7 +157,6 @@ impl<N: Network> Repair<N> {
         }
 
         debug!("repairing block {h} in slot {slot}");
-        // TODO: perform actual repair
         let req = RepairRequest::SliceCount(block_id);
         self.send_request(req).await.unwrap();
     }
@@ -179,14 +179,15 @@ impl<N: Network> Repair<N> {
     /// Otherwise, the correct response is sent back to the sender of the request.
     async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
         trace!("answering repair request: {request:?}");
-        let (slot, hash) = request.block_id();
+        let block_id = request.block_id();
+        let (slot, _) = block_id;
         let blockstore = self.blockstore.read().await;
-        // TODO: answer repair requests for non-canonical blocks
-        if blockstore.canonical_block_hash(slot) != Some(hash) {
+        if blockstore.get_block(block_id).is_none() {
             return Ok(());
         }
         let response = match request {
             RepairRequest::SliceCount(_) => {
+                // FIXME: currently only correct for canonical block
                 let k = blockstore.stored_shreds_for_slot(slot) / TOTAL_SHREDS;
                 RepairResponse::SliceCount(request, k)
             }
@@ -389,8 +390,6 @@ impl RepairResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use super::*;
 
     use crate::consensus::{BlockstoreImpl, PoolImpl};
@@ -403,6 +402,8 @@ mod tests {
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 
     use tokio::sync::mpsc::Sender;
+
+    use std::collections::BTreeSet;
 
     /// Creates a small network of 2 validators.
     ///
@@ -660,7 +661,6 @@ mod tests {
         let NetworkMessage::Repair(repair_msg) = msg else {
             panic!("not a repair msg");
         };
-        println!("{repair_msg:?}");
         let RepairMessage::Response(response) = repair_msg else {
             panic!("not a response");
         };
