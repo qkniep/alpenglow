@@ -27,6 +27,8 @@ use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{DATA_SHREDS, Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 
+const REPAIR_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Message types for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairMessage {
@@ -231,9 +233,14 @@ impl<N: Network> Repair<N> {
         let msg_bytes = msg.to_bytes();
         let request_hash = hash(&msg_bytes);
 
+        // check whether we are (still) waiting on response to this request
+        let Some(_) = self.outstanding_requests.remove(&request_hash) else {
+            warn!("received repair response for unknown request {response:?}");
+            return;
+        };
+
         let block_id = response.block_id();
         let (slot, block_hash) = block_id;
-        // TODO: check whether we actually sent the request
         match response {
             RepairResponse::SliceCount(req, count) => {
                 let RepairRequest::SliceCount(_) = req else {
@@ -305,7 +312,6 @@ impl<N: Network> Repair<N> {
                 }
             }
         }
-        self.outstanding_requests.remove(&request_hash);
     }
 
     /// Tries to receive a repair message from the underlying [`Network`].
@@ -331,7 +337,7 @@ impl<N: Network> Repair<N> {
         let msg_bytes = msg.to_bytes();
         let hash = hash(&msg_bytes);
 
-        let expiry = Instant::now() + Duration::from_secs(10);
+        let expiry = Instant::now() + REPAIR_TIMEOUT;
         self.outstanding_requests.insert(hash, request);
         self.request_timeouts.push((expiry, hash));
 
