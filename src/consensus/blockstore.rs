@@ -57,7 +57,7 @@ pub trait Blockstore {
     fn canonical_block_hash(&self, slot: Slot) -> Option<Hash>;
     fn stored_shreds_for_slot(&self, slot: Slot) -> usize;
     #[allow(clippy::needless_lifetimes)]
-    fn get_block<'a>(&'a self, slot: Slot, hash: Hash) -> Option<&'a Block>;
+    fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(&'a self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&'a Shred>;
     fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash>;
@@ -216,7 +216,8 @@ impl Blockstore for BlockstoreImpl {
     /// Considers both, the canonical block and any repaired blocks.
     ///
     /// Returns `None` if blockstore does not hold that block yet.
-    fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
+    fn get_block(&self, block_id: BlockId) -> Option<&Block> {
+        let (slot, hash) = block_id;
         let slot_data = self.slot_data(slot)?;
         if let Some((h, block)) = slot_data.canonical.completed.as_ref()
             && *h == hash
