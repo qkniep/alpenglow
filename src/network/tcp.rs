@@ -8,6 +8,7 @@
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use async_trait::async_trait;
 use futures::SinkExt;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -61,6 +62,7 @@ impl TcpNetwork {
     }
 }
 
+#[async_trait]
 impl Network for TcpNetwork {
     type Address = SocketAddr;
 
