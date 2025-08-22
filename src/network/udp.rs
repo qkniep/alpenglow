@@ -8,6 +8,7 @@
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use async_trait::async_trait;
 use log::warn;
 use tokio::net::UdpSocket;
 
@@ -50,6 +51,7 @@ impl UdpNetwork {
     }
 }
 
+#[async_trait]
 impl Network for UdpNetwork {
     type Address = SocketAddr;
 
