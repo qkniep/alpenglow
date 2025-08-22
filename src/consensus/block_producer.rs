@@ -42,7 +42,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
 
-    /// Should be set to DELTA_BLOCK in production.
+    /// Should be set to `DELTA_BLOCK` in production.
     /// Stored as a field to aid in testing.
     delta_block: Duration,
 }
