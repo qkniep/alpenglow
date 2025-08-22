@@ -14,7 +14,7 @@ use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{Blockstore, DELTA_BLOCK, EpochInfo, Pool};
+use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
 use crate::highest_non_zero_byte;
 use crate::network::{Network, NetworkMessage};
@@ -41,6 +41,10 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
+
+    /// Should be set to DELTA_BLOCK in production.
+    /// Stored as a field to aid in testing.
+    delta_block: Duration,
 }
 
 impl<D, T> BlockProducer<D, T>
@@ -56,6 +60,7 @@ where
         blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
         pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         cancel_token: CancellationToken,
+        delta_block: Duration,
     ) -> Self {
         Self {
             secret_key,
@@ -65,6 +70,7 @@ where
             disseminator,
             txs_receiver,
             cancel_token,
+            delta_block,
         }
     }
 
@@ -146,7 +152,7 @@ where
             parent_slot,
         );
 
-        let mut duration_left = DELTA_BLOCK;
+        let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
             let parent = if slice_index.is_first() {
                 Some(parent_block_id)
@@ -213,7 +219,7 @@ where
             parent_slot,
         );
 
-        let mut duration_left = DELTA_BLOCK;
+        let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
             let parent = if slice_index.is_first() {
                 Some(parent_block_id)
@@ -440,7 +446,6 @@ mod tests {
     use crate::network::UdpNetwork;
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
-    use crate::types::slice::create_slice_payload_with_invalid_txs;
 
     use mockall::{Sequence, predicate};
 
@@ -555,6 +560,7 @@ mod tests {
         blockstore: MockBlockstore,
         pool: MockPool,
         disseminator: MockDisseminator,
+        delta_block: Duration,
     ) -> BlockProducer<MockDisseminator, UdpNetwork> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
@@ -574,11 +580,12 @@ mod tests {
             blockstore,
             pool,
             cancel_token,
+            delta_block,
         )
     }
 
     #[tokio::test]
-    async fn shred_and_disseminate_final_slice() {
+    async fn verify_produce_block_parent_ready() {
         let slot = Slot::new(123);
         let block_info = BlockInfo {
             hash: [1; 32],
@@ -613,23 +620,13 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(blockstore, pool, disseminator);
+        let block_producer = setup(blockstore, pool, disseminator, Duration::from_micros(0));
 
-        let payload = create_slice_payload_with_invalid_txs(None, 10);
-        let header = SliceHeader {
-            slot,
-            slice_index: SliceIndex::first(),
-            is_last: true,
-        };
-        let maybe_duration = None;
-
-        let res = block_producer
-            .shred_and_disseminate(header, payload, maybe_duration)
+        let ret = block_producer
+            .produce_block_parent_ready(slot, block_info.parent)
             .await
             .unwrap();
-        match res {
-            Either::Left(hash) => assert_eq!(hash, block_info.hash),
-            Either::Right(res) => panic!("unexpected result {res:?}"),
-        }
+        assert_eq!(slot, ret.0);
+        assert_eq!(block_info.hash, ret.1);
     }
 }
