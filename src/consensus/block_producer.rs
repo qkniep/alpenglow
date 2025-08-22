@@ -431,15 +431,16 @@ async fn wait_for_first_slot(
 mod tests {
     use super::*;
 
+    use crate::Transaction;
     use crate::consensus::BlockInfo;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
-    use crate::crypto::{Hash, aggsig};
+    use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::UdpNetwork;
     use crate::shredder::TOTAL_SHREDS;
+    use crate::test_utils::generate_validators;
     use crate::types::slice::create_slice_payload_with_invalid_txs;
-    use crate::{Transaction, ValidatorInfo};
 
     use mockall::{Sequence, predicate};
 
@@ -556,22 +557,7 @@ mod tests {
         disseminator: MockDisseminator,
     ) -> BlockProducer<MockDisseminator, UdpNetwork> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
-        let mut validators = Vec::new();
-        let num_validators = 10;
-        for i in 0..num_validators {
-            let sk = signature::SecretKey::new(&mut rand::rng());
-            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-            validators.push(ValidatorInfo {
-                id: i,
-                stake: 1,
-                pubkey: sk.to_pk(),
-                voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
-            });
-        }
-        let epoch_info = Arc::new(EpochInfo::new(0, validators));
+        let (_, epoch_info) = generate_validators(11);
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
         let blockstore = Arc::new(RwLock::new(blockstore));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
