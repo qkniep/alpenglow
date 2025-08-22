@@ -153,7 +153,8 @@ where
             parent_slot,
         );
 
-        let mut duration_left = self.delta_block;
+        // only start the DELTA_BLOCK timer once the ParentReady event is seen
+        let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
             let parent = if slice_index.is_first() {
                 Some(parent_block_id)
@@ -161,7 +162,7 @@ where
                 None
             };
 
-            // If we have not yet received the `ParentReady` event, wait for it concurrently while producing the next slice.
+            // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
             let produce_slice_future =
                 produce_slice_payload(&self.txs_receiver, parent, duration_left);
             let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
@@ -169,15 +170,25 @@ where
             } else {
                 pin!(produce_slice_future);
                 tokio::select! {
-                    res = &mut produce_slice_future => res,
+                    res = &mut produce_slice_future => {
+                        let (payload, _maybe_duration) = res;
+                        // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
+                        (payload, Some(Duration::MAX))
+                    }
                     res = &mut parent_ready_receiver => {
-                        // Got `ParentReady` event while producing slice.
+                        // Got ParentReady event while producing slice.
                         // It's a NOP if we have been using the same parent as before.
                         // TODO: if parent is different, then implement optimistic handover.
+
+                        let start = Instant::now();
                         let (new_slot, new_hash) = res.unwrap();
                         assert_eq!(new_slot, parent_slot);
                         assert_eq!(new_hash, parent_hash);
-                        produce_slice_future.await
+                        let (payload, _maybe_duration) = produce_slice_future.await;
+                        // ParentReady was seen, start the DELTA_BLOCK timer
+                        // account for the time it took to finish producing the slice
+                        let duration = Some(self.delta_block - (Instant::now() - start));
+                        (payload, duration)
                   }
                 }
             };
