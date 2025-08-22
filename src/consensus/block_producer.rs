@@ -52,6 +52,7 @@ where
     D: Disseminator + Sync + Send + 'static,
     T: Network + Sync + Send + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
         epoch_info: Arc<EpochInfo>,
