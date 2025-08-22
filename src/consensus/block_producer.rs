@@ -594,12 +594,9 @@ mod tests {
     #[tokio::test]
     async fn shred_and_disseminate_final_slice() {
         let slot = Slot::new(123);
-        let block_hash = [1; 32];
-        let parent_hash = [2; 32];
         let block_info = BlockInfo {
-            hash: block_hash,
-            parent_slot: slot.prev(),
-            parent_hash,
+            hash: [1; 32],
+            parent: (slot.prev(), [2; 32]),
         };
 
         // Handles TOTAL_SHRED number of calls.
@@ -620,9 +617,9 @@ mod tests {
 
         let mut pool = MockPool::new();
         pool.expect_add_block()
-            .returning(move |ret_slot, ret_block_info| {
-                assert_eq!(ret_slot, slot);
-                assert_eq!(ret_block_info, block_info);
+            .returning(move |ret_block_id, ret_parent_block_id| {
+                assert_eq!(ret_block_id, (slot, block_info.hash));
+                assert_eq!(block_info.parent, ret_parent_block_id);
                 Box::pin(async { () })
             });
 
@@ -645,7 +642,7 @@ mod tests {
             .await
             .unwrap();
         match res {
-            Either::Left(hash) => assert_eq!(hash, block_hash),
+            Either::Left(hash) => assert_eq!(hash, block_info.hash),
             Either::Right(res) => panic!("unexpected result {res:?}"),
         }
     }
