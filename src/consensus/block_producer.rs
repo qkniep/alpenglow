@@ -620,7 +620,7 @@ mod tests {
             .returning(move |ret_block_id, ret_parent_block_id| {
                 assert_eq!(ret_block_id, (slot, block_info.hash));
                 assert_eq!(block_info.parent, ret_parent_block_id);
-                Box::pin(async { () })
+                Box::pin(async {})
             });
 
         let mut disseminator = MockDisseminator::new();
