@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::repair::{Repair, RepairMessage};
+use crate::repair::Repair;
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -76,8 +76,7 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     all2all: Arc<A>,
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
-    /// Block repair protocol.
-    repair: Arc<Repair<R>>,
+    _repair: std::marker::PhantomData<Repair<R>>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -119,18 +118,16 @@ where
         ));
         let pool = Arc::new(RwLock::new(pool));
 
-        let repair = Repair::new(
+        let mut repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
             repair_network,
             (repair_tx, repair_rx),
             epoch_info.clone(),
         );
-        let repair = Arc::new(repair);
 
-        let r = Arc::clone(&repair);
         let _repair_handle = tokio::spawn(
-            async move { r.repair_loop().await }
+            async move { repair.repair_loop().await }
                 .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
@@ -164,8 +161,8 @@ where
             block_producer,
             pool,
             all2all,
+            _repair: std::marker::PhantomData,
             disseminator,
-            repair,
             cancel_token,
             votor_handle,
         }
@@ -223,7 +220,6 @@ where
     ///
     /// [`All2All`]: Handles incoming votes and certificates. Adds them to the [`Pool`].
     /// [`Disseminator`]: Handles incoming shreds. Adds them to the [`Blockstore`].
-    /// [`Repair`]: Answers incoming repair requests.
     async fn message_loop(self: &Arc<Self>) -> Result<()> {
         loop {
             tokio::select! {
@@ -231,8 +227,6 @@ where
                 res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
                 // handle shreds received by block dissemination protocol
                 res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
-                // handle repair requests
-                res = self.repair.receive() => self.handle_repair_message(res?).await?,
 
                 () = self.cancel_token.cancelled() => return Ok(()),
             };
@@ -292,18 +286,6 @@ where
             let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
             guard.add_block(block_id, block_info.parent).await;
-        }
-        Ok(())
-    }
-
-    async fn handle_repair_message(&self, msg: RepairMessage) -> Result<(), NetworkError> {
-        match msg {
-            RepairMessage::Request(request) => {
-                self.repair.answer_request(request).await?;
-            }
-            RepairMessage::Response(resposne) => {
-                self.repair.handle_response(resposne).await;
-            }
         }
         Ok(())
     }

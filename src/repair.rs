@@ -11,14 +11,16 @@
 
 // WARN: this is incomplete!
 
+use std::collections::{BTreeMap, BinaryHeap};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::Hash;
+use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
@@ -68,10 +70,14 @@ pub enum RepairResponse {
 pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+
+    outstanding_requests: BTreeMap<Hash, RepairRequest>,
+    request_timeouts: BinaryHeap<(Instant, Hash)>,
+
     network: N,
     repair_channel: (
         tokio::sync::mpsc::Sender<BlockId>,
-        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<BlockId>>,
+        Option<tokio::sync::mpsc::Receiver<BlockId>>,
     ),
     sampler: StakeWeightedSampler,
 }
@@ -93,10 +99,12 @@ impl<N: Network> Repair<N> {
     ) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler = StakeWeightedSampler::new(validators);
-        let repair_channel = (repair_channel.0, tokio::sync::Mutex::new(repair_channel.1));
+        let repair_channel = (repair_channel.0, Some(repair_channel.1));
         Self {
             blockstore,
             pool,
+            outstanding_requests: BTreeMap::new(),
+            request_timeouts: BinaryHeap::new(),
             network,
             repair_channel,
             sampler,
@@ -107,19 +115,29 @@ impl<N: Network> Repair<N> {
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
     /// Inititates the corresponding repair process and handles ongoing repairs.
-    pub async fn repair_loop(&self) {
+    pub async fn repair_loop(&mut self) {
         // only this loop uses the receiver, keeping the lock is safe
         // TODO: maybe move the repair channel receiver here
-        let mut guard = self.repair_channel.1.lock().await;
-        while let Some((slot, hash)) = guard.recv().await {
-            // TODO: maybe move receiving of requests into this loop
-            // TODO: handle ongoing repair with pending requests (timeout + retry)
-            self.repair_block(slot, hash).await;
+        let mut repair_receiver = self.repair_channel.1.take().unwrap();
+        loop {
+            tokio::select! {
+                    // res = &mut produce_slice_future => res,
+                    // res = &mut parent_ready_receiver => {
+                // handle repair requests
+                res = self.receive() => self.handle_repair_message(res.unwrap()).await.unwrap(),
+                // while let Some((slot, hash)) = guard.recv().await {
+
+                Some((slot, hash)) = repair_receiver.recv() => {
+                    // TODO: maybe move receiving of requests into this loop
+                    // TODO: handle ongoing repair with pending requests (timeout + retry)
+                    self.repair_block(slot, hash).await;
+                }
+            }
         }
     }
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
-    pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
+    pub async fn repair_block(&mut self, slot: Slot, block_hash: Hash) {
         let h = &hex::encode(block_hash)[..8];
         if self
             .blockstore
@@ -141,11 +159,23 @@ impl<N: Network> Repair<N> {
         }
     }
 
+    async fn handle_repair_message(&self, msg: RepairMessage) -> Result<(), NetworkError> {
+        match msg {
+            RepairMessage::Request(request) => {
+                self.answer_request(request).await?;
+            }
+            RepairMessage::Response(resposne) => {
+                self.handle_response(resposne).await;
+            }
+        }
+        Ok(())
+    }
+
     /// Tries to answer the given repair request.
     ///
     /// If we do not have the block the request refers to, the request is ignored.
     /// Otherwise, the correct response is sent back to the sender of the request.
-    pub async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
+    async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
         trace!("answering repair request: {request:?}");
         let slot = request.slot();
         let hash = request.block_hash();
@@ -191,7 +221,7 @@ impl<N: Network> Repair<N> {
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
-    pub async fn handle_response(&self, response: RepairResponse) {
+    async fn handle_response(&self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
         let slot = response.slot();
         let block_hash = response.block_hash();
@@ -280,7 +310,7 @@ impl<N: Network> Repair<N> {
     /// # Errors
     ///
     /// Returns [`NetworkError`] if the underlying network fails.
-    pub async fn receive(&self) -> Result<RepairMessage, NetworkError> {
+    async fn receive(&self) -> Result<RepairMessage, NetworkError> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Repair(r) => return Ok(r),
@@ -289,10 +319,18 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    async fn send_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
-        let repair = RepairMessage::Request(request);
+    async fn send_request(&mut self, request: RepairRequest) -> Result<(), NetworkError> {
+        let repair = RepairMessage::Request(request.clone());
         let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
-        self.network.send(&repair.into(), to).await
+        let msg: NetworkMessage = repair.into();
+        let msg_bytes = msg.to_bytes();
+        let hash = hash(&msg_bytes);
+
+        let expiry = Instant::now() + Duration::from_secs(10);
+        self.outstanding_requests.insert(hash, request);
+        self.request_timeouts.push((expiry, hash));
+
+        self.network.send_serialized(&msg_bytes, to).await
     }
 
     async fn send_response(&self, response: RepairResponse) -> Result<(), NetworkError> {
@@ -387,7 +425,7 @@ mod tests {
         let network0 = core.join_unlimited(0).await;
         let network1 = core.join_unlimited(1).await;
 
-        let repair = Repair::new(
+        let mut repair = Repair::new(
             Arc::clone(&blockstore),
             pool,
             network0,
