@@ -10,8 +10,8 @@ pub mod trivial;
 pub mod turbine;
 
 use async_trait::async_trait;
-
 use mockall::automock;
+
 pub use rotor::Rotor;
 pub use trivial::TrivialDisseminator;
 pub use turbine::Turbine;
