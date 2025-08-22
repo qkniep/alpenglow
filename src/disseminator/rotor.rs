@@ -5,6 +5,7 @@ pub mod sampling_strategy;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use log::warn;
 use rand::prelude::*;
 use sampling_strategy::PartitionSampler;
@@ -110,6 +111,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     }
 }
 
+#[async_trait]
 impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S> {
     async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
         Self::send_as_leader(self, shred).await
