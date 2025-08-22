@@ -30,6 +30,7 @@ mod udp;
 
 use std::str::FromStr;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -90,7 +91,6 @@ impl NetworkMessage {
     }
 
     /// Serializes this `NetworkMessage` into an existing buffer using [`bincode`].
-    #[must_use]
     pub fn write_bytes(&self, buf: &mut [u8]) -> usize {
         let written = bincode::serde::encode_into_slice(self, buf, bincode::config::standard())
             .expect("serialization should not panic");
@@ -141,24 +141,25 @@ pub enum NetworkError {
 }
 
 /// Abstraction of a network interface for sending and receiving messages.
+#[async_trait]
 pub trait Network: Send + Sync {
     type Address: Send;
 
-    fn send(
+    async fn send(
         &self,
         message: &NetworkMessage,
         to: impl AsRef<str> + Send,
-    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+    ) -> Result<(), NetworkError>;
 
-    fn send_serialized(
+    async fn send_serialized(
         &self,
         bytes: &[u8],
         to: impl AsRef<str> + Send,
-    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+    ) -> Result<(), NetworkError>;
 
     // TODO: implement brodcast at `Network` level?
 
-    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkError>> + Send;
+    async fn receive(&self) -> Result<NetworkMessage, NetworkError>;
 
     fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
     where

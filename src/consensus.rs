@@ -17,11 +17,11 @@
 //! - [`Vote`] represents a vote of a specific type.
 //! - [`EpochInfo`] holds information about the epoch and all validators.
 
+mod block_producer;
 mod blockstore;
 mod cert;
 mod epoch_info;
 mod pool;
-mod produce_block;
 mod vote;
 pub(crate) mod votor;
 
@@ -30,24 +30,23 @@ use std::time::Instant;
 use std::{sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use either::Either;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::crypto::{Hash, aggsig, signature};
+use crate::consensus::block_producer::BlockProducer;
+use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
-pub use blockstore::{BlockInfo, Blockstore};
+pub use blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use cert::Cert;
 pub use epoch_info::EpochInfo;
-pub use pool::{AddVoteError, Pool};
+pub use pool::{AddVoteError, Pool, PoolImpl};
 pub use vote::Vote;
 use votor::Votor;
 
@@ -62,16 +61,16 @@ const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
-    /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`Votor`].
-    secret_key: signature::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Blockstore>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Pool>>,
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+
+    /// Block production (i.e. leader side) component of the consensus protocol.
+    block_producer: Arc<BlockProducer<D, T>>,
 
     /// All-to-all broadcast network protocol for consensus messages.
     all2all: Arc<A>,
@@ -79,86 +78,11 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     disseminator: Arc<D>,
     /// Block repair protocol.
     repair: Arc<Repair<R>>,
-    /// Network connection to receive transactions from clients.
-    txs_receiver: T,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
     /// Votor task handle.
     votor_handle: tokio::task::JoinHandle<()>,
-}
-
-/// Waits for first slot in the given window to become ready for block production.
-///
-/// Ready here can mean:
-/// - Pool emitted the `ParentReady` event for it, OR
-/// - the blockstore has stored a canonical block for the previous slot.
-///
-/// If the slot became ready, returns `Some((parent_slot, parent_hash, is_parent-ready))`.
-/// Else returns `None` if the window should be skipped.
-async fn wait_for_first_slot(
-    pool: Arc<RwLock<Pool>>,
-    blockstore: Arc<RwLock<Blockstore>>,
-    first_slot_in_window: Slot,
-) -> Option<(Slot, Hash, bool)> {
-    if first_slot_in_window.is_genesis_window() {
-        return Some((Slot::new(0), Hash::default(), false));
-    }
-
-    let last_slot_in_window = first_slot_in_window.last_slot_in_window();
-
-    // if already have parent ready, return it, otherwise get a channel to await on
-    let rx = {
-        let mut guard = pool.write().await;
-        match guard.wait_for_parent_ready(first_slot_in_window) {
-            Either::Left((slot, hash)) => {
-                return Some((slot, hash, true));
-            }
-            Either::Right(rx) => rx,
-        }
-    };
-
-    // Concurrently wait for:
-    // - `ParentReady` event,
-    // - canonical block reconstruction in blockstore, OR
-    // - notification that a later slot was finalized.
-    tokio::select! {
-        res = rx => {
-            let (slot, hash) = res.expect("Sender dropped channel.");
-            Some((slot, hash, true))
-        }
-
-        res = async {
-            let handle = tokio::spawn(async move {
-                // PERF: These are burning a CPU. Can we use async here?
-                loop {
-                    let last_slot_in_prev_window = first_slot_in_window.prev();
-                    if let Some(hash) = blockstore
-                        .read()
-                        .await
-                        .canonical_block_hash(last_slot_in_prev_window)
-                    {
-                        debug!(
-                            "optimistically building block on parent {} in slot {}",
-                            &hex::encode(hash)[..8],
-                            last_slot_in_prev_window,
-                        );
-                        return Some((last_slot_in_prev_window, hash, false));
-                    }
-                    if pool.read().await.finalized_slot() >= last_slot_in_window {
-                        warn!(
-                            "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
-                        );
-                        return None;
-                    }
-                    sleep(Duration::from_millis(1)).await;
-                }
-            });
-            handle.await.expect("Error in task")
-        } => {
-            res
-        }
-    }
 }
 
 impl<A, D, R, T> Alpenglow<A, D, R, T>
@@ -181,29 +105,33 @@ where
     ) -> Self {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
-        let (repair_tx, mut repair_rx) = mpsc::channel(1024);
+        let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore = Blockstore::new(epoch_info.clone(), votor_tx.clone());
+        let blockstore: Box<dyn Blockstore + Send + Sync> =
+            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone()));
         let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool = Pool::new(epoch_info.clone(), votor_tx.clone(), repair_tx);
+
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
+            epoch_info.clone(),
+            votor_tx.clone(),
+            repair_tx.clone(),
+        ));
         let pool = Arc::new(RwLock::new(pool));
+
         let repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
             repair_network,
+            (repair_tx, repair_rx),
             epoch_info.clone(),
         );
         let repair = Arc::new(repair);
 
         let r = Arc::clone(&repair);
         let _repair_handle = tokio::spawn(
-            async move {
-                while let Some((slot, hash)) = repair_rx.recv().await {
-                    r.repair_block(slot, hash).await;
-                }
-            }
-            .in_span(Span::enter_with_local_parent("repair loop")),
+            async move { r.repair_loop().await }
+                .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
         let mut votor = Votor::new(
@@ -218,17 +146,29 @@ where
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
-        Self {
+        let disseminator = Arc::new(disseminator);
+
+        let block_producer = Arc::new(BlockProducer::new(
             secret_key,
+            epoch_info.clone(),
+            disseminator.clone(),
+            txs_receiver,
+            blockstore.clone(),
+            pool.clone(),
+            cancel_token.clone(),
+            DELTA_BLOCK,
+        ));
+
+        Self {
             epoch_info,
             blockstore,
+            block_producer,
             pool,
             all2all,
-            disseminator: Arc::new(disseminator),
+            disseminator,
             repair,
             cancel_token,
             votor_handle,
-            txs_receiver,
         }
     }
 
@@ -250,9 +190,10 @@ where
             tokio::spawn(async move { nn.standstill_loop().await }.in_span(standstill_loop_span));
 
         let block_production_span = Span::enter_with_local_parent("block production");
-        let nn = node.clone();
+        let block_producer = Arc::clone(&node.block_producer);
         let prod_loop = tokio::spawn(
-            async move { nn.block_production_loop().await }.in_span(block_production_span),
+            async move { block_producer.block_production_loop().await }
+                .in_span(block_production_span),
         );
 
         node.cancel_token.cancelled().await;
@@ -271,7 +212,7 @@ where
         self.epoch_info.validator(self.epoch_info.own_id)
     }
 
-    pub fn get_pool(&self) -> Arc<RwLock<Pool>> {
+    pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
         Arc::clone(&self.pool)
     }
 
@@ -319,68 +260,6 @@ where
         }
     }
 
-    /// Handles the leader side of the consensus protocol.
-    ///
-    /// Once all previous blocks have been notarized or skipped and the next
-    /// slot belongs to our leader window, we will produce a block.
-    async fn block_production_loop(&self) -> Result<()> {
-        for first_slot_in_window in Slot::windows() {
-            if self.cancel_token.is_cancelled() {
-                break;
-            }
-
-            let last_slot_in_window = first_slot_in_window.last_slot_in_window();
-
-            // don't do anything if we are not the leader
-            let leader = self.epoch_info.leader(first_slot_in_window);
-            if leader.id != self.epoch_info.own_id {
-                continue;
-            }
-
-            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
-                warn!(
-                    "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
-                );
-                continue;
-            }
-
-            let (parent, parent_hash, mut parent_ready) = match wait_for_first_slot(
-                self.pool.clone(),
-                self.blockstore.clone(),
-                first_slot_in_window,
-            )
-            .await
-            {
-                Some(res) => res,
-                None => continue,
-            };
-
-            // produce blocks for all slots in window
-            let mut block = parent;
-            let mut block_hash = parent_hash;
-            for slot in first_slot_in_window.slots_in_window() {
-                if slot.is_genesis() {
-                    parent_ready = true;
-                    continue;
-                }
-                self.produce_block(slot, (block, block_hash), parent_ready)
-                    .await?;
-
-                // build off own block next
-                block = slot;
-                block_hash = self
-                    .blockstore
-                    .read()
-                    .await
-                    .canonical_block_hash(slot)
-                    .expect("missing own block during block production");
-                parent_ready = true;
-            }
-        }
-
-        Ok(())
-    }
-
     #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
         trace!("received all2all msg: {msg:?}");
@@ -412,7 +291,8 @@ where
             .await;
         if let Ok(Some((slot, block_info))) = b {
             let mut guard = self.pool.write().await;
-            guard.add_block(slot, block_info).await;
+            let block_id = (slot, block_info.hash);
+            guard.add_block(block_id, block_info.parent).await;
         }
         Ok(())
     }

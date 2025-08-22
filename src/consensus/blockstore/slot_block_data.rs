@@ -14,7 +14,7 @@ use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
-use crate::slice::Slice;
+use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
 
 use super::BlockInfo;
@@ -109,15 +109,15 @@ pub struct BlockData {
     /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
-    pub(super) shreds: BTreeMap<usize, Vec<Shred>>,
+    pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
     /// Any already reconstructed slices of this block.
-    pub(super) slices: BTreeMap<usize, Slice>,
+    pub(super) slices: BTreeMap<SliceIndex, Slice>,
     /// Index of the slice marked as last, if any.
-    pub(super) last_slice: Option<usize>,
+    pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
     pub(super) double_merkle_tree: Option<MerkleTree>,
     /// Cache of Merkle roots for which the leader signature has been verified.
-    pub(super) merkle_root_cache: BTreeMap<usize, Hash>,
+    pub(super) merkle_root_cache: BTreeMap<SliceIndex, Hash>,
 }
 
 impl BlockData {
@@ -151,8 +151,8 @@ impl BlockData {
         // store last slice index, delete everything after last slice
         if is_last_slice && self.last_slice.is_none() {
             self.last_slice = Some(slice_index);
-            self.slices.split_off(&(slice_index + 1));
-            self.shreds.split_off(&(slice_index + 1));
+            self.slices.retain(|&ind, _| ind <= slice_index);
+            self.shreds.retain(|&ind, _| ind <= slice_index);
         }
 
         // maybe send first shred notification
@@ -215,7 +215,7 @@ impl BlockData {
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
     /// Returns `true` if a slice was reconstructed, `false` otherwise.
-    fn try_reconstruct_slice(&mut self, slice: usize) -> bool {
+    fn try_reconstruct_slice(&mut self, slice: SliceIndex) -> bool {
         let slice_shreds = self.shreds.get(&slice).unwrap();
         if self.slices.contains_key(&slice) {
             return false;
@@ -228,7 +228,7 @@ impl BlockData {
                 return false;
             }
         };
-        if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index == 0 {
+        if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
             warn!(
                 "reconstructed slice {} in slot {} expected to contain parent",
                 slice, self.slot
@@ -250,7 +250,7 @@ impl BlockData {
             return None;
         }
         let last_slice = self.last_slice?;
-        if self.slices.len() != last_slice + 1 {
+        if self.slices.len() != last_slice.inner() + 1 {
             trace!("don't have all slices for slot {} yet", self.slot);
             return None;
         }
@@ -266,12 +266,29 @@ impl BlockData {
         self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
-        let first_slice = self.slices.get(&0).unwrap();
+        let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
         // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let (parent_slot, parent_hash) = first_slice.parent.unwrap();
+        let mut parent = first_slice.parent.unwrap();
+        let mut parent_switched = false;
 
         let mut transactions = vec![];
         for (ind, slice) in &self.slices {
+            // handle optimistic handover
+            if !ind.is_first()
+                && let Some(new_parent) = slice.parent
+            {
+                if new_parent == parent {
+                    warn!("parent switched to same value");
+                    return None;
+                }
+                if parent_switched {
+                    warn!("parent switched more than once");
+                    return None;
+                }
+                parent_switched = true;
+                parent = new_parent;
+            }
+
             let (mut txs, bytes_read) =
                 match bincode::serde::decode_from_slice(&slice.data, bincode::config::standard()) {
                     Ok(r) => r,
@@ -291,18 +308,19 @@ impl BlockData {
             }
             transactions.append(&mut txs);
         }
+
         let block = Block {
             slot: self.slot,
             block_hash,
-            parent: parent_slot,
-            parent_hash,
+            parent: parent.0,
+            parent_hash: parent.1,
             transactions,
         };
         let block_info = BlockInfo::from(&block);
         self.completed = Some((block_hash, block));
 
         // clean up raw slices
-        for slice_index in 0..=last_slice {
+        for slice_index in last_slice.until() {
             self.slices.remove(&slice_index);
         }
 
@@ -335,12 +353,7 @@ mod tests {
         match event {
             VotorEvent::Block {
                 slot: _,
-                block_info:
-                    BlockInfo {
-                        hash,
-                        parent_slot: _,
-                        parent_hash: _,
-                    },
+                block_info: BlockInfo { hash, parent: _ },
             } => *hash,
             _ => panic!(),
         }
@@ -353,7 +366,6 @@ mod tests {
 
         // manage to construct a valid block.
         let slices = create_random_block(slot, 1);
-        let (parent_slot, parent_hash) = slices[0].parent.unwrap();
         let events = handle_slice(slices[0].clone(), &sk);
         assert_eq!(events.len(), 2);
         let first_shred_event = VotorEvent::FirstShred(slot);
@@ -363,8 +375,7 @@ mod tests {
             slot,
             block_info: BlockInfo {
                 hash,
-                parent_slot,
-                parent_hash,
+                parent: slices[0].parent.unwrap(),
             },
         };
         assert_votor_events_match(events[1].clone(), block_event);

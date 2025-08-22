@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structures handling votes and certificates for a single slot.
+//!
+//! The main data structure defined here is [`SlotState`], which has components:
+//! - [`SlotVotes`] for all votes in a single slot.
+//! - [`SlotVotedStake`] for all running stake totals in a single slot.
+//! - [`SlotCertificates`] for all certificates in a single slot.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use either::Either;
+use log::warn;
 use smallvec::SmallVec;
 
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
@@ -26,10 +32,8 @@ pub struct SlotState {
     pub(super) voted_stakes: SlotVotedStake,
     /// Certificates for this slot, contains all certificate types and validators.
     pub(super) certificates: SlotCertificates,
-    /// Indicates for which blocks we know the parent already.
-    known_parent: BTreeSet<Hash>,
-    /// Indicates which blocks have a certified parent.
-    certified_parent: BTreeSet<Hash>,
+    /// Indicates blocks for which we already know their parents.
+    parents: BTreeMap<Hash, ParentStatus>,
     /// Hashes of blocks that have reached the necessary votes for safe-to-notar
     /// and are only waiting for our only vote to arrive.
     pending_safe_to_notar: BTreeSet<Hash>,
@@ -90,6 +94,12 @@ pub struct SlotCertificates {
     pub(super) finalize: Option<FinalCert>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParentStatus {
+    Known,
+    Certified,
+}
+
 /// Possible states for the safe-to-notar check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SafeToNotarStatus {
@@ -113,8 +123,7 @@ impl SlotState {
             votes: SlotVotes::new(epoch_info.validators.len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
-            known_parent: BTreeSet::new(),
-            certified_parent: BTreeSet::new(),
+            parents: BTreeMap::new(),
             pending_safe_to_notar: BTreeSet::new(),
             sent_safe_to_notar: BTreeSet::new(),
             sent_safe_to_skip: false,
@@ -197,15 +206,33 @@ impl SlotState {
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
     pub fn notify_parent_known(&mut self, hash: Hash) {
-        self.known_parent.insert(hash);
+        // TODO: maybe turn this back into a panic once repair is fully implemented
+        if self.parents.contains_key(&hash) {
+            warn!(
+                "parent of block {} in slot {} was alredy known",
+                &hex::encode(hash)[..8],
+                self.slot
+            );
+            return;
+        }
+        self.parents.insert(hash, ParentStatus::Known);
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.
+    ///
+    /// # Panics
+    ///
+    /// If [`SlotState::notify_parent_known`] has not yet been called for this block.
     pub fn notify_parent_certified(
         &mut self,
         hash: Hash,
     ) -> Option<Either<VotorEvent, (Slot, Hash)>> {
-        self.certified_parent.insert(hash);
+        let Some(parent_info) = self.parents.get_mut(&hash) else {
+            panic!("parent not known")
+        };
+        *parent_info = ParentStatus::Certified;
+
+        // potentially emit safe-to-notar
         if self.sent_safe_to_notar.contains(&hash) {
             return None;
         }
@@ -454,9 +481,9 @@ impl SlotState {
         }
 
         // check parent condition
-        if !self.known_parent.contains(block_hash) {
+        if !self.parents.contains_key(block_hash) {
             return SafeToNotarStatus::MissingBlock;
-        } else if !self.certified_parent.contains(block_hash) {
+        } else if *self.parents.get(block_hash).unwrap() != ParentStatus::Certified {
             return SafeToNotarStatus::AwaitingVotes;
         }
 

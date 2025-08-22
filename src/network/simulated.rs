@@ -23,6 +23,7 @@ mod token_bucket;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -63,6 +64,7 @@ impl SimulatedNetwork {
     }
 }
 
+#[async_trait]
 impl Network for SimulatedNetwork {
     type Address = ValidatorId;
 
@@ -107,7 +109,8 @@ mod tests {
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
-    use crate::slice::{Slice, SliceHeader, create_slice_payload_with_invalid_txs};
+    use crate::types::slice::create_slice_payload_with_invalid_txs;
+    use crate::types::{Slice, SliceHeader, SliceIndex};
 
     use std::time::Instant;
 
@@ -147,12 +150,13 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        for i in 0..2 {
+        let final_slice_index = SliceIndex::new_unchecked(1);
+        for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: i,
-                is_last: i == 1,
+                slice_index,
+                is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
@@ -181,7 +185,7 @@ mod tests {
         });
 
         for shred in shreds {
-            let msg = NetworkMessage::Shred(shred);
+            let msg: NetworkMessage = shred.into();
             net1.send(&msg, "1").await.unwrap();
         }
 
@@ -202,23 +206,24 @@ mod tests {
         let net1 = core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
         let net2 = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
-        // create 1000 slices
+        // create a full block (1024 slices)
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        for i in 0..1000 {
+        let final_slice_index = SliceIndex::new_unchecked(1023);
+        for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: i,
-                is_last: i == 999,
+                slice_index,
+                is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
-        let t_latency = 1000.0 * MAX_DATA_PER_SLICE as f64 / 100.0 / 1024.0 / 1024.0;
+        let t_latency = 1024.0 * MAX_DATA_PER_SLICE as f64 / 100.0 / 1024.0 / 1024.0;
         let p_latency = 0.1;
         let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
         let min = p_latency + t_latency * expansion_ratio; // account for erasure coding
@@ -231,7 +236,7 @@ mod tests {
             while let Ok(msg) = net2.receive().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
-                    if shreds_received == 1000 * TOTAL_SHREDS {
+                    if shreds_received == 1024 * TOTAL_SHREDS {
                         return now.elapsed().as_secs_f64();
                     }
                 }
@@ -240,7 +245,7 @@ mod tests {
         });
 
         for shred in shreds {
-            let msg = NetworkMessage::Shred(shred);
+            let msg: NetworkMessage = shred.into();
             net1.send(&msg, "1").await.unwrap();
         }
 
@@ -261,16 +266,17 @@ mod tests {
         let net1 = core.join_unlimited(0).await;
         let net2 = core.join_unlimited(1).await;
 
-        // create 10,000 slices
+        // create a full block (1024 slices)
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        for i in 0..10_000 {
+        let final_slice_index = SliceIndex::new_unchecked(1023);
+        for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
                 slot: Slot::new(0),
-                slice_index: i,
-                is_last: i == 9999,
+                slice_index,
+                is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
             let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
@@ -278,7 +284,7 @@ mod tests {
         }
 
         // achieving at least 256 MiB/s
-        let t_latency = 10_000.0 * MAX_DATA_PER_SLICE as f64 / 256.0 / 1024.0 / 1024.0;
+        let t_latency = 1024.0 * MAX_DATA_PER_SLICE as f64 / 256.0 / 1024.0 / 1024.0;
         let p_latency = 0.1;
         let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
         let max = p_latency + t_latency * expansion_ratio * 1.41; // account for erasure coding + 36% metadata overhead + 5% margin
@@ -290,7 +296,7 @@ mod tests {
             while let Ok(msg) = net2.receive().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
-                    if shreds_received == 10_000 * TOTAL_SHREDS {
+                    if shreds_received == 1024 * TOTAL_SHREDS {
                         return now.elapsed().as_secs_f64();
                     }
                 }
@@ -299,7 +305,7 @@ mod tests {
         });
 
         for shred in shreds {
-            let msg = NetworkMessage::Shred(shred);
+            let msg: NetworkMessage = shred.into();
             net1.send(&msg, "1").await.unwrap();
         }
 

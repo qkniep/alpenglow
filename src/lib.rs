@@ -13,10 +13,9 @@ pub mod logging;
 pub mod network;
 pub mod repair;
 pub mod shredder;
-pub mod slice;
-pub mod slot;
 #[cfg(test)]
 pub mod test_utils;
+pub mod types;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};
@@ -26,8 +25,9 @@ pub use consensus::Alpenglow;
 pub use consensus::votor::VotorEvent;
 use crypto::{Hash, aggsig, signature};
 pub use disseminator::Disseminator;
-pub use slot::Slot;
 pub use validator::Validator;
+
+use crate::types::Slot;
 
 /// Validator ID number type.
 pub type ValidatorId = u64;
@@ -52,7 +52,7 @@ pub struct Block {
 
 /// Dummy transaction containing payload bytes.
 ///
-/// A transaction cannot be bigger than `MAX_TRANSACTION_SIZE`.
+/// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Transaction(Vec<u8>);
 
