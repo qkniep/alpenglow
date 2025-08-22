@@ -371,13 +371,12 @@ impl RepairResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use tokio::sync::mpsc::Sender;
 
+    use super::*;
     use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
     use crate::test_utils::generate_validators;
-
-    use tokio::sync::mpsc::Sender;
 
     async fn create_repair_instance() -> (
         Sender<BlockId>,

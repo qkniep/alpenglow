@@ -27,12 +27,10 @@ use async_trait::async_trait;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
-use crate::ValidatorId;
-
+pub use self::core::SimulatedNetworkCore;
+use self::token_bucket::TokenBucket;
 use super::{Network, NetworkError, NetworkMessage};
-
-pub use core::SimulatedNetworkCore;
-use token_bucket::TokenBucket;
+use crate::ValidatorId;
 
 /// A simulated network interface for local testing and simulations.
 ///
@@ -102,8 +100,9 @@ impl Network for SimulatedNetwork {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Instant;
 
+    use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{
@@ -111,8 +110,6 @@ mod tests {
     };
     use crate::types::slice::create_slice_payload_with_invalid_txs;
     use crate::types::{Slice, SliceHeader, SliceIndex};
-
-    use std::time::Instant;
 
     #[tokio::test]
     async fn basic() {

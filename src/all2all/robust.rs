@@ -6,10 +6,9 @@
 //! Broadcasts each message over the underlying instance of [`Network`].
 //! The message may be retransmitted multiple times.
 
+use super::All2All;
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
-
-use super::All2All;
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -60,17 +59,16 @@ impl<N: Network> All2All for RobustAll2All<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::crypto::aggsig;
-    use crate::crypto::signature::SecretKey;
-    use crate::network::simulated::SimulatedNetworkCore;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     use tokio::task::JoinSet;
     use tokio::time::timeout;
 
-    use std::sync::Arc;
-    use std::time::Duration;
+    use super::*;
+    use crate::crypto::aggsig;
+    use crate::crypto::signature::SecretKey;
+    use crate::network::simulated::SimulatedNetworkCore;
 
     async fn broadcast_test(packet_loss: f64) {
         // set up network and nodes
