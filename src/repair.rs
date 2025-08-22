@@ -191,8 +191,7 @@ impl<N: Network> Repair<N> {
                 RepairResponse::SliceCount(request, k)
             }
             RepairRequest::SliceRoot(_, slice) => {
-                let shred_index = slice.inner() * TOTAL_SHREDS;
-                let Some(shred) = blockstore.get_shred(slot, slice, shred_index) else {
+                let Some(shred) = blockstore.get_shred(slot, slice, 0) else {
                     return Ok(());
                 };
                 let root = shred.merkle_root;
@@ -342,7 +341,7 @@ impl<N: Network> Repair<N> {
     async fn send_response(&self, response: RepairResponse) -> Result<(), NetworkError> {
         let msg = RepairMessage::Response(response);
         // TODO: send back to correct validator
-        let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
+        let to = self.pick_random_peer();
         self.network.send(&msg.into(), to).await
     }
 
@@ -429,7 +428,7 @@ mod tests {
         let epoch_info = Arc::new(epoch_info);
 
         // set up blockstore
-        let (votor_tx, _) = tokio::sync::mpsc::channel(100);
+        let (votor_tx, votor_rx) = tokio::sync::mpsc::channel(100);
         let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
             Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone())),
         ));
@@ -453,7 +452,11 @@ mod tests {
             (repair_tx.clone(), repair_rx),
             epoch_info,
         );
-        tokio::spawn(async move { repair.repair_loop().await });
+        tokio::spawn(async move {
+            repair.repair_loop().await;
+            // keep votor_rx alive
+            drop(votor_rx);
+        });
 
         (repair_tx, blockstore, network0, leader_key)
     }
@@ -477,6 +480,7 @@ mod tests {
         let (repair_channel, blockstore, other_network, sk) = create_repair_instance().await;
 
         // create a block to repair
+        // TODO: maybe turn this into a function
         let slot = Slot::genesis().next();
         let mut slices = Vec::with_capacity(num_slices);
         let mut shreds = Vec::with_capacity(num_slices);
@@ -496,9 +500,7 @@ mod tests {
         repair_channel.send(block_to_repair).await.unwrap();
 
         // expect SliceCount request first
-        let Ok(msg) = other_network.receive().await else {
-            panic!("failed to receive");
-        };
+        let msg = other_network.receive().await.unwrap();
         let req = RepairRequest::SliceCount(block_to_repair);
         assert!(msg_matches_request(&msg, &req));
 
@@ -510,9 +512,7 @@ mod tests {
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
         for _ in 0..num_slices {
-            let Ok(msg) = other_network.receive().await else {
-                panic!("failed to receive");
-            };
+            let msg = other_network.receive().await.unwrap();
             for slice in SliceIndex::all().take(num_slices) {
                 let req = RepairRequest::SliceRoot(block_to_repair, slice);
                 if msg_matches_request(&msg, &req) {
@@ -533,9 +533,7 @@ mod tests {
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
             for _ in 0..DATA_SHREDS {
-                let Ok(msg) = other_network.receive().await else {
-                    panic!("failed to receive");
-                };
+                let msg = other_network.receive().await.unwrap();
                 for shred_index in 0..DATA_SHREDS {
                     let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                     if msg_matches_request(&msg, &req) {
@@ -561,15 +559,92 @@ mod tests {
         assert!(blockstore.read().await.get_block(block_to_repair).is_some());
     }
 
-    // #[tokio::test]
-    // async fn make_requests() {
-    //     let (repair_channel, blockstore, other_network, sk) = create_repair_instance().await;
-    //     let block_to_repair = (Slot::genesis().next(), [1; 32]);
-    //     let req = RepairRequest::Shred(block_to_repair, SliceIndex::first(), 0);
-    //     let msg = RepairMessage::Request(req).into();
-    //     other_network.send(&msg, "1").await.unwrap();
-    //     // ...
-    // }
+    #[tokio::test]
+    async fn answer_requests() {
+        const SLICES: usize = 2;
+        let (_, blockstore, other_network, sk) = create_repair_instance().await;
+
+        // create a block to repair
+        // TODO: maybe turn this into a function
+        let slot = Slot::genesis().next();
+        let mut slices = Vec::with_capacity(SLICES);
+        let mut shreds = Vec::with_capacity(SLICES);
+        for slice in create_random_block(slot, SLICES) {
+            shreds.push(RegularShredder::shred(slice.clone(), &sk).unwrap());
+            slices.push(RegularShredder::deshred(shreds.last().unwrap()).unwrap());
+        }
+        let merkle_roots = slices
+            .iter()
+            .map(|slice| slice.merkle_root.unwrap())
+            .collect::<Vec<_>>();
+        let tree = MerkleTree::new(&merkle_roots);
+        let block_hash = tree.get_root();
+        let block_to_repair = (slot, block_hash);
+
+        // ingest the block into blockstore
+        for slice_shreds in shreds.clone() {
+            let mut b = blockstore.write().await;
+            for shred in slice_shreds {
+                b.add_shred_from_disseminator(shred).await.unwrap();
+            }
+        }
+        assert_eq!(
+            blockstore.read().await.canonical_block_hash(slot),
+            Some(block_hash)
+        );
+        assert!(blockstore.read().await.get_block(block_to_repair).is_some());
+
+        // request slice count
+        let request = RepairRequest::SliceCount(block_to_repair);
+        let msg = RepairMessage::Request(request.clone()).into();
+        other_network.send(&msg, "1").await.unwrap();
+
+        // verify reponse
+        let msg = other_network.receive().await.unwrap();
+        let RepairResponse::SliceCount(req, num_slices) = parse_response(msg) else {
+            panic!("not SliceCount response");
+        };
+        assert_eq!(req, request);
+        assert_eq!(num_slices, SLICES);
+
+        // request slice roots
+        for slice in SliceIndex::all().take(SLICES) {
+            let request = RepairRequest::SliceRoot(block_to_repair, slice);
+            let msg = RepairMessage::Request(request.clone()).into();
+            other_network.send(&msg, "1").await.unwrap();
+
+            // verify response
+            let msg = other_network.receive().await.unwrap();
+            let RepairResponse::SliceRoot(req, root, proof) = parse_response(msg) else {
+                panic!("not SliceRoot response");
+            };
+            assert_eq!(req, request);
+            assert_eq!(root, slices[slice.inner()].merkle_root.unwrap());
+            let correct_proof = blockstore
+                .read()
+                .await
+                .create_double_merkle_proof(slot, slice);
+            assert_eq!(proof, correct_proof);
+
+            // request slice shreds
+            for shred_index in 0..DATA_SHREDS {
+                let request = RepairRequest::Shred(block_to_repair, slice, shred_index);
+                let msg = RepairMessage::Request(request.clone()).into();
+                other_network.send(&msg, "1").await.unwrap();
+
+                // verify response
+                let msg = other_network.receive().await.unwrap();
+                let RepairResponse::Shred(req, shred) = parse_response(msg) else {
+                    panic!("not Shred response");
+                };
+                assert_eq!(req, request);
+                assert_eq!(
+                    shred.payload().data,
+                    shreds[slice.inner()][shred_index].payload().data
+                );
+            }
+        }
+    }
 
     fn msg_matches_request(msg: &NetworkMessage, request: &RepairRequest) -> bool {
         let NetworkMessage::Repair(repair_msg) = msg else {
@@ -579,5 +654,16 @@ mod tests {
             panic!("not a request");
         };
         req == request
+    }
+
+    fn parse_response(msg: NetworkMessage) -> RepairResponse {
+        let NetworkMessage::Repair(repair_msg) = msg else {
+            panic!("not a repair msg");
+        };
+        println!("{repair_msg:?}");
+        let RepairMessage::Response(response) = repair_msg else {
+            panic!("not a response");
+        };
+        response
     }
 }
