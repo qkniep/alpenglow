@@ -116,21 +116,27 @@ impl<N: Network> Repair<N> {
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
     /// Inititates the corresponding repair process and handles ongoing repairs.
     pub async fn repair_loop(&mut self) {
-        // only this loop uses the receiver, keeping the lock is safe
-        // TODO: maybe move the repair channel receiver here
         let mut repair_receiver = self.repair_channel.1.take().unwrap();
         loop {
+            let next_timeout = self.request_timeouts.peek().map(|t| t.0);
+            let sleep_duration = match next_timeout {
+                None => std::time::Duration::MAX,
+                Some(t) => t.duration_since(Instant::now()),
+            };
             tokio::select! {
-                    // res = &mut produce_slice_future => res,
-                    // res = &mut parent_ready_receiver => {
-                // handle repair requests
+                // handle repair request or response from network
                 res = self.receive() => self.handle_repair_message(res.unwrap()).await.unwrap(),
-                // while let Some((slot, hash)) = guard.recv().await {
-
+                // handle request for repairing new block
                 Some((slot, hash)) = repair_receiver.recv() => {
-                    // TODO: maybe move receiving of requests into this loop
-                    // TODO: handle ongoing repair with pending requests (timeout + retry)
                     self.repair_block(slot, hash).await;
+                }
+                _ = tokio::time::sleep(sleep_duration) => {
+                    let Some((_, hash)) = self.request_timeouts.pop() else {
+                        continue;
+                    };
+                    // TODO: handle the case where the request has already been completed
+                    let request = self.outstanding_requests.remove(&hash).unwrap();
+                    self.send_request(request).await.unwrap();
                 }
             }
         }
@@ -159,7 +165,7 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    async fn handle_repair_message(&self, msg: RepairMessage) -> Result<(), NetworkError> {
+    async fn handle_repair_message(&mut self, msg: RepairMessage) -> Result<(), NetworkError> {
         match msg {
             RepairMessage::Request(request) => {
                 self.answer_request(request).await?;
@@ -221,19 +227,23 @@ impl<N: Network> Repair<N> {
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
-    async fn handle_response(&self, response: RepairResponse) {
+    async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
         let slot = response.slot();
         let block_hash = response.block_hash();
         // TODO: check whether we actually sent the request
         match response {
-            RepairResponse::SliceCount(req, _count) => {
+            RepairResponse::SliceCount(req, count) => {
                 let RepairRequest::SliceCount(_, _) = req else {
                     warn!("repair response (SliceCount) to mismatching request {req:?}");
                     return;
                 };
                 // TODO: include & check proof:
                 // self.slice_counts.insert((slot, block_hash), count);
+                for slice in SliceIndex::all().take(count) {
+                    let req = RepairRequest::SliceRoot(slot, block_hash, slice);
+                    self.send_request(req).await.unwrap();
+                }
             }
             RepairResponse::SliceRoot(req, _slice_root, _proof) => {
                 let RepairRequest::SliceRoot(_, _, _slice) = req else {
