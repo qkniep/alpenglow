@@ -334,7 +334,6 @@ mod tests {
         let window3 = windows.next().unwrap();
         let window4 = windows.next().unwrap();
         let window5 = windows.next().unwrap();
-        println!("windows: {window2}, {window3}, {window4}, {window5}");
         let mut tracker = ParentReadyTracker::default();
 
         // basic case where finalized slot is first in its window

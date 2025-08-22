@@ -91,7 +91,7 @@ impl SlotBlockData {
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
         match block_data.check_shred_to_add(&shred, true, leader_pk) {
-            Ok(()) => Ok(self.canonical.add_valid_shred(shred)),
+            Ok(()) => Ok(block_data.add_valid_shred(shred)),
             Err(err) => {
                 if let AddShredError::Equivocation = &err {
                     self.equivocated = true;
@@ -201,6 +201,7 @@ impl BlockData {
                 && shred.payload_type.is_data() == s.payload_type.is_data()
         });
         if exists {
+            debug!("dropping duplicate shred");
             return Err(AddShredError::Duplicate);
         }
 

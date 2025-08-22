@@ -372,13 +372,13 @@ mod tests {
         for shred in slice0_shreds {
             blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.get_block((slot, block_hash)).is_none());
 
         // after second slice we should have the block
         for shred in slice1_shreds {
             blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_some());
+        assert!(blockstore.get_block((slot, block_hash)).is_some());
 
         Ok(())
     }
