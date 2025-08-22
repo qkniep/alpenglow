@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use async_trait::async_trait;
 use log::warn;
 
 use crate::ValidatorInfo;
@@ -25,6 +26,7 @@ impl<N: Network> TrivialDisseminator<N> {
     }
 }
 
+#[async_trait]
 impl<N: Network> Disseminator for TrivialDisseminator<N> {
     async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
         let msg = NetworkMessage::Shred(shred.clone());
