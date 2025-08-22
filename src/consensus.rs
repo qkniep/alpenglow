@@ -153,6 +153,7 @@ where
             blockstore.clone(),
             pool.clone(),
             cancel_token.clone(),
+            DELTA_BLOCK,
         ));
 
         Self {
