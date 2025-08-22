@@ -27,7 +27,10 @@ use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{DATA_SHREDS, Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 
-const REPAIR_TIMEOUT: Duration = Duration::from_secs(10);
+/// Maximum time to wait for a response to a repair request.
+///
+/// After a request times out we retry it from another node.
+const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Message types for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,8 +50,6 @@ pub enum RepairRequest {
     SliceRoot(BlockId, SliceIndex),
     /// Request for shred, identified by block hash, slice index and shred index.
     Shred(BlockId, SliceIndex, usize),
-    // TODO: remove or replace with variant that includes proof
-    Parent(BlockId),
 }
 
 /// Response messages for the repair sub-protocol.
@@ -64,8 +65,6 @@ pub enum RepairResponse {
     SliceRoot(RepairRequest, Hash, Vec<Hash>),
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
-    // TODO: remove or replace with variant that includes proof
-    Parent(RepairRequest, BlockId),
 }
 
 /// Instance of double-Merkle based block repair protocol.
@@ -207,14 +206,6 @@ impl<N: Network> Repair<N> {
                 };
                 RepairResponse::Shred(request, shred)
             }
-            // TODO: remove this
-            RepairRequest::Parent(block_id) => {
-                let Some(block) = blockstore.get_block(block_id) else {
-                    return Ok(());
-                };
-                let parent = (block.parent, block.parent_hash);
-                RepairResponse::Parent(request, parent)
-            }
         };
         drop(blockstore);
         self.send_response(response).await
@@ -298,19 +289,6 @@ impl<N: Network> Repair<N> {
                         .await;
                 }
             }
-            // TODO: remove this
-            RepairResponse::Parent(req, parent) => {
-                let RepairRequest::Parent(_) = req else {
-                    warn!("repair response (Parent) to mismatching request {req:?}");
-                    return;
-                };
-                self.pool.write().await.add_block(block_id, parent).await;
-
-                // request repair of the parent block if necessary
-                if self.blockstore.read().await.get_block(parent).is_none() {
-                    self.repair_channel.0.send(parent).await.unwrap();
-                }
-            }
         }
     }
 
@@ -367,10 +345,7 @@ impl RepairRequest {
     #[must_use]
     pub const fn block_id(&self) -> BlockId {
         match self {
-            Self::SliceCount(block_id)
-            | Self::SliceRoot(block_id, _)
-            | Self::Shred(block_id, _, _)
-            | Self::Parent(block_id) => *block_id,
+            Self::SliceCount(id) | Self::SliceRoot(id, _) | Self::Shred(id, _, _) => *id,
         }
     }
 }
@@ -380,10 +355,7 @@ impl RepairResponse {
     #[must_use]
     pub const fn request(&self) -> &RepairRequest {
         match self {
-            Self::SliceCount(req, _)
-            | Self::SliceRoot(req, _, _)
-            | Self::Shred(req, _)
-            | Self::Parent(req, _) => req,
+            Self::SliceCount(req, _) | Self::SliceRoot(req, _, _) | Self::Shred(req, _) => req,
         }
     }
 
