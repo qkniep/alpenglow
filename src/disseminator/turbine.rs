@@ -10,6 +10,7 @@
 
 mod weighted_shuffle;
 
+use async_trait::async_trait;
 use log::warn;
 use moka::future::Cache;
 use rand::prelude::*;
@@ -91,7 +92,7 @@ impl<N: Network> Turbine<N> {
         let root = tree.get_root();
         let msg: NetworkMessage = shred.clone().into();
         let addr = &self.validators[root as usize].disseminator_address;
-        self.network.send(&msg, &addr).await
+        self.network.send(&msg, addr).await
     }
 
     /// Forwards the shred to all our children in the correct Turbine tree.
@@ -107,7 +108,7 @@ impl<N: Network> Turbine<N> {
         let msg: NetworkMessage = shred.clone().into();
         for child in tree.get_children() {
             let addr = &self.validators[*child as usize].disseminator_address;
-            self.network.send(&msg, &addr).await?;
+            self.network.send(&msg, addr).await?;
         }
         Ok(())
     }
@@ -130,6 +131,7 @@ impl<N: Network> Turbine<N> {
     }
 }
 
+#[async_trait]
 impl<N: Network> Disseminator for Turbine<N> {
     async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
         self.send_shred_to_root(shred).await

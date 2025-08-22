@@ -23,6 +23,7 @@ mod token_bucket;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -63,6 +64,7 @@ impl SimulatedNetwork {
     }
 }
 
+#[async_trait]
 impl Network for SimulatedNetwork {
     type Address = ValidatorId;
 
