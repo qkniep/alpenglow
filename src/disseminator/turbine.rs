@@ -10,6 +10,7 @@
 
 mod weighted_shuffle;
 
+use async_trait::async_trait;
 use log::warn;
 use moka::future::Cache;
 use rand::prelude::*;
@@ -130,6 +131,7 @@ impl<N: Network> Turbine<N> {
     }
 }
 
+#[async_trait]
 impl<N: Network> Disseminator for Turbine<N> {
     async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
         self.send_shred_to_root(shred).await

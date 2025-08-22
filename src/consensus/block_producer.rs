@@ -266,6 +266,7 @@ where
                 .await;
             if let Ok(Some((block_slot, block_info))) = block {
                 assert_eq!(block_slot, slot);
+                assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash);
                 let block_id = (block_slot, block_info.hash);
                 self.pool
@@ -431,12 +432,17 @@ mod tests {
     use super::*;
 
     use crate::Transaction;
+    use crate::consensus::BlockInfo;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
     use crate::crypto::Hash;
+    use crate::disseminator::MockDisseminator;
     use crate::network::UdpNetwork;
+    use crate::shredder::TOTAL_SHREDS;
+    use crate::test_utils::generate_validators;
+    use crate::types::slice::create_slice_payload_with_invalid_txs;
 
-    use mockall::predicate;
+    use mockall::{Sequence, predicate};
 
     use std::time::Duration;
 
@@ -541,6 +547,89 @@ mod tests {
         match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
             other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// A bunch of boilerplate to initialize and return a [`BlockProducer`].
+    fn setup(
+        blockstore: MockBlockstore,
+        pool: MockPool,
+        disseminator: MockDisseminator,
+    ) -> BlockProducer<MockDisseminator, UdpNetwork> {
+        let secret_key = signature::SecretKey::new(&mut rand::rng());
+        let (_, epoch_info) = generate_validators(11);
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
+        let blockstore = Arc::new(RwLock::new(blockstore));
+        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
+        let pool = Arc::new(RwLock::new(pool));
+        let disseminator = Arc::new(disseminator);
+        let txs_receiver = UdpNetwork::new_with_any_port();
+        let cancel_token = CancellationToken::new();
+
+        BlockProducer::new(
+            secret_key,
+            epoch_info,
+            disseminator,
+            txs_receiver,
+            blockstore,
+            pool,
+            cancel_token,
+        )
+    }
+
+    #[tokio::test]
+    async fn shred_and_disseminate_final_slice() {
+        let slot = Slot::new(123);
+        let block_info = BlockInfo {
+            hash: [1; 32],
+            parent: (slot.prev(), [2; 32]),
+        };
+
+        // Handles TOTAL_SHRED number of calls.
+        // The first TOTAL_SHRED - 1 calls return None.
+        // The last call returns Some.
+        let mut seq = Sequence::new();
+        let mut blockstore = MockBlockstore::new();
+        blockstore
+            .expect_add_shred_from_disseminator()
+            .times(TOTAL_SHREDS - 1)
+            .in_sequence(&mut seq)
+            .returning(move |_| Box::pin(async move { Ok(None) }));
+        blockstore
+            .expect_add_shred_from_disseminator()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(move |_| Box::pin(async move { Ok(Some((slot, block_info))) }));
+
+        let mut pool = MockPool::new();
+        pool.expect_add_block()
+            .returning(move |ret_block_id, ret_parent_block_id| {
+                assert_eq!(ret_block_id, (slot, block_info.hash));
+                assert_eq!(block_info.parent, ret_parent_block_id);
+                Box::pin(async {})
+            });
+
+        let mut disseminator = MockDisseminator::new();
+        disseminator
+            .expect_send()
+            .returning(|_| Box::pin(async { Ok(()) }));
+        let block_producer = setup(blockstore, pool, disseminator);
+
+        let payload = create_slice_payload_with_invalid_txs(None, 10);
+        let header = SliceHeader {
+            slot,
+            slice_index: SliceIndex::first(),
+            is_last: true,
+        };
+        let maybe_duration = None;
+
+        let res = block_producer
+            .shred_and_disseminate(header, payload, maybe_duration)
+            .await
+            .unwrap();
+        match res {
+            Either::Left(hash) => assert_eq!(hash, block_info.hash),
+            Either::Right(res) => panic!("unexpected result {res:?}"),
         }
     }
 }
