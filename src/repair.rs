@@ -35,7 +35,7 @@ pub enum RepairMessage {
 }
 
 /// Request messages for the repair sub-protocol.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepairRequest {
     /// Request for the total number of slices in block with a given hash.
     SliceCount(Slot, Hash),
@@ -103,20 +103,24 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    /// The main repair loop.
+    /// Main loop of the repair protocol.
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
     /// Inititates the corresponding repair process and handles ongoing repairs.
     pub async fn repair_loop(&self) {
-        // only this loop uses the receiver
+        // only this loop uses the receiver, keeping the lock is safe
+        // TODO: maybe move the repair channel receiver here
         let mut guard = self.repair_channel.1.lock().await;
         while let Some((slot, hash)) = guard.recv().await {
+            // TODO: maybe move receiving of requests into this loop
+            // TODO: handle ongoing repair with pending requests (timeout + retry)
             self.repair_block(slot, hash).await;
         }
     }
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
+        let h = &hex::encode(block_hash)[..8];
         if self
             .blockstore
             .read()
@@ -124,15 +128,16 @@ impl<N: Network> Repair<N> {
             .get_block(slot, block_hash)
             .is_some()
         {
+            trace!("ignoring repair for block {h} in slot {slot}, already have the block");
             return;
         }
 
-        let h = &hex::encode(block_hash)[..8];
         debug!("repairing block {h} in slot {slot}");
         // TODO: perform actual repair
         // HACK: magic number of 10 requests (to ensure it can handle some failures)
         for _ in 0..10 {
-            self.request_parent(slot, block_hash).await.unwrap();
+            let req = RepairRequest::Parent(slot, block_hash);
+            self.send_request(req).await.unwrap();
         }
     }
 
@@ -145,6 +150,7 @@ impl<N: Network> Repair<N> {
         let slot = request.slot();
         let hash = request.block_hash();
         let blockstore = self.blockstore.read().await;
+        // TODO: answer repair requests for non-canonical blocks
         if blockstore.canonical_block_hash(slot) != Some(hash) {
             return Ok(());
         }
@@ -168,6 +174,7 @@ impl<N: Network> Repair<N> {
                 };
                 RepairResponse::Shred(request, shred)
             }
+            // TODO: remove this
             RepairRequest::Parent(slot, hash) => {
                 let Some(block) = blockstore.get_block(slot, hash) else {
                     return Ok(());
@@ -188,6 +195,7 @@ impl<N: Network> Repair<N> {
         trace!("handling repair response: {response:?}");
         let slot = response.slot();
         let block_hash = response.block_hash();
+        // TODO: check whether we actually sent the request
         match response {
             RepairResponse::SliceCount(req, _count) => {
                 let RepairRequest::SliceCount(_, _) = req else {
@@ -222,13 +230,21 @@ impl<N: Network> Repair<N> {
                 }
                 // TODO: make sure shred is checked against correct merkle_root:
                 // if !shred.merkle_root ... { return; }
-                self.blockstore
+                let res = self
+                    .blockstore
                     .write()
                     .await
                     .add_shred_from_repair(block_hash, shred)
-                    .await
-                    .unwrap();
+                    .await;
+                if let Ok(Some((slot, block_info))) = res {
+                    self.pool
+                        .write()
+                        .await
+                        .add_block((slot, block_info.hash), block_info.parent)
+                        .await;
+                }
             }
+            // TODO: remove this
             RepairResponse::Parent(req, parent_slot, parent_hash) => {
                 let RepairRequest::Parent(_, _) = req else {
                     warn!("repair response (Parent) to mismatching request {req:?}");
@@ -271,37 +287,6 @@ impl<N: Network> Repair<N> {
                 m => warn!("unexpected message type for repair: {m:?}"),
             }
         }
-    }
-
-    async fn _request_slice_count(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
-        let req = RepairRequest::SliceCount(slot, hash);
-        self.send_request(req).await
-    }
-
-    async fn _request_slice_root(
-        &self,
-        slot: Slot,
-        hash: Hash,
-        slice: SliceIndex,
-    ) -> Result<(), NetworkError> {
-        let req = RepairRequest::SliceRoot(slot, hash, slice);
-        self.send_request(req).await
-    }
-
-    async fn _request_shred(
-        &self,
-        slot: Slot,
-        hash: Hash,
-        slice: SliceIndex,
-        shred: usize,
-    ) -> Result<(), NetworkError> {
-        let req = RepairRequest::Shred(slot, hash, slice, shred);
-        self.send_request(req).await
-    }
-
-    async fn request_parent(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
-        let req = RepairRequest::Parent(slot, hash);
-        self.send_request(req).await
     }
 
     async fn send_request(&self, request: RepairRequest) -> Result<(), NetworkError> {

@@ -282,13 +282,13 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
         self.disseminator.forward(&shred).await?;
-        let b = self
+        let res = self
             .blockstore
             .write()
             .await
             .add_shred_from_disseminator(shred)
             .await;
-        if let Ok(Some((slot, block_info))) = b {
+        if let Ok(Some((slot, block_info))) = res {
             let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
             guard.add_block(block_id, block_info.parent).await;

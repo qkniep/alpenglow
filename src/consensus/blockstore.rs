@@ -213,6 +213,8 @@ impl Blockstore for BlockstoreImpl {
 
     /// Gives reference to stored block for the given `slot` and `hash`.
     ///
+    /// Considers both, the canonical block and any repaired blocks.
+    ///
     /// Returns `None` if blockstore does not hold that block yet.
     fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
         let slot_data = self.slot_data(slot)?;
