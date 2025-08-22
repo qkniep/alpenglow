@@ -268,10 +268,27 @@ impl BlockData {
         // reconstruct block header
         let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
         // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let (parent_slot, parent_hash) = first_slice.parent.unwrap();
+        let mut parent = first_slice.parent.unwrap();
+        let mut parent_switched = false;
 
         let mut transactions = vec![];
         for (ind, slice) in &self.slices {
+            // handle optimistic handover
+            if !ind.is_first()
+                && let Some(new_parent) = slice.parent
+            {
+                if new_parent == parent {
+                    warn!("parent switched to same value");
+                    return None;
+                }
+                if parent_switched {
+                    warn!("parent switched more than once");
+                    return None;
+                }
+                parent_switched = true;
+                parent = new_parent;
+            }
+
             let (mut txs, bytes_read) =
                 match bincode::serde::decode_from_slice(&slice.data, bincode::config::standard()) {
                     Ok(r) => r,
@@ -291,11 +308,12 @@ impl BlockData {
             }
             transactions.append(&mut txs);
         }
+
         let block = Block {
             slot: self.slot,
             block_hash,
-            parent: parent_slot,
-            parent_hash,
+            parent: parent.0,
+            parent_hash: parent.1,
             transactions,
         };
         let block_info = BlockInfo::from(&block);

@@ -178,13 +178,13 @@ where
                     res = &mut parent_ready_receiver => {
                         // Got ParentReady event while producing slice.
                         // It's a NOP if we have been using the same parent as before.
-                        // TODO: if parent is different, then implement optimistic handover.
 
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.unwrap();
-                        assert_eq!(new_slot, parent_slot);
-                        assert_eq!(new_hash, parent_hash);
-                        let (payload, _maybe_duration) = produce_slice_future.await;
+                        let (mut payload, _maybe_duration) = produce_slice_future.await;
+                        if new_hash != parent_hash {
+                            payload.parent = Some((new_slot, new_hash));
+                        }
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         let duration = Some(self.delta_block - (Instant::now() - start));
