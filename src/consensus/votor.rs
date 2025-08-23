@@ -356,7 +356,7 @@ mod tests {
     use std::time::Duration;
 
     use tokio::sync::mpsc;
-  
+
     use super::*;
     use crate::all2all::TrivialAll2All;
     use crate::consensus::EpochInfo;
