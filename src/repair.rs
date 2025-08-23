@@ -248,8 +248,7 @@ impl<N: Network> Repair<N> {
                     warn!("repair response (LastSliceRoot) to mismatching request {req:?}");
                     return;
                 };
-                // TODO: check that proof is for last index in Merkle tree
-                if !MerkleTree::check_proof(&root, last_slice.inner(), block_hash, &proof) {
+                if !MerkleTree::check_proof_last(&root, last_slice.inner(), block_hash, &proof) {
                     warn!("repair response (LastSliceRoot) with invalid proof");
                     return;
                 }
@@ -258,6 +257,8 @@ impl<N: Network> Repair<N> {
                 self.slice_roots.insert((block_id, last_slice), root);
 
                 // issue next requests
+                // TODO: do not request last slice root again
+                // TODO: already requests shreds for last slice here
                 for slice in last_slice.until() {
                     let req = RepairRequest::SliceRoot(block_id, slice);
                     self.send_request(req).await.unwrap();
@@ -528,7 +529,7 @@ mod tests {
             }
         }
 
-        // assert all slice roots requested + answer the requests
+        // assert all other slice roots requested + answer the requests
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
             let req = RepairRequest::SliceRoot(block_to_repair, slice);
