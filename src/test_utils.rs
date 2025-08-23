@@ -1,3 +1,6 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use std::sync::Arc;
 
 use rand::RngCore;
@@ -5,10 +8,10 @@ use rand::RngCore;
 use crate::all2all::TrivialAll2All;
 use crate::consensus::EpochInfo;
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::{Hash, signature};
+use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::SimulatedNetwork;
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::shredder::MAX_DATA_PER_SLICE;
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
