@@ -9,8 +9,6 @@
 //! Each repair response is accompanied by a Merkle proof and can thus be
 //! individually verified.
 
-// WARN: this is incomplete!
-
 use std::collections::{BTreeMap, BinaryHeap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,13 +17,13 @@ use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::BlockId;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{DATA_SHREDS, Shred};
 use crate::types::SliceIndex;
+use crate::{BlockId, ValidatorId};
 
 /// Maximum time to wait for a response to a repair request.
 ///
@@ -36,7 +34,7 @@ const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairMessage {
     /// Request for information from another validator.
-    Request(RepairRequest),
+    Request(RepairRequest, ValidatorId),
     /// Response to a request from another validator.
     Response(RepairResponse),
 }
@@ -168,8 +166,8 @@ impl<N: Network> Repair<N> {
 
     async fn handle_repair_message(&mut self, msg: RepairMessage) -> Result<(), NetworkError> {
         match msg {
-            RepairMessage::Request(request) => {
-                self.answer_request(request).await?;
+            RepairMessage::Request(request, sender) => {
+                self.answer_request(request, sender).await?;
             }
             RepairMessage::Response(resposne) => {
                 self.handle_response(resposne).await;
@@ -182,7 +180,11 @@ impl<N: Network> Repair<N> {
     ///
     /// If we do not have the block the request refers to, the request is ignored.
     /// Otherwise, the correct response is sent back to the sender of the request.
-    async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
+    async fn answer_request(
+        &self,
+        request: RepairRequest,
+        sender: ValidatorId,
+    ) -> Result<(), NetworkError> {
         trace!("answering repair request: {request:?}");
         let block_id = request.block_id();
         let blockstore = self.blockstore.read().await;
@@ -217,7 +219,7 @@ impl<N: Network> Repair<N> {
             }
         };
         drop(blockstore);
-        self.send_response(response).await
+        self.send_response(response, sender).await
     }
 
     /// Handles a repair response, storing the received data.
@@ -227,11 +229,7 @@ impl<N: Network> Repair<N> {
     /// Does nothing if the provided `response` is not well-formed.
     async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
-        // TODO: expose `hash()` function for `RepairRequest` instead?
-        let repair = RepairMessage::Request(response.request().clone());
-        let msg: NetworkMessage = repair.into();
-        let msg_bytes = msg.to_bytes();
-        let request_hash = hash(&msg_bytes);
+        let request_hash = response.request().hash();
 
         // check whether we are (still) waiting on response to this request
         let Some(_) = self.outstanding_requests.remove(&request_hash) else {
@@ -342,23 +340,26 @@ impl<N: Network> Repair<N> {
     }
 
     async fn send_request(&mut self, request: RepairRequest) -> Result<(), NetworkError> {
-        let repair = RepairMessage::Request(request.clone());
-        let msg: NetworkMessage = repair.into();
-        let msg_bytes = msg.to_bytes();
-        let hash = hash(&msg_bytes);
+        let hash = request.hash();
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;
-        self.outstanding_requests.insert(hash, request);
+        self.outstanding_requests.insert(hash, request.clone());
         self.request_timeouts.push((expiry, hash));
 
+        let repair = RepairMessage::Request(request, self.epoch_info.own_id);
+        let msg: NetworkMessage = repair.into();
+        let msg_bytes = msg.to_bytes();
         let to = self.pick_random_peer();
         self.network.send_serialized(&msg_bytes, to).await
     }
 
-    async fn send_response(&self, response: RepairResponse) -> Result<(), NetworkError> {
+    async fn send_response(
+        &self,
+        response: RepairResponse,
+        validator: ValidatorId,
+    ) -> Result<(), NetworkError> {
         let msg = RepairMessage::Response(response);
-        // TODO: send back to correct validator
-        let to = self.pick_random_peer();
+        let to = &self.epoch_info.validator(validator).repair_address;
         self.network.send(&msg.into(), to).await
     }
 
@@ -379,6 +380,14 @@ impl RepairRequest {
         match self {
             Self::LastSliceRoot(id) | Self::SliceRoot(id, _) | Self::Shred(id, _, _) => *id,
         }
+    }
+
+    /// Digests the [`RepairRequest`] into a [`Hash`].
+    pub fn hash(&self) -> Hash {
+        let repair = RepairMessage::Request(self.clone(), 0);
+        let msg: NetworkMessage = repair.into();
+        let msg_bytes = msg.to_bytes();
+        hash(&msg_bytes)
     }
 }
 
@@ -590,7 +599,7 @@ mod tests {
 
         // request last slice root to learn how many slices there are
         let request = RepairRequest::LastSliceRoot(block_to_repair);
-        let msg = RepairMessage::Request(request.clone()).into();
+        let msg = RepairMessage::Request(request.clone(), 0).into();
         other_network.send(&msg, "1").await.unwrap();
 
         // verify reponse
@@ -612,7 +621,7 @@ mod tests {
         // request slice roots
         for slice in SliceIndex::all().take(SLICES) {
             let request = RepairRequest::SliceRoot(block_to_repair, slice);
-            let msg = RepairMessage::Request(request.clone()).into();
+            let msg = RepairMessage::Request(request.clone(), 0).into();
             other_network.send(&msg, "1").await.unwrap();
 
             // verify response
@@ -632,7 +641,7 @@ mod tests {
             // request slice shreds
             for shred_index in 0..DATA_SHREDS {
                 let request = RepairRequest::Shred(block_to_repair, slice, shred_index);
-                let msg = RepairMessage::Request(request.clone()).into();
+                let msg = RepairMessage::Request(request.clone(), 0).into();
                 other_network.send(&msg, "1").await.unwrap();
 
                 // verify response
@@ -653,7 +662,7 @@ mod tests {
         let NetworkMessage::Repair(repair_msg) = msg else {
             panic!("not a repair msg");
         };
-        let RepairMessage::Request(req) = repair_msg else {
+        let RepairMessage::Request(req, _) = repair_msg else {
             panic!("not a request");
         };
         req == request
