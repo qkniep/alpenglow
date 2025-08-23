@@ -123,15 +123,14 @@ pub(super) fn reed_solomon_deshred(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use static_assertions::const_assert;
 
+    use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
     use crate::types::SliceIndex;
     use crate::types::slice::create_slice_with_invalid_txs;
-
-    use static_assertions::const_assert;
 
     #[test]
     fn restore_full() {

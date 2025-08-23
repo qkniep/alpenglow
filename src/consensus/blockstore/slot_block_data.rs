@@ -10,14 +10,13 @@ use std::collections::BTreeMap;
 use log::{debug, trace, warn};
 use thiserror::Error;
 
+use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
-
-use super::BlockInfo;
 
 /// Errors that may be encountered when adding a shred.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -330,12 +329,9 @@ impl BlockData {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        crypto::signature::SecretKey,
-        test_utils::{assert_votor_events_match, create_random_block},
-    };
-
     use super::*;
+    use crate::crypto::signature::SecretKey;
+    use crate::test_utils::{assert_votor_events_match, create_random_block};
 
     fn handle_slice(slice: Slice, sk: &SecretKey) -> Vec<VotorEvent> {
         let mut block_data = BlockData::new(slice.slot);

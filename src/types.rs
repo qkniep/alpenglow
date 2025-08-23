@@ -5,7 +5,7 @@ pub mod slice;
 pub mod slice_index;
 pub mod slot;
 
-pub use slice::Slice;
-pub(crate) use slice::{SliceHeader, SlicePayload};
-pub use slice_index::SliceIndex;
-pub use slot::{SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Slot};
+pub use self::slice::Slice;
+pub(crate) use self::slice::{SliceHeader, SlicePayload};
+pub use self::slice_index::SliceIndex;
+pub use self::slot::{SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Slot};

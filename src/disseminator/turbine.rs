@@ -15,13 +15,11 @@ use log::warn;
 use moka::future::Cache;
 use rand::prelude::*;
 
+pub(crate) use self::weighted_shuffle::WeightedShuffle;
+use super::Disseminator;
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
-
-use super::Disseminator;
-
-pub(crate) use weighted_shuffle::WeightedShuffle;
 
 /// Default fanout for the Turbine tree.
 pub const DEFAULT_FANOUT: usize = 200;
@@ -225,18 +223,20 @@ impl TurbineTree {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use std::time::Duration;
 
+    use tokio::sync::Mutex;
+    use tokio::task;
+
+    use super::*;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-
-    use tokio::{sync::Mutex, task};
-
-    use std::{collections::HashSet, sync::Arc, time::Duration};
 
     fn create_validator_info(count: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
         let mut sks = Vec::new();

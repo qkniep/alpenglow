@@ -7,10 +7,9 @@
 //! After that, the message is forgotten. The protocol is completely stateless.
 //! If the underlying [`Network`] is not reliable, the message might thus be lost.
 
+use super::All2All;
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
-
-use super::All2All;
 
 /// Instance of the trivial all-to-all broadcast protocol.
 pub struct TrivialAll2All<N: Network> {
@@ -46,15 +45,15 @@ impl<N: Network> All2All for TrivialAll2All<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::crypto::aggsig;
-    use crate::crypto::signature::SecretKey;
-    use crate::network::simulated::SimulatedNetworkCore;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     use tokio::task::JoinSet;
 
-    use std::{sync::Arc, time::Duration};
+    use super::*;
+    use crate::crypto::aggsig;
+    use crate::crypto::signature::SecretKey;
+    use crate::network::simulated::SimulatedNetworkCore;
 
     #[tokio::test]
     async fn simple_broadcast() {

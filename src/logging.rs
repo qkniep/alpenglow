@@ -38,9 +38,9 @@ fn enable_logforth_append<A: logforth::Append>(to_append: A) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use log::{Level, debug, error, info, log_enabled, trace, warn};
+
+    use super::*;
 
     #[test]
     fn basic() {
