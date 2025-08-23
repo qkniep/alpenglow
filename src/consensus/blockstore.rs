@@ -59,6 +59,7 @@ pub trait Blockstore {
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
     fn get_last_slice(&self, block_id: BlockId) -> Option<SliceIndex>;
+    fn get_slice_root(&self, block_id: BlockId, slice: SliceIndex) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
@@ -270,6 +271,15 @@ impl Blockstore for BlockstoreImpl {
     fn get_last_slice(&self, block_id: BlockId) -> Option<SliceIndex> {
         let block_data = self.get_block_data(block_id)?;
         block_data.last_slice
+    }
+
+    /// Gives the Merkle root for the given `slice` of the given `block_id`.
+    ///
+    /// Returns `None` if blockstore does not hold any shred for that slice.
+    fn get_slice_root(&self, block_id: BlockId, slice: SliceIndex) -> Option<Hash> {
+        let block_data = self.get_block_data(block_id)?;
+        let slice_shreds = block_data.shreds.get(&slice)?;
+        slice_shreds.first().map(|s| s.merkle_root)
     }
 
     /// Gives reference to stored shred for the given `block_id`, `slice` and `shred` index.

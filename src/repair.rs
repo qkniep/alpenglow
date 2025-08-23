@@ -72,6 +72,7 @@ pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
 
+    slice_roots: BTreeMap<(BlockId, SliceIndex), Hash>,
     outstanding_requests: BTreeMap<Hash, RepairRequest>,
     request_timeouts: BinaryHeap<(Instant, Hash)>,
 
@@ -105,8 +106,11 @@ impl<N: Network> Repair<N> {
         Self {
             blockstore,
             pool,
+
+            slice_roots: BTreeMap::new(),
             outstanding_requests: BTreeMap::new(),
             request_timeouts: BinaryHeap::new(),
+
             network,
             repair_channel,
             sampler,
@@ -187,10 +191,9 @@ impl<N: Network> Repair<N> {
                 let Some(last_slice) = blockstore.get_last_slice(block_id) else {
                     return Ok(());
                 };
-                let Some(shred) = blockstore.get_shred(block_id, last_slice, 0) else {
+                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
                     return Ok(());
                 };
-                let root = shred.merkle_root;
                 let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
                 else {
                     return Ok(());
@@ -198,10 +201,9 @@ impl<N: Network> Repair<N> {
                 RepairResponse::LastSliceRoot(request, last_slice, root, proof)
             }
             RepairRequest::SliceRoot(_, slice) => {
-                let Some(shred) = blockstore.get_shred(block_id, slice, 0) else {
+                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
                     return Ok(());
                 };
-                let root = shred.merkle_root;
                 let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
                     return Ok(());
                 };
@@ -241,6 +243,7 @@ impl<N: Network> Repair<N> {
         let (slot, block_hash) = block_id;
         match response {
             RepairResponse::LastSliceRoot(req, last_slice, root, proof) => {
+                // check validity of response
                 let RepairRequest::LastSliceRoot(_) = req else {
                     warn!("repair response (LastSliceRoot) to mismatching request {req:?}");
                     return;
@@ -250,28 +253,38 @@ impl<N: Network> Repair<N> {
                     warn!("repair response (LastSliceRoot) with invalid proof");
                     return;
                 }
+
+                // store slice Merkle root
+                self.slice_roots.insert((block_id, last_slice), root);
+
+                // issue next requests
                 for slice in last_slice.until() {
                     let req = RepairRequest::SliceRoot(block_id, slice);
                     self.send_request(req).await.unwrap();
                 }
             }
-            RepairResponse::SliceRoot(req, _slice_root, _proof) => {
+            RepairResponse::SliceRoot(req, root, proof) => {
+                // check validity of response
                 let RepairRequest::SliceRoot(_, slice) = req else {
                     warn!("repair response (SliceRoot) to mismatching request {req:?}");
                     return;
                 };
-                // TODO: check Merkle proof & cache it:
-                // if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
-                //     return;
-                // }
-                // self.slice_roots
-                //     .insert((slot, block_hash, slice), slice_root);
+                if !MerkleTree::check_proof(&root, slice.inner(), block_hash, &proof) {
+                    warn!("repair response (SliceRoot) with invalid proof");
+                    return;
+                }
+
+                // store slice Merkle root
+                self.slice_roots.insert((block_id, slice), root);
+
+                // issue next requests
                 for shred_index in 0..DATA_SHREDS {
                     let req = RepairRequest::Shred(block_id, slice, shred_index);
                     self.send_request(req).await.unwrap();
                 }
             }
             RepairResponse::Shred(req, shred) => {
+                // check validity of response
                 let RepairRequest::Shred(_, slice, index) = req else {
                     warn!("repair response (Shred) to mismatching request {req:?}");
                     return;
@@ -280,10 +293,18 @@ impl<N: Network> Repair<N> {
                     || shred.payload().header.slice_index != slice
                     || shred.payload().index_in_slice != index
                 {
+                    warn!("repair response (Shred) for mismatching shred index");
                     return;
                 }
-                // TODO: make sure shred is checked against correct merkle_root:
-                // if !shred.merkle_root ... { return; }
+                let Some(&root) = self.slice_roots.get(&(block_id, slice)) else {
+                    unreachable!("issued repair request (Shred) before knowing slice root");
+                };
+                if !shred.verify_path_only(&root) {
+                    warn!("repair response (Shred) with invalid Merkle proof");
+                    return;
+                }
+
+                // store shred
                 let res = self
                     .blockstore
                     .write()
@@ -511,7 +532,9 @@ mod tests {
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
             let req = RepairRequest::SliceRoot(block_to_repair, slice);
-            let response = RepairResponse::SliceRoot(req, [2; 32], vec![[3; 32]]);
+            let root = shreds[slice.inner()][0].merkle_root;
+            let proof = merkle_tree.create_proof(slice.inner());
+            let response = RepairResponse::SliceRoot(req, root, proof);
             let msg = RepairMessage::Response(response).into();
             other_network.send(&msg, "1").await.unwrap();
 
