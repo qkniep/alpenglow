@@ -6,9 +6,9 @@ use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
     all2all::TrivialAll2All,
     consensus::EpochInfo,
-    crypto::{Hash, aggsig::SecretKey, signature},
+    crypto::{Hash, MerkleTree, aggsig::SecretKey, signature},
     network::{SimulatedNetwork, simulated::SimulatedNetworkCore},
-    shredder::MAX_DATA_PER_SLICE,
+    shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder},
     types::{Slice, SliceHeader, SliceIndex, SlicePayload},
 };
 
@@ -51,6 +51,24 @@ pub async fn generate_all2all_instances(
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all
+}
+
+pub fn create_random_shredded_block(
+    slot: Slot,
+    num_slices: usize,
+    sk: &signature::SecretKey,
+) -> (Hash, MerkleTree, Vec<Vec<Shred>>) {
+    let mut shreds = Vec::with_capacity(num_slices);
+    for slice in create_random_block(slot, num_slices) {
+        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap());
+    }
+    let merkle_roots = shreds
+        .iter()
+        .map(|slice_shreds| slice_shreds[0].merkle_root)
+        .collect::<Vec<_>>();
+    let tree = MerkleTree::new(&merkle_roots);
+    let block_hash = tree.get_root();
+    (block_hash, tree, shreds)
 }
 
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
