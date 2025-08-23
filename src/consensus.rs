@@ -26,8 +26,8 @@ mod vote;
 pub(crate) mod votor;
 
 use std::marker::{Send, Sync};
-use std::time::Instant;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use fastrace::Span;
@@ -36,19 +36,18 @@ use log::{trace, warn};
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 
+pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
+pub use self::cert::Cert;
+pub use self::epoch_info::EpochInfo;
+pub use self::pool::{AddVoteError, Pool, PoolImpl};
+pub use self::vote::Vote;
+use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::repair::{Repair, RepairMessage};
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
-
-pub use blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
-pub use cert::Cert;
-pub use epoch_info::EpochInfo;
-pub use pool::{AddVoteError, Pool, PoolImpl};
-pub use vote::Vote;
-use votor::Votor;
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(250);

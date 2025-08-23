@@ -26,13 +26,12 @@ use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use self::reed_solomon::{
+    ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
+};
 use crate::crypto::signature::{PublicKey, SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::types::{Slice, SliceHeader};
-
-use reed_solomon::{
-    ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
-};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -477,9 +476,8 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 mod tests {
     use color_eyre::Result;
 
-    use crate::types::slice::create_slice_with_invalid_txs;
-
     use super::*;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     #[test]
     fn regular_shredding() -> Result<()> {

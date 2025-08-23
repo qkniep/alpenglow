@@ -54,9 +54,9 @@ use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
-use bandwidth::BandwidthTest;
-use latency::{LatencyTest, LatencyTestStage};
-use rotor_safety::RotorSafetyTest;
+use self::bandwidth::BandwidthTest;
+use self::latency::{LatencyTest, LatencyTestStage};
+use self::rotor_safety::RotorSafetyTest;
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;

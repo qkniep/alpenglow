@@ -12,11 +12,11 @@ pub mod turbine;
 use async_trait::async_trait;
 use mockall::automock;
 
-pub use rotor::Rotor;
-pub use trivial::TrivialDisseminator;
-pub use turbine::Turbine;
-
-use crate::{network::NetworkError, shredder::Shred};
+pub use self::rotor::Rotor;
+pub use self::trivial::TrivialDisseminator;
+pub use self::turbine::Turbine;
+use crate::network::NetworkError;
+use crate::shredder::Shred;
 
 /// Abstraction of a block dissemination protocol.
 #[async_trait]

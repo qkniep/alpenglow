@@ -13,15 +13,13 @@ use log::debug;
 use mockall::automock;
 use tokio::sync::mpsc::Sender;
 
+use self::slot_block_data::{AddShredError, SlotBlockData};
+use super::epoch_info::EpochInfo;
+use super::votor::VotorEvent;
 use crate::crypto::Hash;
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
-
-use super::epoch_info::EpochInfo;
-use super::votor::VotorEvent;
-
-use slot_block_data::{AddShredError, SlotBlockData};
 
 /// Information about a block within a slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,17 +253,16 @@ impl Blockstore for BlockstoreImpl {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use color_eyre::Result;
+    use tokio::sync::mpsc;
 
+    use super::*;
     use crate::ValidatorInfo;
     use crate::crypto::signature::SecretKey;
     use crate::crypto::{MerkleTree, aggsig};
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::test_utils::create_random_block;
     use crate::types::SliceIndex;
-
-    use color_eyre::Result;
-    use tokio::sync::mpsc;
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());

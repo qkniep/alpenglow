@@ -18,12 +18,11 @@ use color_eyre::Result;
 use log::{debug, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
+use super::blockstore::BlockInfo;
+use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
-
-use super::blockstore::BlockInfo;
-use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 
 /// Events that Votor is interested in.
 ///
@@ -356,15 +355,14 @@ impl VotorEvent {
 mod tests {
     use std::time::Duration;
 
+    use tokio::sync::mpsc;
+  
     use super::*;
-
     use crate::all2all::TrivialAll2All;
     use crate::consensus::EpochInfo;
     use crate::consensus::cert::NotarCert;
     use crate::network::{NetworkMessage, SimulatedNetwork};
     use crate::test_utils::{generate_all2all_instances, generate_validators};
-
-    use tokio::sync::mpsc;
 
     type A2A = TrivialAll2All<SimulatedNetwork>;
 

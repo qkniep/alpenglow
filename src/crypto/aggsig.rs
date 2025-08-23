@@ -27,13 +27,12 @@
 
 use bitvec::vec::BitVec;
 use blst::BLST_ERROR;
-use blst::min_sig::AggregateSignature as BlstAggSig;
-use blst::min_sig::PublicKey as BlstPublicKey;
-use blst::min_sig::SecretKey as BlstSecretKey;
-use blst::min_sig::Signature as BlstSignature;
+use blst::min_sig::{
+    AggregateSignature as BlstAggSig, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey,
+    Signature as BlstSignature,
+};
 use rand::prelude::*;
-use serde::Deserializer;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::ValidatorId;
 

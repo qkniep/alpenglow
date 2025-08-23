@@ -15,14 +15,13 @@ use either::Either;
 use log::warn;
 use smallvec::SmallVec;
 
+use super::SlashableOffence;
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
 use crate::consensus::vote::VoteKind;
 use crate::consensus::votor::VotorEvent;
 use crate::consensus::{Cert, EpochInfo, Vote};
 use crate::crypto::Hash;
 use crate::{Slot, Stake};
-
-use super::SlashableOffence;
 
 /// Data structure holding pool state for a single slot.
 pub struct SlotState {
@@ -569,7 +568,6 @@ impl SlotVotes {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::ValidatorId;
     use crate::test_utils::generate_validators;
 
