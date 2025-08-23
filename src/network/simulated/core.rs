@@ -8,10 +8,9 @@ use std::time::{Duration, Instant};
 use rand::Rng;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
-use crate::ValidatorId;
-
 use super::SimulatedNetwork;
 use super::token_bucket::TokenBucket;
+use crate::ValidatorId;
 
 struct SimulatedPacket {
     _from: ValidatorId,
@@ -247,11 +246,10 @@ impl SimulatedNetworkCore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use crate::network::{Network, NetworkMessage};
-
     use tokio::time::timeout;
+
+    use super::*;
+    use crate::network::{Network, NetworkMessage};
 
     // test simulated latency accuracy to within +/-5%
     const ACCURACY: f64 = 0.05;

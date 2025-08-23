@@ -48,9 +48,9 @@ pub fn truncate(hash: Hash) -> ShortHash {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::collections::HashSet;
+
+    use super::*;
 
     const HASH_ITERATIONS: u64 = 100_000;
 

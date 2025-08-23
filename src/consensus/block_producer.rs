@@ -16,11 +16,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
-use crate::highest_non_zero_byte;
 use crate::network::{Network, NetworkMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
-use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE};
+use crate::{
+    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
+};
 
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
@@ -447,8 +448,11 @@ async fn wait_for_first_slot(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Duration;
 
+    use mockall::{Sequence, predicate};
+
+    use super::*;
     use crate::Transaction;
     use crate::consensus::BlockInfo;
     use crate::consensus::blockstore::MockBlockstore;
@@ -458,10 +462,6 @@ mod tests {
     use crate::network::UdpNetwork;
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
-
-    use mockall::{Sequence, predicate};
-
-    use std::time::Duration;
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {

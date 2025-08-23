@@ -4,11 +4,10 @@
 use async_trait::async_trait;
 use log::warn;
 
+use super::Disseminator;
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::Shred;
-
-use super::Disseminator;
 
 /// A trivial implementation for a block disseminator.
 /// The leader just sends each shred directly to every validator.
@@ -53,17 +52,18 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
 
+    use tokio::sync::Mutex;
+    use tokio::task;
+
+    use super::*;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-
-    use tokio::{sync::Mutex, task};
-
-    use std::{sync::Arc, time::Duration};
 
     fn create_disseminator_instances(
         count: u64,

@@ -35,10 +35,9 @@
 mod robust;
 mod trivial;
 
+pub use self::robust::RobustAll2All;
+pub use self::trivial::TrivialAll2All;
 use crate::network::{NetworkError, NetworkMessage};
-
-pub use robust::RobustAll2All;
-pub use trivial::TrivialAll2All;
 
 /// Abstraction for a direct all-to-all network communication protocol.
 pub trait All2All {

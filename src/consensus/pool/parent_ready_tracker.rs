@@ -23,11 +23,10 @@ use either::Either;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
+use self::parent_ready_state::ParentReadyState;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::Hash;
 use crate::{BlockId, Slot};
-
-use parent_ready_state::ParentReadyState;
 
 /// Keeps track of the parent-ready condition across slots.
 pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
@@ -179,9 +178,8 @@ impl Default for ParentReadyTracker {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::SLOTS_PER_WINDOW;
-
     use super::*;
+    use crate::types::SLOTS_PER_WINDOW;
 
     #[test]
     fn basic() {

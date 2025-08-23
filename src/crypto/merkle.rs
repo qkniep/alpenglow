@@ -12,7 +12,8 @@
 //! - rainbow tables / pre-calculation attacks
 //! - ambiguity between leaf and inner nodes with unknown tree height
 
-use super::{Hash, hash::hash_all};
+use super::Hash;
+use super::hash::hash_all;
 
 const LEAF_LABEL: [u8; 22] = *b"\x00ALPENGLOW-MERKLE-TREE";
 const LEFT_LABEL: [u8; 22] = *b"\x01ALPENGLOW-MERKLE-TREE";

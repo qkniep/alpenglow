@@ -34,14 +34,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use self::simulated::SimulatedNetwork;
+pub use self::tcp::TcpNetwork;
+pub use self::udp::UdpNetwork;
 use crate::Transaction;
 use crate::consensus::{Cert, Vote};
 use crate::repair::RepairMessage;
 use crate::shredder::Shred;
-
-pub use simulated::SimulatedNetwork;
-pub use tcp::TcpNetwork;
-pub use udp::UdpNetwork;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
