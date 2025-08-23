@@ -406,7 +406,6 @@ mod tests {
 
     use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::crypto::signature::SecretKey;
-    use crate::logging::enable_logforth;
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
@@ -489,7 +488,6 @@ mod tests {
     }
 
     async fn repair_block(num_slices: usize) {
-        enable_logforth();
         let (repair_channel, blockstore, other_network, sk) = create_repair_instance().await;
 
         // create a block to repair
