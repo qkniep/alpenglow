@@ -14,7 +14,8 @@
 
 use hex_literal::hex;
 
-use super::{Hash, hash::hash_all};
+use super::Hash;
+use super::hash::hash_all;
 
 const LEAF_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEAF-NODE";
 const LEFT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEFT-NODE";

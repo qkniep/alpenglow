@@ -402,18 +402,17 @@ impl RepairResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeSet;
 
+    use tokio::sync::mpsc::Sender;
+
+    use super::*;
     use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
-
-    use tokio::sync::mpsc::Sender;
-
-    use std::collections::BTreeSet;
 
     /// Creates a small network of 2 validators.
     ///

@@ -20,14 +20,13 @@ pub mod validator;
 
 use serde::{Deserialize, Serialize};
 
-pub use all2all::All2All;
-pub use consensus::Alpenglow;
-pub use consensus::votor::VotorEvent;
-use crypto::{Hash, aggsig, signature};
-pub use disseminator::Disseminator;
-pub use validator::Validator;
-
-use crate::types::Slot;
+pub use self::all2all::All2All;
+pub use self::consensus::Alpenglow;
+pub use self::consensus::votor::VotorEvent;
+use self::crypto::{Hash, aggsig, signature};
+pub use self::disseminator::Disseminator;
+use self::types::Slot;
+pub use self::validator::Validator;
 
 /// Validator ID number type.
 pub type ValidatorId = u64;

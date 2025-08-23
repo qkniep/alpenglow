@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::f64;
-use std::sync::{Arc, atomic::AtomicUsize};
-use std::{io, time::Duration};
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::time::Duration;
 
 use alpenglow::logging;
 use bincode::{Decode, Encode};
@@ -11,8 +13,9 @@ use clap::Parser;
 use color_eyre::Result;
 use log::{debug, info};
 use time::OffsetDateTime;
+use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, RwLock};
-use tokio::{net::UdpSocket, task::JoinSet};
+use tokio::task::JoinSet;
 
 // TODO: allow for different leader per round
 const LEADER: usize = 0;

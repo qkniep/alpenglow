@@ -21,17 +21,15 @@ use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
+use self::finality_tracker::FinalityTracker;
+use self::parent_ready_tracker::ParentReadyTracker;
+use self::slot_state::SlotState;
+use super::votor::VotorEvent;
+use super::{Cert, EpochInfo, Vote};
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::Hash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
-
-use super::votor::VotorEvent;
-use super::{Cert, EpochInfo, Vote};
-
-use finality_tracker::FinalityTracker;
-use parent_ready_tracker::ParentReadyTracker;
-use slot_state::SlotState;
 
 /// Errors the Pool may return when adding a vote.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -501,15 +499,14 @@ impl Pool for PoolImpl {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use tokio::sync::mpsc;
 
+    use super::*;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::VoteKind;
     use crate::crypto::aggsig::SecretKey;
     use crate::test_utils::generate_validators;
     use crate::types::SLOTS_PER_WINDOW;
-
-    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn handle_invalid_votes() {

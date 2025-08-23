@@ -10,10 +10,10 @@ pub mod hash;
 pub mod merkle;
 pub mod signature;
 
-pub use aggsig::{AggregateSignature, IndividualSignature};
-pub use hash::{Hash, ShortHash, hash};
-pub use merkle::MerkleTree;
-pub use signature::Signature;
+pub use self::aggsig::{AggregateSignature, IndividualSignature};
+pub use self::hash::{Hash, ShortHash, hash};
+pub use self::merkle::MerkleTree;
+pub use self::signature::Signature;
 
 /// A type that can be converted into a byte string to be signed.
 ///

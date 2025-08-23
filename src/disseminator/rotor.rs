@@ -8,16 +8,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use log::warn;
 use rand::prelude::*;
-use sampling_strategy::PartitionSampler;
 
+use self::sampling_strategy::PartitionSampler;
+pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
+use super::Disseminator;
 use crate::consensus::EpochInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId};
-
-use super::Disseminator;
-
-pub use sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
 pub struct Rotor<N: Network, S: SamplingStrategy> {
@@ -133,21 +131,20 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use std::time::Duration;
 
+    use tokio::sync::Mutex;
+    use tokio::task;
+
+    use super::*;
     use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::UdpNetwork;
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-
-    use tokio::sync::Mutex;
-    use tokio::task;
-
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::time::Duration;
 
     fn create_rotor_instances(
         count: u64,

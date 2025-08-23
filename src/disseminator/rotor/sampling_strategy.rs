@@ -649,16 +649,15 @@ impl Clone for FaitAccompli2Sampler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashSet;
 
+    use super::*;
     use crate::ValidatorId;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::disseminator::turbine::WeightedShuffle;
     use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
     use crate::shredder::TOTAL_SHREDS;
-
-    use std::collections::HashSet;
 
     fn create_validator_info(count: ValidatorId) -> Vec<ValidatorInfo> {
         let mut validators = Vec::new();
