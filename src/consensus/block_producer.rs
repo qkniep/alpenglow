@@ -14,7 +14,7 @@ use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{Blockstore, DELTA_BLOCK, EpochInfo, Pool};
+use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
 use crate::network::{Network, NetworkMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
@@ -108,7 +108,7 @@ where
             {
                 SlotReady::Skip => {
                     warn!(
-                        "skipping window {first_slot_in_window}..{last_slot_in_window} for block production"
+                        "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
                     );
                     continue;
                 }
@@ -407,8 +407,6 @@ async fn wait_for_first_slot(
         return SlotReady::Ready((Slot::genesis(), Hash::default()));
     }
 
-    let last_slot_in_window = first_slot_in_window.last_slot_in_window();
-
     // if already have parent ready, return it, otherwise get a channel to await on
     let mut rx = {
         let mut guard = pool.write().await;
@@ -441,7 +439,6 @@ async fn wait_for_first_slot(
                         return Some((last_slot_in_prev_window, hash));
                     }
                     if pool.read().await.finalized_slot() >= first_slot_in_window {
-                        warn!("not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization");
                         return None;
                     }
                     sleep(Duration::from_millis(1)).await;
