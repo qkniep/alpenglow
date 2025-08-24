@@ -45,6 +45,8 @@ use crate::shredder::Shred;
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
 
+const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+
 /// Network message type.
 ///
 /// Everything that the Alpenglow validator will send over the network is a `NetworkMessage`.
@@ -76,25 +78,37 @@ impl NetworkMessage {
             ));
         }
         // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        let (msg, _) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
         Ok(msg)
     }
 
-    /// Serializes this `NetworkMessage` into owned bytes using [`bincode`].
+    /// Serializes this message into owned bytes using [`bincode`].
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+        let bytes = bincode::serde::encode_to_vec(self, BINCODE_CONFIG)
             .expect("serialization should not panic");
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         bytes
     }
 
-    /// Serializes this `NetworkMessage` into an existing buffer using [`bincode`].
-    pub fn write_bytes(&self, buf: &mut [u8]) -> usize {
-        let written = bincode::serde::encode_into_slice(self, buf, bincode::config::standard())
-            .expect("serialization should not panic");
-        assert!(written <= MTU_BYTES, "each message should fit in MTU");
-        written
+    /// Serializes this message into an existing buffer using [`bincode`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NetworkError::Serialization`] if bincode encoding fails.
+    /// This includes the case where `buf` is to small to fit this message.
+    pub fn to_slice(&self, buf: &mut [u8]) -> Result<usize, NetworkError> {
+        let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
+        match res {
+            Ok(written) => {
+                assert!(written <= MTU_BYTES, "each message should fit in MTU");
+                Ok(written)
+            }
+            Err(bincode::error::EncodeError::UnexpectedEnd) => Err(NetworkError::Serialization(
+                bincode::error::EncodeError::UnexpectedEnd,
+            )),
+            _ => panic!("unexpected serialization error"),
+        }
     }
 }
 
@@ -173,6 +187,7 @@ pub trait Network: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MAX_TRANSACTION_SIZE;
 
     #[tokio::test]
     async fn basic() {
@@ -192,7 +207,7 @@ mod tests {
         let mut buf = [0u8; MTU_BYTES];
         for _ in 0..10 {
             let msg = NetworkMessage::Ping;
-            let num_bytes = msg.write_bytes(&mut buf);
+            let num_bytes = msg.to_slice(&mut buf).unwrap();
             let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
             assert!(matches!(deserialized, NetworkMessage::Ping));
         }
@@ -205,5 +220,12 @@ mod tests {
 
         let bytes = vec![0u8; 10 * MTU_BYTES];
         assert!(NetworkMessage::from_bytes(&bytes).is_err());
+    }
+
+    #[tokio::test]
+    async fn serialize_buffer_too_small() {
+        let mut buf = [0u8; 1];
+        let msg = NetworkMessage::Transaction(Transaction(vec![1; MAX_TRANSACTION_SIZE]));
+        assert!(msg.to_slice(&mut buf).is_err());
     }
 }
