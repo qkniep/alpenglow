@@ -165,12 +165,12 @@ where
                 None
             };
 
+            // cap timeout for each slice to `DELTA_BLOCK`
+            // makes sure optimistic block production yields before timeout would expire
+            let time_for_slice = duration_left.min(self.delta_block);
+            let produce_slice_future =
+                produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let produce_slice_future = produce_slice_payload(
-                &self.txs_receiver,
-                parent,
-                duration_left.min(DELTA_BLOCK / 2),
-            );
             let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
