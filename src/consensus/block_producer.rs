@@ -14,7 +14,7 @@ use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{Blockstore, EpochInfo, Pool};
+use crate::consensus::{Blockstore, DELTA_BLOCK, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
 use crate::network::{Network, NetworkMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
@@ -166,8 +166,11 @@ where
             };
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let produce_slice_future =
-                produce_slice_payload(&self.txs_receiver, parent, duration_left);
+            let produce_slice_future = produce_slice_payload(
+                &self.txs_receiver,
+                parent,
+                duration_left.min(DELTA_BLOCK / 2),
+            );
             let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
@@ -186,10 +189,20 @@ where
                         let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
                         if new_hash != parent_hash {
+                            debug!(
+                                "changed parent from {} in slot {} to {} in slot {}",
+                                &hex::encode(parent_hash)[..8],
+                                parent_slot,
+                                &hex::encode(new_hash)[..8],
+                                new_slot
+                            );
                             payload.parent = Some((new_slot, new_hash));
+                        } else {
+                            debug!("parent is ready, continuing with same parent");
                         }
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
+                        debug!("starting blocktime timer");
                         let duration = Some(self.delta_block - (Instant::now() - start));
                         (payload, duration)
                   }
