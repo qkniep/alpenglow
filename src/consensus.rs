@@ -160,6 +160,7 @@ where
             pool.clone(),
             cancel_token.clone(),
             DELTA_BLOCK,
+            DELTA_FIRST_SLICE,
         ));
 
         Self {
