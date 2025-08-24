@@ -175,7 +175,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn serialization() {
+    async fn basic() {
         let msg = NetworkMessage::Ping;
         let bytes = msg.to_bytes();
         let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
@@ -185,5 +185,25 @@ mod tests {
         let bytes = msg.to_bytes();
         let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
         assert!(matches!(deserialized, NetworkMessage::Pong));
+    }
+
+    #[tokio::test]
+    async fn serialize_reuse_buffer() {
+        let mut buf = [0u8; MTU_BYTES];
+        for _ in 0..10 {
+            let msg = NetworkMessage::Ping;
+            let num_bytes = msg.write_bytes(&mut buf);
+            let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
+            assert!(matches!(deserialized, NetworkMessage::Ping));
+        }
+    }
+
+    #[tokio::test]
+    async fn deserialize_too_large() {
+        let bytes = vec![0u8; MTU_BYTES + 1];
+        assert!(NetworkMessage::from_bytes(&bytes).is_err());
+
+        let bytes = vec![0u8; 10 * MTU_BYTES];
+        assert!(NetworkMessage::from_bytes(&bytes).is_err());
     }
 }
