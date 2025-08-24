@@ -8,11 +8,10 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::crypto::{AggregateSignature, Hash, Signable};
-use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
-
 use super::Vote;
 use super::vote::VoteKind;
+use crate::crypto::{AggregateSignature, Hash, Signable};
+use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
 /// Errors that can occur during certificate aggregation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -556,12 +555,11 @@ fn aggsig_from_votes_iter<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashSet;
 
+    use super::*;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::signature;
-
-    use std::collections::HashSet;
 
     fn create_signers(signers: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
         let mut sks = Vec::new();

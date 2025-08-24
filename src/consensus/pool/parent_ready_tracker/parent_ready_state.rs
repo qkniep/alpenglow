@@ -118,7 +118,6 @@ impl ParentReadyState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::Slot;
 
     #[test]
