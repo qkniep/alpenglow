@@ -20,6 +20,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
+use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
@@ -252,12 +253,16 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         );
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(DELTA_TIMEOUT).await;
+            tokio::time::sleep(DELTA_TIMEOUT + DELTA_FIRST_SLICE).await;
             // HACK: ignoring errors to prevent panic when shutting down votor
             let event = VotorEvent::TimeoutCrashedLeader(slot);
             let _ = sender.send(event).await;
             for s in slot.slots_in_window() {
-                tokio::time::sleep(DELTA_BLOCK).await;
+                if s.is_start_of_window() {
+                    tokio::time::sleep(DELTA_BLOCK - DELTA_FIRST_SLICE).await;
+                } else {
+                    tokio::time::sleep(DELTA_BLOCK).await;
+                }
                 let event = VotorEvent::Timeout(s);
                 let _ = sender.send(event).await;
             }
