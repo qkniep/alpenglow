@@ -169,7 +169,7 @@ where
             } else {
                 None
             };
-            
+
             let time_for_slice = if slice_index == SliceIndex::first() {
                 // make sure first slice is produced on time
                 // TODO: this can be made more accurate, only needed if production of first slice
