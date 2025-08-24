@@ -385,4 +385,98 @@ mod tests {
         let first_shred_event = VotorEvent::FirstShred(slot);
         assert_votor_events_match(events[0].clone(), first_shred_event);
     }
+
+    // If a subsequent slice switches parent to the original, the block is not reconstructed.
+    #[test]
+    fn reconstruct_block_optimistic_handover_duplicate_parent() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = Slot::new(123);
+        let mut slices = create_random_block(slot, 3);
+        slices[2].parent = slices[0].parent;
+
+        let mut block_data = BlockData::new(slot);
+        let mut events = vec![];
+        for slice in slices {
+            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            for shred in shreds {
+                if let Some(event) = block_data.add_valid_shred(shred) {
+                    events.push(event);
+                }
+            }
+        }
+        assert_eq!(events.len(), 1);
+        match events[0] {
+            VotorEvent::FirstShred(s) => assert_eq!(slot, s),
+            _ => panic!(),
+        }
+    }
+
+    // Two switches of parents do not reconstruct block.
+    #[test]
+    fn reconstruct_block_optimistic_handover_two_switches() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = Slot::new(123);
+        let mut slices = create_random_block(slot, 3);
+        let parent = slices[0].parent.unwrap();
+        let slice_1_parent = (parent.0.next(), parent.1);
+        assert!(slice_1_parent.0 < slot);
+        let slice_2_parent = (parent.0.next().next(), parent.1);
+        assert!(slice_2_parent.0 < slot);
+        slices[1].parent = Some(slice_1_parent);
+        slices[2].parent = Some(slice_2_parent);
+
+        let mut block_data = BlockData::new(slot);
+        let mut events = vec![];
+        for slice in slices {
+            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            for shred in shreds {
+                if let Some(event) = block_data.add_valid_shred(shred) {
+                    events.push(event);
+                }
+            }
+        }
+        assert_eq!(events.len(), 1);
+        match events[0] {
+            VotorEvent::FirstShred(s) => assert_eq!(slot, s),
+            _ => panic!(),
+        }
+    }
+
+    // Optimistic handover works.
+    #[test]
+    fn reconstruct_block_optimistic_handover_works() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = Slot::new(123);
+        let mut slices = create_random_block(slot, 3);
+        let parent = slices[0].parent.unwrap();
+        let slice_1_parent = (parent.0.next(), parent.1);
+        assert!(slice_1_parent.0 < slot);
+        slices[1].parent = Some(slice_1_parent);
+
+        let mut block_data = BlockData::new(slot);
+        let mut events = vec![];
+        for slice in slices {
+            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            for shred in shreds {
+                if let Some(event) = block_data.add_valid_shred(shred) {
+                    events.push(event);
+                }
+            }
+        }
+        assert_eq!(events.len(), 2);
+        match events[0] {
+            VotorEvent::FirstShred(s) => assert_eq!(slot, s),
+            _ => panic!(),
+        }
+        match events[1] {
+            VotorEvent::Block {
+                slot: ret_slot,
+                block_info,
+            } => {
+                assert_eq!(ret_slot, slot);
+                assert_eq!(block_info.parent, slice_1_parent);
+            }
+            _ => panic!(),
+        }
+    }
 }
