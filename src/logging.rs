@@ -30,7 +30,7 @@ pub fn enable_logforth_stderr() {
 }
 
 fn enable_logforth_append<A: logforth::Append>(to_append: A) {
-    let filter = EnvFilter::from_default_env_or("alpenglow=info");
+    let filter = EnvFilter::from_default_env_or("info");
     logforth::builder()
         .dispatch(|d| d.filter(filter).append(to_append))
         .apply();
