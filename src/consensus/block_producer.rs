@@ -46,6 +46,9 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Should be set to `DELTA_BLOCK` in production.
     /// Stored as a field to aid in testing.
     delta_block: Duration,
+    /// Should be set to `DELTA_FIRST_SLICE` in production.
+    /// Stored as a field to aid in testing.
+    delta_first_slice: Duration,
 }
 
 impl<D, T> BlockProducer<D, T>
@@ -63,6 +66,7 @@ where
         pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         cancel_token: CancellationToken,
         delta_block: Duration,
+        delta_first_slice: Duration,
     ) -> Self {
         Self {
             secret_key,
@@ -73,6 +77,7 @@ where
             txs_receiver,
             cancel_token,
             delta_block,
+            delta_first_slice,
         }
     }
 
@@ -165,11 +170,21 @@ where
                 None
             };
 
-            // cap timeout for each slice to `DELTA_BLOCK`
-            // makes sure optimistic block production yields before timeout would expire
-            let time_for_slice = duration_left.min(self.delta_block);
+            let time_for_slice = if slice_index.is_first() {
+                // make sure first slice is produced on time
+                // TODO: this can be made more accurate, only needed if production of first slice
+                // still takes more than delta_first_slice after we saw ParentReady, not if:
+                // 1. first slice is produced before ParentReady is seen, OR
+                // 2. first slice finishes at most delta_first_slice after ParentReady is seen
+                duration_left.min(self.delta_first_slice)
+            } else {
+                // cap timeout for each slice to `DELTA_BLOCK`
+                // makes sure optimistic block production yields before timeout would expire
+                duration_left.min(self.delta_block)
+            };
             let produce_slice_future =
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
+
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
             let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
@@ -259,8 +274,14 @@ where
             } else {
                 None
             };
+            let time_for_slice = if slice_index.is_first() {
+                // make sure first slice is produced on time
+                duration_left.min(self.delta_first_slice)
+            } else {
+                duration_left
+            };
             let (payload, maybe_duration) =
-                produce_slice_payload(&self.txs_receiver, parent, duration_left).await;
+                produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
             let is_last = slice_index.is_max() || maybe_duration.is_none();
             let header = SliceHeader {
                 slot,
@@ -586,6 +607,7 @@ mod tests {
         pool: MockPool,
         disseminator: MockDisseminator,
         delta_block: Duration,
+        delta_first_slice: Duration,
     ) -> BlockProducer<MockDisseminator, UdpNetwork> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
@@ -606,6 +628,7 @@ mod tests {
             pool,
             cancel_token,
             delta_block,
+            delta_first_slice,
         )
     }
 
@@ -645,7 +668,13 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(blockstore, pool, disseminator, Duration::from_micros(0));
+        let block_producer = setup(
+            blockstore,
+            pool,
+            disseminator,
+            Duration::from_micros(0),
+            Duration::from_micros(0),
+        );
 
         let ret = block_producer
             .produce_block_parent_ready(slot, block_info.parent)
