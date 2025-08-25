@@ -269,7 +269,7 @@ where
             } else {
                 None
             };
-            let (payload, maybe_duration) = if slice_index == SliceIndex::first() {
+            let (payload, maybe_duration) = if slice_index.is_first() {
                 let time_for_slice = duration_left.min(self.delta_first_slice);
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await
             } else {
