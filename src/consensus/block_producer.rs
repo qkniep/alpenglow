@@ -186,7 +186,7 @@ where
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
+            let (mut payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
                 pin!(produce_slice_future);
@@ -204,6 +204,7 @@ where
                         let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
                         if new_hash != parent_hash {
+                            assert_ne!(new_slot, parent_slot);
                             debug!(
                                 "changed parent from {} in slot {} to {} in slot {}",
                                 &hex::encode(parent_hash)[..8],
@@ -232,9 +233,19 @@ where
             let is_last = slice_index.is_max() || maybe_duration.is_none();
             if is_last && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                // TODO: implement optimistic handover.
-                assert_eq!(new_slot, parent_slot);
-                assert_eq!(new_hash, parent_hash);
+                if new_hash != parent_hash {
+                    assert_ne!(new_slot, parent_slot);
+                    debug!(
+                        "changed parent from {} in slot {} to {} in slot {}",
+                        &hex::encode(parent_hash)[..8],
+                        parent_slot,
+                        &hex::encode(new_hash)[..8],
+                        new_slot
+                    );
+                    payload.parent = Some((new_slot, new_hash));
+                } else {
+                    debug!("parent is ready, continuing with same parent");
+                }
             }
             let header = SliceHeader {
                 slot,
@@ -259,6 +270,7 @@ where
         parent_block_id: BlockId,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+        assert!(slot.is_start_of_window());
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
             "producing block in slot {} with ready parent {} in slot {}",
@@ -634,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_produce_block_parent_ready() {
-        let slot = Slot::new(123);
+        let slot = Slot::windows().nth(10).unwrap();
         let block_info = BlockInfo {
             hash: [1; 32],
             parent: (slot.prev(), [2; 32]),
@@ -682,5 +694,101 @@ mod tests {
             .unwrap();
         assert_eq!(slot, ret.0);
         assert_eq!(block_info.hash, ret.1);
+    }
+
+    #[tokio::test]
+    async fn verify_produce_block_parent_not_ready() {
+        let slot = Slot::windows().nth(10).unwrap();
+        let slot_hash = [1; 32];
+        let old_parent = (slot.prev(), [2; 32]);
+        let new_parent = (slot.prev().prev(), [3; 32]);
+        let old_block_info = BlockInfo {
+            hash: slot_hash,
+            parent: old_parent,
+        };
+        let new_block_info = BlockInfo {
+            hash: slot_hash,
+            parent: new_parent,
+        };
+
+        let (first_slice_finished_tx, first_slice_finished_rx) = oneshot::channel();
+        let (start_second_slice_tx, start_second_slice_rx) = oneshot::channel();
+
+        let mut seq = Sequence::new();
+        let mut blockstore = MockBlockstore::new();
+
+        // handle first slice
+        blockstore
+            .expect_add_shred_from_disseminator()
+            .times(TOTAL_SHREDS - 1)
+            .in_sequence(&mut seq)
+            .returning(move |_| Box::pin(async move { Ok(None) }));
+        blockstore
+            .expect_add_shred_from_disseminator()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move |_| {
+                Box::pin(async move {
+                    // last shred; wait for the parent ready event to be sent before continuing
+                    first_slice_finished_tx.send(()).unwrap();
+                    let () = start_second_slice_rx.await.unwrap();
+                    Ok(None)
+                })
+            });
+
+        // handle second slice
+        blockstore
+            .expect_add_shred_from_disseminator()
+            .times(TOTAL_SHREDS - 1)
+            .in_sequence(&mut seq)
+            .returning(move |_| Box::pin(async move { Ok(None) }));
+        blockstore
+            .expect_add_shred_from_disseminator()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(move |_| {
+                Box::pin(async move {
+                    // final shred of second slice
+                    // block is constructed with the new parent
+                    Ok(Some((slot, new_block_info)))
+                })
+            });
+
+        let mut pool = MockPool::new();
+        pool.expect_add_block()
+            .returning(move |ret_block_id, ret_parent_block_id| {
+                assert_eq!(ret_block_id, (slot, new_block_info.hash));
+                assert_eq!(new_block_info.parent, ret_parent_block_id);
+                Box::pin(async {})
+            });
+
+        let mut disseminator = MockDisseminator::new();
+        disseminator
+            .expect_send()
+            .returning(|_| Box::pin(async { Ok(()) }));
+        let block_producer = setup(
+            blockstore,
+            pool,
+            disseminator,
+            Duration::from_micros(0),
+            Duration::from_millis(0),
+        );
+
+        let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let () = first_slice_finished_rx.await.unwrap();
+            parent_ready_tx.send(new_parent).unwrap();
+            start_second_slice_tx.send(()).unwrap();
+        });
+
+        let ret = block_producer
+            .produce_block_parent_not_ready(slot, old_block_info.parent, parent_ready_rx)
+            .await
+            .unwrap();
+
+        assert_eq!(slot, ret.0);
+        assert_eq!(new_block_info.hash, ret.1);
+        assert_eq!(new_block_info.parent, new_parent);
     }
 }
