@@ -40,17 +40,22 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
-          tool: nextest,cargo-llvm-cov
+          tool: nextest,cargo-llvm-cov,cargo-machete
 
-      - name: Build
+      - name: Build (debug)
         run: cargo build --all-targets --verbose
+
+      - name: Build (debug)
+        run: cargo build --all-targets --release --verbose
+
+      - name: Linting (clippy)
+        run: cargo clippy --all-targets --all-features -- -Dwarnings
+
+      - name: Unused dependencies
+        run: cargo machete
 
       - name: Run tests
         run: ./test.sh ci
-
-      # linting
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -Dwarnings
 
       # test coverage
       - name: Collect coverage data
