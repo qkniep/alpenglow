@@ -303,31 +303,25 @@ where
 
         let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
-            let parent = if slice_index.is_first() {
-                Some(parent_block_id)
-            } else {
-                None
-            };
-            let time_for_slice = if slice_index.is_first() {
+            let (payload, maybe_duration) = if slice_index.is_first() {
                 // make sure first slice is produced on time
-                duration_left.min(self.delta_first_slice)
-            } else {
-                duration_left
-            };
-            let (payload, mut maybe_duration) =
-                produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
-            if slice_index.is_first() {
-                let left = if let Some(duration) = maybe_duration {
-                    duration_left.saturating_sub(duration)
+                let time_for_slice = duration_left.min(self.delta_first_slice);
+                let (payload, maybe_duration) = produce_slice_payload(
+                    &self.txs_receiver,
+                    Some(parent_block_id),
+                    time_for_slice,
+                )
+                .await;
+                let elapsed = self.delta_first_slice - maybe_duration.unwrap_or(Duration::ZERO);
+                let left = if elapsed >= duration_left {
+                    None
                 } else {
-                    duration_left.saturating_sub(self.delta_first_slice)
+                    Some(duration_left - elapsed)
                 };
-                if left > Duration::ZERO {
-                    maybe_duration = Some(left);
-                } else {
-                    maybe_duration = None;
-                }
-            }
+                (payload, left)
+            } else {
+                produce_slice_payload(&self.txs_receiver, None, duration_left).await
+            };
             let is_last = slice_index.is_max() || maybe_duration.is_none();
             let header = SliceHeader {
                 slot,
