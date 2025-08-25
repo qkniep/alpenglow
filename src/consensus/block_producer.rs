@@ -269,6 +269,7 @@ where
             } else {
                 None
             };
+            // make sure first slice is produced on time
             let (payload, maybe_duration) = if slice_index.is_first() {
                 let time_for_slice = duration_left.min(self.delta_first_slice);
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await
