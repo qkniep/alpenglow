@@ -112,14 +112,14 @@ where
             }
 
             // produce first block
-            let now = Instant::now();
-            let mut block_id = match wait_for_first_slot(
+            let slot_ready = wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
             )
-            .await
-            {
+            .await;
+            let start = Instant::now();
+            let mut block_id = match slot_ready {
                 SlotReady::Skip => {
                     warn!(
                         "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
@@ -143,17 +143,17 @@ where
             debug!(
                 "produced block {} in {} ms",
                 first_slot_in_window,
-                now.elapsed().as_millis()
+                start.elapsed().as_millis()
             );
 
             // produce remaining blocks
             for slot in first_slot_in_window.slots_in_window().skip(1) {
-                let now = Instant::now();
+                let start = Instant::now();
                 block_id = self.produce_block_parent_ready(slot, block_id).await?;
                 debug!(
                     "produced block {} in {} ms",
                     slot,
-                    now.elapsed().as_millis()
+                    start.elapsed().as_millis()
                 );
             }
         }
