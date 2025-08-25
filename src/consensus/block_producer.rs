@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Block production, leader-side of the consensus protocol.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +25,12 @@ use crate::{
     BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
 };
 
+/// Produces blocks from transactions and dissminates them.
+///
+/// This is the leader's side of the consensus protocol.
+/// Produces blocks in accordance with the consensus protocol's timeouts.
+/// Receives transactions from clients via a [`Network`] instance and packs them into blocks.
+/// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
     /// This is not the same as the voting secret key, which is held by [`Votor`].
@@ -68,6 +76,7 @@ where
         delta_block: Duration,
         delta_first_slice: Duration,
     ) -> Self {
+        assert!(delta_block >= delta_first_slice);
         Self {
             secret_key,
             epoch_info,
@@ -103,14 +112,17 @@ where
                 continue;
             }
 
-            // produce first block
-            let mut block_id = match wait_for_first_slot(
+            // wait for ParentReady or block in previous slot
+            let slot_ready = wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
             )
-            .await
-            {
+            .await;
+
+            // produce first block
+            let start = Instant::now();
+            let mut block_id = match slot_ready {
                 SlotReady::Skip => {
                     warn!(
                         "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
@@ -131,10 +143,21 @@ where
                         .await?
                 }
             };
+            debug!(
+                "produced block {} in {} ms",
+                first_slot_in_window,
+                start.elapsed().as_millis()
+            );
 
             // produce remaining blocks
             for slot in first_slot_in_window.slots_in_window().skip(1) {
+                let start = Instant::now();
                 block_id = self.produce_block_parent_ready(slot, block_id).await?;
+                debug!(
+                    "produced block {} in {} ms",
+                    slot,
+                    start.elapsed().as_millis()
+                );
             }
         }
 
@@ -253,24 +276,23 @@ where
                 is_last,
             };
 
-            match self
-                .shred_and_disseminate(header, payload, maybe_duration)
-                .await?
-            {
-                Either::Left(block_hash) => return Ok((slot, block_hash)),
-                Either::Right(duration) => duration_left = duration,
+            match self.shred_and_disseminate(header, payload).await? {
+                Some(block_hash) => return Ok((slot, block_hash)),
+                None => duration_left = maybe_duration.unwrap(),
             }
         }
         unreachable!()
     }
 
+    /// Produces a block in the situation where we have already seen the `ParentReady` event.
+    ///
+    /// The `parent_block_id` refers to the block that is the ready parent.
     pub(crate) async fn produce_block_parent_ready(
         &self,
         slot: Slot,
         parent_block_id: BlockId,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
-        assert!(slot.is_start_of_window());
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
             "producing block in slot {} with ready parent {} in slot {}",
@@ -281,19 +303,25 @@ where
 
         let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
-            let parent = if slice_index.is_first() {
-                Some(parent_block_id)
-            } else {
-                None
-            };
-            let time_for_slice = if slice_index.is_first() {
+            let (payload, maybe_duration) = if slice_index.is_first() {
                 // make sure first slice is produced on time
-                duration_left.min(self.delta_first_slice)
+                let time_for_slice = duration_left.min(self.delta_first_slice);
+                let (payload, maybe_duration) = produce_slice_payload(
+                    &self.txs_receiver,
+                    Some(parent_block_id),
+                    time_for_slice,
+                )
+                .await;
+                let elapsed = self.delta_first_slice - maybe_duration.unwrap_or(Duration::ZERO);
+                let left = if elapsed >= duration_left {
+                    None
+                } else {
+                    Some(duration_left - elapsed)
+                };
+                (payload, left)
             } else {
-                duration_left
+                produce_slice_payload(&self.txs_receiver, None, duration_left).await
             };
-            let (payload, maybe_duration) =
-                produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
             let is_last = slice_index.is_max() || maybe_duration.is_none();
             let header = SliceHeader {
                 slot,
@@ -301,12 +329,9 @@ where
                 is_last,
             };
 
-            match self
-                .shred_and_disseminate(header, payload, maybe_duration)
-                .await?
-            {
-                Either::Left(block_hash) => return Ok((slot, block_hash)),
-                Either::Right(duration) => duration_left = duration,
+            match self.shred_and_disseminate(header, payload).await? {
+                Some(block_hash) => return Ok((slot, block_hash)),
+                None => duration_left = maybe_duration.unwrap(),
             }
         }
         unreachable!()
@@ -314,19 +339,19 @@ where
 
     /// Shreds and disseminates the slice payload.
     ///
-    /// Returns Ok(Either::Left(hash of the block)) if this is the last slice.
-    /// Returns Ok(Either::Right(duration left in slot)) if this is not the last slice.
+    /// Returns Ok(Some(hash of the block)) if this is the last slice.
+    /// Returns Ok(None) otherwise.
     async fn shred_and_disseminate(
         &self,
         header: SliceHeader,
         payload: SlicePayload,
-        maybe_duration: Option<Duration>,
-    ) -> Result<Either<Hash, Duration>> {
+    ) -> Result<Option<Hash>> {
         let slot = header.slot;
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
         let mut maybe_block_hash = None;
-        let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
+        let shreds = RegularShredder::shred(slice, &self.secret_key)
+            .expect("shredding of valid slice should never fail");
         for s in shreds {
             self.disseminator.send(&s).await?;
             // PERF: move expensive add_shred() call out of block production
@@ -348,16 +373,17 @@ where
                     .await;
             }
         }
-        let ret = if is_last {
-            Either::Left(maybe_block_hash.unwrap())
+        if is_last {
+            Ok(Some(maybe_block_hash.unwrap()))
         } else {
             assert!(maybe_block_hash.is_none());
-            Either::Right(maybe_duration.unwrap())
-        };
-        Ok(ret)
+            Ok(None)
+        }
     }
 }
 
+// TODO: extend docstring
+/// Returns
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
@@ -373,7 +399,7 @@ where
         .unwrap()
         .len();
 
-    // Super hacky!!!  As long as the size of the txs vec fits in a single byte,
+    // HACK: Super hacky!!! As long as the size of the txs vec fits in a single byte,
     // bincode encoding seems to take a single byte so account for that here.
     assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
