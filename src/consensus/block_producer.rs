@@ -76,6 +76,7 @@ where
         delta_block: Duration,
         delta_first_slice: Duration,
     ) -> Self {
+        assert!(delta_block >= delta_first_slice);
         Self {
             secret_key,
             epoch_info,
