@@ -111,13 +111,15 @@ where
                 continue;
             }
 
-            // produce first block
+            // wait for ParentReady or block in previous slot
             let slot_ready = wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
             )
             .await;
+
+            // produce first block
             let start = Instant::now();
             let mut block_id = match slot_ready {
                 SlotReady::Skip => {
