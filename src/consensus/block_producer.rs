@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use color_eyre::Result;
 use either::Either;
 use fastrace::Span;
-use log::{info, warn};
+use log::{debug, info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
 use tokio::sync::{RwLock, oneshot};
@@ -91,12 +91,9 @@ where
             // don't do anything if we are not the leader
             let leader = self.epoch_info.leader(first_slot_in_window);
             if leader.id != self.epoch_info.own_id {
-                continue;
-            }
-
-            if self.pool.read().await.finalized_slot() >= last_slot_in_window {
-                warn!(
-                    "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
+                debug!(
+                    "[val {}] not producing in window {first_slot_in_window}..{last_slot_in_window}, not leader",
+                    self.epoch_info.own_id
                 );
                 continue;
             }
@@ -109,7 +106,12 @@ where
             )
             .await
             {
-                SlotReady::Skip => continue,
+                SlotReady::Skip => {
+                    warn!(
+                        "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
+                    );
+                    continue;
+                }
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
                         // genesis block is already produced so skip it
@@ -163,9 +165,12 @@ where
                 None
             };
 
-            // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
+            // cap timeout for each slice to `DELTA_BLOCK`
+            // makes sure optimistic block production yields before timeout would expire
+            let time_for_slice = duration_left.min(self.delta_block);
             let produce_slice_future =
-                produce_slice_payload(&self.txs_receiver, parent, duration_left);
+                produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
+            // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
             let (payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
@@ -184,10 +189,20 @@ where
                         let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
                         if new_hash != parent_hash {
+                            debug!(
+                                "changed parent from {} in slot {} to {} in slot {}",
+                                &hex::encode(parent_hash)[..8],
+                                parent_slot,
+                                &hex::encode(new_hash)[..8],
+                                new_slot
+                            );
                             payload.parent = Some((new_slot, new_hash));
+                        } else {
+                            debug!("parent is ready, continuing with same parent");
                         }
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
+                        debug!("starting blocktime timer");
                         let duration = Some(self.delta_block - (Instant::now() - start));
                         (payload, duration)
                   }
@@ -392,8 +407,6 @@ async fn wait_for_first_slot(
         return SlotReady::Ready((Slot::genesis(), Hash::default()));
     }
 
-    let last_slot_in_window = first_slot_in_window.last_slot_in_window();
-
     // if already have parent ready, return it, otherwise get a channel to await on
     let mut rx = {
         let mut guard = pool.write().await;
@@ -411,7 +424,7 @@ async fn wait_for_first_slot(
     // - notification that a later slot was finalized.
     tokio::select! {
         res = &mut rx => {
-            let parent = res.expect("Sender dropped channel.");
+            let parent = res.expect("sender dropped channel");
             SlotReady::Ready(parent)
         }
 
@@ -420,23 +433,18 @@ async fn wait_for_first_slot(
                 // PERF: These are burning a CPU. Can we use async here?
                 loop {
                     let last_slot_in_prev_window = first_slot_in_window.prev();
-                    if let Some(hash) = blockstore
-                        .read()
-                        .await
+                    if let Some(hash) = blockstore.read().await
                         .canonical_block_hash(last_slot_in_prev_window)
                     {
                         return Some((last_slot_in_prev_window, hash));
                     }
-                    if pool.read().await.finalized_slot() >= last_slot_in_window {
-                        warn!(
-                            "ignoring window {first_slot_in_window}..{last_slot_in_window} for block production"
-                        );
+                    if pool.read().await.finalized_slot() >= first_slot_in_window {
                         return None;
                     }
                     sleep(Duration::from_millis(1)).await;
                 }
             });
-            handle.await.expect("Error in task")
+            handle.await.expect("error in task")
         } => {
             match res {
                 None => SlotReady::Skip,
