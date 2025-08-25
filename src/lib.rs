@@ -53,7 +53,7 @@ pub struct Block {
 ///
 /// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Transaction(Vec<u8>);
+pub struct Transaction(pub Vec<u8>);
 
 /// Validator information as known about other validators.
 #[derive(Clone, Debug, Serialize, Deserialize)]
