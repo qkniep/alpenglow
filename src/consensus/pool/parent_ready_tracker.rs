@@ -63,8 +63,8 @@ impl ParentReadyTracker {
     /// Marks the given slot as skipped.
     ///
     /// Returns a list of any newly connected parents.
-    pub fn mark_skipped(&mut self, slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
-        let state = self.slot_state(slot);
+    pub fn mark_skipped(&mut self, marked_slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
+        let state = self.slot_state(marked_slot);
         if state.skip {
             return SmallVec::new();
         }
@@ -72,7 +72,7 @@ impl ParentReadyTracker {
 
         // get newly connected future windows
         let mut future_windows = SmallVec::<[Slot; 1]>::new();
-        for slot in slot.future_slots() {
+        for slot in marked_slot.future_slots() {
             if slot.is_start_of_window() {
                 future_windows.push(slot);
             }
@@ -83,11 +83,12 @@ impl ParentReadyTracker {
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
-        for s in slot.slots_in_window().filter(|s| *s <= slot).rev() {
-            let state = self.slot_state(s);
-            if s < slot {
+        let window_slots = marked_slot.slots_in_window();
+        for slot in window_slots.filter(|s| *s <= marked_slot).rev() {
+            let state = self.slot_state(slot);
+            if slot < marked_slot {
                 for nf in &state.notar_fallbacks {
-                    potential_parents.push((s, *nf));
+                    potential_parents.push((slot, *nf));
                 }
             }
             if !state.skip {
@@ -101,10 +102,8 @@ impl ParentReadyTracker {
         let mut newly_certified = SmallVec::new();
         for first_slot in future_windows {
             let state = self.slot_state(first_slot);
-            for p in potential_parents.iter() {
-                state.add_to_ready(*p);
-            }
             for parent in &potential_parents {
+                state.add_to_ready(*parent);
                 newly_certified.push((first_slot, *parent));
             }
         }
