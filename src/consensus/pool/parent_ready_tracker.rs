@@ -36,16 +36,16 @@ impl ParentReadyTracker {
     ///
     /// Returns a list of any newly connected parents.
     /// All of these will have the given block ID as the parent.
-    pub fn mark_notar_fallback(&mut self, id: BlockId) -> Vec<(Slot, BlockId)> {
+    pub fn mark_notar_fallback(&mut self, id: BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
         let (slot, hash) = id;
         let state = self.slot_state(slot);
         if state.notar_fallbacks.contains(&hash) {
-            return Vec::new();
+            return SmallVec::new();
         }
         state.notar_fallbacks.push(hash);
 
         // add this block as valid parent to any skip-connected future windows
-        let mut newly_certified = Vec::new();
+        let mut newly_certified = SmallVec::new();
         for slot in slot.future_slots() {
             let state = self.slot_state(slot);
             if slot.is_start_of_window() {
@@ -63,10 +63,10 @@ impl ParentReadyTracker {
     /// Marks the given slot as skipped.
     ///
     /// Returns a list of any newly connected parents.
-    pub fn mark_skipped(&mut self, slot: Slot) -> Vec<(Slot, BlockId)> {
+    pub fn mark_skipped(&mut self, slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
         let state = self.slot_state(slot);
         if state.skip {
-            return Vec::new();
+            return SmallVec::new();
         }
         state.skip = true;
 
@@ -83,7 +83,6 @@ impl ParentReadyTracker {
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
-
         for s in slot.slots_in_window().filter(|s| *s <= slot).rev() {
             let state = self.slot_state(s);
             if s < slot {
@@ -99,7 +98,7 @@ impl ParentReadyTracker {
         }
 
         // add these as valid parents to future windows
-        let mut newly_certified = Vec::new();
+        let mut newly_certified = SmallVec::new();
         for first_slot in future_windows {
             let state = self.slot_state(first_slot);
             for p in potential_parents.iter() {
@@ -118,8 +117,11 @@ impl ParentReadyTracker {
     ///
     /// Returns at most one newly ready parent (for the highest slot).
     /// For consistency with other functions it still returns a `Vec`.
-    pub fn handle_finalization(&mut self, event: FinalizationEvent) -> Vec<(Slot, BlockId)> {
-        let mut parents_ready = Vec::new();
+    pub fn handle_finalization(
+        &mut self,
+        event: FinalizationEvent,
+    ) -> SmallVec<[(Slot, BlockId); 1]> {
+        let mut parents_ready = SmallVec::<[(Slot, BlockId); 1]>::new();
         if let Some(finalized) = event.finalized {
             parents_ready.extend(self.mark_notar_fallback(finalized));
         }
@@ -129,9 +131,10 @@ impl ParentReadyTracker {
         for slot in event.implicitly_skipped {
             parents_ready.extend(self.mark_skipped(slot));
         }
-        parents_ready.sort_by_key(|(slot, _)| u64::MAX - slot.inner());
-        parents_ready.truncate(1);
-        parents_ready
+
+        // keep only highest slot ParentReady
+        let maybe_parent = parents_ready.iter().max_by_key(|(slot, _)| slot).copied();
+        maybe_parent.into_iter().collect()
     }
 
     /// Returns list of all valid parents for the given slot, as of now.
@@ -240,10 +243,13 @@ mod tests {
         assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
-            tracker.mark_notar_fallback(block),
+            tracker.mark_notar_fallback(block).to_vec(),
             vec![(Slot::new(4), block)]
         );
-        assert_eq!(tracker.mark_skipped(slot), vec![(Slot::new(4), genesis)]);
+        assert_eq!(
+            tracker.mark_skipped(slot).to_vec(),
+            vec![(Slot::new(4), genesis)]
+        );
     }
 
     #[test]
@@ -255,7 +261,7 @@ mod tests {
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(block2).is_empty());
         assert_eq!(
-            tracker.mark_notar_fallback(block3),
+            tracker.mark_notar_fallback(block3).to_vec(),
             vec![(Slot::new(4), block3)]
         );
         assert!(tracker.mark_notar_fallback(block1).is_empty());
@@ -270,14 +276,14 @@ mod tests {
         assert!(tracker.mark_notar_fallback(block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
-            tracker.mark_skipped(Slot::new(3)),
+            tracker.mark_skipped(Slot::new(3)).to_vec(),
             vec![(Slot::new(4), block)]
         );
         assert!(tracker.mark_skipped(Slot::new(4)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(5)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(6)).is_empty());
         assert_eq!(
-            tracker.mark_skipped(Slot::new(7)),
+            tracker.mark_skipped(Slot::new(7)).to_vec(),
             vec![(Slot::new(8), block)]
         );
     }
