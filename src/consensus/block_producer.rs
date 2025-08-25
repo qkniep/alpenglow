@@ -269,13 +269,13 @@ where
             } else {
                 None
             };
-            // make sure first slice is produced on time
             let time_for_slice = if slice_index.is_first() {
+                // make sure first slice is produced on time
                 duration_leaft.min(self.delta_first_slice)
             } else {
                 duration_left
             };
-            let (payload, maybe_duration) = 
+            let (payload, maybe_duration) =
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
             let is_last = slice_index.is_max() || maybe_duration.is_none();
             let header = SliceHeader {
