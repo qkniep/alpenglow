@@ -5,10 +5,10 @@ use rand::RngCore;
 use crate::all2all::TrivialAll2All;
 use crate::consensus::EpochInfo;
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::{Hash, signature};
+use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::SimulatedNetwork;
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::shredder::MAX_DATA_PER_SLICE;
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
@@ -34,6 +34,30 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
     }
     let epoch_info = Arc::new(EpochInfo::new(0, validators));
     (voting_sks, epoch_info)
+}
+
+pub fn generate_validators_with_leader_keys(
+    num_validators: u64,
+) -> (Vec<SecretKey>, Vec<signature::SecretKey>, Arc<EpochInfo>) {
+    let mut rng = rand::rng();
+    let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
+    let mut validators = Vec::new();
+    for i in 0..num_validators {
+        sks.push(signature::SecretKey::new(&mut rng));
+        voting_sks.push(SecretKey::new(&mut rng));
+        validators.push(ValidatorInfo {
+            id: i,
+            stake: 1,
+            pubkey: sks[i as usize].to_pk(),
+            voting_pubkey: voting_sks[i as usize].to_pk(),
+            all2all_address: String::new(),
+            disseminator_address: String::new(),
+            repair_address: String::new(),
+        });
+    }
+    let epoch_info = Arc::new(EpochInfo::new(0, validators));
+    (voting_sks, sks, epoch_info)
 }
 
 pub async fn generate_all2all_instances(
@@ -75,6 +99,24 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         slices.push(Slice::from_parts(header, payload, None));
     }
     slices
+}
+
+pub fn create_random_shredded_block(
+    slot: Slot,
+    num_slices: usize,
+    sk: &signature::SecretKey,
+) -> (Hash, MerkleTree, Vec<Vec<Shred>>) {
+    let mut shreds = Vec::with_capacity(num_slices);
+    for slice in create_random_block(slot, num_slices) {
+        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap());
+    }
+    let merkle_roots = shreds
+        .iter()
+        .map(|slice_shreds| slice_shreds[0].merkle_root)
+        .collect::<Vec<_>>();
+    let tree = MerkleTree::new(&merkle_roots);
+    let block_hash = tree.get_root();
+    (block_hash, tree, shreds)
 }
 
 pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
