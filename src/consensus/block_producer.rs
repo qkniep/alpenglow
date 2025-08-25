@@ -271,7 +271,7 @@ where
             };
             let time_for_slice = if slice_index.is_first() {
                 // make sure first slice is produced on time
-                duration_leaft.min(self.delta_first_slice)
+                duration_left.min(self.delta_first_slice)
             } else {
                 duration_left
             };
