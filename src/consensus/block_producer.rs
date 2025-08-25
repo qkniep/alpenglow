@@ -270,12 +270,13 @@ where
                 None
             };
             // make sure first slice is produced on time
-            let (payload, maybe_duration) = if slice_index.is_first() {
-                let time_for_slice = duration_left.min(self.delta_first_slice);
-                produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await
+            let time_for_slice = if slice_index.is_first() {
+                duration_leaft.min(self.delta_first_slice)
             } else {
-                produce_slice_payload(&self.txs_receiver, parent, duration_left).await
+                duration_left
             };
+            let (payload, maybe_duration) = 
+                produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
             let is_last = slice_index.is_max() || maybe_duration.is_none();
             let header = SliceHeader {
                 slot,
