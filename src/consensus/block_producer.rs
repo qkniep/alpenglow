@@ -270,7 +270,6 @@ where
         parent_block_id: BlockId,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
-        assert!(slot.is_start_of_window());
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
             "producing block in slot {} with ready parent {} in slot {}",
