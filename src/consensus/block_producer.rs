@@ -170,7 +170,7 @@ where
                 None
             };
 
-            let time_for_slice = if slice_index == SliceIndex::first() {
+            let time_for_slice = if slice_index.is_first() {
                 // make sure first slice is produced on time
                 // TODO: this can be made more accurate, only needed if production of first slice
                 // still takes more than delta_first_slice after we saw ParentReady, not if:
