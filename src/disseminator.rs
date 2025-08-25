@@ -3,7 +3,12 @@
 
 //! Fast block dissemination protocols.
 //!
+//! This module provides the [`Disseminator`] trait for block dissemination protocols.
 //!
+//! Also, this module provides implementations of three dissemination protocols:
+//! - [`TrivialDisseminator`] implements a leader-to-everyone broadcast protocol.
+//! - [`Rotor`] implements Alpenglow's Rotor, which is an evolution of Turbine.
+//! - [`Turbine`] implements Solana's basic Turbine protocol.
 
 pub mod rotor;
 pub mod trivial;
