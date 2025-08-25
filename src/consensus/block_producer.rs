@@ -273,12 +273,9 @@ where
                 is_last,
             };
 
-            match self
-                .shred_and_disseminate(header, payload, maybe_duration)
-                .await?
-            {
-                Either::Left(block_hash) => return Ok((slot, block_hash)),
-                Either::Right(duration) => duration_left = duration,
+            match self.shred_and_disseminate(header, payload).await? {
+                Some(block_hash) => return Ok((slot, block_hash)),
+                None => duration_left = maybe_duration.unwrap(),
             }
         }
         unreachable!()
@@ -323,12 +320,9 @@ where
                 is_last,
             };
 
-            match self
-                .shred_and_disseminate(header, payload, maybe_duration)
-                .await?
-            {
-                Either::Left(block_hash) => return Ok((slot, block_hash)),
-                Either::Right(duration) => duration_left = duration,
+            match self.shred_and_disseminate(header, payload).await? {
+                Some(block_hash) => return Ok((slot, block_hash)),
+                None => duration_left = maybe_duration.unwrap(),
             }
         }
         unreachable!()
@@ -336,19 +330,19 @@ where
 
     /// Shreds and disseminates the slice payload.
     ///
-    /// Returns Ok(Either::Left(hash of the block)) if this is the last slice.
-    /// Returns Ok(Either::Right(duration left in slot)) if this is not the last slice.
+    /// Returns Ok(Some(hash of the block)) if this is the last slice.
+    /// Returns Ok(None) otherwise.
     async fn shred_and_disseminate(
         &self,
         header: SliceHeader,
         payload: SlicePayload,
-        maybe_duration: Option<Duration>,
-    ) -> Result<Either<Hash, Duration>> {
+    ) -> Result<Option<Hash>> {
         let slot = header.slot;
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
         let mut maybe_block_hash = None;
-        let shreds = RegularShredder::shred(slice, &self.secret_key).unwrap();
+        let shreds = RegularShredder::shred(slice, &self.secret_key)
+            .expect("shredding of valid slice should never fail");
         for s in shreds {
             self.disseminator.send(&s).await?;
             // PERF: move expensive add_shred() call out of block production
@@ -370,13 +364,12 @@ where
                     .await;
             }
         }
-        let ret = if is_last {
-            Either::Left(maybe_block_hash.unwrap())
+        if is_last {
+            Ok(Some(maybe_block_hash.unwrap()))
         } else {
             assert!(maybe_block_hash.is_none());
-            Either::Right(maybe_duration.unwrap())
-        };
-        Ok(ret)
+            Ok(None)
+        }
     }
 }
 
