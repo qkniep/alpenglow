@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Block production, leader-side of the consensus protocol.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +25,12 @@ use crate::{
     BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
 };
 
+/// Produces blocks from transactions and dissminates them.
+///
+/// This is the leader's side of the consensus protocol.
+/// Produces blocks in accordance with the consensus protocol's timeouts.
+/// Receives transactions from clients via a [`Network`] instance and packs them into blocks.
+/// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
     /// This is not the same as the voting secret key, which is held by [`Votor`].
@@ -276,6 +284,9 @@ where
         unreachable!()
     }
 
+    /// Produces a block in the situation where we have already seen the `ParentReady` event.
+    ///
+    /// The `parent_block_id` refers to the block that is the ready parent.
     pub(crate) async fn produce_block_parent_ready(
         &self,
         slot: Slot,
