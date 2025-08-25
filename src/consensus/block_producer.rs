@@ -766,7 +766,13 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(blockstore, pool, disseminator, Duration::from_micros(0));
+        let block_producer = setup(
+            blockstore,
+            pool,
+            disseminator,
+            Duration::from_micros(0),
+            Duration::from_millis(0),
+        );
 
         let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
 
