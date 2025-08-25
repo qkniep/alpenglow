@@ -44,6 +44,8 @@ fn main() -> Result<()> {
 
     // create socket on arbitrary port
     let socket = UdpSocket::bind("0.0.0.0:0")?;
+    // prevent blocking forever
+    socket.set_write_timeout(Some(Duration::from_secs(1)))?;
 
     // initial delay
     sleep(Duration::from_secs(args.initial_delay_secs.unwrap_or(0)));
