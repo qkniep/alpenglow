@@ -20,6 +20,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
+use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
 use crate::{All2All, Slot, ValidatorId};
@@ -252,12 +253,16 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
         );
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(DELTA_TIMEOUT).await;
+            tokio::time::sleep(DELTA_TIMEOUT + DELTA_FIRST_SLICE).await;
             // HACK: ignoring errors to prevent panic when shutting down votor
             let event = VotorEvent::TimeoutCrashedLeader(slot);
             let _ = sender.send(event).await;
             for s in slot.slots_in_window() {
-                tokio::time::sleep(DELTA_BLOCK).await;
+                if s.is_start_of_window() {
+                    tokio::time::sleep(DELTA_BLOCK - DELTA_FIRST_SLICE).await;
+                } else {
+                    tokio::time::sleep(DELTA_BLOCK).await;
+                }
                 let event = VotorEvent::Timeout(s);
                 let _ = sender.send(event).await;
             }
@@ -353,6 +358,8 @@ impl VotorEvent {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use tokio::sync::mpsc;
 
     use super::*;
@@ -415,7 +422,7 @@ mod tests {
         tx.send(event).await.unwrap();
         let vote = match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => v,
-            _ => unreachable!(),
+            m => panic!("other msg: {m:?}"),
         };
         assert!(vote.is_notar());
         assert_eq!(vote.slot(), slot);
@@ -427,6 +434,121 @@ mod tests {
         match other_a2a.receive().await.unwrap() {
             NetworkMessage::Vote(v) => {
                 assert!(v.is_final());
+                assert_eq!(v.slot(), slot);
+            }
+            m => panic!("other msg: {m:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn notar_out_of_order() {
+        let (other_a2a, tx, _) = start_votor().await;
+        let (slot1, hash1) = (Slot::genesis().next(), [1u8; 32]);
+        let (slot2, hash2) = (slot1.next(), [2u8; 32]);
+
+        // give later block to votor first
+        let event = VotorEvent::FirstShred(slot2);
+        tx.send(event).await.unwrap();
+        let block_info = BlockInfo {
+            hash: hash2,
+            parent: (slot1, hash1),
+        };
+        let event = VotorEvent::Block {
+            slot: slot2,
+            block_info,
+        };
+        tx.send(event).await.unwrap();
+
+        // should not vote yet
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), other_a2a.receive())
+                .await
+                .is_err()
+        );
+
+        // now notify votor of earlier block
+        let event = VotorEvent::FirstShred(slot1);
+        tx.send(event).await.unwrap();
+        let block_info = BlockInfo {
+            hash: hash1,
+            parent: (Slot::genesis(), Hash::default()),
+        };
+        let event = VotorEvent::Block {
+            slot: slot1,
+            block_info,
+        };
+        tx.send(event).await.unwrap();
+
+        // should now see notar votes
+        for _ in 0..2 {
+            match other_a2a.receive().await.unwrap() {
+                NetworkMessage::Vote(vote) => {
+                    assert!(vote.is_notar());
+                    assert!(vote.slot() == slot1 || vote.slot() == slot2);
+                }
+                m => panic!("other msg: {m:?}"),
+            };
+        }
+    }
+
+    #[tokio::test]
+    async fn safe_to_notar() {
+        let (other_a2a, tx, _) = start_votor().await;
+        let slot = Slot::genesis().next();
+
+        // wait for skip votes
+        for slot in slot.slots_in_window() {
+            if slot.is_genesis() {
+                continue;
+            }
+            if let Ok(msg) = other_a2a.receive().await {
+                match msg {
+                    NetworkMessage::Vote(v) => assert!(v.is_skip()),
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        // vote notar-fallback after safe-to-notar
+        let event = VotorEvent::SafeToNotar(slot, [1; 32]);
+        tx.send(event).await.unwrap();
+        match other_a2a.receive().await.unwrap() {
+            NetworkMessage::Vote(v) => {
+                assert!(v.is_notar_fallback());
+                assert_eq!(v.slot(), slot);
+                assert_eq!(v.block_hash(), Some([1; 32]));
+            }
+            m => panic!("other msg: {m:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn safe_to_skip() {
+        let (other_a2a, tx, _) = start_votor().await;
+        let slot = Slot::genesis().next();
+
+        // vote notar after seeing block
+        let event = VotorEvent::FirstShred(slot);
+        tx.send(event).await.unwrap();
+        let block_info = BlockInfo {
+            hash: [1u8; 32],
+            parent: (Slot::genesis(), Hash::default()),
+        };
+        let event = VotorEvent::Block { slot, block_info };
+        tx.send(event).await.unwrap();
+        let vote = match other_a2a.receive().await.unwrap() {
+            NetworkMessage::Vote(v) => v,
+            m => panic!("other msg: {m:?}"),
+        };
+        assert!(vote.is_notar());
+        assert_eq!(vote.slot(), slot);
+
+        // vote skip-fallback after safe-to-skip
+        let event = VotorEvent::SafeToSkip(slot);
+        tx.send(event).await.unwrap();
+        match other_a2a.receive().await.unwrap() {
+            NetworkMessage::Vote(v) => {
+                assert!(v.is_skip_fallback());
                 assert_eq!(v.slot(), slot);
             }
             m => panic!("other msg: {m:?}"),
