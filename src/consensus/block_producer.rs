@@ -314,10 +314,15 @@ where
             let (payload, mut maybe_duration) =
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
             if slice_index.is_first() {
-                if let Some(duration) = maybe_duration {
-                    maybe_duration = Some(duration_left.saturating_sub(duration));
+                let left = if let Some(duration) = maybe_duration {
+                    duration_left.saturating_sub(duration)
                 } else {
-                    maybe_duration = Some(duration_left.saturating_sub(self.delta_first_slice));
+                    duration_left.saturating_sub(self.delta_first_slice)
+                };
+                if left > Duration::ZERO {
+                    maybe_duration = Some(left);
+                } else {
+                    maybe_duration = None;
                 }
             }
             let is_last = slice_index.is_max() || maybe_duration.is_none();
