@@ -218,8 +218,13 @@ where
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
-                        let duration = Some(self.delta_block - (Instant::now() - start));
-                        (payload, duration)
+                        let elapsed = Instant::now() - start;
+                        let duration = self.delta_block.saturating_sub(elapsed);
+                        if duration.is_zero() {
+                            (payload, None)
+                        } else {
+                            (payload, Some(duration))
+                        }
                   }
                 }
             };
