@@ -184,17 +184,12 @@ where
             parent_slot,
         );
 
-        // only start the DELTA_BLOCK timer once the ParentReady event is seen
+        // only start the DELTA_BLOCK timer later, when ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
-            let parent = if slice_index.is_first() {
-                Some(parent_block_id)
-            } else {
-                None
-            };
-
+            let parent = slice_index.is_first().then_some(parent_block_id);
             let time_for_slice = if slice_index.is_first() {
-                // make sure first slice is produced on time
+                // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
                 // TODO: this can be made more accurate, only needed if production of first slice
                 // still takes more than delta_first_slice after we saw ParentReady, not if:
                 // 1. first slice is produced before ParentReady is seen, OR
@@ -209,13 +204,13 @@ where
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let (mut payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
+            let (payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
                 pin!(produce_slice_future);
                 tokio::select! {
                     res = &mut produce_slice_future => {
-                        let (payload, _new_duration_left) = res;
+                        let (payload, _slice_duration_left) = res;
                         // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
                         (payload, Duration::MAX)
                     }
@@ -225,7 +220,7 @@ where
 
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.unwrap();
-                        let (mut payload, _maybe_duration) = produce_slice_future.await;
+                        let (mut payload, _slice_duration_left) = produce_slice_future.await;
                         if new_hash != parent_hash {
                             assert_ne!(new_slot, parent_slot);
                             debug!(
@@ -242,29 +237,15 @@ where
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
-                        let elapsed = Instant::now() - start;
-                        let duration = self.delta_block.saturating_sub(elapsed);
+                        let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
                   }
                 }
             };
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
-            if is_last && !parent_ready_receiver.is_terminated() {
-                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                if new_hash != parent_hash {
-                    assert_ne!(new_slot, parent_slot);
-                    debug!(
-                        "changed parent from {} in slot {} to {} in slot {}",
-                        &hex::encode(parent_hash)[..8],
-                        parent_slot,
-                        &hex::encode(new_hash)[..8],
-                        new_slot
-                    );
-                    payload.parent = Some((new_slot, new_hash));
-                } else {
-                    debug!("parent is ready, continuing with same parent");
-                }
+            if is_last {
+                assert!(parent_ready_receiver.is_terminated());
             }
             let header = SliceHeader {
                 slot,
@@ -539,17 +520,17 @@ mod tests {
         let duration_left = Duration::from_micros(0);
 
         let parent = None;
-        let (payload, maybe_duration) =
+        let (payload, slice_duration_left) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert_eq!(maybe_duration, Duration::ZERO);
+        assert_eq!(slice_duration_left, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
 
         let parent = Some((Slot::genesis(), Hash::default()));
-        let (payload, maybe_duration) =
+        let (payload, slice_duration_left) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert_eq!(maybe_duration, Duration::ZERO);
+        assert_eq!(slice_duration_left, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
@@ -572,9 +553,9 @@ mod tests {
         });
 
         let parent = None;
-        let (payload, maybe_duration) =
+        let (payload, slice_duration_left) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert!(maybe_duration > Duration::ZERO);
+        assert!(slice_duration_left > Duration::ZERO);
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
         assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
