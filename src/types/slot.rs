@@ -76,7 +76,7 @@ impl Slot {
 
     /// Returns the previous slot before `self`.
     pub fn prev(&self) -> Self {
-        Self(self.0 - 1)
+        Self(self.0.checked_sub(1).unwrap())
     }
 
     /// Returns `true` iff this slot is part of the genesis window.
