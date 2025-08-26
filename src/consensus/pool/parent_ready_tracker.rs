@@ -125,8 +125,8 @@ impl ParentReadyTracker {
         }
 
         // keep only highest slot ParentReady
-        let maybe_parent = parents_ready.iter().max_by_key(|(slot, _)| slot).copied();
-        maybe_parent.into_iter().collect()
+        let maybe_parent = parents_ready.iter().max_by_key(|(slot, _)| slot);
+        maybe_parent.into_iter().copied().collect()
     }
 
     /// Returns list of all valid parents for the given slot, as of now.
