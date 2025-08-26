@@ -165,12 +165,11 @@ impl ParentReadyTracker {
 impl Default for ParentReadyTracker {
     /// Creates a new empty tracker.
     ///
-    /// Only the genesis block is considered a valid parent for the first leader window.
+    /// Initially, only the genesis block is considered notarized-fallback.
     fn default() -> Self {
-        let genesis_block = (Slot::genesis(), Hash::default());
         let mut map = HashMap::new();
-        let mut genesis_parent_state = ParentReadyState::new([genesis_block]);
-        genesis_parent_state.skip = true;
+        let mut genesis_parent_state = ParentReadyState::default();
+        genesis_parent_state.notar_fallbacks = SmallVec::from([Hash::default()]);
         map.insert(Slot::genesis(), genesis_parent_state);
         Self(map)
     }
