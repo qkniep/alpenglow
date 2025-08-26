@@ -56,7 +56,6 @@ impl ParentReadyTracker {
                 break;
             }
         }
-
         newly_certified
     }
 
@@ -69,17 +68,6 @@ impl ParentReadyTracker {
             return SmallVec::new();
         }
         state.skip = true;
-
-        // get newly connected future windows
-        let mut future_windows = SmallVec::<[Slot; 1]>::new();
-        for slot in marked_slot.future_slots() {
-            if slot.is_start_of_window() {
-                future_windows.push(slot);
-            }
-            if !self.slot_state(slot).skip {
-                break;
-            }
-        }
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
@@ -100,11 +88,16 @@ impl ParentReadyTracker {
 
         // add these as valid parents to future windows
         let mut newly_certified = SmallVec::new();
-        for first_slot in future_windows {
-            let state = self.slot_state(first_slot);
-            for parent in &potential_parents {
-                state.add_to_ready(*parent);
-                newly_certified.push((first_slot, *parent));
+        for slot in marked_slot.future_slots() {
+            let state = self.slot_state(slot);
+            if slot.is_start_of_window() {
+                for parent in &potential_parents {
+                    state.add_to_ready(*parent);
+                    newly_certified.push((slot, *parent));
+                }
+            }
+            if !state.skip {
+                break;
             }
         }
         newly_certified
@@ -267,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn no_double_counting() {
+    fn no_double_counting_skip_chain() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
         let block = (slot, [1; 32]);
@@ -284,6 +277,25 @@ mod tests {
         assert_eq!(
             tracker.mark_skipped(Slot::new(7)).to_vec(),
             vec![(Slot::new(8), block)]
+        );
+    }
+
+    #[test]
+    fn no_double_counting_notar_and_skip() {
+        assert_eq!(Slot::genesis().slots_in_window().count(), 4);
+        let slot = Slot::genesis().next();
+        let block = (slot, [1; 32]);
+        let mut tracker = ParentReadyTracker::default();
+        assert!(tracker.mark_notar_fallback(block).is_empty());
+        assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
+        assert_eq!(
+            tracker.mark_skipped(Slot::new(3)).to_vec(),
+            vec![(Slot::new(4), block)]
+        );
+        // notably this does not re-issue a ParentReady for `block`
+        assert_eq!(
+            tracker.mark_skipped(Slot::new(1)).to_vec(),
+            vec![(Slot::new(4), (Slot::genesis(), Hash::default()))]
         );
     }
 
