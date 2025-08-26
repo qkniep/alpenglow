@@ -305,7 +305,7 @@ where
         for slice_index in SliceIndex::all() {
             let (payload, maybe_duration) = if slice_index.is_first() {
                 // make sure first slice is produced on time
-                let time_for_slice = duration_left.min(self.delta_first_slice);
+                let time_for_slice = self.delta_first_slice;
                 let (payload, maybe_duration) = produce_slice_payload(
                     &self.txs_receiver,
                     Some(parent_block_id),
