@@ -313,11 +313,8 @@ where
                 )
                 .await;
                 let elapsed = self.delta_first_slice - maybe_duration.unwrap_or(Duration::ZERO);
-                let left = if elapsed >= duration_left {
-                    None
-                } else {
-                    Some(duration_left - elapsed)
-                };
+                let left = (elapsed < duration_left).then_some(duration_left - elapsed);
+
                 (payload, left)
             } else {
                 produce_slice_payload(&self.txs_receiver, None, duration_left).await
