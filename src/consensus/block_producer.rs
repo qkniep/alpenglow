@@ -187,7 +187,7 @@ where
         // only start the DELTA_BLOCK timer later, when ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
-            let parent = slice_index.is_first().then_some(parent_block_id);
+            let slice_parent = slice_index.is_first().then_some(parent_block_id);
             let time_for_slice = if slice_index.is_first() {
                 // make sure first slice is produced quickly enough so that other nodes do not generate the `TimeoutCrashedLeader` event
                 // TODO: this can be made more accurate, only needed if production of first slice
@@ -201,7 +201,7 @@ where
                 duration_left.min(self.delta_block)
             };
             let produce_slice_future =
-                produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
+                produce_slice_payload(&self.txs_receiver, slice_parent, time_for_slice);
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
             let (payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
