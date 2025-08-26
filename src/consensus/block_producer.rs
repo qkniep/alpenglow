@@ -274,7 +274,10 @@ where
 
             match self.shred_and_disseminate(header, payload).await? {
                 Some(block_hash) => return Ok((slot, block_hash)),
-                None => duration_left = new_duration_left,
+                None => {
+                    assert!(!new_duration_left.is_zero());
+                    duration_left = new_duration_left;
+                }
             }
         }
         unreachable!()
@@ -324,7 +327,10 @@ where
 
             match self.shred_and_disseminate(header, payload).await? {
                 Some(block_hash) => return Ok((slot, block_hash)),
-                None => duration_left = new_duration_left,
+                None => {
+                    assert!(!new_duration_left.is_zero());
+                    duration_left = new_duration_left;
+                }
             }
         }
         unreachable!()
