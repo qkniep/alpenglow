@@ -304,7 +304,7 @@ where
         let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
             let (payload, maybe_duration) = if slice_index.is_first() {
-                // make sure first slice is produced on time
+                // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
                 let time_for_slice = self.delta_first_slice;
                 let (payload, maybe_duration) = produce_slice_payload(
                     &self.txs_receiver,
