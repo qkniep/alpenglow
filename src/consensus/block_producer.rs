@@ -235,7 +235,7 @@ where
                             debug!("parent is ready, continuing with same parent");
                         }
                         // ParentReady was seen, start the DELTA_BLOCK timer
-                        // account for the time it took to finish producing the slice
+                        // account for the time it took to finish producing current slice
                         debug!("starting blocktime timer");
                         let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
@@ -306,6 +306,7 @@ where
                 is_last,
             };
 
+            // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
             match self.shred_and_disseminate(header, payload).await? {
                 Some(block_hash) => return Ok((slot, block_hash)),
                 None => {
@@ -358,8 +359,13 @@ where
     }
 }
 
-// TODO: extend docstring
-/// Returns
+/// Produces a slice (payload only).
+///
+/// Packs transactions received from the network into the slice until either:
+/// - The slice is full (accounting for encoding of parent), OR
+/// - `duration_left` time has elapsed.
+///
+/// Returns the slice payload and the amount of time left afterwards.
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
