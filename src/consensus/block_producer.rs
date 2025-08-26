@@ -189,12 +189,12 @@ where
         for slice_index in SliceIndex::all() {
             let parent = slice_index.is_first().then_some(parent_block_id);
             let time_for_slice = if slice_index.is_first() {
-                // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
+                // make sure first slice is produced quickly enough so that other nodes do not generate the `TimeoutCrashedLeader` event
                 // TODO: this can be made more accurate, only needed if production of first slice
                 // still takes more than delta_first_slice after we saw ParentReady, not if:
                 // 1. first slice is produced before ParentReady is seen, OR
                 // 2. first slice finishes at most delta_first_slice after ParentReady is seen
-                duration_left.min(self.delta_first_slice)
+                self.delta_first_slice
             } else {
                 // cap timeout for each slice to `DELTA_BLOCK`
                 // makes sure optimistic block production yields before timeout would expire
@@ -219,7 +219,7 @@ where
                         // It's a NOP if we have been using the same parent as before.
 
                         let start = Instant::now();
-                        let (new_slot, new_hash) = res.unwrap();
+                        let (new_slot, new_hash) = res.expect("sender dropped");
                         let (mut payload, _slice_duration_left) = produce_slice_future.await;
                         if new_hash != parent_hash {
                             assert_ne!(new_slot, parent_slot);
@@ -284,7 +284,7 @@ where
         let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
             let (payload, new_duration_left) = if slice_index.is_first() {
-                // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
+                // make sure first slice is produced quickly enough so that other nodes do not generate the `TimeoutCrashedLeader` event
                 let time_for_slice = self.delta_first_slice;
                 let (payload, slice_duration_left) = produce_slice_payload(
                     &self.txs_receiver,
