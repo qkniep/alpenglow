@@ -329,9 +329,9 @@ where
         let slot = header.slot;
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
-        let mut maybe_block_hash = None;
         let shreds = RegularShredder::shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
+        let mut maybe_block_hash = None;
         for s in shreds {
             self.disseminator.send(&s).await?;
             // PERF: move expensive add_shred() call out of block production
@@ -353,12 +353,8 @@ where
                     .await;
             }
         }
-        if is_last {
-            Ok(Some(maybe_block_hash.unwrap()))
-        } else {
-            assert!(maybe_block_hash.is_none());
-            Ok(None)
-        }
+        assert_eq!(maybe_block_hash.is_some(), is_last);
+        Ok(maybe_block_hash)
     }
 }
 
