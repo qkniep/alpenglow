@@ -112,7 +112,7 @@ where
                 continue;
             }
 
-            // wait for ParentReady or block in previous slot
+            // wait for (a) ParentReady, OR (b) block in previous slot
             let slot_ready = wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
@@ -131,7 +131,7 @@ where
                 }
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
-                        // genesis block is already produced so skip it
+                        // skip genesis
                         (first_slot_in_window, Hash::default())
                     } else {
                         self.produce_block_parent_ready(first_slot_in_window, parent)
@@ -247,11 +247,7 @@ where
             if is_last {
                 assert!(parent_ready_receiver.is_terminated());
             }
-            let header = SliceHeader {
-                slot,
-                slice_index,
-                is_last,
-            };
+            let header = SliceHeader::new(slot, slice_index, is_last);
 
             match self.shred_and_disseminate(header, payload).await? {
                 Some(block_hash) => return Ok((slot, block_hash)),
@@ -300,11 +296,7 @@ where
                 produce_slice_payload(&self.txs_receiver, None, duration_left).await
             };
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
-            let header = SliceHeader {
-                slot,
-                slice_index,
-                is_last,
-            };
+            let header = SliceHeader::new(slot, slice_index, is_last);
 
             // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
             match self.shred_and_disseminate(header, payload).await? {
@@ -320,16 +312,19 @@ where
 
     /// Shreds and disseminates the slice payload.
     ///
-    /// Returns Ok(Some(hash of the block)) if this is the last slice.
-    /// Returns Ok(None) otherwise.
+    /// Returns `Ok(Some(block_hash))` if this is the last slice, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending via the [`Disseminator`] fails.
     async fn shred_and_disseminate(
         &self,
         header: SliceHeader,
         payload: SlicePayload,
     ) -> Result<Option<Hash>> {
-        let slot = header.slot;
-        let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
+        let slot = slice.slot;
+        let is_last = slice.is_last;
         let shreds = RegularShredder::shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         let mut maybe_block_hash = None;
