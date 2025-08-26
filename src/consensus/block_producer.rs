@@ -209,15 +209,15 @@ where
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let (mut payload, maybe_duration) = if parent_ready_receiver.is_terminated() {
+            let (mut payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
                 pin!(produce_slice_future);
                 tokio::select! {
                     res = &mut produce_slice_future => {
-                        let (payload, _maybe_duration) = res;
+                        let (payload, _new_duration_left) = res;
                         // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
-                        (payload, Some(Duration::MAX))
+                        (payload, Duration::MAX)
                     }
                     res = &mut parent_ready_receiver => {
                         // Got ParentReady event while producing slice.
@@ -244,16 +244,12 @@ where
                         debug!("starting blocktime timer");
                         let elapsed = Instant::now() - start;
                         let duration = self.delta_block.saturating_sub(elapsed);
-                        if duration.is_zero() {
-                            (payload, None)
-                        } else {
-                            (payload, Some(duration))
-                        }
+                        (payload, duration)
                   }
                 }
             };
 
-            let is_last = slice_index.is_max() || maybe_duration.is_none();
+            let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if is_last && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
                 if new_hash != parent_hash {
@@ -278,7 +274,7 @@ where
 
             match self.shred_and_disseminate(header, payload).await? {
                 Some(block_hash) => return Ok((slot, block_hash)),
-                None => duration_left = maybe_duration.unwrap(),
+                None => duration_left = new_duration_left,
             }
         }
         unreachable!()
@@ -303,23 +299,23 @@ where
 
         let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
-            let (payload, maybe_duration) = if slice_index.is_first() {
+            let (payload, new_duration_left) = if slice_index.is_first() {
                 // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
                 let time_for_slice = self.delta_first_slice;
-                let (payload, maybe_duration) = produce_slice_payload(
+                let (payload, slice_duration_left) = produce_slice_payload(
                     &self.txs_receiver,
                     Some(parent_block_id),
                     time_for_slice,
                 )
                 .await;
-                let elapsed = self.delta_first_slice - maybe_duration.unwrap_or(Duration::ZERO);
-                let left = (elapsed < duration_left).then_some(duration_left - elapsed);
+                let elapsed = self.delta_first_slice - slice_duration_left;
+                let left = duration_left.saturating_sub(elapsed);
 
                 (payload, left)
             } else {
                 produce_slice_payload(&self.txs_receiver, None, duration_left).await
             };
-            let is_last = slice_index.is_max() || maybe_duration.is_none();
+            let is_last = slice_index.is_max() || new_duration_left.is_zero();
             let header = SliceHeader {
                 slot,
                 slice_index,
@@ -328,7 +324,7 @@ where
 
             match self.shred_and_disseminate(header, payload).await? {
                 Some(block_hash) => return Ok((slot, block_hash)),
-                None => duration_left = maybe_duration.unwrap(),
+                None => duration_left = new_duration_left,
             }
         }
         unreachable!()
@@ -385,7 +381,7 @@ async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
     duration_left: Duration,
-) -> (SlicePayload, Option<Duration>)
+) -> (SlicePayload, Duration)
 where
     T: Network + Sync + Send + 'static,
 {
@@ -410,7 +406,7 @@ where
         let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
         let res = tokio::select! {
             () = tokio::time::sleep(sleep_duration) => {
-                break None;
+                break Duration::ZERO;
             }
             res = txs_receiver.receive() => {
                 res
@@ -428,8 +424,7 @@ where
             }
         }
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
-            let duration_left = duration_left.saturating_sub(Instant::now() - start_time);
-            break Some(duration_left);
+            break duration_left.saturating_sub(Instant::now() - start_time);
         }
     };
 
@@ -540,7 +535,7 @@ mod tests {
         let parent = None;
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert!(maybe_duration.is_none());
+        assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
@@ -548,7 +543,7 @@ mod tests {
         let parent = Some((Slot::genesis(), Hash::default()));
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert!(maybe_duration.is_none());
+        assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
@@ -573,7 +568,7 @@ mod tests {
         let parent = None;
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert!(maybe_duration.is_some());
+        assert!(maybe_duration > Duration::ZERO);
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
         assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
