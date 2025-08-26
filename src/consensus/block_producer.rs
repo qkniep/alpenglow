@@ -399,7 +399,7 @@ where
         .unwrap()
         .len();
 
-    // HACK: Super hacky!!! As long as the size of the txs vec fits in a single byte,
+    // HACK: As long as the size of the txs vec fits in a single byte,
     // bincode encoding seems to take a single byte so account for that here.
     assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
