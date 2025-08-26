@@ -424,7 +424,7 @@ where
             }
         }
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
-            break duration_left.saturating_sub(Instant::now() - start_time);
+            break duration_left.saturating_sub(start_time.elapsed());
         }
     };
 
