@@ -348,7 +348,8 @@ impl Pool for PoolImpl {
         // TODO: set bounds exactly correctly,
         //       use correct validator set & stake distribution
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        if slot <= self.finalized_slot() || slot >= slot_far_in_future {
+        // NOTE: This needs to be `< finalize_slot` to allow for later notarization.
+        if slot < self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
