@@ -319,6 +319,11 @@ impl<N: Network> Repair<N> {
                         .await
                         .add_block((slot, block_info.hash), block_info.parent)
                         .await;
+                    debug!(
+                        "successfully repaired block {} in slot {}",
+                        &hex::encode(block_hash)[..8],
+                        slot
+                    );
                 }
             }
         }
