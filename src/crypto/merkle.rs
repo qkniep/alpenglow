@@ -13,14 +13,31 @@
 //! - ambiguity between leaf and inner nodes with unknown tree height
 
 use hex_literal::hex;
+use static_assertions::const_assert;
 
 use super::Hash;
 use super::hash::hash_all;
+use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 
 const LEAF_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEAF-NODE";
 const LEFT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEFT-NODE";
 const RIGHT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE RIGHT-NODE";
 
+/// Pre-calculated empty roots for up to 2^24 leaves.
+///
+/// For each given `height` these are calculated as:
+/// ```rust
+/// use alpenglow::crypto::hash::Hash;
+/// use alpenglow::crypto::merkle::MerkleTree;
+///
+/// fn empty_root(height: usize) -> Hash {
+///     let data = vec![b""; 1 << height];
+///     let tree = MerkleTree::new(&data);
+///     tree.get_root()
+/// }
+/// ```
+///
+/// Used for efficient check whether leaf is last in [`MerkleTree::check_proof_last`].
 const EMPTY_ROOTS: [Hash; 24] = [
     hex!("50c4672b7a309041b109458b1f3a11f82c225970975a95cd1025209301fcbcab"),
     hex!("2aa0cc78c82100f0fa3a26606a9794a928d5ddd0f5d381f93d6b0d64d065aa6f"),
@@ -47,6 +64,7 @@ const EMPTY_ROOTS: [Hash; 24] = [
     hex!("826bfb27619fbf799f6000e4a3acdec264a13661e9c730e265c1c74c63501cb3"),
     hex!("720d56bf703cd7677805d33e73d2e7cb6104c932b62458ac3ae2f9d7469a1f38"),
 ];
+const_assert!(MAX_SLICES_PER_BLOCK.ilog2() < 24);
 
 /// Implementation of a Merkle tree.
 pub struct MerkleTree {
