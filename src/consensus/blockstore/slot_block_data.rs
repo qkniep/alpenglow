@@ -36,11 +36,11 @@ pub struct SlotBlockData {
     /// Slot number this data corresponds to.
     slot: Slot,
     /// Spot for storing the block that was received via block dissemination.
-    pub(super) canonical: BlockData,
+    pub(super) disseminated: BlockData,
     /// Spot for storing alternative blocks that might later be received via repair.
     pub(super) alternatives: BTreeMap<Hash, BlockData>,
     /// Whether conflicting shreds have been seen for this slot.
-    pub(super) equivocated: bool,
+    equivocated: bool,
 }
 
 impl SlotBlockData {
@@ -48,7 +48,7 @@ impl SlotBlockData {
     pub fn new(slot: Slot) -> Self {
         Self {
             slot,
-            canonical: BlockData::new(slot),
+            disseminated: BlockData::new(slot),
             alternatives: BTreeMap::new(),
             equivocated: false,
         }
@@ -67,12 +67,12 @@ impl SlotBlockData {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
         }
-        let add_shred_result = self.canonical.check_shred_to_add(&shred, true, leader_pk);
+        let add_shred_result = self.disseminated.check_shred_to_add(&shred, leader_pk);
         if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
             self.equivocated = true;
         }
         add_shred_result?;
-        Ok(self.canonical.add_valid_shred(shred))
+        Ok(self.disseminated.add_valid_shred(shred))
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -89,8 +89,8 @@ impl SlotBlockData {
             .alternatives
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        match block_data.check_shred_to_add(&shred, true, leader_pk) {
-            Ok(()) => Ok(self.canonical.add_valid_shred(shred)),
+        match block_data.check_shred_to_add(&shred, leader_pk) {
+            Ok(()) => Ok(block_data.add_valid_shred(shred)),
             Err(err) => {
                 if let AddShredError::Equivocation = &err {
                     self.equivocated = true;
@@ -174,7 +174,6 @@ impl BlockData {
     fn check_shred_to_add(
         &mut self,
         shred: &Shred,
-        check_equivocation: bool,
         leader_pk: PublicKey,
     ) -> Result<(), AddShredError> {
         let slice_index = shred.payload().header.slice_index;
@@ -189,7 +188,7 @@ impl BlockData {
         } else if cached_merkle_root.is_none() {
             self.merkle_root_cache
                 .insert(slice_index, shred.merkle_root);
-        } else if check_equivocation && cached_merkle_root != Some(&shred.merkle_root) {
+        } else if cached_merkle_root != Some(&shred.merkle_root) {
             warn!("shreds show leader equivocation in slot {}", self.slot);
             return Err(AddShredError::Equivocation);
         }

@@ -89,7 +89,8 @@ impl BlockstoreImpl {
 
     /// Gives the number of stored slices for a given `slot`.
     pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
+        self.slot_data(slot)
+            .map_or(0, |s| s.disseminated.slices.len())
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
@@ -197,7 +198,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `None` if blockstore does not hold any version of the block yet.
     fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
         self.slot_data(slot)?
-            .canonical
+            .disseminated
             .completed
             .as_ref()
             .map(|c| c.0)
@@ -206,7 +207,7 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the number of stored shreds for a given `slot` (across all slices).
     fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
         self.slot_data(slot)
-            .map_or(0, |s| s.canonical.shreds.values().map(Vec::len).sum())
+            .map_or(0, |s| s.disseminated.shreds.values().map(Vec::len).sum())
     }
 
     /// Gives reference to stored block for the given `slot` and `hash`.
@@ -214,7 +215,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `None` if blockstore does not hold that block yet.
     fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
         let slot_data = self.slot_data(slot)?;
-        if let Some((h, block)) = slot_data.canonical.completed.as_ref()
+        if let Some((h, block)) = slot_data.disseminated.completed.as_ref()
             && *h == hash
         {
             return Some(block);
@@ -232,7 +233,7 @@ impl Blockstore for BlockstoreImpl {
     // TODO: support alternative/repaired blocks here
     fn get_shred(&self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&Shred> {
         self.slot_data(slot)?
-            .canonical
+            .disseminated
             .shreds
             .get(&slice)
             .and_then(|v| v.iter().find(|s| s.payload().index_in_slice == shred))
@@ -246,7 +247,7 @@ impl Blockstore for BlockstoreImpl {
     // TODO: support alternative/repaired blocks here
     fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash> {
         let slot_data = self.slot_data(slot).unwrap();
-        let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
+        let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         tree.create_proof(slice.inner())
     }
 }
@@ -311,7 +312,7 @@ mod tests {
         // create and check double-Merkle proof
         let proof = blockstore.create_double_merkle_proof(slot, SliceIndex::first());
         let slot_data = blockstore.slot_data(slot).unwrap();
-        let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
+        let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
         assert!(MerkleTree::check_proof(&slice_hash, 0, root, &proof));
 
@@ -561,7 +562,13 @@ mod tests {
         let shred_count = blockstore
             .block_data
             .values()
-            .map(|d| d.canonical.shreds.values().map(|s| s.len()).sum::<usize>())
+            .map(|d| {
+                d.disseminated
+                    .shreds
+                    .values()
+                    .map(|s| s.len())
+                    .sum::<usize>()
+            })
             .sum::<usize>();
         assert_eq!(shred_count, 0);
 
