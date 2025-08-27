@@ -229,29 +229,28 @@ where
         for slice_index in SliceIndex::all() {
             let (parent_slot, parent_hash) = parent;
             let slice_parent = slice_index.is_first().then_some(parent);
-            let time_for_slice = if slice_index.is_first() {
-                // make sure first slice is produced quickly enough so that other nodes do not generate the `TimeoutCrashedLeader` event
-                // TODO: this can be made more accurate, only needed if production of first slice
-                // still takes more than delta_first_slice after we saw ParentReady, not if:
-                // 1. first slice is produced before ParentReady is seen, OR
-                // 2. first slice finishes at most delta_first_slice after ParentReady is seen
-                self.delta_first_slice
-            } else {
-                // cap timeout for each slice to `DELTA_BLOCK`
-                // makes sure optimistic block production yields before timeout would expire
-                duration_left.min(self.delta_block)
-            };
+
+            let (preempt_sender, preempt_receiver) = oneshot::channel();
             let produce_slice_future =
-                produce_slice_payload(&self.txs_receiver, slice_parent, time_for_slice);
+                produce_slice_payload(&self.txs_receiver, slice_parent, preempt_receiver);
+            pin!(produce_slice_future);
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
             let (payload, new_duration_left) = if parent_ready_receiver.is_none()
                 || parent_ready_receiver.as_ref().unwrap().is_terminated()
             {
-                let (payload, time_elapsed) = produce_slice_future.await;
-                (payload, duration_left - time_elapsed)
+                tokio::select! {
+                    () = tokio::time::sleep(duration_left) => {
+                        // timeout expired, preempt slice production
+                        preempt_sender.send(()).unwrap();
+                        let (payload, time_elapsed) = produce_slice_future.await;
+                        (payload, duration_left.saturating_sub(time_elapsed))
+                    }
+                    (payload, time_elapsed) = &mut produce_slice_future => {
+                        (payload, duration_left.saturating_sub(time_elapsed))
+                    }
+                }
             } else {
-                pin!(produce_slice_future);
                 tokio::select! {
                     res = &mut produce_slice_future => {
                         let (payload, _time_elapsed) = res;
@@ -261,10 +260,15 @@ where
                     res = parent_ready_receiver.as_mut().unwrap() => {
                         // Got ParentReady event while producing slice.
                         // It's a NOP if we have been using the same parent as before.
-
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.expect("sender dropped");
-                        let (mut payload, _time_elapsed) = produce_slice_future.await;
+                        let (payload, _time_elapsed) = tokio::select! {
+                            () = tokio::time::sleep(self.delta_first_slice) => {
+                                preempt_sender.send(()).unwrap();
+                                produce_slice_future.await
+                            }
+                            res = &mut produce_slice_future => res,
+                        };
                         if new_hash != parent_hash {
                             assert_ne!(new_slot, parent_slot);
                             debug!(
@@ -274,7 +278,6 @@ where
                                 &hex::encode(new_hash)[..8],
                                 new_slot
                             );
-                            payload.parent = Some((new_slot, new_hash));
                         } else {
                             debug!("parent is ready, continuing with same parent");
                         }
@@ -363,7 +366,7 @@ where
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
-    duration_left: Duration,
+    mut preempt_receiver: oneshot::Receiver<()>,
 ) -> (SlicePayload, Duration)
 where
     T: Network + Sync + Send + 'static,
@@ -385,15 +388,13 @@ where
         .unwrap();
     let mut txs = Vec::new();
 
-    let ret = loop {
-        let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
+    loop {
         let res = tokio::select! {
-            () = tokio::time::sleep(sleep_duration) => {
-                break duration_left;
+            res = &mut preempt_receiver => {
+                let () = res.expect("sender dropped");
+                break;
             }
-            res = txs_receiver.receive() => {
-                res
-            }
+            res = txs_receiver.receive() => res,
         };
         match res.expect("unexpected error") {
             NetworkMessage::Transaction(tx) => {
@@ -407,15 +408,14 @@ where
             }
         }
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
-            break Duration::ZERO;
+            break;
         }
-    };
+    }
 
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
-    let time_elapsed = start_time.elapsed().max(ret);
-    (payload, time_elapsed.min(duration_left))
+    (payload, start_time.elapsed())
 }
 
 /// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
@@ -513,20 +513,19 @@ mod tests {
     #[tokio::test]
     async fn produce_slice_empty_slices() {
         let txs_receiver = UdpNetwork::new_with_any_port();
-        let duration_left = Duration::from_micros(0);
 
+        let (preempt_sender, preempt_receiver) = oneshot::channel();
+        preempt_sender.send(()).unwrap();
         let parent = None;
-        let (payload, time_elapsed) =
-            produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert_eq!(time_elapsed, duration_left);
+        let (payload, _) = produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
 
+        let (preempt_sender, preempt_receiver) = oneshot::channel();
+        preempt_sender.send(()).unwrap();
         let parent = Some((Slot::genesis(), Hash::default()));
-        let (payload, time_elapsed) =
-            produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert_eq!(time_elapsed, duration_left);
+        let (payload, _) = produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
@@ -537,8 +536,8 @@ mod tests {
         let txs_receiver = UdpNetwork::new_with_any_port();
         let addr = format!("127.0.0.1:{}", txs_receiver.port());
         let txs_sender = UdpNetwork::new_with_any_port();
-        // long enough duration so hopefully doesn't fire while collecting txs
-        let duration_left = Duration::from_secs(100);
+        // do not preempt slice
+        let (_preempt_sender, preempt_receiver) = oneshot::channel();
 
         tokio::spawn(async move {
             for i in 0..255 {
@@ -549,9 +548,7 @@ mod tests {
         });
 
         let parent = None;
-        let (payload, time_elapsed) =
-            produce_slice_payload(&txs_receiver, parent, duration_left).await;
-        assert!(time_elapsed < duration_left);
+        let (payload, _) = produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
         assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
