@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: true
 
 jobs:
   main:
@@ -27,7 +28,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-all-crates: true
-          cache-targets: true
 
       - name: Cache downloaded data
         id: cache-data
