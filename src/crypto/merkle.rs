@@ -165,7 +165,7 @@ impl MerkleTree {
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
     pub fn check_hash_proof_last(hash: Hash, index: usize, root: Hash, proof: &[Hash]) -> bool {
-        assert!(proof.len() <= EMPTY_ROOTS.len(),);
+        assert!(proof.len() <= EMPTY_ROOTS.len());
         let mut i = index;
         let mut node = hash;
         for (height, h) in proof.iter().enumerate() {
