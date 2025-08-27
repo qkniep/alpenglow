@@ -25,7 +25,6 @@ use crate::crypto::Hash;
 use crate::types::Slot;
 
 /// Tracks finality of blocks.
-#[derive(Default)]
 pub struct FinalityTracker {
     /// Current finalization status for each slot.
     status: BTreeMap<Slot, FinalizationStatus>,
@@ -274,6 +273,24 @@ impl FinalityTracker {
         // recurse through ancestors
         if let Some(parent) = self.parents.get(&implicitly_finalized) {
             self.handle_implicitly_finalized(implicitly_finalized.0, *parent, event);
+        }
+    }
+}
+
+impl Default for FinalityTracker {
+    /// Creates a new empty tracker.
+    ///
+    /// Initially, only the genesis block is considered (directly) finalized.
+    fn default() -> Self {
+        let mut status = BTreeMap::new();
+        status.insert(
+            Slot::genesis(),
+            FinalizationStatus::Notarized(Hash::default()),
+        );
+        Self {
+            status,
+            parents: BTreeMap::new(),
+            highest_finalized_slot: Slot::genesis(),
         }
     }
 }
