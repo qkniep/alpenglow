@@ -62,11 +62,14 @@ pub trait Blockstore {
     fn get_shred<'a>(
         &'a self,
         block_id: BlockId,
-        slice: SliceIndex,
-        shred: usize,
+        slice_index: SliceIndex,
+        shred_index: usize,
     ) -> Option<&'a Shred>;
-    fn create_double_merkle_proof(&self, block_id: BlockId, slice: SliceIndex)
-    -> Option<Vec<Hash>>;
+    fn create_double_merkle_proof(
+        &self,
+        block_id: BlockId,
+        slice_index: SliceIndex,
+    ) -> Option<Vec<Hash>>;
 }
 
 /// Blockstore is the fundamental data structure holding block data per slot.
@@ -271,37 +274,42 @@ impl Blockstore for BlockstoreImpl {
         block_data.last_slice
     }
 
-    /// Gives the Merkle root for the given `slice` of the given `block_id`.
+    /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold any shred for that slice.
-    fn get_slice_root(&self, block_id: BlockId, slice: SliceIndex) -> Option<Hash> {
+    fn get_slice_root(&self, block_id: BlockId, slice_index: SliceIndex) -> Option<Hash> {
         let block_data = self.get_block_data(block_id)?;
-        let slice_shreds = block_data.shreds.get(&slice)?;
+        let slice_shreds = block_data.shreds.get(&slice_index)?;
         slice_shreds.first().map(|s| s.merkle_root)
     }
 
-    /// Gives reference to stored shred for the given `block_id`, `slice` and `shred` index.
+    /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
     ///
     /// Returns `None` if blockstore does not hold that shred.
-    fn get_shred(&self, block_id: BlockId, slice: SliceIndex, shred: usize) -> Option<&Shred> {
+    fn get_shred(
+        &self,
+        block_id: BlockId,
+        slice_index: SliceIndex,
+        shred_index: usize,
+    ) -> Option<&Shred> {
         let block_data = self.get_block_data(block_id)?;
-        let slice_shreds = block_data.shreds.get(&slice)?;
+        let slice_shreds = block_data.shreds.get(&slice_index)?;
         slice_shreds
             .iter()
-            .find(|s| s.payload().index_in_slice == shred)
+            .find(|s| s.payload().index_in_slice == shred_index)
     }
 
-    /// Generates a Merkle proof for the given `slice` of the given `block_id`.
+    /// Generates a Merkle proof for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold that block yet.
     fn create_double_merkle_proof(
         &self,
         block_id: BlockId,
-        slice: SliceIndex,
+        slice_index: SliceIndex,
     ) -> Option<Vec<Hash>> {
         let block_data = self.get_block_data(block_id)?;
         let tree = block_data.double_merkle_tree.as_ref()?;
-        Some(tree.create_proof(slice.inner()))
+        Some(tree.create_proof(slice_index.inner()))
     }
 }
 
