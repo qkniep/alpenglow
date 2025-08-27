@@ -277,7 +277,16 @@ where
 
     #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
+        // potentially forward shred
         self.disseminator.forward(&shred).await?;
+
+        // if we are the leader, we already have the shred
+        let slot = shred.payload().header.slot;
+        if self.epoch_info.leader(slot).id != self.epoch_info.own_id {
+            return Ok(());
+        }
+
+        // otherwise, ingest into blockstore
         let res = self
             .blockstore
             .write()
