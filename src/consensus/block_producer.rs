@@ -411,7 +411,6 @@ where
         }
     };
 
-    // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
