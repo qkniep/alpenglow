@@ -708,6 +708,7 @@ mod tests {
             .unwrap();
         assert_eq!(slot, block_id.0);
         assert_eq!(block_info.hash, block_id.1);
+        assert_eq!(num_txs, 0);
     }
 
     #[tokio::test]
@@ -786,6 +787,18 @@ mod tests {
             Duration::from_millis(0),
         );
 
+        let port = block_producer.txs_receiver.port();
+        let txs_sender = UdpNetwork::new_with_any_port();
+        for _ in 0..MAX_TRANSACTIONS_PER_SLICE {
+            txs_sender
+                .send(
+                    &NetworkMessage::Transaction(Transaction(vec![1u8; MAX_TRANSACTION_SIZE])),
+                    format!("127.0.0.1:{}", port),
+                )
+                .await
+                .unwrap();
+        }
+
         let (block_id, num_txs) = block_producer
             .produce_block_parent_not_ready(slot, old_block_info.parent, parent_ready_rx)
             .await
@@ -794,5 +807,6 @@ mod tests {
         assert_eq!(slot, block_id.0);
         assert_eq!(new_block_info.hash, block_id.1);
         assert_eq!(new_block_info.parent, new_parent);
+        assert!(num_txs > 0);
     }
 }
