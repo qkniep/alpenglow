@@ -186,10 +186,9 @@ impl<N: Network> Repair<N> {
         sender: ValidatorId,
     ) -> Result<(), NetworkError> {
         trace!("answering repair request: {request:?}");
-        let block_id = request.block_id();
         let blockstore = self.blockstore.read().await;
         let response = match request {
-            RepairRequest::LastSliceRoot(_) => {
+            RepairRequest::LastSliceRoot(block_id) => {
                 let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
                     return Ok(());
                 };
@@ -202,7 +201,7 @@ impl<N: Network> Repair<N> {
                 };
                 RepairResponse::LastSliceRoot(request, last_slice, root, proof)
             }
-            RepairRequest::SliceRoot(_, slice) => {
+            RepairRequest::SliceRoot(block_id, slice) => {
                 let Some(root) = blockstore.get_slice_root(block_id, slice) else {
                     return Ok(());
                 };
@@ -211,7 +210,7 @@ impl<N: Network> Repair<N> {
                 };
                 RepairResponse::SliceRoot(request, root, proof)
             }
-            RepairRequest::Shred(_, slice, shred) => {
+            RepairRequest::Shred(block_id, slice, shred) => {
                 let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
@@ -237,15 +236,14 @@ impl<N: Network> Repair<N> {
             return;
         };
 
-        let block_id = response.block_id();
-        let (slot, block_hash) = block_id;
         match response {
             RepairResponse::LastSliceRoot(req, last_slice, root, proof) => {
                 // check validity of response
-                let RepairRequest::LastSliceRoot(_) = req else {
+                let RepairRequest::LastSliceRoot(block_id) = req else {
                     warn!("repair response (LastSliceRoot) to mismatching request {req:?}");
                     return;
                 };
+                let (_, block_hash) = block_id;
                 if !MerkleTree::check_proof_last(&root, last_slice.inner(), block_hash, &proof) {
                     warn!("repair response (LastSliceRoot) with invalid proof");
                     return;
@@ -264,10 +262,11 @@ impl<N: Network> Repair<N> {
             }
             RepairResponse::SliceRoot(req, root, proof) => {
                 // check validity of response
-                let RepairRequest::SliceRoot(_, slice) = req else {
+                let RepairRequest::SliceRoot(block_id, slice) = req else {
                     warn!("repair response (SliceRoot) to mismatching request {req:?}");
                     return;
                 };
+                let (_, block_hash) = block_id;
                 if !MerkleTree::check_proof(&root, slice.inner(), block_hash, &proof) {
                     warn!("repair response (SliceRoot) with invalid proof");
                     return;
@@ -284,10 +283,11 @@ impl<N: Network> Repair<N> {
             }
             RepairResponse::Shred(req, shred) => {
                 // check validity of response
-                let RepairRequest::Shred(_, slice, index) = req else {
+                let RepairRequest::Shred(block_id, slice, index) = req else {
                     warn!("repair response (Shred) to mismatching request {req:?}");
                     return;
                 };
+                let (slot, block_hash) = block_id;
                 if shred.payload().header.slot != slot
                     || shred.payload().header.slice_index != slice
                     || shred.payload().index_in_slice != index
@@ -374,14 +374,6 @@ impl<N: Network> Repair<N> {
 }
 
 impl RepairRequest {
-    /// Returns the [`BlockId`] this request refers to.
-    #[must_use]
-    pub const fn block_id(&self) -> BlockId {
-        match self {
-            Self::LastSliceRoot(id) | Self::SliceRoot(id, _) | Self::Shred(id, _, _) => *id,
-        }
-    }
-
     /// Digests the [`RepairRequest`] into a [`Hash`].
     pub fn hash(&self) -> Hash {
         let repair = RepairMessage::Request(self.clone(), 0);
@@ -400,12 +392,6 @@ impl RepairResponse {
             | Self::SliceRoot(req, _, _)
             | Self::Shred(req, _) => req,
         }
-    }
-
-    /// Returns the [`BlockId`] this response refers to.
-    #[must_use]
-    pub const fn block_id(&self) -> BlockId {
-        self.request().block_id()
     }
 }
 
