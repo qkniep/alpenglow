@@ -63,7 +63,7 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
+pub struct Alpenglow<A: All2All, D: Disseminator, T: Network> {
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -79,7 +79,6 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     all2all: Arc<A>,
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
-    _repair: std::marker::PhantomData<Repair<R>>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -87,16 +86,15 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
-impl<A, D, R, T> Alpenglow<A, D, R, T>
+impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    R: Network + Sync + Send + 'static,
     T: Network + Sync + Send + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     #[must_use]
-    pub fn new(
+    pub fn new<R: Network + Sync + Send + 'static>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
@@ -166,7 +164,6 @@ where
             block_producer,
             pool,
             all2all,
-            _repair: std::marker::PhantomData,
             disseminator,
             cancel_token,
             votor_handle,
