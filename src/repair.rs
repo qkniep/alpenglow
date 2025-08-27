@@ -28,6 +28,7 @@ use crate::{BlockId, ValidatorId};
 /// Maximum time to wait for a response to a repair request.
 ///
 /// After a request times out we retry it from another node.
+// TODO: make this tighter (can probably be close to `2 * DELTA`)
 const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Message types for the repair sub-protocol.
