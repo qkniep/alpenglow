@@ -122,7 +122,7 @@ where
 
             // produce first block
             let start = Instant::now();
-            let mut block_id = match slot_ready {
+            let (mut block_id, num_txs) = match slot_ready {
                 SlotReady::Skip => {
                     warn!(
                         "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
@@ -132,7 +132,7 @@ where
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
                         // skip genesis
-                        (first_slot_in_window, Hash::default())
+                        ((first_slot_in_window, Hash::default()), 0)
                     } else {
                         self.produce_block_parent_ready(first_slot_in_window, parent)
                             .await?
@@ -144,18 +144,22 @@ where
                 }
             };
             debug!(
-                "produced block {} in {} ms",
+                "produced block {} ({} txs) in {} ms",
                 first_slot_in_window,
+                num_txs,
                 start.elapsed().as_millis()
             );
 
             // produce remaining blocks
             for slot in first_slot_in_window.slots_in_window().skip(1) {
                 let start = Instant::now();
-                block_id = self.produce_block_parent_ready(slot, block_id).await?;
+                let (new_block_id, num_txs) =
+                    self.produce_block_parent_ready(slot, block_id).await?;
+                block_id = new_block_id;
                 debug!(
-                    "produced block {} in {} ms",
+                    "produced block {} ({} txs) in {} ms",
                     slot,
+                    num_txs,
                     start.elapsed().as_millis()
                 );
             }
@@ -172,7 +176,7 @@ where
         slot: Slot,
         parent: BlockId,
         mut parent_ready_receiver: oneshot::Receiver<BlockId>,
-    ) -> Result<BlockId> {
+    ) -> Result<(BlockId, usize)> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent;
         assert_eq!(parent_slot, slot.prev());
@@ -184,7 +188,7 @@ where
             parent_slot,
         );
 
-        let block_hash = self
+        let (block_hash, num_txs) = self
             .produce_slices(
                 slot,
                 parent,
@@ -193,7 +197,7 @@ where
                 Some(&mut parent_ready_receiver),
             )
             .await?;
-        Ok((slot, block_hash))
+        Ok(((slot, block_hash), num_txs))
     }
 
     /// Produces a block in the situation where we have already seen the `ParentReady` event.
@@ -203,7 +207,7 @@ where
         &self,
         slot: Slot,
         parent: BlockId,
-    ) -> Result<BlockId> {
+    ) -> Result<(BlockId, usize)> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent;
         info!(
@@ -213,10 +217,10 @@ where
             parent_slot,
         );
 
-        let block_hash = self
+        let (block_hash, num_txs) = self
             .produce_slices(slot, parent, self.delta_block, None)
             .await?;
-        Ok((slot, block_hash))
+        Ok(((slot, block_hash), num_txs))
     }
 
     async fn produce_slices(
@@ -225,7 +229,8 @@ where
         parent: BlockId,
         mut duration_left: Duration,
         mut parent_ready_receiver: Option<&mut oneshot::Receiver<BlockId>>,
-    ) -> Result<Hash> {
+    ) -> Result<(Hash, usize)> {
+        let mut num_txs = 0;
         for slice_index in SliceIndex::all() {
             let (parent_slot, parent_hash) = parent;
             let slice_parent = slice_index.is_first().then_some(parent);
@@ -235,34 +240,36 @@ where
                 produce_slice_payload(&self.txs_receiver, slice_parent, preempt_receiver);
             pin!(produce_slice_future);
 
-            // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let (payload, new_duration_left) = if parent_ready_receiver.is_none()
+            let (payload, new_duration_left, txs_in_slice) = if parent_ready_receiver.is_none()
                 || parent_ready_receiver.as_ref().unwrap().is_terminated()
             {
+                // after we saw ParentReady event, simply produce slices with timeout
                 tokio::select! {
                     () = tokio::time::sleep(duration_left) => {
                         // timeout expired, preempt slice production
                         preempt_sender.send(()).unwrap();
-                        let (payload, time_elapsed) = produce_slice_future.await;
-                        (payload, duration_left.saturating_sub(time_elapsed))
+                        let (payload, time_elapsed, txs_in_slice) = produce_slice_future.await;
+                        (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
                     }
-                    (payload, time_elapsed) = &mut produce_slice_future => {
-                        (payload, duration_left.saturating_sub(time_elapsed))
+                    (payload, time_elapsed, txs_in_slice) = &mut produce_slice_future => {
+                        (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
                     }
                 }
             } else {
+                // if we have not yet received the ParentReady event,
+                // wait for it concurrently while producing the next slice
                 tokio::select! {
                     res = &mut produce_slice_future => {
-                        let (payload, _time_elapsed) = res;
+                        let (payload, _time_elapsed, txs_in_slice) = res;
                         // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
-                        (payload, Duration::MAX)
+                        (payload, Duration::MAX, txs_in_slice)
                     }
                     res = parent_ready_receiver.as_mut().unwrap() => {
                         // Got ParentReady event while producing slice.
                         // It's a NOP if we have been using the same parent as before.
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.expect("sender dropped");
-                        let (payload, _time_elapsed) = tokio::select! {
+                        let (payload, _time_elapsed, txs_in_slice) = tokio::select! {
                             () = tokio::time::sleep(self.delta_first_slice) => {
                                 preempt_sender.send(()).unwrap();
                                 produce_slice_future.await
@@ -285,10 +292,12 @@ where
                         // account for the time it took to finish producing current slice
                         debug!("starting blocktime timer");
                         let time_left = self.delta_block.saturating_sub(start.elapsed());
-                        (payload, time_left)
+                        (payload, time_left, txs_in_slice)
                     }
                 }
             };
+
+            num_txs += txs_in_slice;
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if let Some(ref parent_rcv) = parent_ready_receiver
@@ -302,7 +311,7 @@ where
             let maybe_block_hash = self.shred_and_disseminate(header, payload).await?;
 
             match maybe_block_hash {
-                Some(block_hash) => return Ok(block_hash),
+                Some(block_hash) => return Ok((block_hash, num_txs)),
                 None => {
                     assert!(!new_duration_left.is_zero());
                     duration_left = new_duration_left.saturating_sub(start.elapsed());
@@ -367,7 +376,7 @@ async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
     mut preempt_receiver: oneshot::Receiver<()>,
-) -> (SlicePayload, Duration)
+) -> (SlicePayload, Duration, usize)
 where
     T: Network + Sync + Send + 'static,
 {
@@ -412,10 +421,11 @@ where
         }
     }
 
+    let num_txs = txs.len();
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
-    (payload, start_time.elapsed())
+    (payload, start_time.elapsed(), num_txs)
 }
 
 /// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
@@ -517,18 +527,22 @@ mod tests {
         let (preempt_sender, preempt_receiver) = oneshot::channel();
         preempt_sender.send(()).unwrap();
         let parent = None;
-        let (payload, _) = produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
+        let (payload, _, num_txs) =
+            produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
+        assert_eq!(num_txs, 0);
 
         let (preempt_sender, preempt_receiver) = oneshot::channel();
         preempt_sender.send(()).unwrap();
         let parent = Some((Slot::genesis(), Hash::default()));
-        let (payload, _) = produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
+        let (payload, _, num_txs) =
+            produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
+        assert_eq!(num_txs, 0);
     }
 
     #[tokio::test]
@@ -548,10 +562,12 @@ mod tests {
         });
 
         let parent = None;
-        let (payload, _) = produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
+        let (payload, _, num_txs) =
+            produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
         assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
+        assert!(num_txs > 0);
     }
 
     #[tokio::test]
@@ -686,12 +702,12 @@ mod tests {
             Duration::from_micros(0),
         );
 
-        let ret = block_producer
+        let (block_id, num_txs) = block_producer
             .produce_block_parent_ready(slot, block_info.parent)
             .await
             .unwrap();
-        assert_eq!(slot, ret.0);
-        assert_eq!(block_info.hash, ret.1);
+        assert_eq!(slot, block_id.0);
+        assert_eq!(block_info.hash, block_id.1);
     }
 
     #[tokio::test]
@@ -709,8 +725,7 @@ mod tests {
             parent: new_parent,
         };
 
-        let (first_slice_finished_tx, first_slice_finished_rx) = oneshot::channel();
-        let (start_second_slice_tx, start_second_slice_rx) = oneshot::channel();
+        let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
 
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
@@ -727,9 +742,8 @@ mod tests {
             .in_sequence(&mut seq)
             .return_once(move |_| {
                 Box::pin(async move {
-                    // last shred; wait for the parent ready event to be sent before continuing
-                    first_slice_finished_tx.send(()).unwrap();
-                    let () = start_second_slice_rx.await.unwrap();
+                    // last shred; send ParentReady event before continuing
+                    parent_ready_tx.send(new_parent).unwrap();
                     Ok(None)
                 })
             });
@@ -772,21 +786,13 @@ mod tests {
             Duration::from_millis(0),
         );
 
-        let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
-
-        tokio::spawn(async move {
-            let () = first_slice_finished_rx.await.unwrap();
-            parent_ready_tx.send(new_parent).unwrap();
-            start_second_slice_tx.send(()).unwrap();
-        });
-
-        let ret = block_producer
+        let (block_id, num_txs) = block_producer
             .produce_block_parent_not_ready(slot, old_block_info.parent, parent_ready_rx)
             .await
             .unwrap();
 
-        assert_eq!(slot, ret.0);
-        assert_eq!(new_block_info.hash, ret.1);
+        assert_eq!(slot, block_id.0);
+        assert_eq!(new_block_info.hash, block_id.1);
         assert_eq!(new_block_info.parent, new_parent);
     }
 }
