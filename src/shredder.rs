@@ -244,7 +244,7 @@ impl Shredder for RegularShredder {
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
         let tree = build_merkle_tree(&data, &coding);
-        if tree.get_root() != merkle_root {
+        if tree.get_root().inner() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
 
@@ -274,7 +274,7 @@ impl Shredder for CodingOnlyShredder {
         let (header, payload) = slice.clone().deconstruct();
         let (_, coding) = reed_solomon_shred(header, payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
-        if tree.get_root() != merkle_root {
+        if tree.get_root().inner() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
 
@@ -338,7 +338,7 @@ impl Shredder for PetsShredder {
         )?;
         data.pop();
         let tree = build_merkle_tree(&data, &coding);
-        if tree.get_root() != merkle_root {
+        if tree.get_root().inner() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
 
@@ -405,7 +405,7 @@ impl Shredder for AontShredder {
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
         let tree = build_merkle_tree(&data, &coding);
-        if tree.get_root() != merkle_root {
+        if tree.get_root().inner() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
 
@@ -437,7 +437,7 @@ pub fn data_and_coding_to_output_shreds(
     let num_data_shreds = data.len();
 
     let tree = build_merkle_tree(&data, &coding);
-    let merkle_root = tree.get_root();
+    let merkle_root = tree.get_root().inner();
     let sig = sk.sign(&merkle_root);
 
     for d in data.into_iter() {

@@ -6,12 +6,12 @@
 //! This module contains any cryptographic primitives used by the library.
 
 pub mod aggsig;
-pub mod hash;
-pub mod merkle;
+mod hash;
+mod merkle;
 pub mod signature;
 
 pub use self::aggsig::{AggregateSignature, IndividualSignature};
-pub use self::hash::{Hash, ShortHash, hash};
+pub use self::hash::{BlockHash, Hash, ShortHash, hash};
 pub use self::merkle::MerkleTree;
 pub use self::signature::Signature;
 

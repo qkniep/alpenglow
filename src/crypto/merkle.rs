@@ -12,6 +12,8 @@
 //! - rainbow tables / pre-calculation attacks
 //! - ambiguity between leaf and inner nodes with unknown tree height
 
+use crate::crypto::BlockHash;
+
 use super::Hash;
 use super::hash::hash_all;
 
@@ -69,8 +71,8 @@ impl MerkleTree {
 
     /// Gives the root hash of the tree.
     #[must_use]
-    pub fn get_root(&self) -> Hash {
-        *self.nodes.last().expect("empty tree")
+    pub fn get_root(&self) -> BlockHash {
+        BlockHash::new(*self.nodes.last().expect("empty tree"))
     }
 
     /// Generates a proof of membership for the element at the given `index`.
@@ -158,7 +160,7 @@ mod tests {
         // calculate expected root hash manually
         let leaf1 = hash_leaf(b"hello");
         let leaf2 = hash_leaf(b"world");
-        let expected_root = hash_pair(leaf1, leaf2);
+        let expected_root = BlockHash::new(hash_pair(leaf1, leaf2));
 
         assert_eq!(tree.get_root(), expected_root);
     }
@@ -169,7 +171,7 @@ mod tests {
         let tree = MerkleTree::new(&data);
 
         // check root hash of zero-length leaf
-        let expected_root = hash_leaf(b"");
+        let expected_root = BlockHash::new(hash_leaf(b""));
         assert_eq!(tree.get_root(), expected_root);
     }
 
@@ -181,13 +183,13 @@ mod tests {
 
         // proof and verify all leaves
         let proof = tree.create_proof(0);
-        assert!(MerkleTree::check_proof(b"hello", 0, root, &proof));
+        assert!(MerkleTree::check_proof(b"hello", 0, root.inner(), &proof));
         let proof = tree.create_proof(1);
-        assert!(MerkleTree::check_proof(b"world", 1, root, &proof));
+        assert!(MerkleTree::check_proof(b"world", 1, root.inner(), &proof));
         let proof = tree.create_proof(2);
-        assert!(MerkleTree::check_proof(b"data", 2, root, &proof));
+        assert!(MerkleTree::check_proof(b"data", 2, root.inner(), &proof));
         let proof = tree.create_proof(3);
-        assert!(MerkleTree::check_proof(b"test", 3, root, &proof));
+        assert!(MerkleTree::check_proof(b"test", 3, root.inner(), &proof));
     }
 
     #[test]

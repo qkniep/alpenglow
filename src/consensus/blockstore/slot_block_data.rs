@@ -13,7 +13,7 @@ use thiserror::Error;
 use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
-use crate::crypto::{Hash, MerkleTree};
+use crate::crypto::{BlockHash, Hash, MerkleTree};
 use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
@@ -38,7 +38,7 @@ pub struct SlotBlockData {
     /// Spot for storing the block that was received via block dissemination.
     pub(super) canonical: BlockData,
     /// Spot for storing alternative blocks that might later be received via repair.
-    pub(super) alternatives: BTreeMap<Hash, BlockData>,
+    pub(super) alternatives: BTreeMap<BlockHash, BlockData>,
     /// Whether conflicting shreds have been seen for this slot.
     pub(super) equivocated: bool,
 }
@@ -80,7 +80,7 @@ impl SlotBlockData {
     /// Performs the necessary validity checks, all but leader equivocation.
     pub fn add_shred_from_repair(
         &mut self,
-        hash: Hash,
+        hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
@@ -106,7 +106,7 @@ pub struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
     /// Potentially completely restored block.
-    pub(super) completed: Option<(Hash, Block)>,
+    pub(super) completed: Option<(BlockHash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
     pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
     /// Any already reconstructed slices of this block.
@@ -345,7 +345,7 @@ mod tests {
         events
     }
 
-    fn get_block_hash_from_votor_event(event: &VotorEvent) -> Hash {
+    fn get_block_hash_from_votor_event(event: &VotorEvent) -> BlockHash {
         match event {
             VotorEvent::Block {
                 slot: _,

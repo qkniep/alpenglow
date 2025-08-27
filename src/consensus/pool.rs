@@ -27,7 +27,7 @@ use self::slot_state::SlotState;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, Vote};
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
-use crate::crypto::Hash;
+use crate::crypto::{BlockHash, Hash};
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
@@ -96,14 +96,14 @@ pub struct PoolImpl {
     /// Keeps track of which slots are finalized.
     finality_tracker: FinalityTracker,
     /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
-    s2n_waiting_parent_cert: BTreeMap<(Slot, Hash), (Slot, Hash)>,
+    s2n_waiting_parent_cert: BTreeMap<(Slot, BlockHash), (Slot, BlockHash)>,
 
     /// Information about all active validators.
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
     /// Channel for sending repair requests to the repair loop.
-    repair_channel: Sender<(Slot, Hash)>,
+    repair_channel: Sender<(Slot, BlockHash)>,
 }
 
 impl PoolImpl {
@@ -113,7 +113,7 @@ impl PoolImpl {
     pub fn new(
         epoch_info: Arc<EpochInfo>,
         votor_event_channel: Sender<VotorEvent>,
-        repair_channel: Sender<(Slot, Hash)>,
+        repair_channel: Sender<(Slot, BlockHash)>,
     ) -> Self {
         Self {
             slot_states: BTreeMap::new(),
@@ -143,11 +143,7 @@ impl PoolImpl {
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
                 let block_hash = cert.block_hash().unwrap();
-                info!(
-                    "notarized(-fallback) block {} in slot {}",
-                    &hex::encode(block_hash)[..8],
-                    slot
-                );
+                info!("notarized(-fallback) block {block_hash} in slot {slot}");
                 if matches!(cert, Cert::Notar(_)) {
                     let finalization_event = self.finality_tracker.mark_notarized(slot, block_hash);
                     self.handle_finalization(finalization_event).await;

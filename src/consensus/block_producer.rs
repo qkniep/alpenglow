@@ -17,7 +17,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::{Hash, signature};
+use crate::crypto::{BlockHash, signature};
 use crate::network::{Network, NetworkMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
@@ -132,7 +132,7 @@ where
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
                         // genesis block is already produced so skip it
-                        (first_slot_in_window, Hash::default())
+                        (first_slot_in_window, BlockHash::genesis())
                     } else {
                         self.produce_block_parent_ready(first_slot_in_window, parent)
                             .await?
@@ -179,9 +179,7 @@ where
         assert!(slot.is_start_of_window());
         info!(
             "optimistically producing block in slot {} with parent {} in slot {}",
-            slot,
-            &hex::encode(parent_hash)[..8],
-            parent_slot,
+            slot, parent_hash, parent_slot,
         );
 
         // only start the DELTA_BLOCK timer once the ParentReady event is seen
@@ -230,9 +228,9 @@ where
                             assert_ne!(new_slot, parent_slot);
                             debug!(
                                 "changed parent from {} in slot {} to {} in slot {}",
-                                &hex::encode(parent_hash)[..8],
+                                parent_hash,
                                 parent_slot,
-                                &hex::encode(new_hash)[..8],
+                                new_hash,
                                 new_slot
                             );
                             payload.parent = Some((new_slot, new_hash));
@@ -256,10 +254,7 @@ where
                     assert_ne!(new_slot, parent_slot);
                     debug!(
                         "changed parent from {} in slot {} to {} in slot {}",
-                        &hex::encode(parent_hash)[..8],
-                        parent_slot,
-                        &hex::encode(new_hash)[..8],
-                        new_slot
+                        parent_hash, parent_slot, new_hash, new_slot
                     );
                     payload.parent = Some((new_slot, new_hash));
                 } else {
@@ -295,9 +290,7 @@ where
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
             "producing block in slot {} with ready parent {} in slot {}",
-            slot,
-            &hex::encode(parent_hash)[..8],
-            parent_slot,
+            slot, parent_hash, parent_slot,
         );
 
         let mut duration_left = self.delta_block;
@@ -344,7 +337,7 @@ where
         &self,
         header: SliceHeader,
         payload: SlicePayload,
-    ) -> Result<Option<Hash>> {
+    ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
@@ -466,7 +459,7 @@ async fn wait_for_first_slot(
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
     if first_slot_in_window.is_genesis_window() {
-        return SlotReady::Ready((Slot::genesis(), Hash::default()));
+        return SlotReady::Ready((Slot::genesis(), BlockHash::genesis()));
     }
 
     // if already have parent ready, return it, otherwise get a channel to await on
@@ -672,7 +665,7 @@ mod tests {
     async fn verify_produce_block_parent_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let block_info = BlockInfo {
-            hash: [1; 32],
+            hash: BlockHash::new_random(),
             parent: (slot.prev(), [2; 32]),
         };
 
@@ -723,9 +716,9 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
-        let slot_hash = [1; 32];
-        let old_parent = (slot.prev(), [2; 32]);
-        let new_parent = (slot.prev().prev(), [3; 32]);
+        let slot_hash = BlockHash::new_random();
+        let old_parent = (slot.prev(), BlockHash::new_random());
+        let new_parent = (slot.prev().prev(), BlockHash::new_random());
         let old_block_info = BlockInfo {
             hash: slot_hash,
             parent: old_parent,
