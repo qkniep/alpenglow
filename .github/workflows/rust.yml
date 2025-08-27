@@ -16,6 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
       - name: Cache downloaded data
         id: cache-data
         uses: actions/cache@v4
@@ -30,24 +41,15 @@ jobs:
             touch data/dataset.ok
           fi
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
           tool: nextest,cargo-llvm-cov,cargo-machete
 
       - name: Build (debug)
-        uses: Swatinem/rust-cache@v2
         run: cargo build --all-targets --verbose
 
       - name: Build (release)
-        uses: Swatinem/rust-cache@v2
         run: cargo build --all-targets --release --verbose
 
       - name: Linting (clippy)
