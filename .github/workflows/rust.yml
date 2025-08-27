@@ -42,13 +42,12 @@ jobs:
         with:
           tool: nextest,cargo-llvm-cov,cargo-machete
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
       - name: Build (debug)
+        uses: Swatinem/rust-cache@v2
         run: cargo build --all-targets --verbose
 
       - name: Build (release)
+        uses: Swatinem/rust-cache@v2
         run: cargo build --all-targets --release --verbose
 
       - name: Linting (clippy)
