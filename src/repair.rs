@@ -186,9 +186,9 @@ impl<N: Network> Repair<N> {
         sender: ValidatorId,
     ) -> Result<(), NetworkError> {
         trace!("answering repair request: {request:?}");
-        let blockstore = self.blockstore.read().await;
         let response = match request {
             RepairRequest::LastSliceRoot(block_id) => {
+                let blockstore = self.blockstore.read().await;
                 let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
                     return Ok(());
                 };
@@ -202,6 +202,7 @@ impl<N: Network> Repair<N> {
                 RepairResponse::LastSliceRoot(request, last_slice, root, proof)
             }
             RepairRequest::SliceRoot(block_id, slice) => {
+                let blockstore = self.blockstore.read().await;
                 let Some(root) = blockstore.get_slice_root(block_id, slice) else {
                     return Ok(());
                 };
@@ -211,13 +212,13 @@ impl<N: Network> Repair<N> {
                 RepairResponse::SliceRoot(request, root, proof)
             }
             RepairRequest::Shred(block_id, slice, shred) => {
+                let blockstore = self.blockstore.read().await;
                 let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
                 RepairResponse::Shred(request, shred)
             }
         };
-        drop(blockstore);
         self.send_response(response, sender).await
     }
 
