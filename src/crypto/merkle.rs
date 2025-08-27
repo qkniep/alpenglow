@@ -89,7 +89,7 @@ impl MerkleTree {
             nodes.push(leaf_hash);
         }
 
-        // PERF: precompute these
+        // PERF: use `EMPTY_ROOTS` to get rid of these explicit empty leaves
         let empty_leaf_hash = hash_leaf(&[]);
         while !nodes.len().is_power_of_two() {
             nodes.push(empty_leaf_hash);
