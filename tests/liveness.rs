@@ -65,12 +65,8 @@ async fn three_nodes_crash() {
 //     liveness_test(11, 1).await;
 // }
 
-type TestNode = Alpenglow<
-    TrivialAll2All<UdpNetwork>,
-    Rotor<UdpNetwork, StakeWeightedSampler>,
-    UdpNetwork,
-    UdpNetwork,
->;
+type TestNode =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
