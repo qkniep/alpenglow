@@ -56,7 +56,7 @@ pub trait Blockstore {
     fn canonical_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
-    fn get_last_slice(&self, block_id: BlockId) -> Option<SliceIndex>;
+    fn get_last_slice_index(&self, block_id: BlockId) -> Option<SliceIndex>;
     fn get_slice_root(&self, block_id: BlockId, slice: SliceIndex) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
@@ -263,10 +263,10 @@ impl Blockstore for BlockstoreImpl {
         block_data.completed.as_ref().map(|(_, block)| block)
     }
 
-    /// Gives reference to stored block for the given `block_id`.
+    /// Gives the last slice index for the given `block_id`.
     ///
-    /// Returns `None` if blockstore does not hold that block yet.
-    fn get_last_slice(&self, block_id: BlockId) -> Option<SliceIndex> {
+    /// Returns `None` if blockstore does not know the last slice yet.
+    fn get_last_slice_index(&self, block_id: BlockId) -> Option<SliceIndex> {
         let block_data = self.get_block_data(block_id)?;
         block_data.last_slice
     }

@@ -190,7 +190,7 @@ impl<N: Network> Repair<N> {
         let blockstore = self.blockstore.read().await;
         let response = match request {
             RepairRequest::LastSliceRoot(_) => {
-                let Some(last_slice) = blockstore.get_last_slice(block_id) else {
+                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
                     return Ok(());
                 };
                 let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
