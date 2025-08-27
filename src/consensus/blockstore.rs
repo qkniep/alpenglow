@@ -263,7 +263,12 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `None` if blockstore does not hold that block.
     fn get_block(&self, block_id: BlockId) -> Option<&Block> {
         let block_data = self.get_block_data(block_id)?;
-        block_data.completed.as_ref().map(|(_, block)| block)
+        if let Some((hash, block)) = block_data.completed.as_ref() {
+            debug_assert_eq!(*hash, block_id.1);
+            Some(block)
+        } else {
+            None
+        }
     }
 
     /// Gives the last slice index for the given `block_id`.
