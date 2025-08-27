@@ -6,6 +6,9 @@
 //! This module abstratcs the specific cryptographic hash function used
 //! throughout the entire library. Currently, SHA-256 is used.
 
+use std::fmt::Display;
+
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Regular hash that should be used in most cases.
@@ -44,6 +47,38 @@ pub fn hash_all(data: &[&[u8]]) -> Hash {
 #[must_use]
 pub fn truncate(hash: Hash) -> ShortHash {
     hash[..16].try_into().expect("wrong length")
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+pub struct BlockHash(Hash);
+
+impl BlockHash {
+    pub(super) fn new(hash: Hash) -> Self {
+        Self(hash)
+    }
+
+    pub fn genesis() -> Self {
+        Self(Hash::default())
+    }
+
+    pub fn inner(&self) -> Hash {
+        self.0
+    }
+
+    #[cfg(test)]
+    pub fn new_random() -> Self {
+        use rand::RngCore;
+
+        let mut hash = Hash::default();
+        rand::rng().fill_bytes(&mut hash);
+        Self(hash)
+    }
+}
+
+impl Display for BlockHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0[..8]))
+    }
 }
 
 #[cfg(test)]

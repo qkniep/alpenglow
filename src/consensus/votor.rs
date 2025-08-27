@@ -21,8 +21,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
-use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
+use crate::crypto::{BlockHash, Hash};
 use crate::{All2All, Slot, ValidatorId};
 
 /// Events that Votor is interested in.
@@ -38,10 +38,10 @@ pub enum VotorEvent {
     ParentReady {
         slot: Slot,
         parent_slot: Slot,
-        parent_hash: Hash,
+        parent_hash: BlockHash,
     },
     /// The given block has reached the safe-to-notar status.
-    SafeToNotar(Slot, Hash),
+    SafeToNotar(Slot, BlockHash),
     /// The given slot has reached the safe-to-skip status.
     SafeToSkip(Slot),
     /// New certificated created in pool (should then be broadcast by Votor).
@@ -75,13 +75,13 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     /// Indicates for which slots we already voted notar or skip.
     voted: BTreeSet<Slot>,
     /// Indicates for which slots we already voted notar and for what hash.
-    voted_notar: BTreeMap<Slot, Hash>,
+    voted_notar: BTreeMap<Slot, BlockHash>,
     /// Indicates for which slots we set the 'bad window' flag.
     bad_window: BTreeSet<Slot>,
     /// Blocks that have a notarization certificate (not notar-fallback).
-    block_notarized: BTreeMap<Slot, Hash>,
+    block_notarized: BTreeMap<Slot, BlockHash>,
     /// Indicates for which slots the given (slot, hash) pair is a valid parent.
-    parents_ready: BTreeSet<(Slot, Slot, Hash)>,
+    parents_ready: BTreeSet<(Slot, Slot, BlockHash)>,
     /// Indicates for which slots we received at least one shred.
     received_shred: BTreeSet<Slot>,
     /// Blocks that are waiting for previous slots to be notarized.
@@ -112,9 +112,13 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
     ) -> Self {
         // add dummy genesis block to some of the data structures
         let voted = [Slot::genesis()].into_iter().collect();
-        let voted_notar = [(Slot::genesis(), Hash::default())].into_iter().collect();
-        let block_notarized = [(Slot::genesis(), Hash::default())].into_iter().collect();
-        let parents_ready = [(Slot::genesis(), Slot::genesis(), Hash::default())]
+        let voted_notar = [(Slot::genesis(), BlockHash::genesis())]
+            .into_iter()
+            .collect();
+        let block_notarized = [(Slot::genesis(), BlockHash::genesis())]
+            .into_iter()
+            .collect();
+        let parents_ready = [(Slot::genesis(), Slot::genesis(), BlockHash::genesis())]
             .into_iter()
             .collect();
         let retired_slots = [Slot::genesis()].into_iter().collect();
@@ -156,8 +160,7 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                     parent_slot,
                     parent_hash,
                 } => {
-                    let h = &hex::encode(parent_hash)[..8];
-                    trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
+                    trace!("slot {slot} has new valid parent {parent_hash} in slot {parent_slot}");
                     self.parents_ready.insert((slot, parent_slot, parent_hash));
                     self.check_pending_blocks().await;
                     self.set_timeouts(slot);
@@ -208,8 +211,10 @@ impl<A: All2All + Sync + Send + 'static> Votor<A> {
                 }
                 VotorEvent::Block { slot, block_info } => {
                     if self.voted.contains(&slot) {
-                        let h = &hex::encode(block_info.hash)[..8];
-                        warn!("not voting for block {h} in slot {slot}, already voted");
+                        warn!(
+                            "not voting for block {} in slot {slot}, already voted",
+                            block_info.hash
+                        );
                         continue;
                     }
                     if self.try_notar(slot, block_info).await {

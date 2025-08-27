@@ -16,7 +16,7 @@ use tokio::sync::mpsc::Sender;
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
-use crate::crypto::Hash;
+use crate::crypto::{BlockHash, Hash};
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
@@ -24,7 +24,7 @@ use crate::{Block, BlockId, Slot};
 /// Information about a block within a slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockInfo {
-    pub(crate) hash: Hash,
+    pub(crate) hash: BlockHash,
     pub(crate) parent: BlockId,
 }
 
@@ -49,13 +49,13 @@ pub trait Blockstore {
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
-        hash: Hash,
+        hash: BlockHash,
         shred: Shred,
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
-    fn canonical_block_hash(&self, slot: Slot) -> Option<Hash>;
+    fn canonical_block_hash(&self, slot: Slot) -> Option<BlockHash>;
     fn stored_shreds_for_slot(&self, slot: Slot) -> usize;
     #[allow(clippy::needless_lifetimes)]
-    fn get_block<'a>(&'a self, slot: Slot, hash: Hash) -> Option<&'a Block>;
+    fn get_block<'a>(&'a self, slot: Slot, hash: BlockHash) -> Option<&'a Block>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(&'a self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&'a Shred>;
     fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash>;
@@ -107,10 +107,7 @@ impl BlockstoreImpl {
                 self.votor_channel.send(event).await.unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
-                    &hex::encode(block_info.hash)[..8],
-                    slot,
-                    &hex::encode(block_info.parent.1)[..8],
-                    block_info.parent.0,
+                    block_info.hash, slot, block_info.parent.1, block_info.parent.0,
                 );
 
                 Some((slot, block_info))
@@ -177,7 +174,7 @@ impl Blockstore for BlockstoreImpl {
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
         &mut self,
-        hash: Hash,
+        hash: BlockHash,
         shred: Shred,
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
         let slot = shred.payload().header.slot;
@@ -195,7 +192,7 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// This is usually the first version of the block stored in the blockstore.
     /// Returns `None` if blockstore does not hold any version of the block yet.
-    fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
+    fn canonical_block_hash(&self, slot: Slot) -> Option<BlockHash> {
         self.slot_data(slot)?
             .canonical
             .completed
@@ -212,7 +209,7 @@ impl Blockstore for BlockstoreImpl {
     /// Gives reference to stored block for the given `slot` and `hash`.
     ///
     /// Returns `None` if blockstore does not hold that block yet.
-    fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
+    fn get_block(&self, slot: Slot, hash: BlockHash) -> Option<&Block> {
         let slot_data = self.slot_data(slot)?;
         if let Some((h, block)) = slot_data.canonical.completed.as_ref()
             && *h == hash
@@ -312,7 +309,7 @@ mod tests {
         let proof = blockstore.create_double_merkle_proof(slot, SliceIndex::first());
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
-        let root = tree.get_root();
+        let root = tree.get_root().inner();
         assert!(MerkleTree::check_proof(&slice_hash, 0, root, &proof));
 
         Ok(())

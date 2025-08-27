@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use crate::BlockId;
-use crate::crypto::Hash;
+use crate::crypto::BlockHash;
 use crate::types::Slot;
 
 /// Tracks finality of blocks.
@@ -38,13 +38,13 @@ pub struct FinalityTracker {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizationStatus {
     /// Block with given hash is notarized, but slot is not yet (known to be) finalized.
-    Notarized(Hash),
+    Notarized(BlockHash),
     /// Slot is finalized, but notarized block is not yet known.
     FinalizedSlot,
     /// Slot is finalized, and notarized block is known to have the given hash.
-    FinalizedBlock(Hash),
+    FinalizedBlock(BlockHash),
     /// Block with given hash was implicitly finalized through later finalization.
-    ImplicitlyFinalized(Hash),
+    ImplicitlyFinalized(BlockHash),
     /// Slot was implicitly skipped through later finalization.
     ImplicitlySkipped,
 }
@@ -102,7 +102,7 @@ impl FinalityTracker {
     /// If the block was newly finalized, handles resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
+    pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: BlockHash) -> FinalizationEvent {
         let old = self
             .status
             .insert(slot, FinalizationStatus::FinalizedBlock(block_hash));
@@ -133,7 +133,7 @@ impl FinalityTracker {
     /// Further, also handles any possibly resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub fn mark_notarized(&mut self, slot: Slot, block_hash: Hash) -> FinalizationEvent {
+    pub fn mark_notarized(&mut self, slot: Slot, block_hash: BlockHash) -> FinalizationEvent {
         let old = self
             .status
             .insert(slot, FinalizationStatus::Notarized(block_hash));
@@ -285,7 +285,7 @@ impl Default for FinalityTracker {
         let mut status = BTreeMap::new();
         status.insert(
             Slot::genesis(),
-            FinalizationStatus::Notarized(Hash::default()),
+            FinalizationStatus::Notarized(BlockHash::genesis()),
         );
         Self {
             status,
@@ -305,7 +305,7 @@ mod tests {
 
         // slow finalize a block
         let slot = Slot::genesis().next();
-        let event = tracker.mark_notarized(slot, [1; 32]);
+        let event = tracker.mark_notarized(slot, BlockHash::new_random());
         assert_eq!(event, FinalizationEvent::default());
         let event = tracker.mark_finalized(slot);
         assert_eq!(event.finalized, Some((slot, [1; 32])));
@@ -314,7 +314,7 @@ mod tests {
 
         // fast finalize a block
         let slot = slot.next();
-        let event = tracker.mark_fast_finalized(slot, [2; 32]);
+        let event = tracker.mark_fast_finalized(slot, BlockHash::new_random());
         assert_eq!(event.finalized, Some((slot, [2; 32])));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
@@ -323,7 +323,7 @@ mod tests {
         let slot = slot.next().next();
         let event = tracker.add_parent((slot, [4; 32]), (slot.prev(), [3; 32]));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [4; 32]);
+        let event = tracker.mark_fast_finalized(slot, BlockHash::new_random());
         assert_eq!(event.finalized, Some((slot, [4; 32])));
         assert_eq!(event.implicitly_finalized, vec![(slot.prev(), [3; 32])]);
         assert_eq!(event.implicitly_skipped, vec![]);
@@ -332,7 +332,7 @@ mod tests {
         let slot = slot.next().next().next();
         let event = tracker.add_parent((slot, [6; 32]), (slot.prev().prev(), [5; 32]));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [6; 32]);
+        let event = tracker.mark_fast_finalized(slot, BlockHash::genesis());
         assert_eq!(event.finalized, Some((slot, [6; 32])));
         assert_eq!(
             event.implicitly_finalized,
@@ -349,18 +349,18 @@ mod tests {
         let slot = Slot::genesis().next();
         let event = tracker.mark_finalized(slot);
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_notarized(slot, [1; 32]);
+        let event = tracker.mark_notarized(slot, BlockHash::new_random());
         assert_eq!(event.finalized, Some((slot, [1; 32])));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
-        let event = tracker.mark_fast_finalized(slot, [1; 32]);
+        let event = tracker.mark_fast_finalized(slot, BlockHash::new_random());
         assert_eq!(event, FinalizationEvent::default());
 
         // do NOT implicitly finalize parent, that is already directly finalized
         let slot = slot.next();
         let event = tracker.add_parent((slot, [2; 32]), (slot.prev(), [1; 32]));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [2; 32]);
+        let event = tracker.mark_fast_finalized(slot, BlockHash::new_random());
         assert_eq!(event.finalized, Some((slot, [2; 32])));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
@@ -369,7 +369,7 @@ mod tests {
         let slot = slot.next().next();
         let event = tracker.add_parent((slot, [4; 32]), (slot.prev(), [3; 32]));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [4; 32]);
+        let event = tracker.mark_fast_finalized(slot, BlockHash::new_random());
         assert_eq!(event.finalized, Some((slot, [4; 32])));
         assert_eq!(event.implicitly_finalized, vec![(slot.prev(), [3; 32])]);
         assert_eq!(event.implicitly_skipped, vec![]);

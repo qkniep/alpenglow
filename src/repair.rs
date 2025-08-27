@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::Hash;
+use crate::crypto::{BlockHash, Hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
@@ -38,13 +38,13 @@ pub enum RepairMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairRequest {
     /// Request for the total number of slices in block with a given hash.
-    SliceCount(Slot, Hash),
+    SliceCount(Slot, BlockHash),
     /// Request for the root hash of a slice, identified by block hash and slice index.
-    SliceRoot(Slot, Hash, SliceIndex),
+    SliceRoot(Slot, BlockHash, SliceIndex),
     /// Request for shred, identified by block hash, slice index and shred index.
-    Shred(Slot, Hash, SliceIndex, usize),
+    Shred(Slot, BlockHash, SliceIndex, usize),
     // TODO: remove or replace with variant that includes proof
-    Parent(Slot, Hash),
+    Parent(Slot, BlockHash),
 }
 
 /// Response messages for the repair sub-protocol.
@@ -61,7 +61,7 @@ pub enum RepairResponse {
     /// Response with a specific shred.
     Shred(RepairRequest, Shred),
     // TODO: remove or replace with variant that includes proof
-    Parent(RepairRequest, Slot, Hash),
+    Parent(RepairRequest, Slot, BlockHash),
 }
 
 /// Instance of double-Merkle based block repair protocol.
@@ -116,7 +116,7 @@ impl<N: Network> Repair<N> {
     }
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
-    pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
+    pub async fn repair_block(&self, slot: Slot, block_hash: BlockHash) {
         if self
             .blockstore
             .read()
@@ -127,8 +127,7 @@ impl<N: Network> Repair<N> {
             return;
         }
 
-        let h = &hex::encode(block_hash)[..8];
-        debug!("repairing block {h} in slot {slot}");
+        debug!("repairing block {block_hash} in slot {slot}");
         // TODO: perform actual repair
         // HACK: magic number of 10 requests (to ensure it can handle some failures)
         for _ in 0..10 {
@@ -273,7 +272,7 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    async fn _request_slice_count(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
+    async fn _request_slice_count(&self, slot: Slot, hash: BlockHash) -> Result<(), NetworkError> {
         let req = RepairRequest::SliceCount(slot, hash);
         self.send_request(req).await
     }
@@ -281,7 +280,7 @@ impl<N: Network> Repair<N> {
     async fn _request_slice_root(
         &self,
         slot: Slot,
-        hash: Hash,
+        hash: BlockHash,
         slice: SliceIndex,
     ) -> Result<(), NetworkError> {
         let req = RepairRequest::SliceRoot(slot, hash, slice);
@@ -291,7 +290,7 @@ impl<N: Network> Repair<N> {
     async fn _request_shred(
         &self,
         slot: Slot,
-        hash: Hash,
+        hash: BlockHash,
         slice: SliceIndex,
         shred: usize,
     ) -> Result<(), NetworkError> {
@@ -299,7 +298,7 @@ impl<N: Network> Repair<N> {
         self.send_request(req).await
     }
 
-    async fn request_parent(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
+    async fn request_parent(&self, slot: Slot, hash: BlockHash) -> Result<(), NetworkError> {
         let req = RepairRequest::Parent(slot, hash);
         self.send_request(req).await
     }
@@ -334,7 +333,7 @@ impl RepairRequest {
 
     /// Returns the block hash this request refers to.
     #[must_use]
-    pub const fn block_hash(&self) -> Hash {
+    pub const fn block_hash(&self) -> BlockHash {
         match self {
             Self::SliceCount(_, hash)
             | Self::SliceRoot(_, hash, _)
@@ -364,7 +363,7 @@ impl RepairResponse {
 
     /// Returns the block hash this response refers to.
     #[must_use]
-    pub const fn block_hash(&self) -> Hash {
+    pub const fn block_hash(&self) -> BlockHash {
         self.request().block_hash()
     }
 }
@@ -423,7 +422,7 @@ mod tests {
     #[tokio::test]
     async fn basic() {
         let (repair_channel, other_network, _) = create_repair_instance().await;
-        let block_to_repair = (Slot::genesis().next(), [1; 32]);
+        let block_to_repair = (Slot::genesis().next(), BlockHash::new_random());
         repair_channel.send(block_to_repair).await.unwrap();
         let Ok(msg) = other_network.receive().await else {
             panic!("failed to receive");
@@ -438,7 +437,7 @@ mod tests {
             panic!("not a parent request");
         };
         assert_eq!((slot, hash), block_to_repair);
-        let response = RepairResponse::Parent(req, Slot::genesis(), Hash::default());
+        let response = RepairResponse::Parent(req, Slot::genesis(), BlockHash::genesis());
         let msg = NetworkMessage::Repair(RepairMessage::Response(response));
         other_network.send(&msg, "0").await.unwrap();
     }

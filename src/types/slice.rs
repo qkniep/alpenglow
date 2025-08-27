@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
 use crate::types::SliceIndex;
+use crate::types::block_hash::BlockHash;
 use crate::{Slot, highest_non_zero_byte};
 
 /// A slice is the unit of data between block and shred.
@@ -28,7 +29,7 @@ pub struct Slice {
     pub merkle_root: Option<Hash>,
     /// If first slice in the block or parent changed due to optimistic handover,
     /// then indicates which block is the parent of the block this slice is part of.
-    pub parent: Option<(Slot, Hash)>,
+    pub parent: Option<(Slot, BlockHash)>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
@@ -103,12 +104,12 @@ pub(crate) struct SliceHeader {
 /// This is what actually gets "shredded" into different [`Shred`]s.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
-    pub(crate) parent: Option<(Slot, Hash)>,
+    pub(crate) parent: Option<(Slot, BlockHash)>,
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
-    pub(crate) fn new(parent: Option<(Slot, Hash)>, data: Vec<u8>) -> Self {
+    pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
     }
 }
