@@ -108,12 +108,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-type Node = Alpenglow<
-    TrivialAll2All<UdpNetwork>,
-    Rotor<UdpNetwork, StakeWeightedSampler>,
-    UdpNetwork,
-    UdpNetwork,
->;
+type Node =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
 fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     // turn ConfigFile into an actual node

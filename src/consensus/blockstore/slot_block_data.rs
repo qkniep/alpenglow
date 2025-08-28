@@ -90,7 +90,7 @@ impl SlotBlockData {
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
         match block_data.check_shred_to_add(&shred, true, leader_pk) {
-            Ok(()) => Ok(self.canonical.add_valid_shred(shred)),
+            Ok(()) => Ok(block_data.add_valid_shred(shred)),
             Err(err) => {
                 if let AddShredError::Equivocation = &err {
                     self.equivocated = true;
@@ -142,6 +142,7 @@ impl BlockData {
     /// - `Some(VotorEvent::Block)` if the block was successfully reconstructed,
     /// - `None` otherwise.
     pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
+        assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
         let is_last_slice = shred.payload().header.is_last;
         let is_first_shred = self.shreds.is_empty();
@@ -177,6 +178,7 @@ impl BlockData {
         check_equivocation: bool,
         leader_pk: PublicKey,
     ) -> Result<(), AddShredError> {
+        assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
         let shred_index = shred.payload().index_in_slice;
         let slice_shreds = self.shreds.entry(slice_index).or_default();
@@ -184,7 +186,7 @@ impl BlockData {
         // check Merkle root and signature
         let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
         if !shred.verify(&leader_pk, cached_merkle_root) {
-            debug!("dropping invalid shred");
+            debug!("dropping invalid shred in slot {}", self.slot);
             return Err(AddShredError::InvalidSignature);
         } else if cached_merkle_root.is_none() {
             self.merkle_root_cache
@@ -194,12 +196,15 @@ impl BlockData {
             return Err(AddShredError::Equivocation);
         }
 
-        // store and handle this shred only if it is not yet stored in the blockstore
-        let exists = slice_shreds.iter().any(|s| {
-            s.payload().index_in_slice == shred_index
-                && shred.payload_type.is_data() == s.payload_type.is_data()
-        });
+        // store and handle this shred only if it is not yet stored
+        let exists = slice_shreds
+            .iter()
+            .any(|s| s.payload().index_in_slice == shred_index);
         if exists {
+            debug!(
+                "dropping duplicate shred {}-{} in slot {}",
+                slice_index, shred_index, self.slot
+            );
             return Err(AddShredError::Duplicate);
         }
 

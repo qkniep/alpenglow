@@ -1,3 +1,6 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use std::sync::Arc;
 
 use rand::RngCore;
@@ -5,10 +8,10 @@ use rand::RngCore;
 use crate::all2all::TrivialAll2All;
 use crate::consensus::EpochInfo;
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::{Hash, signature};
+use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::SimulatedNetwork;
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::shredder::MAX_DATA_PER_SLICE;
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
@@ -53,6 +56,24 @@ pub async fn generate_all2all_instances(
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all
+}
+
+pub fn create_random_shredded_block(
+    slot: Slot,
+    num_slices: usize,
+    sk: &signature::SecretKey,
+) -> (Hash, MerkleTree, Vec<Vec<Shred>>) {
+    let mut shreds = Vec::with_capacity(num_slices);
+    for slice in create_random_block(slot, num_slices) {
+        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap());
+    }
+    let merkle_roots = shreds
+        .iter()
+        .map(|slice_shreds| slice_shreds[0].merkle_root)
+        .collect::<Vec<_>>();
+    let tree = MerkleTree::new(&merkle_roots);
+    let block_hash = tree.get_root();
+    (block_hash, tree, shreds)
 }
 
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
