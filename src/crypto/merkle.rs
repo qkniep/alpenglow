@@ -88,6 +88,7 @@ impl MerkleTree {
             let leaf_hash = hash_leaf(leaf);
             nodes.push(leaf_hash);
         }
+        assert!(!nodes.is_empty());
 
         // PERF: use `EMPTY_ROOTS` to get rid of these explicit empty leaves
         let empty_leaf_hash = hash_leaf(&[]);
@@ -121,10 +122,11 @@ impl MerkleTree {
     }
 
     /// Generates a proof of membership for the element at the given `index`.
+    ///
     /// The proof is the Merkle path from the leaf to the root.
     #[must_use]
     pub fn create_proof(&self, index: usize) -> Vec<Hash> {
-        // TODO: handle out-of-bounds index
+        assert!(index < 1 << self.height);
         let mut proof = Vec::new();
         let mut i = index;
         let mut left = 0;
@@ -197,20 +199,20 @@ impl MerkleTree {
     }
 }
 
-/// Hash a leaf data with a label.
+/// Hashes some leaf data with a label into a leaf node.
 ///
 /// The label prevents the possibility to claim an intermediate node was a leaf.
 /// It also makes the Merkle tree more robust against pre-calculation attacks.
 fn hash_leaf(data: &[u8]) -> Hash {
-    hash_all(&[&LEAF_LABEL[..], data])
+    hash_all(&[&LEAF_LABEL, data])
 }
 
-/// Hashes a pair of child hashes into a parent non-leaf node with labels.
+/// Hashes a pair of child hashes with labels into a parent (non-leaf) node.
 ///
 /// The labels prevent the possibility to claim an intermediate node was a leaf.
 /// They also make the Merkle tree more robust against pre-calculation attacks.
 fn hash_pair(left: Hash, right: Hash) -> Hash {
-    hash_all(&[&LEFT_LABEL[..], &left, &RIGHT_LABEL[..], &right])
+    hash_all(&[&LEFT_LABEL, &left, &RIGHT_LABEL, &right])
 }
 
 #[cfg(test)]
@@ -238,13 +240,17 @@ mod tests {
     }
 
     #[test]
-    fn zero_leaves() {
+    fn empty_trees() {
+        // one empty leaf
         let data = [b""];
-        let tree = MerkleTree::new(&data);
+        let tree1 = MerkleTree::new(&data);
 
-        // check root hash of zero-length leaf
-        let expected_root = hash_leaf(b"");
-        assert_eq!(tree.get_root(), expected_root);
+        // two empty leaves
+        let data = [b"", b""];
+        let tree2 = MerkleTree::new(&data);
+
+        // these should have different roots
+        assert_ne!(tree1.get_root(), tree2.get_root());
     }
 
     #[test]
