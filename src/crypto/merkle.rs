@@ -125,7 +125,7 @@ impl MerkleTree {
             let leaf_hash = hash_leaf(leaf);
             nodes.push(leaf_hash);
         }
-        levels.push((0, nodes.len() as u32));
+        levels.push((0, nodes.len().try_into().expect("too many leaves")));
         assert!(!nodes.is_empty());
 
         // calculate inner nodes
