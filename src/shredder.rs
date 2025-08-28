@@ -140,6 +140,24 @@ impl Shred {
         self.merkle_root_sig.verify(&self.merkle_root, pk)
     }
 
+    /// Verifies only the Merkle proof of this shred.
+    ///
+    /// For full verification, see [`Shred::verify`].
+    ///
+    /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
+    #[must_use]
+    pub fn verify_path_only(&self, root: &Hash) -> bool {
+        if &self.merkle_root != root {
+            return false;
+        }
+        MerkleTree::check_proof(
+            &self.payload().data,
+            self.payload().index_in_slice,
+            self.merkle_root,
+            &self.merkle_path,
+        )
+    }
+
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,

@@ -14,6 +14,7 @@ use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, ValidatorInfo};
+use log::debug;
 use rand::prelude::*;
 
 #[tokio::test]
@@ -65,12 +66,8 @@ async fn three_nodes_crash() {
 //     liveness_test(11, 1).await;
 // }
 
-type TestNode = Alpenglow<
-    TrivialAll2All<UdpNetwork>,
-    Rotor<UdpNetwork, StakeWeightedSampler>,
-    UdpNetwork,
-    UdpNetwork,
->;
+type TestNode =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
@@ -140,7 +137,7 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
 
     // spawn a thread checking pool for progress
     let cancel_tokens = node_cancel_tokens.clone();
-    let liveness_tester = tokio::spawn(async move {
+    let mut liveness_tester = tokio::spawn(async move {
         let mut finalized = vec![Slot::new(0); pools.len()];
         for t in 1.. {
             tokio::time::sleep(Duration::from_secs(10)).await;
@@ -164,19 +161,21 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
         let millis = rng.random_range(0..10_000);
         let delay = tokio::time::Duration::from_millis(millis);
         tokio::time::sleep(delay).await;
+        debug!("crashing node {}", id);
         node_cancel_tokens[id].cancel();
     }
 
     // let it run for a while
-    let delay = tokio::time::Duration::from_secs(60);
-    tokio::time::sleep(delay).await;
+    let res = tokio::select! {
+        () = tokio::time::sleep(Duration::from_secs(60)) => {
+            liveness_tester.abort();
+            liveness_tester.await
+        }
+        res = &mut liveness_tester => res,
+    };
 
     // check result of liveness test
-    liveness_tester.abort();
-    assert_eq!(
-        liveness_tester.await.unwrap_err().is_cancelled(),
-        should_succeed
-    );
+    assert_eq!(res.unwrap_err().is_cancelled(), should_succeed);
 
     // kill other nodes
     for token in node_cancel_tokens {

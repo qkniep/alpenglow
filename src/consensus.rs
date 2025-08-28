@@ -46,7 +46,7 @@ use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::repair::{Repair, RepairMessage};
+use crate::repair::Repair;
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -63,7 +63,7 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
+pub struct Alpenglow<A: All2All, D: Disseminator, T: Network> {
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -79,8 +79,6 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     all2all: Arc<A>,
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
-    /// Block repair protocol.
-    repair: Arc<Repair<R>>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -88,16 +86,15 @@ pub struct Alpenglow<A: All2All, D: Disseminator, R: Network, T: Network> {
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
-impl<A, D, R, T> Alpenglow<A, D, R, T>
+impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    R: Network + Sync + Send + 'static,
     T: Network + Sync + Send + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     #[must_use]
-    pub fn new(
+    pub fn new<R: Network + Sync + Send + 'static>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
@@ -122,18 +119,16 @@ where
         ));
         let pool = Arc::new(RwLock::new(pool));
 
-        let repair = Repair::new(
+        let mut repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
             repair_network,
             (repair_tx, repair_rx),
             epoch_info.clone(),
         );
-        let repair = Arc::new(repair);
 
-        let r = Arc::clone(&repair);
         let _repair_handle = tokio::spawn(
-            async move { r.repair_loop().await }
+            async move { repair.repair_loop().await }
                 .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
@@ -170,7 +165,6 @@ where
             pool,
             all2all,
             disseminator,
-            repair,
             cancel_token,
             votor_handle,
         }
@@ -228,7 +222,6 @@ where
     ///
     /// [`All2All`]: Handles incoming votes and certificates. Adds them to the [`Pool`].
     /// [`Disseminator`]: Handles incoming shreds. Adds them to the [`Blockstore`].
-    /// [`Repair`]: Answers incoming repair requests.
     async fn message_loop(self: &Arc<Self>) -> Result<()> {
         loop {
             tokio::select! {
@@ -236,8 +229,6 @@ where
                 res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
                 // handle shreds received by block dissemination protocol
                 res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
-                // handle repair requests
-                res = self.repair.receive() => self.handle_repair_message(res?).await?,
 
                 () = self.cancel_token.cancelled() => return Ok(()),
             };
@@ -286,29 +277,26 @@ where
 
     #[fastrace::trace(short_name = true)]
     async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
+        // potentially forward shred
         self.disseminator.forward(&shred).await?;
-        let b = self
+
+        // if we are the leader, we already have the shred
+        let slot = shred.payload().header.slot;
+        if self.epoch_info.leader(slot).id == self.epoch_info.own_id {
+            return Ok(());
+        }
+
+        // otherwise, ingest into blockstore
+        let res = self
             .blockstore
             .write()
             .await
             .add_shred_from_disseminator(shred)
             .await;
-        if let Ok(Some((slot, block_info))) = b {
+        if let Ok(Some((slot, block_info))) = res {
             let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
             guard.add_block(block_id, block_info.parent).await;
-        }
-        Ok(())
-    }
-
-    async fn handle_repair_message(&self, msg: RepairMessage) -> Result<(), NetworkError> {
-        match msg {
-            RepairMessage::Request(request) => {
-                self.repair.answer_request(request).await?;
-            }
-            RepairMessage::Response(resposne) => {
-                self.repair.handle_response(resposne).await;
-            }
         }
         Ok(())
     }

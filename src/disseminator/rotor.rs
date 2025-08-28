@@ -14,7 +14,7 @@ pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeW
 use super::Disseminator;
 use crate::consensus::EpochInfo;
 use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::shredder::Shred;
+use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
@@ -47,7 +47,8 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     /// Provided `network` will be used to send and receive shreds.
     pub fn new_fa1(network: N, epoch_info: Arc<EpochInfo>) -> Self {
         let validators = epoch_info.validators.clone();
-        let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
+        let sampler =
+            FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
         Self {
             network,
             sampler,

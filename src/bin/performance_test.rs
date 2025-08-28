@@ -34,7 +34,6 @@ type TestNode = Alpenglow<
     TrivialAll2All<SimulatedNetwork>,
     Rotor<SimulatedNetwork, StakeWeightedSampler>,
     UdpNetwork,
-    UdpNetwork,
 >;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {

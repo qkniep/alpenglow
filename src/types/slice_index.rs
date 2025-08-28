@@ -6,7 +6,8 @@ use std::fmt::Display;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 
-const MAX_SLICES_PER_BLOCK: usize = 1024;
+/// Maximum number of slices a leader may produce per block.
+pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 
 /// Slice index type.
 ///
