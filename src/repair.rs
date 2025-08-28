@@ -597,7 +597,7 @@ mod tests {
             }
         }
         assert_eq!(
-            blockstore.read().await.canonical_block_hash(slot),
+            blockstore.read().await.disseminated_block_hash(slot),
             Some(block_hash)
         );
         assert!(blockstore.read().await.get_block(block_to_repair).is_some());
