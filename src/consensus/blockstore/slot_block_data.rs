@@ -201,7 +201,10 @@ impl BlockData {
             .iter()
             .any(|s| s.payload().index_in_slice == shred_index);
         if exists {
-            debug!("dropping duplicate shred in slot {}", self.slot);
+            debug!(
+                "dropping duplicate shred {}-{} in slot {}",
+                slice_index, shred_index, self.slot
+            );
             return Err(AddShredError::Duplicate);
         }
 
