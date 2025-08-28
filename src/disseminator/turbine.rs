@@ -83,7 +83,6 @@ impl<N: Network> Turbine<N> {
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkError> {
-        // TODO: fix duplicate use indices between data and coding shreds
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
