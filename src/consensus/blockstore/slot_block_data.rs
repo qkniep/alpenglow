@@ -36,9 +36,9 @@ pub struct SlotBlockData {
     /// Slot number this data corresponds to.
     slot: Slot,
     /// Spot for storing the block that was received via block dissemination.
-    pub(super) canonical: BlockData,
-    /// Spot for storing alternative blocks that might later be received via repair.
-    pub(super) alternatives: BTreeMap<Hash, BlockData>,
+    pub(super) disseminated: BlockData,
+    /// Spot for storing blocks that might later be received via repair.
+    pub(super) repaired: BTreeMap<Hash, BlockData>,
     /// Whether conflicting shreds have been seen for this slot.
     pub(super) equivocated: bool,
 }
@@ -48,8 +48,8 @@ impl SlotBlockData {
     pub fn new(slot: Slot) -> Self {
         Self {
             slot,
-            canonical: BlockData::new(slot),
-            alternatives: BTreeMap::new(),
+            disseminated: BlockData::new(slot),
+            repaired: BTreeMap::new(),
             equivocated: false,
         }
     }
@@ -67,12 +67,14 @@ impl SlotBlockData {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
         }
-        let add_shred_result = self.canonical.check_shred_to_add(&shred, true, leader_pk);
+        let add_shred_result = self
+            .disseminated
+            .check_shred_to_add(&shred, true, leader_pk);
         if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
             self.equivocated = true;
         }
         add_shred_result?;
-        Ok(self.canonical.add_valid_shred(shred))
+        Ok(self.disseminated.add_valid_shred(shred))
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -86,7 +88,7 @@ impl SlotBlockData {
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
-            .alternatives
+            .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
         match block_data.check_shred_to_add(&shred, true, leader_pk) {
