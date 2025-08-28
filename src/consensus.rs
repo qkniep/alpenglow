@@ -282,7 +282,7 @@ where
 
         // if we are the leader, we already have the shred
         let slot = shred.payload().header.slot;
-        if self.epoch_info.leader(slot).id != self.epoch_info.own_id {
+        if self.epoch_info.leader(slot).id == self.epoch_info.own_id {
             return Ok(());
         }
 
