@@ -9,7 +9,7 @@
 //! Each repair response is accompanied by a Merkle proof and can thus be
 //! individually verified.
 
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::{BTreeMap, BinaryHeap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -359,8 +359,14 @@ impl<N: Network> Repair<N> {
         let msg: NetworkMessage = repair.into();
         let msg_bytes = msg.to_bytes();
         // HACK: magic number to fix high-failure scenarios
-        for _ in 0..3 {
-            let to = self.pick_random_peer();
+        let mut to_all = HashSet::new();
+        for _ in 0..10 {
+            to_all.insert(self.pick_random_peer());
+            if to_all.len() == 3 {
+                break;
+            }
+        }
+        for to in to_all {
             self.network.send_serialized(&msg_bytes, to).await?;
         }
         Ok(())
@@ -418,7 +424,6 @@ mod tests {
     use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
-    use crate::shredder::DATA_SHREDS;
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
@@ -547,9 +552,9 @@ mod tests {
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
-            for _ in 0..DATA_SHREDS {
+            for _ in 0..TOTAL_SHREDS {
                 let msg = other_network.receive().await.unwrap();
-                for shred_index in 0..DATA_SHREDS {
+                for shred_index in 0..TOTAL_SHREDS {
                     let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                     if msg_matches_request(&msg, &req) {
                         shreds_requested.insert(shred_index);
@@ -560,7 +565,7 @@ mod tests {
 
             // assert all shreds requested + answer the requests
             let slice_shreds = shreds[slice.inner()].clone();
-            for (shred_index, shred) in slice_shreds.into_iter().take(DATA_SHREDS).enumerate() {
+            for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
                 assert!(shreds_requested.contains(&shred_index));
                 let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req, shred);
@@ -639,7 +644,7 @@ mod tests {
             assert_eq!(proof, correct_proof);
 
             // request slice shreds
-            for shred_index in 0..DATA_SHREDS {
+            for shred_index in 0..TOTAL_SHREDS {
                 let request = RepairRequest::Shred(block_to_repair, slice, shred_index);
                 let msg = RepairMessage::Request(request.clone(), 0).into();
                 other_network.send(&msg, "1").await.unwrap();
