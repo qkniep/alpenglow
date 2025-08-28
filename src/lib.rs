@@ -74,7 +74,10 @@ pub struct ValidatorInfo {
     pub voting_pubkey: aggsig::PublicKey,
     pub all2all_address: SocketAddr,
     pub disseminator_address: SocketAddr,
-    pub repair_address: SocketAddr,
+    /// Send [`RepairRequest`] messages to this address to ask the node to repair a block.
+    pub repair_request_address: SocketAddr,
+    /// Send [`RepairResponse`] messages to this address when replying to a node's [`RepairRequest`] message.
+    pub repair_response_address: SocketAddr,
 }
 
 /// Returns the highest non-zero byte in `val`.
@@ -93,7 +96,8 @@ type TestNode =
 struct Networks {
     all2all: UdpNetwork,
     disseminator: UdpNetwork,
-    repair: UdpNetwork,
+    repair_response: UdpNetwork,
+    repair_request: UdpNetwork,
     txs: UdpNetwork,
 }
 
@@ -102,7 +106,8 @@ impl Networks {
         Self {
             all2all: UdpNetwork::new_with_any_port(),
             disseminator: UdpNetwork::new_with_any_port(),
-            repair: UdpNetwork::new_with_any_port(),
+            repair_response: UdpNetwork::new_with_any_port(),
+            repair_request: UdpNetwork::new_with_any_port(),
             txs: UdpNetwork::new_with_any_port(),
         }
     }
@@ -126,7 +131,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr(network.all2all.port());
         let disseminator_address = localhost_ip_sockaddr(network.disseminator.port());
-        let repair_address = localhost_ip_sockaddr(network.repair.port());
+        let repair_response_address = localhost_ip_sockaddr(network.repair_response.port());
+        let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
         validators.push(ValidatorInfo {
             id: id as u64,
             stake: 1,
@@ -134,7 +140,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,
             disseminator_address,
-            repair_address,
+            repair_request_address,
+            repair_response_address,
         });
     }
 
@@ -146,7 +153,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let epoch_info = Arc::new(EpochInfo::new(id as u64, validators.clone()));
             let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
             let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
-            let repair_network = network.repair;
+            let repair_network = network.repair_response;
+            let repair_request_network = network.repair_request;
             let txs_receiver = network.txs;
             Alpenglow::new(
                 sks[id].clone(),
@@ -154,6 +162,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 all2all,
                 disseminator,
                 repair_network,
+                repair_request_network,
                 epoch_info,
                 txs_receiver,
             )
