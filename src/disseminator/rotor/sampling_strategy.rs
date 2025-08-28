@@ -888,8 +888,10 @@ mod tests {
                 .iter()
                 .filter(|val| **val == v as ValidatorId)
                 .count();
-            expected_work[v] = ((TOTAL_SHREDS * SLICES) as u64 * stake / total_stake)
-                + (appearances * (validators.len() - 2)) as u64;
+            let fractional_stake = stake as f64 / total_stake as f64;
+            let leader_work = ((TOTAL_SHREDS * SLICES) as f64 * fractional_stake) as u64;
+            let relay_work = (appearances * (validators.len() - 2)) as u64;
+            expected_work[v] = leader_work + relay_work;
         }
 
         // simulate and count work required with actual `Turbine`
