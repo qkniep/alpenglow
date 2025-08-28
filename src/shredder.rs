@@ -483,6 +483,7 @@ pub fn data_and_coding_to_output_shreds(
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
 fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -> MerkleTree {
+    // zero-allocation chaining of slices
     let leaves = data_shreds
         .iter()
         .map(|d| d.0.data.as_ref())
