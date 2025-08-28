@@ -47,14 +47,6 @@ pub(super) struct ParentReadyState {
 }
 
 impl ParentReadyState {
-    /// Creates a new [`ParentReadyState`] with the given `block_ids` as valid parents.
-    pub(super) fn new<T: Into<SmallVec<[BlockId; 1]>>>(block_ids: T) -> Self {
-        Self {
-            is_ready: IsReady::Ready(block_ids.into()),
-            ..Default::default()
-        }
-    }
-
     /// Adds a [`BlockId`] to the parents ready list.
     ///
     /// Additionally, will inform any waiters.

@@ -16,6 +16,7 @@ use tokio::sync::mpsc::Sender;
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
+use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::Hash;
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
@@ -53,12 +54,22 @@ pub trait Blockstore {
         shred: Shred,
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
     fn canonical_block_hash(&self, slot: Slot) -> Option<Hash>;
-    fn stored_shreds_for_slot(&self, slot: Slot) -> usize;
     #[allow(clippy::needless_lifetimes)]
-    fn get_block<'a>(&'a self, slot: Slot, hash: Hash) -> Option<&'a Block>;
+    fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
+    fn get_last_slice_index(&self, block_id: BlockId) -> Option<SliceIndex>;
+    fn get_slice_root(&self, block_id: BlockId, slice: SliceIndex) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
-    fn get_shred<'a>(&'a self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&'a Shred>;
-    fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash>;
+    fn get_shred<'a>(
+        &'a self,
+        block_id: BlockId,
+        slice_index: SliceIndex,
+        shred_index: usize,
+    ) -> Option<&'a Shred>;
+    fn create_double_merkle_proof(
+        &self,
+        block_id: BlockId,
+        slice_index: SliceIndex,
+    ) -> Option<Vec<Hash>>;
 }
 
 /// Blockstore is the fundamental data structure holding block data per slot.
@@ -85,11 +96,6 @@ impl BlockstoreImpl {
             votor_channel,
             epoch_info,
         }
-    }
-
-    /// Gives the number of stored slices for a given `slot`.
-    pub fn stored_slices_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
@@ -119,6 +125,22 @@ impl BlockstoreImpl {
         }
     }
 
+    /// Gives reference to stored block data for the given `block_id`.
+    ///
+    /// Considers both, the canonical block and any repaired blocks.
+    ///
+    /// Returns `None` if blockstore does not know about this block yet.
+    fn get_block_data(&self, block_id: BlockId) -> Option<&BlockData> {
+        let (slot, hash) = block_id;
+        let slot_data = self.slot_data(slot)?;
+        if let Some((h, _)) = slot_data.canonical.completed
+            && h == hash
+        {
+            return Some(&slot_data.canonical);
+        }
+        slot_data.alternatives.get(&hash)
+    }
+
     /// Reads slot data for the given `slot`.
     fn slot_data(&self, slot: Slot) -> Option<&SlotBlockData> {
         self.block_data.get(&slot)
@@ -129,6 +151,39 @@ impl BlockstoreImpl {
         self.block_data
             .entry(slot)
             .or_insert_with(|| SlotBlockData::new(slot))
+    }
+
+    /// Gives the shred for the given `slot`, `slice` and `shred` index.
+    ///
+    /// Considers only the canonical block.
+    ///
+    /// Only used for testing.
+    #[cfg(test)]
+    fn get_canonical_shred(
+        &self,
+        slot: Slot,
+        slice: SliceIndex,
+        shred_index: usize,
+    ) -> Option<&Shred> {
+        self.slot_data(slot)
+            .and_then(|s| s.canonical.shreds.get(&slice)?.get(shred_index))
+    }
+
+    /// Gives the number of stored shreds for a given `slot` (across all slices).
+    ///
+    /// Only used for testing.
+    #[cfg(test)]
+    fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
+        self.slot_data(slot)
+            .map_or(0, |s| s.canonical.shreds.values().map(Vec::len).sum())
+    }
+
+    /// Gives the number of stored slices for a given `slot`.
+    ///
+    /// Only used for testing.
+    #[cfg(test)]
+    pub(crate) fn stored_slices_for_slot(&self, slot: Slot) -> usize {
+        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
     }
 }
 
@@ -203,51 +258,63 @@ impl Blockstore for BlockstoreImpl {
             .map(|c| c.0)
     }
 
-    /// Gives the number of stored shreds for a given `slot` (across all slices).
-    fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot)
-            .map_or(0, |s| s.canonical.shreds.values().map(Vec::len).sum())
+    /// Gives reference to stored block for the given `block_id`.
+    ///
+    /// Returns `None` if blockstore does not hold that block.
+    fn get_block(&self, block_id: BlockId) -> Option<&Block> {
+        let block_data = self.get_block_data(block_id)?;
+        if let Some((hash, block)) = block_data.completed.as_ref() {
+            debug_assert_eq!(*hash, block_id.1);
+            Some(block)
+        } else {
+            None
+        }
     }
 
-    /// Gives reference to stored block for the given `slot` and `hash`.
+    /// Gives the last slice index for the given `block_id`.
+    ///
+    /// Returns `None` if blockstore does not know the last slice yet.
+    fn get_last_slice_index(&self, block_id: BlockId) -> Option<SliceIndex> {
+        let block_data = self.get_block_data(block_id)?;
+        block_data.last_slice
+    }
+
+    /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
+    ///
+    /// Returns `None` if blockstore does not hold any shred for that slice.
+    fn get_slice_root(&self, block_id: BlockId, slice_index: SliceIndex) -> Option<Hash> {
+        let block_data = self.get_block_data(block_id)?;
+        let slice_shreds = block_data.shreds.get(&slice_index)?;
+        slice_shreds.first().map(|s| s.merkle_root)
+    }
+
+    /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
+    ///
+    /// Returns `None` if blockstore does not hold that shred.
+    fn get_shred(
+        &self,
+        block_id: BlockId,
+        slice_index: SliceIndex,
+        shred_index: usize,
+    ) -> Option<&Shred> {
+        let block_data = self.get_block_data(block_id)?;
+        let slice_shreds = block_data.shreds.get(&slice_index)?;
+        slice_shreds
+            .iter()
+            .find(|s| s.payload().index_in_slice == shred_index)
+    }
+
+    /// Generates a Merkle proof for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold that block yet.
-    fn get_block(&self, slot: Slot, hash: Hash) -> Option<&Block> {
-        let slot_data = self.slot_data(slot)?;
-        if let Some((h, block)) = slot_data.canonical.completed.as_ref()
-            && *h == hash
-        {
-            return Some(block);
-        }
-        slot_data
-            .alternatives
-            .get(&hash)
-            .and_then(|data| data.completed.as_ref().map(|(_, block)| Some(block)))
-            .flatten()
-    }
-
-    /// Gives reference to stored shred for the given `slot`, `slice` and `shred` index.
-    ///
-    /// Returns `None` if blockstore does not hold that shred yet.
-    // TODO: support alternative/repaired blocks here
-    fn get_shred(&self, slot: Slot, slice: SliceIndex, shred: usize) -> Option<&Shred> {
-        self.slot_data(slot)?
-            .canonical
-            .shreds
-            .get(&slice)
-            .and_then(|v| v.iter().find(|s| s.payload().index_in_slice == shred))
-    }
-
-    /// Generates a Merkle proof for the given `slice` within the given `slot`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the double-Merkle tree for the given `slot` does not exist.
-    // TODO: support alternative/repaired blocks here
-    fn create_double_merkle_proof(&self, slot: Slot, slice: SliceIndex) -> Vec<Hash> {
-        let slot_data = self.slot_data(slot).unwrap();
-        let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
-        tree.create_proof(slice.inner())
+    fn create_double_merkle_proof(
+        &self,
+        block_id: BlockId,
+        slice_index: SliceIndex,
+    ) -> Option<Vec<Hash>> {
+        let block_data = self.get_block_data(block_id)?;
+        let tree = block_data.double_merkle_tree.as_ref()?;
+        Some(tree.create_proof(slice_index.inner()))
     }
 }
 
@@ -261,7 +328,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::crypto::{MerkleTree, aggsig};
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
-    use crate::test_utils::create_random_block;
+    use crate::test_utils::{create_random_block, create_random_shredded_block};
     use crate::types::SliceIndex;
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
@@ -289,27 +356,31 @@ mod tests {
         assert!(blockstore.slot_data(slot).is_none());
 
         // generate single-slice block
-        let slice = create_random_block(slot, 1)[0].clone();
+        let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &sk);
+        let block_id = (slot, block_hash);
 
-        let shreds = RegularShredder::shred(slice, &sk)?;
-        let slice_hash = shreds[0].merkle_root;
-        for shred in shreds {
+        let slice_hash = shreds[0][0].merkle_root;
+        for shred in &shreds[0] {
             // store shred
             blockstore
                 .add_shred_from_disseminator(shred.clone())
                 .await?;
 
             // check shred is stored
-            let Some(stored_shred) =
-                blockstore.get_shred(slot, SliceIndex::first(), shred.payload().index_in_slice)
-            else {
+            let Some(stored_shred) = blockstore.get_canonical_shred(
+                slot,
+                SliceIndex::first(),
+                shred.payload().index_in_slice,
+            ) else {
                 panic!("shred not stored");
             };
             assert_eq!(stored_shred.payload().data, shred.payload().data);
         }
 
         // create and check double-Merkle proof
-        let proof = blockstore.create_double_merkle_proof(slot, SliceIndex::first());
+        let proof = blockstore
+            .create_double_merkle_proof(block_id, SliceIndex::first())
+            .unwrap();
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
@@ -366,13 +437,13 @@ mod tests {
         for shred in slice0_shreds {
             blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.get_block((slot, block_hash)).is_none());
 
         // after second slice we should have the block
         for shred in slice1_shreds {
             blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_some());
+        assert!(blockstore.get_block((slot, block_hash)).is_some());
 
         Ok(())
     }
