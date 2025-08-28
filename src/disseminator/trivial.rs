@@ -82,7 +82,8 @@ mod tests {
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
-                repair_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
 

@@ -67,7 +67,8 @@ pub struct ValidatorInfo {
     pub voting_pubkey: aggsig::PublicKey,
     pub all2all_address: SocketAddr,
     pub disseminator_address: SocketAddr,
-    pub repair_address: SocketAddr,
+    pub repair_request_address: SocketAddr,
+    pub repair_response_address: SocketAddr,
 }
 
 /// Returns the highest non-zero byte in `val`.

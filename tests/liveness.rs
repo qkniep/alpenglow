@@ -72,7 +72,7 @@ type TestNode =
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
     let mut networks = VecDeque::new();
-    for _ in 0..4 * count {
+    for _ in 0..5 * count {
         networks.push_back(UdpNetwork::new_with_any_port());
     }
 
@@ -86,7 +86,8 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let a2a_port = networks[4 * id as usize].port();
         let dis_port = networks[4 * id as usize + 1].port();
-        let rep_port = networks[4 * id as usize + 2].port();
+        let repair_request_port = networks[4 * id as usize + 2].port();
+        let repair_response_port = networks[4 * id as usize + 3].port();
         validators.push(ValidatorInfo {
             id,
             stake: 1,
@@ -94,7 +95,8 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(a2a_port),
             disseminator_address: localhost_ip_sockaddr(dis_port),
-            repair_address: localhost_ip_sockaddr(rep_port),
+            repair_request_address: localhost_ip_sockaddr(repair_request_port),
+            repair_response_address: localhost_ip_sockaddr(repair_response_port),
         });
     }
 
@@ -106,6 +108,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
             let repair_network = networks.pop_front().unwrap();
+            let repair_request_network = networks.pop_front().unwrap();
             let txs_receiver = networks.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
@@ -113,6 +116,7 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 all2all,
                 disseminator,
                 repair_network,
+                repair_request_network,
                 epoch_info,
                 txs_receiver,
             )

@@ -25,15 +25,15 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
     for i in 0..num_validators {
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
-        let sockaddr = localhost_ip_sockaddr(0);
         validators.push(ValidatorInfo {
             id: i,
             stake: 1,
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
-            all2all_address: sockaddr,
-            disseminator_address: sockaddr,
-            repair_address: sockaddr,
+            all2all_address: localhost_ip_sockaddr(0),
+            disseminator_address: localhost_ip_sockaddr(0),
+            repair_request_address: localhost_ip_sockaddr(0),
+            repair_response_address: localhost_ip_sockaddr(0),
         });
     }
     let epoch_info = Arc::new(EpochInfo::new(0, validators));
