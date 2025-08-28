@@ -21,7 +21,7 @@ use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::shredder::{DATA_SHREDS, Shred};
+use crate::shredder::{DATA_SHREDS, Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
 
@@ -125,7 +125,7 @@ impl<N: Network> Repair<N> {
     pub async fn repair_loop(&mut self) {
         let mut repair_receiver = self.repair_channel.1.take().unwrap();
         loop {
-            let next_timeout = self.request_timeouts.peek().map(|t| t.0);
+            let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
             let sleep_duration = match next_timeout {
                 None => std::time::Duration::MAX,
                 Some(t) => t.duration_since(Instant::now()),
@@ -278,7 +278,8 @@ impl<N: Network> Repair<N> {
                 self.slice_roots.insert((block_id, slice), root);
 
                 // issue next requests
-                for shred_index in 0..DATA_SHREDS {
+                // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
+                for shred_index in 0..TOTAL_SHREDS {
                     let req = RepairRequest::Shred(block_id, slice, shred_index);
                     self.send_request(req).await.unwrap();
                 }
@@ -351,13 +352,18 @@ impl<N: Network> Repair<N> {
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;
         self.outstanding_requests.insert(hash, request.clone());
+        self.request_timeouts.retain(|(_, h)| h != &hash);
         self.request_timeouts.push((expiry, hash));
 
         let repair = RepairMessage::Request(request, self.epoch_info.own_id);
         let msg: NetworkMessage = repair.into();
         let msg_bytes = msg.to_bytes();
-        let to = self.pick_random_peer();
-        self.network.send_serialized(&msg_bytes, to).await
+        // HACK: magic number to fix high-failure scenarios
+        for _ in 0..3 {
+            let to = self.pick_random_peer();
+            self.network.send_serialized(&msg_bytes, to).await?;
+        }
+        Ok(())
     }
 
     async fn send_response(
