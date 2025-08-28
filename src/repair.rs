@@ -418,6 +418,7 @@ mod tests {
     use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
+    use crate::shredder::DATA_SHREDS;
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
