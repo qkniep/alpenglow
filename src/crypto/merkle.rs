@@ -217,6 +217,8 @@ fn hash_pair(left: Hash, right: Hash) -> Hash {
 
 #[cfg(test)]
 mod tests {
+    use rand::prelude::*;
+
     use super::*;
 
     #[test]
@@ -304,5 +306,37 @@ mod tests {
 
         let proof = tree1.create_proof(32);
         assert!(MerkleTree::check_proof_last(b"hello", 32, root, &proof));
+    }
+
+    #[test]
+    fn fuzzing() {
+        const ITERATIONS: u64 = 10_000;
+        const MAX_NUM_LEAVES: usize = 64;
+        const MAX_LEAF_DATA_LEN: usize = 64;
+        const QUERIES_PER_TREE: usize = 10;
+
+        let mut rng = rand::rng();
+        for _ in 0..ITERATIONS {
+            let num_data = rng.random_range(1..=MAX_NUM_LEAVES);
+            let mut data = Vec::with_capacity(num_data);
+            for _ in 0..num_data {
+                let leaf_data_len = rng.random_range(0..=MAX_LEAF_DATA_LEN);
+                let mut leaf_data = vec![0; leaf_data_len];
+                rng.fill_bytes(&mut leaf_data);
+                data.push(leaf_data);
+            }
+
+            let tree = MerkleTree::new(&data);
+            let root = tree.get_root();
+            for _ in 0..QUERIES_PER_TREE {
+                let index = rng.random_range(0..num_data);
+                let proof = tree.create_proof(index);
+                let leaf = &data[index];
+                assert!(MerkleTree::check_proof(leaf, index, root, &proof));
+                if index == num_data - 1 {
+                    assert!(MerkleTree::check_proof_last(leaf, index, root, &proof));
+                }
+            }
+        }
     }
 }
