@@ -496,7 +496,7 @@ async fn wait_for_first_slot(
                 loop {
                     let last_slot_in_prev_window = first_slot_in_window.prev();
                     if let Some(hash) = blockstore.read().await
-                        .canonical_block_hash(last_slot_in_prev_window)
+                        .disseminated_block_hash(last_slot_in_prev_window)
                     {
                         return Some((last_slot_in_prev_window, hash));
                     }
