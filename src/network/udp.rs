@@ -78,7 +78,7 @@ impl Network for UdpNetwork {
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
+    use crate::network::localhost_ip_sockaddr;
 
     use super::*;
 
@@ -86,7 +86,7 @@ mod tests {
     async fn ping() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), socket1.port());
+        let addr1 = localhost_ip_sockaddr(socket1.port());
 
         // regular send()
         socket2.send(&NetworkMessage::Ping, addr1).await.unwrap();
@@ -104,8 +104,8 @@ mod tests {
     async fn ping_pong() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), socket1.port());
-        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), socket2.port());
+        let addr1 = localhost_ip_sockaddr(socket1.port());
+        let addr2 = localhost_ip_sockaddr(socket2.port());
 
         socket1.send(&NetworkMessage::Ping, addr2).await.unwrap();
         let msg = socket2.receive().await.unwrap();
