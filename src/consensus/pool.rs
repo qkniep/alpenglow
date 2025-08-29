@@ -486,6 +486,7 @@ impl Pool for PoolImpl {
     async fn recover_from_standstill(&self) {
         let slot = self.finalized_slot();
         let mut certs = self.get_final_certs(slot);
+        assert!(!certs.is_empty(), "no final cert");
         certs.extend(self.get_certs(slot.next()..));
         let votes = self.get_own_votes(slot.next()..);
 
