@@ -78,9 +78,8 @@ impl Network for UdpNetwork {
 
 #[cfg(test)]
 mod tests {
-    use crate::network::localhost_ip_sockaddr;
-
     use super::*;
+    use crate::network::localhost_ip_sockaddr;
 
     #[tokio::test]
     async fn ping() {
