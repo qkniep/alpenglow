@@ -244,15 +244,14 @@ mod tests {
         for i in 0..count {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
-            let sock = dontcare_sockaddr();
             validators.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: sock,
-                disseminator_address: sock,
-                repair_address: sock,
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             });
         }
         (sks, validators)

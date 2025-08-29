@@ -566,7 +566,6 @@ mod tests {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut info = Vec::new();
-        let sockaddr = dontcare_sockaddr();
 
         for i in 0..signers {
             sks.push(signature::SecretKey::new(&mut rand::rng()));
@@ -576,9 +575,9 @@ mod tests {
                 stake: 1,
                 pubkey: sks.last().unwrap().to_pk(),
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
-                all2all_address: sockaddr,
-                disseminator_address: sockaddr,
-                repair_address: sockaddr,
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             });
         }
 

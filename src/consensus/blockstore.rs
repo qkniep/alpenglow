@@ -340,15 +340,14 @@ mod tests {
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-        let sockaddr = dontcare_sockaddr();
         let info = ValidatorInfo {
             id: 0,
             stake: 1,
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
-            all2all_address: sockaddr,
-            disseminator_address: sockaddr,
-            repair_address: sockaddr,
+            all2all_address: dontcare_sockaddr(),
+            disseminator_address: dontcare_sockaddr(),
+            repair_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
         let epoch_info = EpochInfo::new(0, validators);

@@ -188,7 +188,6 @@ pub fn validators_from_validator_data(
     Vec<ValidatorInfo>,
     Vec<(ValidatorInfo, &'static PingServer)>,
 ) {
-    let sockaddr = dontcare_sockaddr();
     let mut validators = Vec::new();
     for v in validator_data {
         if !(v.is_active && v.delinquent == Some(false)) {
@@ -204,9 +203,9 @@ pub fn validators_from_validator_data(
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: sockaddr,
-                disseminator_address: sockaddr,
-                repair_address: sockaddr,
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             });
         }
     }
@@ -233,9 +232,9 @@ pub fn validators_from_validator_data(
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: sockaddr,
-                disseminator_address: sockaddr,
-                repair_address: sockaddr,
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             },
             ping_server,
         ));
