@@ -53,7 +53,7 @@ pub trait Blockstore {
         hash: Hash,
         shred: Shred,
     ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
-    fn canonical_block_hash(&self, slot: Slot) -> Option<Hash>;
+    fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: BlockId) -> Option<SliceIndex>;
@@ -127,18 +127,18 @@ impl BlockstoreImpl {
 
     /// Gives reference to stored block data for the given `block_id`.
     ///
-    /// Considers both, the canonical block and any repaired blocks.
+    /// Considers both, the disseminated block and any repaired blocks.
     ///
     /// Returns `None` if blockstore does not know about this block yet.
     fn get_block_data(&self, block_id: BlockId) -> Option<&BlockData> {
         let (slot, hash) = block_id;
         let slot_data = self.slot_data(slot)?;
-        if let Some((h, _)) = slot_data.canonical.completed
+        if let Some((h, _)) = slot_data.disseminated.completed
             && h == hash
         {
-            return Some(&slot_data.canonical);
+            return Some(&slot_data.disseminated);
         }
-        slot_data.alternatives.get(&hash)
+        slot_data.repaired.get(&hash)
     }
 
     /// Reads slot data for the given `slot`.
@@ -155,18 +155,18 @@ impl BlockstoreImpl {
 
     /// Gives the shred for the given `slot`, `slice` and `shred` index.
     ///
-    /// Considers only the canonical block.
+    /// Considers only the disseminated block.
     ///
     /// Only used for testing.
     #[cfg(test)]
-    fn get_canonical_shred(
+    fn get_disseminated_shred(
         &self,
         slot: Slot,
         slice: SliceIndex,
         shred_index: usize,
     ) -> Option<&Shred> {
         self.slot_data(slot)
-            .and_then(|s| s.canonical.shreds.get(&slice)?.get(shred_index))
+            .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index))
     }
 
     /// Gives the number of stored shreds for a given `slot` (across all slices).
@@ -175,7 +175,7 @@ impl BlockstoreImpl {
     #[cfg(test)]
     fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
         self.slot_data(slot)
-            .map_or(0, |s| s.canonical.shreds.values().map(Vec::len).sum())
+            .map_or(0, |s| s.disseminated.shreds.values().map(Vec::len).sum())
     }
 
     /// Gives the number of stored slices for a given `slot`.
@@ -183,7 +183,8 @@ impl BlockstoreImpl {
     /// Only used for testing.
     #[cfg(test)]
     pub(crate) fn stored_slices_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot).map_or(0, |s| s.canonical.slices.len())
+        self.slot_data(slot)
+            .map_or(0, |s| s.disseminated.slices.len())
     }
 }
 
@@ -246,13 +247,14 @@ impl Blockstore for BlockstoreImpl {
         }
     }
 
-    /// Gives the canonical block hash for a given `slot`, if any.
+    /// Gives the disseminated block hash for a given `slot`, if any.
     ///
-    /// This is usually the first version of the block stored in the blockstore.
-    /// Returns `None` if blockstore does not hold any version of the block yet.
-    fn canonical_block_hash(&self, slot: Slot) -> Option<Hash> {
+    /// This refers to the block we received from block dissemination.
+    ///
+    /// Returns `None` if we have no block or only blocks from repair.
+    fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash> {
         self.slot_data(slot)?
-            .canonical
+            .disseminated
             .completed
             .as_ref()
             .map(|c| c.0)
@@ -260,7 +262,10 @@ impl Blockstore for BlockstoreImpl {
 
     /// Gives reference to stored block for the given `block_id`.
     ///
-    /// Returns `None` if blockstore does not hold that block.
+    /// Considers both, the disseminated block and any repaired blocks.
+    /// However, the dissminated block can only be considered if it's complete.
+    ///
+    /// Returns `None` if blockstore does not know a block for that hash.
     fn get_block(&self, block_id: BlockId) -> Option<&Block> {
         let block_data = self.get_block_data(block_id)?;
         if let Some((hash, block)) = block_data.completed.as_ref() {
@@ -367,7 +372,7 @@ mod tests {
                 .await?;
 
             // check shred is stored
-            let Some(stored_shred) = blockstore.get_canonical_shred(
+            let Some(stored_shred) = blockstore.get_disseminated_shred(
                 slot,
                 SliceIndex::first(),
                 shred.payload().index_in_slice,
@@ -382,7 +387,7 @@ mod tests {
             .create_double_merkle_proof(block_id, SliceIndex::first())
             .unwrap();
         let slot_data = blockstore.slot_data(slot).unwrap();
-        let tree = slot_data.canonical.double_merkle_tree.as_ref().unwrap();
+        let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
         assert!(MerkleTree::check_proof(&slice_hash, 0, root, &proof));
 
@@ -404,14 +409,14 @@ mod tests {
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // after second slice we should have the block
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_some());
+        assert!(blockstore.disseminated_block_hash(slot).is_some());
 
         Ok(())
     }
@@ -453,7 +458,7 @@ mod tests {
         let slot = Slot::genesis().next();
         let (tx, _rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // generate a single slice for slot 0
         let slices = create_random_block(slot, 1);
@@ -463,7 +468,7 @@ mod tests {
         for shred in shreds.into_iter().rev() {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_some());
+        assert!(blockstore.disseminated_block_hash(slot).is_some());
 
         Ok(())
     }
@@ -473,7 +478,7 @@ mod tests {
         let slot = Slot::genesis().next();
         let (tx, _rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // generate a larger block for slot 0
         let slices = create_random_block(slot, 4);
@@ -509,7 +514,7 @@ mod tests {
         {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_some());
+        assert!(blockstore.disseminated_block_hash(slot).is_some());
 
         // slices are deleted after reconstruction
         assert_eq!(blockstore.stored_slices_for_slot(slot), 0);
@@ -522,7 +527,7 @@ mod tests {
         let slot = Slot::genesis().next();
         let (tx, _rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // generate two slices for slot 0
         let slices = create_random_block(slot, 2);
@@ -532,7 +537,7 @@ mod tests {
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_none());
+        assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // stored all shreds for slot 0
         assert_eq!(blockstore.stored_shreds_for_slot(slot), TOTAL_SHREDS);
@@ -542,7 +547,7 @@ mod tests {
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(slot).is_some());
+        assert!(blockstore.disseminated_block_hash(slot).is_some());
 
         // stored all shreds
         assert_eq!(blockstore.stored_shreds_for_slot(slot), 2 * TOTAL_SHREDS);
@@ -609,9 +614,9 @@ mod tests {
         for shred in shreds {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
-        assert!(blockstore.canonical_block_hash(block0_slot).is_some());
-        assert!(blockstore.canonical_block_hash(block1_slot).is_some());
-        assert!(blockstore.canonical_block_hash(block2_slot).is_some());
+        assert!(blockstore.disseminated_block_hash(block0_slot).is_some());
+        assert!(blockstore.disseminated_block_hash(block1_slot).is_some());
+        assert!(blockstore.disseminated_block_hash(block2_slot).is_some());
 
         // stored all shreds
         assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), TOTAL_SHREDS);
@@ -632,7 +637,13 @@ mod tests {
         let shred_count = blockstore
             .block_data
             .values()
-            .map(|d| d.canonical.shreds.values().map(|s| s.len()).sum::<usize>())
+            .map(|d| {
+                d.disseminated
+                    .shreds
+                    .values()
+                    .map(|s| s.len())
+                    .sum::<usize>()
+            })
             .sum::<usize>();
         assert_eq!(shred_count, 0);
 
