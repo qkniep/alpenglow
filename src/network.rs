@@ -171,6 +171,9 @@ pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
 }
 
 /// Returns a [`SocketAddr`] that could be bound any arbitrary IP and port.
+///
+/// This is present here to enable sharing of code between testing and benchmarking.
+/// This should not be used in production.
 pub fn dontcare_sockaddr() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
 }
