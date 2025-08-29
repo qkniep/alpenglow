@@ -31,6 +31,9 @@ pub struct FinalityTracker {
     /// Maps blocks to their parents.
     parents: BTreeMap<BlockId, BlockId>,
     /// The highest finalized slot so far.
+    ///
+    /// This means that slot has a fast finalization OR finalization + notarization.
+    /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
     highest_finalized_slot: Slot,
 }
 
@@ -39,7 +42,7 @@ pub struct FinalityTracker {
 pub enum FinalizationStatus {
     /// Block with given hash is notarized, but slot is not yet (known to be) finalized.
     Notarized(Hash),
-    /// Slot is finalized, but notarized block is not yet known.
+    /// Slot is known to be finalized, but we are missing the notarization certificate.
     FinalPendingNotar,
     /// Slot is finalized, and notarized block is known to have the given hash.
     Finalized(Hash),
