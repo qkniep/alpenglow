@@ -237,7 +237,7 @@ impl PoolImpl {
         certs
     }
 
-    /// Fetches finalization certficates for given `slot`.
+    /// Fetches finalization certficates for given `slot`, if any.
     ///
     /// Prefers fast-finalization over slow-finalization, if it's available.
     /// In that case this returns only the fast-finalization certificate.
@@ -246,16 +246,18 @@ impl PoolImpl {
         let Some(slot_state) = self.slot_states.get(&slot) else {
             return Vec::new();
         };
-
-        if let Some(ff_cert) = slot_state.certificates.fast_finalize.clone() {
-            vec![Cert::FastFinal(ff_cert)]
-        } else if let Some(final_cert) = slot_state.certificates.finalize.clone()
-            && let Some(notar_cert) = slot_state.certificates.notar.clone()
-        {
-            vec![Cert::Final(final_cert), Cert::Notar(notar_cert)]
-        } else {
-            vec![]
+        if let Some(ff_cert) = &slot_state.certificates.fast_finalize {
+            return vec![Cert::FastFinal(ff_cert.clone())];
         }
+        if let Some(final_cert) = &slot_state.certificates.finalize
+            && let Some(notar_cert) = &slot_state.certificates.notar
+        {
+            return vec![
+                Cert::Final(final_cert.clone()),
+                Cert::Notar(notar_cert.clone()),
+            ];
+        }
+        Vec::new()
     }
 
     /// Fetches all votes cast by myself for the provided range of `slots`.
