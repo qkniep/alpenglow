@@ -567,7 +567,7 @@ mod tests {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
                 let msg = NetworkMessage::Transaction(Transaction(data));
-                txs_sender.send(&msg, addr.clone()).await.unwrap();
+                txs_sender.send(&msg, addr).await.unwrap();
             }
         });
 
