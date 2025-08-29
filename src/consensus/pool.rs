@@ -1149,17 +1149,17 @@ mod tests {
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
 
-        // all nodes vote for first slot
+        // all nodes vote for first slot (it's fast finalized)
         let slot1 = Slot::genesis().next();
         for v in 0..11 {
             let vote = Vote::new_notar(slot1, [1; 32], &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
-        // we also vote for next slot, see only enough votes to notarize
+        // we also vote for next slot, see only final votes (it's missing notar)
         let slot2 = slot1.next();
         for v in 0..7 {
-            let vote = Vote::new_notar(slot2, [2; 32], &sks[v as usize], v);
+            let vote = Vote::new_final(slot2, &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
@@ -1187,19 +1187,26 @@ mod tests {
 
         // check against expected response
         assert_eq!(slot, slot2);
-        assert_eq!(certs.len(), 3);
+        assert_eq!(certs.len(), 2);
         for cert in certs {
-            assert!(matches!(
-                cert,
-                Cert::Notar(_) | Cert::NotarFallback(_) | Cert::FastFinal(_)
-            ));
-            assert!([slot1, slot2].contains(&cert.slot()));
+            if matches!(cert, Cert::FastFinal(_)) {
+                assert_eq!(cert.slot(), slot1);
+            } else if matches!(cert, Cert::Final(_)) {
+                assert_eq!(cert.slot(), slot2);
+            } else {
+                unreachable!("unexpected cert {cert:?}");
+            }
         }
         assert_eq!(votes.len(), 2);
         for vote in votes {
             assert_eq!(vote.signer(), 0);
-            assert!([slot2, slot3].contains(&vote.kind().slot()));
-            assert!(matches!(vote.kind(), VoteKind::Notar(_, _)));
+            if matches!(vote.kind(), VoteKind::Final(_)) {
+                assert_eq!(vote.kind().slot(), slot2);
+            } else if matches!(vote.kind(), VoteKind::Notar(_, _)) {
+                assert_eq!(vote.kind().slot(), slot3);
+            } else {
+                unreachable!("unexpected vote {vote:?}");
+            }
         }
     }
 
