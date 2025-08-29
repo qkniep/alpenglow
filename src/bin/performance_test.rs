@@ -12,7 +12,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
-use alpenglow::network::{SimulatedNetwork, UdpNetwork};
+use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, ValidatorInfo, logging};
 use color_eyre::Result;
@@ -77,17 +77,17 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let a2a_port = 3 * id;
-        let dis_port = 3 * id + 1;
-        let rep_port = udp_networks[id as usize].port();
+        let all2all_address = localhost_ip_sockaddr((3 * id).try_into().unwrap());
+        let disseminator_address = localhost_ip_sockaddr((3 * id + 1).try_into().unwrap());
+        let repair_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id,
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("{a2a_port}"),
-            disseminator_address: format!("{dis_port}"),
-            repair_address: format!("127.0.0.1:{rep_port}"),
+            all2all_address,
+            disseminator_address,
+            repair_address,
         });
     }
 

@@ -28,7 +28,7 @@ pub mod simulated;
 mod tcp;
 mod udp;
 
-use std::str::FromStr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -156,32 +156,23 @@ pub enum NetworkError {
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
-    type Address: Send;
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkError>;
 
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError>;
-
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError>;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkError>;
 
     // TODO: implement brodcast at `Network` level?
 
     async fn receive(&self) -> Result<NetworkMessage, NetworkError>;
+}
 
-    fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
-    where
-        Self::Address: FromStr,
-    {
-        str.as_ref()
-            .parse()
-            .map_err(|_| NetworkError::MalformedAddress)
-    }
+/// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
+pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+}
+
+/// Returns a [`SocketAddr`] that could be bound any arbitrary IP and port.
+pub fn dontcare_sockaddr() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
 }
 
 #[cfg(test)]

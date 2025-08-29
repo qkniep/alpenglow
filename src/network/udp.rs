@@ -53,24 +53,13 @@ impl UdpNetwork {
 
 #[async_trait]
 impl Network for UdpNetwork {
-    type Address = SocketAddr;
-
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkError> {
         let bytes = message.to_bytes();
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
-        let to_addr = Self::parse_addr(to).unwrap();
-        self.socket.send_to(bytes, to_addr).await?;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkError> {
+        self.socket.send_to(bytes, to).await?;
         Ok(())
     }
 
@@ -89,22 +78,24 @@ impl Network for UdpNetwork {
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
     use super::*;
 
     #[tokio::test]
     async fn ping() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = format!("127.0.0.1:{}", socket1.port());
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), socket1.port());
 
         // regular send()
-        socket2.send(&NetworkMessage::Ping, &addr1).await.unwrap();
+        socket2.send(&NetworkMessage::Ping, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
 
         // send_serialized()
         let bytes = NetworkMessage::Ping.to_bytes();
-        socket2.send_serialized(&bytes, &addr1).await.unwrap();
+        socket2.send_serialized(&bytes, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
     }
@@ -113,13 +104,13 @@ mod tests {
     async fn ping_pong() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = format!("127.0.0.1:{}", socket1.port());
-        let addr2 = format!("127.0.0.1:{}", socket2.port());
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), socket1.port());
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), socket2.port());
 
-        socket1.send(&NetworkMessage::Ping, &addr2).await.unwrap();
+        socket1.send(&NetworkMessage::Ping, addr2).await.unwrap();
         let msg = socket2.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
-        socket2.send(&NetworkMessage::Pong, &addr1).await.unwrap();
+        socket2.send(&NetworkMessage::Pong, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Pong));
     }

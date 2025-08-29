@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use alpenglow::all2all::TrivialAll2All;
@@ -81,6 +82,7 @@ type TestNode =
 
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // prepare validator info for all nodes
+    let ipaddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let mut port = 3000;
     let mut rng = rng();
     let mut sks = Vec::new();
@@ -94,9 +96,9 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("127.0.0.1:{port}"),
-            disseminator_address: format!("127.0.0.1:{}", port + 1),
-            repair_address: format!("127.0.0.1:{}", port + 2),
+            all2all_address: SocketAddr::new(ipaddr, port),
+            disseminator_address: SocketAddr::new(ipaddr, port + 1),
+            repair_address: SocketAddr::new(ipaddr, port + 2),
         });
         port += 4;
     }

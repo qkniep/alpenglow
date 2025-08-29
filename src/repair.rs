@@ -10,6 +10,7 @@
 //! individually verified.
 
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -378,17 +379,17 @@ impl<N: Network> Repair<N> {
         validator: ValidatorId,
     ) -> Result<(), NetworkError> {
         let msg = RepairMessage::Response(response);
-        let to = &self.epoch_info.validator(validator).repair_address;
+        let to = self.epoch_info.validator(validator).repair_address;
         self.network.send(&msg.into(), to).await
     }
 
-    fn pick_random_peer(&self) -> &str {
+    fn pick_random_peer(&self) -> SocketAddr {
         let mut rng = rand::rng();
         let mut peer_info = self.sampler.sample_info(&mut rng);
         while peer_info.id == self.epoch_info.own_id {
             peer_info = self.sampler.sample_info(&mut rng);
         }
-        &peer_info.repair_address
+        peer_info.repair_address
     }
 }
 
@@ -423,6 +424,7 @@ mod tests {
     use super::*;
     use crate::consensus::{BlockstoreImpl, PoolImpl};
     use crate::crypto::signature::SecretKey;
+    use crate::network::localhost_ip_sockaddr;
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
@@ -446,8 +448,8 @@ mod tests {
         let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
         let leader_key = SecretKey::new(&mut rand::rng());
         epoch_info.validators.get_mut(0).unwrap().pubkey = leader_key.to_pk();
-        epoch_info.validators.get_mut(0).unwrap().repair_address = "0".to_string();
-        epoch_info.validators.get_mut(1).unwrap().repair_address = "1".to_string();
+        epoch_info.validators.get_mut(0).unwrap().repair_address = localhost_ip_sockaddr(0);
+        epoch_info.validators.get_mut(1).unwrap().repair_address = localhost_ip_sockaddr(1);
         epoch_info.own_id = 1;
         let epoch_info = Arc::new(epoch_info);
 
@@ -523,8 +525,9 @@ mod tests {
             shreds.last().unwrap()[0].merkle_root,
             merkle_tree.create_proof(num_slices - 1),
         );
+        let port1 = localhost_ip_sockaddr(1);
         let msg = RepairMessage::Response(response).into();
-        other_network.send(&msg, "1").await.unwrap();
+        other_network.send(&msg, port1).await.unwrap();
 
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
@@ -548,7 +551,7 @@ mod tests {
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req, root, proof);
             let msg = RepairMessage::Response(response).into();
-            other_network.send(&msg, "1").await.unwrap();
+            other_network.send(&msg, port1).await.unwrap();
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
@@ -570,7 +573,7 @@ mod tests {
                 let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req, shred);
                 let msg = RepairMessage::Response(response).into();
-                other_network.send(&msg, "1").await.unwrap();
+                other_network.send(&msg, port1).await.unwrap();
             }
         }
 
@@ -605,7 +608,8 @@ mod tests {
         // request last slice root to learn how many slices there are
         let request = RepairRequest::LastSliceRoot(block_to_repair);
         let msg = RepairMessage::Request(request.clone(), 0).into();
-        other_network.send(&msg, "1").await.unwrap();
+        let port1 = localhost_ip_sockaddr(1);
+        other_network.send(&msg, port1).await.unwrap();
 
         // verify reponse
         let msg = other_network.receive().await.unwrap();
@@ -627,7 +631,7 @@ mod tests {
         for slice in SliceIndex::all().take(SLICES) {
             let request = RepairRequest::SliceRoot(block_to_repair, slice);
             let msg = RepairMessage::Request(request.clone(), 0).into();
-            other_network.send(&msg, "1").await.unwrap();
+            other_network.send(&msg, port1).await.unwrap();
 
             // verify response
             let msg = other_network.receive().await.unwrap();
@@ -647,7 +651,7 @@ mod tests {
             for shred_index in 0..TOTAL_SHREDS {
                 let request = RepairRequest::Shred(block_to_repair, slice, shred_index);
                 let msg = RepairMessage::Request(request.clone(), 0).into();
-                other_network.send(&msg, "1").await.unwrap();
+                other_network.send(&msg, port1).await.unwrap();
 
                 // verify response
                 let msg = other_network.receive().await.unwrap();

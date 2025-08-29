@@ -64,22 +64,12 @@ impl TcpNetwork {
 
 #[async_trait]
 impl Network for TcpNetwork {
-    type Address = SocketAddr;
-
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkError> {
         let bytes = message.to_bytes();
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        _to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send_serialized(&self, bytes: &[u8], _to: SocketAddr) -> Result<(), NetworkError> {
         // TODO: use correct socket
         let writer = &self.writers.read().await[0];
         writer.lock().await.send(bytes.to_vec().into()).await?;
