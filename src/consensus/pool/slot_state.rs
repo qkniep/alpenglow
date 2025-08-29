@@ -12,7 +12,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use either::Either;
-use log::warn;
 use smallvec::SmallVec;
 
 use super::SlashableOffence;
@@ -205,16 +204,7 @@ impl SlotState {
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
     pub fn notify_parent_known(&mut self, hash: Hash) {
-        // TODO: maybe turn this back into a panic once repair is fully implemented
-        if self.parents.contains_key(&hash) {
-            warn!(
-                "parent of block {} in slot {} was alredy known",
-                &hex::encode(hash)[..8],
-                self.slot
-            );
-            return;
-        }
-        self.parents.insert(hash, ParentStatus::Known);
+        self.parents.entry(hash).or_insert(ParentStatus::Known);
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.

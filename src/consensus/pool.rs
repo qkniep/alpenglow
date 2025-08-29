@@ -11,6 +11,7 @@ mod parent_ready_tracker;
 mod slot_state;
 
 use std::collections::BTreeMap;
+use std::ops::RangeBounds;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -213,12 +214,10 @@ impl PoolImpl {
             .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 
-    /// Fetches all certficates for any slots starting from `slot`.
-    // TODO: only return finalization for first slot, instead of all certs
-    // (need to update `standstill_recovery` test below)
-    fn get_certs(&self, slot: Slot) -> Vec<Cert> {
+    /// Fetches all certficates for the provided range of `slots`.
+    fn get_certs(&self, slots: impl RangeBounds<Slot>) -> Vec<Cert> {
         let mut certs = Vec::new();
-        for (_, slot_state) in self.slot_states.range(slot..) {
+        for (_, slot_state) in self.slot_states.range(slots) {
             if let Some(cert) = slot_state.certificates.finalize.clone() {
                 certs.push(Cert::Final(cert));
             }
@@ -238,11 +237,34 @@ impl PoolImpl {
         certs
     }
 
-    /// Fetches all votes cast by myself for any slots starting from `slot`.
-    fn get_own_votes(&self, slot: Slot) -> Vec<Vote> {
+    /// Fetches finalization certficates for given `slot`, if any.
+    ///
+    /// Prefers fast-finalization over slow-finalization, if it's available.
+    /// In that case this returns only the fast-finalization certificate.
+    /// Otherwise, returns the finalization and notarization certificates.
+    fn get_final_certs(&self, slot: Slot) -> Vec<Cert> {
+        let Some(slot_state) = self.slot_states.get(&slot) else {
+            return Vec::new();
+        };
+        if let Some(ff_cert) = &slot_state.certificates.fast_finalize {
+            return vec![Cert::FastFinal(ff_cert.clone())];
+        }
+        if let Some(final_cert) = &slot_state.certificates.finalize
+            && let Some(notar_cert) = &slot_state.certificates.notar
+        {
+            return vec![
+                Cert::Final(final_cert.clone()),
+                Cert::Notar(notar_cert.clone()),
+            ];
+        }
+        Vec::new()
+    }
+
+    /// Fetches all votes cast by myself for the provided range of `slots`.
+    fn get_own_votes(&self, slots: impl RangeBounds<Slot>) -> Vec<Vote> {
         let mut votes = Vec::new();
         let own_id = self.epoch_info.own_id;
-        for (_, slot_state) in self.slot_states.range(slot..) {
+        for (_, slot_state) in self.slot_states.range(slots) {
             if let Some(vote) = &slot_state.votes.finalize[own_id as usize] {
                 votes.push(vote.clone());
             }
@@ -465,8 +487,10 @@ impl Pool for PoolImpl {
     /// Should be called after not seeing any progress for the standstill duration.
     async fn recover_from_standstill(&self) {
         let slot = self.finalized_slot();
-        let certs = self.get_certs(slot);
-        let votes = self.get_own_votes(slot.next());
+        let mut certs = self.get_final_certs(slot);
+        assert!(!certs.is_empty(), "no final cert");
+        certs.extend(self.get_certs(slot.next()..));
+        let votes = self.get_own_votes(slot.next()..);
 
         warn!("recovering from standstill at slot {slot}");
         debug!(
@@ -1144,7 +1168,7 @@ mod tests {
 
         // check against expected response
         assert_eq!(slot, slot2);
-        assert_eq!(certs.len(), 5);
+        assert_eq!(certs.len(), 3);
         for cert in certs {
             assert!(matches!(
                 cert,
