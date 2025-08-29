@@ -166,6 +166,10 @@ pub trait Network: Send + Sync {
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
+///
+/// NOTE: port 0 is generally reserved and used to get the OS to assign a port.
+/// Using this function with port=0 on actual networks might lead to unexpected behaviour.
+/// TODO: prevent being able to call this function with port = 0.
 pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
 }
