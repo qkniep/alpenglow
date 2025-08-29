@@ -146,11 +146,7 @@ mod tests {
 
     #[test]
     fn restore_empty() {
-        let header = SliceHeader {
-            slot: Slot::new(0),
-            slice_index: SliceIndex::first(),
-            is_last: true,
-        };
+        let header = SliceHeader::new(Slot::new(0), SliceIndex::first(), true);
         let payload = Vec::new();
         shred_deshred_restore(header, payload);
     }
@@ -168,11 +164,7 @@ mod tests {
 
     #[test]
     fn shred_too_much_data() {
-        let header = SliceHeader {
-            slot: Slot::new(0),
-            slice_index: SliceIndex::first(),
-            is_last: true,
-        };
+        let header = SliceHeader::new(Slot::new(0), SliceIndex::first(), true);
         let payload = vec![0; MAX_DATA_PER_SLICE + 1];
         let res = reed_solomon_shred(header, payload, DATA_SHREDS, DATA_SHREDS);
         assert!(res.is_err());
