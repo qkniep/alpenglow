@@ -518,6 +518,8 @@ async fn wait_for_first_slot(
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::str::FromStr;
     use std::time::Duration;
 
     use mockall::{Sequence, predicate};
@@ -559,6 +561,7 @@ mod tests {
     async fn produce_slice_full_slices() {
         let txs_receiver = UdpNetwork::new_with_any_port();
         let addr = format!("127.0.0.1:{}", txs_receiver.port());
+        let addr = IpAddr::V4(Ipv4Addr::from_str(&addr).unwrap());
         let txs_sender = UdpNetwork::new_with_any_port();
         // long enough duration so hopefully doesn't fire while collecting txs
         let duration_left = Duration::from_secs(100);

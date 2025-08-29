@@ -556,6 +556,7 @@ fn aggsig_from_votes_iter<'a>(
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::net::{IpAddr, Ipv4Addr};
 
     use super::*;
     use crate::crypto::aggsig::SecretKey;
@@ -569,14 +570,15 @@ mod tests {
         for i in 0..signers {
             sks.push(signature::SecretKey::new(&mut rand::rng()));
             voting_sks.push(SecretKey::new(&mut rand::rng()));
+            let unspecified = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
             info.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sks.last().unwrap().to_pk(),
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: unspecified,
+                disseminator_address: unspecified,
+                repair_address: unspecified,
             });
         }
 

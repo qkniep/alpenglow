@@ -28,6 +28,7 @@ pub mod simulated;
 mod tcp;
 mod udp;
 
+use std::net::IpAddr;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -158,17 +159,9 @@ pub enum NetworkError {
 pub trait Network: Send + Sync {
     type Address: Send;
 
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError>;
+    async fn send(&self, message: &NetworkMessage, to: IpAddr) -> Result<(), NetworkError>;
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError>;
+    async fn send_serialized(&self, bytes: &[u8], to: IpAddr) -> Result<(), NetworkError>;
 
     // TODO: implement brodcast at `Network` level?
 

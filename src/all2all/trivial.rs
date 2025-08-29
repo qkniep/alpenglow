@@ -33,7 +33,7 @@ impl<N: Network> TrivialAll2All<N> {
 impl<N: Network> All2All for TrivialAll2All<N> {
     async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkError> {
         for v in &self.validators {
-            self.network.send(msg, &v.all2all_address).await?;
+            self.network.send(msg, v.all2all_address).await?;
         }
         Ok(())
     }
@@ -45,6 +45,7 @@ impl<N: Network> All2All for TrivialAll2All<N> {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -72,14 +73,15 @@ mod tests {
             }
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+            let to = IpAddr::V4(Ipv4Addr::from_bits(i.try_into().unwrap()));
             validators.push(ValidatorInfo {
                 id: i,
                 stake: 1,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: i.to_string(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: to,
+                disseminator_address: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                repair_address: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             });
         }
 

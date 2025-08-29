@@ -69,7 +69,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let msg: NetworkMessage = shred.clone().into();
         let v = &self.epoch_info.validator(relay);
-        self.network.send(&msg, &v.disseminator_address).await
+        self.network.send(&msg, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -91,7 +91,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
                 continue;
             }
             self.network
-                .send_serialized(&bytes, &v.disseminator_address)
+                .send_serialized(&bytes, v.disseminator_address)
                 .await?;
         }
         Ok(())
@@ -133,6 +133,8 @@ impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for R
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::str::FromStr;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -155,6 +157,10 @@ mod tests {
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();
         for i in 0..count {
+            let unspecified = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+            let disseminator_address = IpAddr::V4(
+                Ipv4Addr::from_str(&format!("127.0.0.1:{}", base_port + i as u16)).unwrap(),
+            );
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
@@ -162,9 +168,9 @@ mod tests {
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: format!("127.0.0.1:{}", base_port + i as u16),
-                repair_address: String::new(),
+                all2all_address: unspecified,
+                disseminator_address,
+                repair_address: unspecified,
             });
         }
 

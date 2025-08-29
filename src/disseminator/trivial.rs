@@ -30,7 +30,7 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
     async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
         let msg = NetworkMessage::Shred(shred.clone());
         for v in &self.validators {
-            self.network.send(&msg, &v.disseminator_address).await?;
+            self.network.send(&msg, v.disseminator_address).await?;
         }
         Ok(())
     }

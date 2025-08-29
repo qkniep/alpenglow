@@ -325,6 +325,8 @@ impl Blockstore for BlockstoreImpl {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
     use color_eyre::Result;
     use tokio::sync::mpsc;
 
@@ -339,14 +341,15 @@ mod tests {
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+        let unspecified = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let info = ValidatorInfo {
             id: 0,
             stake: 1,
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
-            all2all_address: String::new(),
-            disseminator_address: String::new(),
-            repair_address: String::new(),
+            all2all_address: unspecified,
+            disseminator_address: unspecified,
+            repair_address: unspecified,
         };
         let validators = vec![info];
         let epoch_info = EpochInfo::new(0, validators);
