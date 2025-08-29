@@ -18,6 +18,8 @@ pub mod test_utils;
 pub mod types;
 pub mod validator;
 
+use std::net::SocketAddr;
+
 use serde::{Deserialize, Serialize};
 
 pub use self::all2all::All2All;
@@ -63,9 +65,9 @@ pub struct ValidatorInfo {
     pub pubkey: signature::PublicKey,
     #[serde(deserialize_with = "aggsig::PublicKey::from_array_of_bytes")]
     pub voting_pubkey: aggsig::PublicKey,
-    pub all2all_address: String,
-    pub disseminator_address: String,
-    pub repair_address: String,
+    pub all2all_address: SocketAddr,
+    pub disseminator_address: SocketAddr,
+    pub repair_address: SocketAddr,
 }
 
 /// Returns the highest non-zero byte in `val`.

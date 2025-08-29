@@ -529,7 +529,7 @@ mod tests {
     use crate::consensus::pool::MockPool;
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
-    use crate::network::UdpNetwork;
+    use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
 
@@ -558,7 +558,7 @@ mod tests {
     #[tokio::test]
     async fn produce_slice_full_slices() {
         let txs_receiver = UdpNetwork::new_with_any_port();
-        let addr = format!("127.0.0.1:{}", txs_receiver.port());
+        let addr = localhost_ip_sockaddr(txs_receiver.port());
         let txs_sender = UdpNetwork::new_with_any_port();
         // long enough duration so hopefully doesn't fire while collecting txs
         let duration_left = Duration::from_secs(100);
@@ -567,7 +567,7 @@ mod tests {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
                 let msg = NetworkMessage::Transaction(Transaction(data));
-                txs_sender.send(&msg, addr.clone()).await.unwrap();
+                txs_sender.send(&msg, addr).await.unwrap();
             }
         });
 

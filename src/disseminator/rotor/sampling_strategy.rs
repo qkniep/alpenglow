@@ -656,6 +656,7 @@ mod tests {
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::disseminator::turbine::WeightedShuffle;
+    use crate::network::dontcare_sockaddr;
     use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
     use crate::shredder::TOTAL_SHREDS;
 
@@ -669,9 +670,9 @@ mod tests {
                 stake: 1,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             });
         }
         validators

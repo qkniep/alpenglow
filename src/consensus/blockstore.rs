@@ -332,6 +332,7 @@ mod tests {
     use crate::ValidatorInfo;
     use crate::crypto::signature::SecretKey;
     use crate::crypto::{MerkleTree, aggsig};
+    use crate::network::dontcare_sockaddr;
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::test_utils::{create_random_block, create_random_shredded_block};
     use crate::types::SliceIndex;
@@ -344,9 +345,9 @@ mod tests {
             stake: 1,
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
-            all2all_address: String::new(),
-            disseminator_address: String::new(),
-            repair_address: String::new(),
+            all2all_address: dontcare_sockaddr(),
+            disseminator_address: dontcare_sockaddr(),
+            repair_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
         let epoch_info = EpochInfo::new(0, validators);

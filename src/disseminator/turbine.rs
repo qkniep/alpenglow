@@ -88,7 +88,7 @@ impl<N: Network> Turbine<N> {
             .await;
         let root = tree.get_root();
         let msg: NetworkMessage = shred.clone().into();
-        let addr = &self.validators[root as usize].disseminator_address;
+        let addr = self.validators[root as usize].disseminator_address;
         self.network.send(&msg, addr).await
     }
 
@@ -104,7 +104,7 @@ impl<N: Network> Turbine<N> {
             .await;
         let msg: NetworkMessage = shred.clone().into();
         for child in tree.get_children() {
-            let addr = &self.validators[*child as usize].disseminator_address;
+            let addr = self.validators[*child as usize].disseminator_address;
             self.network.send(&msg, addr).await?;
         }
         Ok(())
@@ -232,8 +232,8 @@ mod tests {
     use super::*;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
+    use crate::network::{SimulatedNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
@@ -249,9 +249,9 @@ mod tests {
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             });
         }
         (sks, validators)
@@ -266,7 +266,7 @@ mod tests {
                 .with_packet_loss(0.0),
         );
         for (i, v) in validators.iter_mut().enumerate() {
-            v.disseminator_address = i.to_string();
+            v.disseminator_address = localhost_ip_sockaddr(i.try_into().unwrap());
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
