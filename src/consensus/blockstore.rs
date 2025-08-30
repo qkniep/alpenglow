@@ -347,7 +347,8 @@ mod tests {
             voting_pubkey: voting_sk.to_pk(),
             all2all_address: dontcare_sockaddr(),
             disseminator_address: dontcare_sockaddr(),
-            repair_address: dontcare_sockaddr(),
+            repair_request_address: dontcare_sockaddr(),
+            repair_response_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
         let epoch_info = EpochInfo::new(0, validators);

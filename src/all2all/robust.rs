@@ -94,7 +94,8 @@ mod tests {
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),
                 disseminator_address: dontcare_sockaddr(),
-                repair_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
 

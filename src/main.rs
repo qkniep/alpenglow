@@ -96,9 +96,10 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(port),
             disseminator_address: localhost_ip_sockaddr(port + 1),
-            repair_address: localhost_ip_sockaddr(port + 2),
+            repair_request_address: localhost_ip_sockaddr(port + 2),
+            repair_response_address: localhost_ip_sockaddr(port + 3),
         });
-        port += 4;
+        port += 5;
     }
 
     // turn validator info into actual nodes
@@ -112,13 +113,15 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let network = UdpNetwork::new(start_port + 1);
             let disseminator = Rotor::new(network, epoch_info.clone());
             let repair_network = UdpNetwork::new(start_port + 2);
-            let txs_receiver = UdpNetwork::new(start_port + 3);
+            let repair_request_network = UdpNetwork::new(start_port + 3);
+            let txs_receiver = UdpNetwork::new(start_port + 4);
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),
                 all2all,
                 disseminator,
                 repair_network,
+                repair_request_network,
                 epoch_info,
                 txs_receiver,
             )

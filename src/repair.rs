@@ -67,6 +67,96 @@ pub enum RepairResponse {
     Shred(RepairRequest, Shred),
 }
 
+pub struct RepairRequestHandler<N: Network> {
+    epoch_info: Arc<EpochInfo>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    network: N,
+}
+
+impl<N: Network> RepairRequestHandler<N> {
+    pub fn new(
+        epoch_info: Arc<EpochInfo>,
+        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        network: N,
+    ) -> Self {
+        Self {
+            epoch_info,
+            blockstore,
+            network,
+        }
+    }
+
+    pub async fn run(&self) {
+        loop {
+            match self.network.receive().await.unwrap() {
+                NetworkMessage::Repair(message) => match message {
+                    RepairMessage::Request(request, sender) => {
+                        self.answer_request(request, sender).await.unwrap()
+                    }
+                    msg => warn!("Unexpected msg tpe: {:?}", msg),
+                },
+                msg => warn!("Unexpected msg type: {:?}", msg),
+            }
+        }
+    }
+
+    /// Tries to answer the given repair request.
+    ///
+    /// If we do not have the block the request refers to, the request is ignored.
+    /// Otherwise, the correct response is sent back to the sender of the request.
+    async fn answer_request(
+        &self,
+        request: RepairRequest,
+        sender: ValidatorId,
+    ) -> Result<(), NetworkError> {
+        trace!("answering repair request: {request:?}");
+        let response = match request {
+            RepairRequest::LastSliceRoot(block_id) => {
+                let blockstore = self.blockstore.read().await;
+                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
+                    return Ok(());
+                };
+                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
+                    return Ok(());
+                };
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
+                else {
+                    return Ok(());
+                };
+                RepairResponse::LastSliceRoot(request, last_slice, root, proof)
+            }
+            RepairRequest::SliceRoot(block_id, slice) => {
+                let blockstore = self.blockstore.read().await;
+                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
+                    return Ok(());
+                };
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
+                    return Ok(());
+                };
+                RepairResponse::SliceRoot(request, root, proof)
+            }
+            RepairRequest::Shred(block_id, slice, shred) => {
+                let blockstore = self.blockstore.read().await;
+                let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
+                    return Ok(());
+                };
+                RepairResponse::Shred(request, shred)
+            }
+        };
+        self.send_response(response, sender).await
+    }
+
+    async fn send_response(
+        &self,
+        response: RepairResponse,
+        validator: ValidatorId,
+    ) -> Result<(), NetworkError> {
+        let msg = RepairMessage::Response(response);
+        let to = self.epoch_info.validator(validator).repair_response_address;
+        self.network.send(&msg.into(), to).await
+    }
+}
+
 /// Instance of double-Merkle based block repair protocol.
 pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -132,8 +222,8 @@ impl<N: Network> Repair<N> {
                 Some(t) => t.duration_since(Instant::now()),
             };
             tokio::select! {
-                // handle repair request or response from network
-                res = self.receive() => self.handle_repair_message(res.unwrap()).await.unwrap(),
+                // handle repair response from network
+                res = self.receive() => self.handle_response(res.unwrap()).await,
                 // handle request for repairing new block
                 Some(block_id) = repair_receiver.recv() => {
                     self.repair_block(block_id).await;
@@ -164,64 +254,6 @@ impl<N: Network> Repair<N> {
         debug!("repairing block {h} in slot {slot}");
         let req = RepairRequest::LastSliceRoot(block_id);
         self.send_request(req).await.unwrap();
-    }
-
-    async fn handle_repair_message(&mut self, msg: RepairMessage) -> Result<(), NetworkError> {
-        match msg {
-            RepairMessage::Request(request, sender) => {
-                self.answer_request(request, sender).await?;
-            }
-            RepairMessage::Response(resposne) => {
-                self.handle_response(resposne).await;
-            }
-        }
-        Ok(())
-    }
-
-    /// Tries to answer the given repair request.
-    ///
-    /// If we do not have the block the request refers to, the request is ignored.
-    /// Otherwise, the correct response is sent back to the sender of the request.
-    async fn answer_request(
-        &self,
-        request: RepairRequest,
-        sender: ValidatorId,
-    ) -> Result<(), NetworkError> {
-        trace!("answering repair request: {request:?}");
-        let response = match request {
-            RepairRequest::LastSliceRoot(block_id) => {
-                let blockstore = self.blockstore.read().await;
-                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
-                    return Ok(());
-                };
-                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
-                    return Ok(());
-                };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
-                else {
-                    return Ok(());
-                };
-                RepairResponse::LastSliceRoot(request, last_slice, root, proof)
-            }
-            RepairRequest::SliceRoot(block_id, slice) => {
-                let blockstore = self.blockstore.read().await;
-                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
-                    return Ok(());
-                };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
-                    return Ok(());
-                };
-                RepairResponse::SliceRoot(request, root, proof)
-            }
-            RepairRequest::Shred(block_id, slice, shred) => {
-                let blockstore = self.blockstore.read().await;
-                let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
-                    return Ok(());
-                };
-                RepairResponse::Shred(request, shred)
-            }
-        };
-        self.send_response(response, sender).await
     }
 
     /// Handles a repair response, storing the received data.
@@ -339,10 +371,13 @@ impl<N: Network> Repair<N> {
     /// # Errors
     ///
     /// Returns [`NetworkError`] if the underlying network fails.
-    async fn receive(&self) -> Result<RepairMessage, NetworkError> {
+    async fn receive(&self) -> Result<RepairResponse, NetworkError> {
         loop {
             match self.network.receive().await? {
-                NetworkMessage::Repair(r) => return Ok(r),
+                NetworkMessage::Repair(r) => match r {
+                    RepairMessage::Response(resp) => return Ok(resp),
+                    msg => warn!("expected msg {msg:?}"),
+                },
                 m => warn!("unexpected message type for repair: {m:?}"),
             }
         }
@@ -373,23 +408,13 @@ impl<N: Network> Repair<N> {
         Ok(())
     }
 
-    async fn send_response(
-        &self,
-        response: RepairResponse,
-        validator: ValidatorId,
-    ) -> Result<(), NetworkError> {
-        let msg = RepairMessage::Response(response);
-        let to = self.epoch_info.validator(validator).repair_address;
-        self.network.send(&msg.into(), to).await
-    }
-
     fn pick_random_peer(&self) -> SocketAddr {
         let mut rng = rand::rng();
         let mut peer_info = self.sampler.sample_info(&mut rng);
         while peer_info.id == self.epoch_info.own_id {
             peer_info = self.sampler.sample_info(&mut rng);
         }
-        peer_info.repair_address
+        peer_info.repair_request_address
     }
 }
 
@@ -447,9 +472,13 @@ mod tests {
         let (_, epoch_info) = generate_validators(2);
         let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
         let leader_key = SecretKey::new(&mut rand::rng());
-        epoch_info.validators.get_mut(0).unwrap().pubkey = leader_key.to_pk();
-        epoch_info.validators.get_mut(0).unwrap().repair_address = localhost_ip_sockaddr(0);
-        epoch_info.validators.get_mut(1).unwrap().repair_address = localhost_ip_sockaddr(1);
+        let v0 = epoch_info.validators.get_mut(0).unwrap();
+        v0.pubkey = leader_key.to_pk();
+        v0.repair_request_address = localhost_ip_sockaddr(0);
+        v0.repair_response_address = localhost_ip_sockaddr(1);
+        let v1 = epoch_info.validators.get_mut(1).unwrap();
+        v1.repair_request_address = localhost_ip_sockaddr(2);
+        v1.repair_response_address = localhost_ip_sockaddr(3);
         epoch_info.own_id = 1;
         let epoch_info = Arc::new(epoch_info);
 

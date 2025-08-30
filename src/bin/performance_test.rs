@@ -79,7 +79,10 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr((3 * id).try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((3 * id + 1).try_into().unwrap());
-        let repair_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
+        // XXX: need to find a new port for response
+        assert!(false);
+        let repair_request_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
+        let repair_response_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id,
             stake: 1,
@@ -87,7 +90,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address,
             disseminator_address,
-            repair_address,
+            repair_request_address,
+            repair_response_address,
         });
     }
 
@@ -99,6 +103,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
             let repair_network = udp_networks.pop_front().unwrap();
+            let repair_request_network = udp_networks.pop_front().unwrap();
             let txs_receiver = udp_networks.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
@@ -106,6 +111,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 all2all,
                 disseminator,
                 repair_network,
+                repair_request_network,
                 epoch_info,
                 txs_receiver,
             )
