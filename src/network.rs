@@ -139,18 +139,12 @@ impl From<RepairMessage> for NetworkMessage {
 /// Error type for network operations.
 #[derive(Debug, Error)]
 pub enum NetworkError {
-    #[error("unexpected message type for this socket")]
-    UnexpectedMessageType,
-    #[error("malformed address")]
-    MalformedAddress,
     #[error("serialization error")]
     Serialization(#[from] bincode::error::EncodeError),
     #[error("deserialization error")]
     Deserialization(#[from] bincode::error::DecodeError),
     #[error("bad socket state")]
     BadSocket(#[from] std::io::Error),
-    #[error("unknown network error")]
-    Unknown,
 }
 
 /// Abstraction of a network interface for sending and receiving messages.
