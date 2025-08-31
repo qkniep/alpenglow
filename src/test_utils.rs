@@ -9,8 +9,8 @@ use crate::all2all::TrivialAll2All;
 use crate::consensus::EpochInfo;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::{Hash, MerkleTree, signature};
-use crate::network::SimulatedNetwork;
 use crate::network::simulated::SimulatedNetworkCore;
+use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
@@ -25,14 +25,15 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
     for i in 0..num_validators {
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
+        let sockaddr = localhost_ip_sockaddr(0);
         validators.push(ValidatorInfo {
             id: i,
             stake: 1,
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
-            all2all_address: String::new(),
-            disseminator_address: String::new(),
-            repair_address: String::new(),
+            all2all_address: sockaddr,
+            disseminator_address: sockaddr,
+            repair_address: sockaddr,
         });
     }
     let epoch_info = Arc::new(EpochInfo::new(0, validators));
@@ -48,7 +49,7 @@ pub async fn generate_all2all_instances(
             .with_packet_loss(0.0),
     );
     for (i, val) in validators.iter_mut().enumerate() {
-        val.all2all_address = i.to_string();
+        val.all2all_address = localhost_ip_sockaddr(i.try_into().unwrap());
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {

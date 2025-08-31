@@ -560,6 +560,7 @@ mod tests {
     use super::*;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::signature;
+    use crate::network::dontcare_sockaddr;
 
     fn create_signers(signers: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
         let mut sks = Vec::new();
@@ -574,9 +575,9 @@ mod tests {
                 stake: 1,
                 pubkey: sks.last().unwrap().to_pk(),
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_address: dontcare_sockaddr(),
             });
         }
 

@@ -68,8 +68,8 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let msg: NetworkMessage = shred.clone().into();
-        let v = &self.epoch_info.validator(relay);
-        self.network.send(&msg, &v.disseminator_address).await
+        let v = self.epoch_info.validator(relay);
+        self.network.send(&msg, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -91,7 +91,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
                 continue;
             }
             self.network
-                .send_serialized(&bytes, &v.disseminator_address)
+                .send_serialized(&bytes, v.disseminator_address)
                 .await?;
         }
         Ok(())
@@ -143,7 +143,7 @@ mod tests {
     use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::UdpNetwork;
+    use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
@@ -162,9 +162,9 @@ mod tests {
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: format!("127.0.0.1:{}", base_port + i as u16),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
+                repair_address: dontcare_sockaddr(),
             });
         }
 

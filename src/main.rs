@@ -10,7 +10,7 @@ use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
-use alpenglow::network::UdpNetwork;
+use alpenglow::network::{UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use fastrace::collector::Config;
@@ -94,9 +94,9 @@ fn create_test_nodes(count: u64) -> Vec<TestNode> {
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("127.0.0.1:{port}"),
-            disseminator_address: format!("127.0.0.1:{}", port + 1),
-            repair_address: format!("127.0.0.1:{}", port + 2),
+            all2all_address: localhost_ip_sockaddr(port),
+            disseminator_address: localhost_ip_sockaddr(port + 1),
+            repair_address: localhost_ip_sockaddr(port + 2),
         });
         port += 4;
     }
