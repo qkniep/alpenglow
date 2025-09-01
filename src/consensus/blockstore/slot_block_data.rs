@@ -226,7 +226,7 @@ impl BlockData {
         if self.slices.contains_key(&slice) {
             return false;
         }
-        let reconstructed_slice = match RegularShredder::deshred(slice_shreds) {
+        let (reconstructed_slice, _) = match RegularShredder::deshred(slice_shreds) {
             Ok(s) => s,
             Err(DeshredError::NotEnoughShreds) => return false,
             rest => {
