@@ -67,9 +67,7 @@ impl SlotBlockData {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
         }
-        let add_shred_result = self
-            .disseminated
-            .check_shred_to_add(&shred, true, leader_pk);
+        let add_shred_result = self.disseminated.check_shred_to_add(&shred, leader_pk);
         if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
             self.equivocated = true;
         }
@@ -91,7 +89,7 @@ impl SlotBlockData {
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        match block_data.check_shred_to_add(&shred, true, leader_pk) {
+        match block_data.check_shred_to_add(&shred, leader_pk) {
             Ok(()) => Ok(block_data.add_valid_shred(shred)),
             Err(err) => {
                 if let AddShredError::Equivocation = &err {
@@ -177,7 +175,6 @@ impl BlockData {
     fn check_shred_to_add(
         &mut self,
         shred: &Shred,
-        check_equivocation: bool,
         leader_pk: PublicKey,
     ) -> Result<(), AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
@@ -193,7 +190,7 @@ impl BlockData {
         } else if cached_merkle_root.is_none() {
             self.merkle_root_cache
                 .insert(slice_index, shred.merkle_root);
-        } else if check_equivocation && cached_merkle_root != Some(&shred.merkle_root) {
+        } else if cached_merkle_root != Some(&shred.merkle_root) {
             warn!("shreds show leader equivocation in slot {}", self.slot);
             return Err(AddShredError::Equivocation);
         }
