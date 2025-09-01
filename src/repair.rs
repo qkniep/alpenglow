@@ -497,7 +497,10 @@ mod tests {
         repair_block(10).await;
     }
 
+    // test takes a long time to run in debug mode.
+    // so ignored for normal runs and ran as part of sequential tests
     #[tokio::test]
+    #[ignore]
     async fn repair_large_block() {
         repair_block(MAX_SLICES_PER_BLOCK).await;
     }

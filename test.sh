@@ -24,6 +24,7 @@ sequential_tests () {
 	    network::simulated::core::tests::symmetric \
 		network::simulated::token_bucket::tests::extreme_rate \
 		max_crashes \
+		repair::tests::repair_large_block \
 		three_nodes_crash
 }
 
