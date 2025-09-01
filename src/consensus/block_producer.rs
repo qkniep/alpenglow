@@ -232,9 +232,7 @@ where
     ) -> Result<(Hash, usize)> {
         let mut num_txs = 0;
         for slice_index in SliceIndex::all() {
-            let (parent_slot, parent_hash) = parent;
             let slice_parent = slice_index.is_first().then_some(parent);
-
             let (preempt_sender, preempt_receiver) = oneshot::channel();
             let produce_slice_future =
                 produce_slice_payload(&self.txs_receiver, slice_parent, preempt_receiver);
@@ -276,6 +274,7 @@ where
                             }
                             res = &mut produce_slice_future => res,
                         };
+                        let (parent_slot, parent_hash) = parent;
                         if new_hash != parent_hash {
                             assert_ne!(new_slot, parent_slot);
                             debug!(
@@ -369,9 +368,9 @@ where
 ///
 /// Packs transactions received from the network into the slice until either:
 /// - The slice is full (accounting for encoding of parent), OR
-/// - `duration_left` time has elapsed.
+/// - there is an incoming message on the `preempt_receiver`.
 ///
-/// Returns the slice payload and the amount of time left afterwards.
+/// Returns the slice payload, amount of time elapsed, and number of transactions packed.
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
