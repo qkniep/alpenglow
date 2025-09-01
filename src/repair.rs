@@ -428,7 +428,6 @@ mod tests {
     use crate::network::simulated::{SimulatedNetwork, SimulatedNetworkCore};
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
-    use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 
     /// Creates a small network of 2 validators.
     ///
@@ -497,8 +496,12 @@ mod tests {
         repair_block(10).await;
     }
 
+    // test takes a long time to run in debug, run only in release
+    #[cfg(not(debug_assertions))]
     #[tokio::test]
     async fn repair_large_block() {
+        use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
+
         repair_block(MAX_SLICES_PER_BLOCK).await;
     }
 

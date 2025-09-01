@@ -14,6 +14,7 @@ fast_tests () {
 	echo "🚀 Running fast tests!"
 	sleep 1
 	RUST_BACKTRACE=1 cargo nextest run
+	RUST_BACKTRACE=1 cargo nextest run --release repair_large_block
 }
 
 sequential_tests () {
