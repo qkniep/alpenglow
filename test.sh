@@ -14,7 +14,6 @@ fast_tests () {
 	echo "🚀 Running fast tests!"
 	sleep 1
 	RUST_BACKTRACE=1 cargo nextest run
-	RUST_BACKTRACE=1 cargo nextest run --release repair_large_block
 }
 
 sequential_tests () {
@@ -25,6 +24,7 @@ sequential_tests () {
 	    network::simulated::core::tests::symmetric \
 		network::simulated::token_bucket::tests::extreme_rate \
 		max_crashes \
+		repair::tests::repair_large_block \
 		three_nodes_crash
 }
 
