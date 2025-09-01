@@ -58,7 +58,7 @@ jobs:
       - name: Build (debug)
         run: cargo build --all-targets --verbose
 
-      - name: Build (debug)
+      - name: Build (release)
         run: cargo build --all-targets --release --verbose
 
       - name: Linting (clippy)
