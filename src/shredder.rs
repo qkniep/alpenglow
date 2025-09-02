@@ -485,7 +485,7 @@ pub fn data_and_coding_to_output_shreds(
     let merkle_root = tree.get_root();
     let sig = sk.sign(&merkle_root);
 
-    for d in data.into_iter() {
+    for d in data {
         let merkle_path = tree.create_proof(d.0.index_in_slice);
         shreds.push(Shred {
             payload_type: ShredPayloadType::Data(d.0),
@@ -494,7 +494,7 @@ pub fn data_and_coding_to_output_shreds(
             merkle_path,
         });
     }
-    for mut c in coding.into_iter() {
+    for mut c in coding {
         c.0.index_in_slice += num_data_shreds;
         let merkle_path = tree.create_proof(c.0.index_in_slice);
         shreds.push(Shred {
@@ -525,7 +525,7 @@ pub fn create_output_shreds_for_other_leader(
     let num_data_shreds = data.len();
     let merkle_root = tree.get_root();
 
-    for d in data.into_iter() {
+    for d in data {
         let merkle_path = tree.create_proof(d.0.index_in_slice);
         shreds.push(Shred {
             payload_type: ShredPayloadType::Data(d.0),
@@ -534,7 +534,7 @@ pub fn create_output_shreds_for_other_leader(
             merkle_path,
         });
     }
-    for mut c in coding.into_iter() {
+    for mut c in coding {
         c.0.index_in_slice += num_data_shreds;
         let merkle_path = tree.create_proof(c.0.index_in_slice);
         shreds.push(Shred {
