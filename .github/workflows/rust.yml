@@ -12,6 +12,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +58,7 @@ jobs:
       - name: Build (debug)
         run: cargo build --all-targets --verbose
 
-      - name: Build (debug)
+      - name: Build (release)
         run: cargo build --all-targets --release --verbose
 
       - name: Linting (clippy)
@@ -83,6 +84,7 @@ jobs:
 
   rustfmt:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
 
     steps:
       - uses: actions/checkout@v4

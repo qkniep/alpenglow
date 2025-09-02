@@ -30,8 +30,9 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
-use super::{Network, NetworkError, NetworkMessage};
+use super::{Network, NetworkMessage};
 use crate::ValidatorId;
+use crate::network::{NetworkReceiveError, NetworkSendError};
 
 /// A simulated network interface for local testing and simulations.
 ///
@@ -49,7 +50,7 @@ pub struct SimulatedNetwork {
 }
 
 impl SimulatedNetwork {
-    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> Result<(), NetworkError> {
+    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> Result<(), NetworkSendError> {
         if let Some(limiter) = &self.limiter {
             limiter.write().await.wait_for(bytes.len()).await;
         }
@@ -60,27 +61,28 @@ impl SimulatedNetwork {
 
 #[async_trait]
 impl Network for SimulatedNetwork {
-    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkError> {
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError> {
         let bytes = message.to_bytes();
         let validator_id = to.port() as ValidatorId;
         self.send_byte_vec(bytes, validator_id).await
     }
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkError> {
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError> {
         let validator_id = to.port() as ValidatorId;
         self.send_byte_vec(bytes.to_vec(), validator_id).await
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         loop {
             let Some(bytes) = self.receiver.lock().await.recv().await else {
                 let io_error = std::io::Error::other("channel closed");
-                return Err(NetworkError::BadSocket(io_error));
+                return Err(NetworkReceiveError::BadSocket(io_error));
             };
             match NetworkMessage::from_bytes(&bytes) {
                 Ok(msg) => return Ok(msg),
-                Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
-                Err(err) => return Err(err),
+                Err(err) => {
+                    warn!("deserializing msg failed with {err:?}")
+                }
             }
         }
     }
