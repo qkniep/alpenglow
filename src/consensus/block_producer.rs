@@ -238,63 +238,63 @@ where
                 produce_slice_payload(&self.txs_receiver, slice_parent, preempt_receiver);
             pin!(produce_slice_future);
 
-            let (payload, new_duration_left, txs_in_slice) = if parent_ready_receiver.is_none()
-                || parent_ready_receiver.as_ref().unwrap().is_terminated()
-            {
-                // after we saw ParentReady event, simply produce slices with timeout
-                tokio::select! {
-                    () = tokio::time::sleep(duration_left) => {
-                        // timeout expired, preempt slice production
-                        preempt_sender.send(()).unwrap();
-                        let (payload, time_elapsed, txs_in_slice) = produce_slice_future.await;
-                        (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
-                    }
-                    (payload, time_elapsed, txs_in_slice) = &mut produce_slice_future => {
-                        (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
-                    }
-                }
-            } else {
-                // if we have not yet received the ParentReady event,
-                // wait for it concurrently while producing the next slice
-                tokio::select! {
-                    res = &mut produce_slice_future => {
-                        let (payload, _time_elapsed, txs_in_slice) = res;
-                        // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
-                        (payload, Duration::MAX, txs_in_slice)
-                    }
-                    res = parent_ready_receiver.as_mut().unwrap() => {
-                        // Got ParentReady event while producing slice.
-                        // It's a NOP if we have been using the same parent as before.
-                        let start = Instant::now();
-                        let (new_slot, new_hash) = res.expect("sender dropped");
-                        let (payload, _time_elapsed, txs_in_slice) = tokio::select! {
-                            () = tokio::time::sleep(self.delta_first_slice) => {
-                                preempt_sender.send(()).unwrap();
-                                produce_slice_future.await
-                            }
-                            res = &mut produce_slice_future => res,
-                        };
-                        let (parent_slot, parent_hash) = parent;
-                        if new_hash != parent_hash {
-                            assert_ne!(new_slot, parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                &hex::encode(parent_hash)[..8],
-                                parent_slot,
-                                &hex::encode(new_hash)[..8],
-                                new_slot
-                            );
-                        } else {
-                            debug!("parent is ready, continuing with same parent");
+            let (payload, new_duration_left, txs_in_slice) =
+                if let Some(ref mut parent_rcv) = parent_ready_receiver {
+                    // if we have not yet received the ParentReady event,
+                    // wait for it concurrently while producing the next slice
+                    tokio::select! {
+                        res = &mut produce_slice_future => {
+                            let (payload, _time_elapsed, txs_in_slice) = res;
+                            // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
+                            (payload, Duration::MAX, txs_in_slice)
                         }
-                        // ParentReady was seen, start the DELTA_BLOCK timer
-                        // account for the time it took to finish producing current slice
-                        debug!("starting blocktime timer");
-                        let time_left = self.delta_block.saturating_sub(start.elapsed());
-                        (payload, time_left, txs_in_slice)
+                        res = parent_rcv => {
+                            parent_ready_receiver = None;
+                            // Got ParentReady event while producing slice.
+                            // It's a NOP if we have been using the same parent as before.
+                            let start = Instant::now();
+                            let (new_slot, new_hash) = res.expect("sender dropped");
+                            let (payload, _time_elapsed, txs_in_slice) = tokio::select! {
+                                () = tokio::time::sleep(self.delta_first_slice) => {
+                                    preempt_sender.send(()).unwrap();
+                                    produce_slice_future.await
+                                }
+                                res = &mut produce_slice_future => res,
+                            };
+                            let (parent_slot, parent_hash) = parent;
+                            if new_hash != parent_hash {
+                                assert_ne!(new_slot, parent_slot);
+                                debug!(
+                                    "changed parent from {} in slot {} to {} in slot {}",
+                                    &hex::encode(parent_hash)[..8],
+                                    parent_slot,
+                                    &hex::encode(new_hash)[..8],
+                                    new_slot
+                                );
+                            } else {
+                                debug!("parent is ready, continuing with same parent");
+                            }
+                            // ParentReady was seen, start the DELTA_BLOCK timer
+                            // account for the time it took to finish producing current slice
+                            debug!("starting blocktime timer");
+                            let time_left = self.delta_block.saturating_sub(start.elapsed());
+                            (payload, time_left, txs_in_slice)
+                        }
                     }
-                }
-            };
+                } else {
+                    // after we saw ParentReady event, simply produce slices with timeout
+                    tokio::select! {
+                        () = tokio::time::sleep(duration_left) => {
+                            // timeout expired, preempt slice production
+                            preempt_sender.send(()).unwrap();
+                            let (payload, time_elapsed, txs_in_slice) = produce_slice_future.await;
+                            (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
+                        }
+                        (payload, time_elapsed, txs_in_slice) = &mut produce_slice_future => {
+                            (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
+                        }
+                    }
+                };
 
             num_txs += txs_in_slice;
 
@@ -792,7 +792,7 @@ mod tests {
             txs_sender
                 .send(
                     &NetworkMessage::Transaction(Transaction(vec![1u8; MAX_TRANSACTION_SIZE])),
-                    format!("127.0.0.1:{}", port),
+                    localhost_ip_sockaddr(port),
                 )
                 .await
                 .unwrap();
