@@ -189,13 +189,7 @@ where
         );
 
         let (block_hash, num_txs) = self
-            .produce_slices(
-                slot,
-                parent,
-                // only start the DELTA_BLOCK timer later, when ParentReady event is seen
-                Duration::MAX,
-                Some(&mut parent_ready_receiver),
-            )
+            .produce_slices(slot, parent, Some(&mut parent_ready_receiver))
             .await?;
         Ok(((slot, block_hash), num_txs))
     }
@@ -217,9 +211,7 @@ where
             parent_slot,
         );
 
-        let (block_hash, num_txs) = self
-            .produce_slices(slot, parent, self.delta_block, None)
-            .await?;
+        let (block_hash, num_txs) = self.produce_slices(slot, parent, None).await?;
         Ok(((slot, block_hash), num_txs))
     }
 
@@ -227,10 +219,15 @@ where
         &self,
         slot: Slot,
         parent: BlockId,
-        mut duration_left: Duration,
         mut parent_ready_receiver: Option<&mut oneshot::Receiver<BlockId>>,
     ) -> Result<(Hash, usize)> {
+        // only start the DELTA_BLOCK timer when ParentReady event is seen
+        let mut duration_left = match parent_ready_receiver {
+            None => self.delta_block,
+            Some(_) => Duration::MAX,
+        };
         let mut num_txs = 0;
+
         for slice_index in SliceIndex::all() {
             let slice_parent = slice_index.is_first().then_some(parent);
             let (preempt_sender, preempt_receiver) = oneshot::channel();
