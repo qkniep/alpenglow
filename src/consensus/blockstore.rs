@@ -354,6 +354,17 @@ mod tests {
         (sk, BlockstoreImpl::new(Arc::new(epoch_info), tx))
     }
 
+    async fn add_shred_ignore_duplicate(
+        blockstore: &mut BlockstoreImpl,
+        shred: Shred,
+    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+        match blockstore.add_shred_from_disseminator(shred).await {
+            Ok(output) => Ok(output),
+            Err(AddShredError::Duplicate) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     #[tokio::test]
     async fn store_one_slice_block() -> Result<()> {
         let slot = Slot::genesis().next();
@@ -368,9 +379,7 @@ mod tests {
         let slice_hash = shreds[0][0].merkle_root;
         for shred in &shreds[0] {
             // store shred
-            blockstore
-                .add_shred_from_disseminator(shred.clone())
-                .await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred.clone()).await?;
 
             // check shred is stored
             let Some(stored_shred) = blockstore.get_disseminated_shred(
@@ -408,14 +417,14 @@ mod tests {
         // first slice is not enough
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred).await?;
         }
         assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // after second slice we should have the block
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred).await?;
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -440,13 +449,13 @@ mod tests {
         let block_hash = tree.get_root();
 
         // first slice is not enough
-        for shred in slice0_shreds {
+        for shred in slice0_shreds.into_iter().take(DATA_SHREDS) {
             blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
         assert!(blockstore.get_block((slot, block_hash)).is_none());
 
         // after second slice we should have the block
-        for shred in slice1_shreds {
+        for shred in slice1_shreds.into_iter().take(DATA_SHREDS) {
             blockstore.add_shred_from_repair(block_hash, shred).await?;
         }
         assert!(blockstore.get_block((slot, block_hash)).is_some());
@@ -467,7 +476,7 @@ mod tests {
         // insert shreds in reverse order
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().rev() {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred).await?;
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -501,7 +510,11 @@ mod tests {
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
         let shreds = RegularShredder::shred(slices[2].clone(), &sk)?;
-        for shred in shreds.into_iter().skip(DATA_SHREDS / 2) {
+        for shred in shreds
+            .into_iter()
+            .skip((TOTAL_SHREDS - DATA_SHREDS) / 2)
+            .take(DATA_SHREDS)
+        {
             blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(blockstore.stored_slices_for_slot(slot), 3);
@@ -536,7 +549,7 @@ mod tests {
         // second slice alone is not enough
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred).await?;
         }
         assert!(blockstore.disseminated_block_hash(slot).is_none());
 
@@ -546,7 +559,7 @@ mod tests {
         // after also also inserting first slice we should have the block
         let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred).await?;
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -563,12 +576,18 @@ mod tests {
         let (sk, mut blockstore) = test_setup(tx);
         let slices = create_random_block(slot, 1);
 
-        // insert many duplicate shreds
+        // inserting single shred should not throw errors
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
-        for shred in vec![shreds[0].clone(); 2] {
-            // ignore errors
-            let _ = blockstore.add_shred_from_disseminator(shred).await;
-        }
+        let res = blockstore
+            .add_shred_from_disseminator(shreds[0].clone())
+            .await;
+        assert!(res.is_ok());
+
+        // inserting same shred again should give duplicate error
+        let res = blockstore
+            .add_shred_from_disseminator(shreds[0].clone())
+            .await;
+        assert_eq!(res, Err(AddShredError::Duplicate));
 
         // should only store one copy
         assert_eq!(blockstore.stored_shreds_for_slot(slot), 1);
@@ -587,7 +606,7 @@ mod tests {
         let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
         for mut shred in shreds {
             shred.merkle_root = Hash::default();
-            let res = blockstore.add_shred_from_disseminator(shred).await;
+            let res = add_shred_ignore_duplicate(&mut blockstore, shred).await;
             assert!(res.is_err());
             assert_eq!(res.err(), Some(AddShredError::InvalidSignature));
         }
@@ -613,7 +632,7 @@ mod tests {
         shreds.extend(RegularShredder::shred(block1[0].clone(), &sk)?);
         shreds.extend(RegularShredder::shred(block2[0].clone(), &sk)?);
         for shred in shreds {
-            blockstore.add_shred_from_disseminator(shred).await?;
+            add_shred_ignore_duplicate(&mut blockstore, shred).await?;
         }
         assert!(blockstore.disseminated_block_hash(block0_slot).is_some());
         assert!(blockstore.disseminated_block_hash(block1_slot).is_some());
