@@ -228,7 +228,7 @@ impl BlockData {
             return false;
         }
         let slice_shreds = self.shreds.get_mut(&slice).unwrap();
-        let (reconstructed_slice, reconstructed_shreds) =
+        let (reconstructed_slice, mut reconstructed_shreds) =
             match RegularShredder::deshred(slice_shreds) {
                 Ok(output) => output,
                 Err(DeshredError::NotEnoughShreds) => return false,
@@ -247,14 +247,7 @@ impl BlockData {
 
         // insert reconstructed slice and shreds
         self.slices.insert(slice, reconstructed_slice);
-        for shred in reconstructed_shreds {
-            let exists = slice_shreds
-                .iter()
-                .any(|s| s.payload().index_in_slice == shred.payload().index_in_slice);
-            if !exists {
-                slice_shreds.push(shred);
-            }
-        }
+        std::mem::swap(slice_shreds, &mut reconstructed_shreds);
         trace!("reconstructed slice {} in slot {}", slice, self.slot);
 
         true
