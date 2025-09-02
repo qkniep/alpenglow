@@ -17,7 +17,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -82,7 +82,7 @@ impl<N: Network> Turbine<N> {
     /// # Errors
     ///
     /// Returns an error if the send operation on the underlying network fails.
-    pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkError> {
+    pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
@@ -98,7 +98,7 @@ impl<N: Network> Turbine<N> {
     /// # Errors
     ///
     /// Returns an error if the send operation on the underlying network fails.
-    pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkError> {
+    pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
@@ -130,15 +130,15 @@ impl<N: Network> Turbine<N> {
 
 #[async_trait]
 impl<N: Network> Disseminator for Turbine<N> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         self.send_shred_to_root(shred).await
     }
 
-    async fn forward(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn forward(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         self.forward_shred(shred).await
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkError> {
+    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
