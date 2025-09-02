@@ -20,7 +20,7 @@ use mockall::automock;
 pub use self::rotor::Rotor;
 pub use self::trivial::TrivialDisseminator;
 pub use self::turbine::Turbine;
-use crate::network::NetworkError;
+use crate::network::{NetworkReceiveError, NetworkSendError};
 use crate::shredder::Shred;
 
 /// Abstraction of a block dissemination protocol.
@@ -28,11 +28,11 @@ use crate::shredder::Shred;
 #[automock]
 pub trait Disseminator {
     /// Sends the given shred to the network as the original source.
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkError>;
+    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError>;
 
     /// Performs any necessary forwarding of the given shred.
-    async fn forward(&self, shred: &Shred) -> Result<(), NetworkError>;
+    async fn forward(&self, shred: &Shred) -> Result<(), NetworkSendError>;
 
     /// Receives the next shred from the network.
-    async fn receive(&self) -> Result<Shred, NetworkError>;
+    async fn receive(&self) -> Result<Shred, NetworkReceiveError>;
 }

@@ -8,7 +8,7 @@
 
 use super::All2All;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -33,7 +33,7 @@ impl<N: Network> RobustAll2All<N> {
 }
 
 impl<N: Network> All2All for RobustAll2All<N> {
-    async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkError> {
+    async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkSendError> {
         for v in &self.validators {
             // HACK: stupidly expensive retransmits
             for _ in 0..1000 {
@@ -43,7 +43,7 @@ impl<N: Network> All2All for RobustAll2All<N> {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         self.network.receive().await
         // loop {
         //     let msg = self.network.receive().await;

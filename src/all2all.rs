@@ -19,10 +19,10 @@
 //! # Examples
 //!
 //! ```
-//! use alpenglow::network::{NetworkError, NetworkMessage};
+//! use alpenglow::network::{NetworkMessage};
 //! use alpenglow::all2all::All2All;
 //!
-//! async fn broadcast_all(msgs: &[NetworkMessage], all2all: impl All2All) -> Result<(), NetworkError> {
+//! async fn broadcast_all(msgs: &[NetworkMessage], all2all: impl All2All) -> Result<(), NetworkSendError> {
 //!     for msg in msgs {
 //!         all2all.broadcast(msg).await?;
 //!     }
@@ -37,7 +37,7 @@ mod trivial;
 
 pub use self::robust::RobustAll2All;
 pub use self::trivial::TrivialAll2All;
-use crate::network::{NetworkError, NetworkMessage};
+use crate::network::{NetworkMessage, NetworkReceiveError, NetworkSendError};
 
 /// Abstraction for a direct all-to-all network communication protocol.
 pub trait All2All {
@@ -49,11 +49,11 @@ pub trait All2All {
     ///
     /// # Errors
     ///
-    /// Implementors should return [`NetworkError`] iff the underlying network fails.
+    /// Implementors should return [`NetworkSendError`] iff the underlying network fails.
     fn broadcast(
         &self,
         msg: &NetworkMessage,
-    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+    ) -> impl Future<Output = Result<(), NetworkSendError>> + Send;
 
     /// Receives a message from any of the other nodes.
     ///
@@ -62,6 +62,6 @@ pub trait All2All {
     ///
     /// # Errors
     ///
-    /// Implementors should return [`NetworkError`] iff the underlying network fails.
-    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkError>> + Send;
+    /// Implementors should return [`NetworkReceiveError`] iff the underlying network fails.
+    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkReceiveError>> + Send;
 }

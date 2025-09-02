@@ -6,7 +6,7 @@ use log::warn;
 
 use super::Disseminator;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
@@ -27,7 +27,7 @@ impl<N: Network> TrivialDisseminator<N> {
 
 #[async_trait]
 impl<N: Network> Disseminator for TrivialDisseminator<N> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let msg = NetworkMessage::Shred(shred.clone());
         for v in &self.validators {
             self.network.send(&msg, v.disseminator_address).await?;
@@ -35,12 +35,12 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
         Ok(())
     }
 
-    async fn forward(&self, _shred: &Shred) -> Result<(), NetworkError> {
+    async fn forward(&self, _shred: &Shred) -> Result<(), NetworkSendError> {
         // nothing to do
         Ok(())
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkError> {
+    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),

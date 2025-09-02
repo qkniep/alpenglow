@@ -69,16 +69,19 @@ impl NetworkMessage {
     ///
     /// # Errors
     ///
-    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
+    /// Returns [`bincode::error::DecodeError`] if bincode decoding fails.
     /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
         if bytes.len() > MTU_BYTES {
-            return Err(NetworkError::Deserialization(
-                bincode::error::DecodeError::LimitExceeded,
-            ));
+            return Err(bincode::error::DecodeError::LimitExceeded);
         }
         // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
+        let (msg, bytes_read) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
+        if bytes_read != bytes.len() {
+            return Err(bincode::error::DecodeError::UnexpectedEnd {
+                additional: bytes.len() - bytes_read,
+            });
+        }
         Ok(msg)
     }
 
@@ -95,18 +98,18 @@ impl NetworkMessage {
     ///
     /// # Errors
     ///
-    /// Returns [`NetworkError::Serialization`] if bincode encoding fails.
+    /// Returns [`bincode::error::EncodeError`] if bincode encoding fails.
     /// This includes the case where `buf` is to small to fit this message.
-    pub fn to_slice(&self, buf: &mut [u8]) -> Result<usize, NetworkError> {
+    pub fn to_slice(&self, buf: &mut [u8]) -> Result<usize, bincode::error::EncodeError> {
         let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
         match res {
             Ok(written) => {
                 assert!(written <= MTU_BYTES, "each message should fit in MTU");
                 Ok(written)
             }
-            Err(bincode::error::EncodeError::UnexpectedEnd) => Err(NetworkError::Serialization(
-                bincode::error::EncodeError::UnexpectedEnd,
-            )),
+            Err(bincode::error::EncodeError::UnexpectedEnd) => {
+                Err(bincode::error::EncodeError::UnexpectedEnd)
+            }
             _ => panic!("unexpected serialization error"),
         }
     }
@@ -138,9 +141,14 @@ impl From<RepairMessage> for NetworkMessage {
 
 /// Error type for network operations.
 #[derive(Debug, Error)]
-pub enum NetworkError {
-    #[error("serialization error")]
-    Serialization(#[from] bincode::error::EncodeError),
+pub enum NetworkSendError {
+    #[error("bad socket state")]
+    BadSocket(#[from] std::io::Error),
+}
+
+/// Error type for network operations.
+#[derive(Debug, Error)]
+pub enum NetworkReceiveError {
     #[error("deserialization error")]
     Deserialization(#[from] bincode::error::DecodeError),
     #[error("bad socket state")]
@@ -150,13 +158,13 @@ pub enum NetworkError {
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
-    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkError>;
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError>;
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkError>;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError>;
 
     // TODO: implement brodcast at `Network` level?
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError>;
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
