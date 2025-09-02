@@ -219,10 +219,15 @@ impl BlockData {
     ///
     /// Returns `true` if a slice was reconstructed, `false` otherwise.
     fn try_reconstruct_slice(&mut self, slice: SliceIndex) -> bool {
-        let slice_shreds = self.shreds.get_mut(&slice).unwrap();
-        if self.slices.contains_key(&slice) {
+        if self.completed.is_some() {
+            trace!("already have block for slot {}", self.slot);
             return false;
         }
+        if self.slices.contains_key(&slice) {
+            trace!("already have slice {} in slot {}", slice, self.slot);
+            return false;
+        }
+        let slice_shreds = self.shreds.get_mut(&slice).unwrap();
         let (reconstructed_slice, reconstructed_shreds) =
             match RegularShredder::deshred(slice_shreds) {
                 Ok(output) => output,
