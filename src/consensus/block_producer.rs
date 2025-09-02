@@ -284,8 +284,8 @@ where
                         () = tokio::time::sleep(duration_left) => {
                             // timeout expired, preempt slice production
                             preempt_sender.send(()).unwrap();
-                            let (payload, time_elapsed, txs_in_slice) = produce_slice_future.await;
-                            (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
+                            let (payload, _, txs_in_slice) = produce_slice_future.await;
+                            (payload, Duration::ZERO, txs_in_slice)
                         }
                         (payload, time_elapsed, txs_in_slice) = &mut produce_slice_future => {
                             (payload, duration_left.saturating_sub(time_elapsed), txs_in_slice)
