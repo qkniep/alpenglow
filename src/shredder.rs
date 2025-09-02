@@ -471,7 +471,8 @@ impl Shredder for AontShredder {
 }
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
-/// Each shred contains the Merkle root, its own path and the signature.
+///
+/// Each returned shred contains the Merkle root, its own path and the signature.
 pub fn data_and_coding_to_output_shreds(
     data: Vec<DataShred>,
     coding: Vec<CodingShred>,
@@ -507,8 +508,13 @@ pub fn data_and_coding_to_output_shreds(
     shreds
 }
 
+/// Puts the root, path, and signature of the leader into shreds.
 ///
+/// This is analogous to [`data_and_coding_to_output_shreds`], but for another leader.
+/// Instead of signing the root, copies the existing signature from another shred.
+/// Also, requires the Merkle tree to already be calculated from reconstructed shreds.
 ///
+/// Each returned shred contains the Merkle root, its own path and the signature.
 pub fn create_output_shreds_for_other_leader(
     data: Vec<DataShred>,
     coding: Vec<CodingShred>,
