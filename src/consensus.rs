@@ -115,7 +115,7 @@ where
         let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
             epoch_info.clone(),
             votor_tx.clone(),
-            repair_tx.clone(),
+            repair_tx,
         ));
         let pool = Arc::new(RwLock::new(pool));
 
@@ -123,12 +123,11 @@ where
             Arc::clone(&blockstore),
             Arc::clone(&pool),
             repair_network,
-            (repair_tx, repair_rx),
             epoch_info.clone(),
         );
 
         let _repair_handle = tokio::spawn(
-            async move { repair.repair_loop().await }
+            async move { repair.repair_loop(repair_rx).await }
                 .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
