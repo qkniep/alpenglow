@@ -226,7 +226,7 @@ where
             None => self.delta_block,
             Some(_) => Duration::MAX,
         };
-        let mut num_txs = 0;
+        let mut txs_in_block = 0;
 
         for slice_index in SliceIndex::all() {
             let slice_parent = slice_index.is_first().then_some(parent);
@@ -293,7 +293,7 @@ where
                     }
                 };
 
-            num_txs += txs_in_slice;
+            txs_in_block += txs_in_slice;
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if let Some(ref parent_rcv) = parent_ready_receiver
@@ -307,7 +307,7 @@ where
             let maybe_block_hash = self.shred_and_disseminate(header, payload).await?;
 
             match maybe_block_hash {
-                Some(block_hash) => return Ok((block_hash, num_txs)),
+                Some(block_hash) => return Ok((block_hash, txs_in_block)),
                 None => {
                     assert!(!new_duration_left.is_zero());
                     duration_left = new_duration_left.saturating_sub(start.elapsed());
