@@ -231,6 +231,8 @@ where
 
         for slice_index in SliceIndex::all() {
             let slice_parent = slice_index.is_first().then_some(parent);
+            // HACK: use of `MAX_SLICES_PER_BLOCK / 2`, maybe introduce `MAX_SLICES_FIRST_SLOT`
+            // HACK: use of `SliceIndex::inner()`, maybe introduce `is_last_before_parent_ready()`
             let min_time_for_slice = if parent_ready_receiver.is_some()
                 && slice_index.inner() == MAX_SLICES_PER_BLOCK / 2
             {
