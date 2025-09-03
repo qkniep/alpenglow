@@ -439,7 +439,7 @@ where
 
     // idle if necessary
     // TODO: instead actually spend more time waiting for and selecting transactions
-    if start_time.elapsed() < min_duration {
+    if start_time.elapsed() < min_duration && !preempt_receiver.is_terminated() {
         tokio::select! {
             res = &mut preempt_receiver => res.expect("sender dropped"),
             () = tokio::time::sleep(min_duration - start_time.elapsed()) => {}
