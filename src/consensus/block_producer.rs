@@ -144,7 +144,7 @@ where
                         .await?
                 }
             };
-            debug!(
+            info!(
                 "produced block {} ({} txs) in {} ms",
                 first_slot_in_window,
                 num_txs,
@@ -157,7 +157,7 @@ where
                 let (new_block_id, num_txs) =
                     self.produce_block_parent_ready(slot, block_id).await?;
                 block_id = new_block_id;
-                debug!(
+                info!(
                     "produced block {} ({} txs) in {} ms",
                     slot,
                     num_txs,
@@ -445,6 +445,12 @@ where
             () = tokio::time::sleep(min_duration - start_time.elapsed()) => {}
         }
     }
+
+    debug!(
+        "produced slice with {} txs in {}ms",
+        num_txs,
+        start_time.elapsed().as_millis()
+    );
 
     (payload, start_time.elapsed(), num_txs)
 }
