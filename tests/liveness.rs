@@ -1,7 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -69,47 +68,63 @@ async fn three_nodes_crash() {
 type TestNode =
     Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
 
+struct Networks {
+    all2all: UdpNetwork,
+    disseminator: UdpNetwork,
+    repair: UdpNetwork,
+    txs: UdpNetwork,
+}
+
+impl Networks {
+    fn new() -> Self {
+        Self {
+            all2all: UdpNetwork::new_with_any_port(),
+            disseminator: UdpNetwork::new_with_any_port(),
+            repair: UdpNetwork::new_with_any_port(),
+            txs: UdpNetwork::new_with_any_port(),
+        }
+    }
+}
+
 fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
-    let mut networks = VecDeque::new();
-    for _ in 0..4 * count {
-        networks.push_back(UdpNetwork::new_with_any_port());
-    }
+    let networks = (0..count).map(|_| Networks::new()).collect::<Vec<_>>();
 
     // prepare validator info for all nodes
     let mut rng = rand::rng();
     let mut sks = Vec::new();
     let mut voting_sks = Vec::new();
     let mut validators = Vec::new();
-    for id in 0..count {
+    for (id, network) in networks.iter().enumerate() {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let a2a_port = networks[4 * id as usize].port();
-        let dis_port = networks[4 * id as usize + 1].port();
-        let rep_port = networks[4 * id as usize + 2].port();
+        let all2all_address = localhost_ip_sockaddr(network.all2all.port());
+        let disseminator_address = localhost_ip_sockaddr(network.disseminator.port());
+        let repair_address = localhost_ip_sockaddr(network.repair.port());
         validators.push(ValidatorInfo {
-            id,
+            id: id as u64,
             stake: 1,
-            pubkey: sks[id as usize].to_pk(),
-            voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: localhost_ip_sockaddr(a2a_port),
-            disseminator_address: localhost_ip_sockaddr(dis_port),
-            repair_address: localhost_ip_sockaddr(rep_port),
+            pubkey: sks[id].to_pk(),
+            voting_pubkey: voting_sks[id].to_pk(),
+            all2all_address,
+            disseminator_address,
+            repair_address,
         });
     }
 
     // turn validator info into actual nodes
-    validators
-        .iter()
-        .map(|v| {
-            let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
-            let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
-            let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
-            let repair_network = networks.pop_front().unwrap();
-            let txs_receiver = networks.pop_front().unwrap();
+    networks
+        .into_iter()
+        .enumerate()
+        .map(|(id, network)| {
+            let epoch_info = Arc::new(EpochInfo::new(id as u64, validators.clone()));
+            let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
+            let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
+            let repair_network = network.repair;
+            let txs_receiver = network.txs;
             Alpenglow::new(
-                sks[v.id as usize].clone(),
-                voting_sks[v.id as usize].clone(),
+                sks[id].clone(),
+                voting_sks[id].clone(),
                 all2all,
                 disseminator,
                 repair_network,
