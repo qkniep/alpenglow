@@ -41,8 +41,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
     let mut udp_networks = VecDeque::new();
-    for i in 0..3 * count {
-        if i % 3 == 2 {
+    for i in 0..4 * count {
+        if i % 4 == 2 || i % 4 == 3 {
             udp_networks.push_back(UdpNetwork::new_with_any_port());
         } else {
             networks.push_back(core.join_unlimited(i).await);
@@ -51,19 +51,19 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for a in 0..count {
         for b in 0..count {
             if a < 6 && b < 6 {
-                core.set_latency(3 * a, 3 * b, Duration::from_millis(20))
+                core.set_latency(4 * a, 4 * b, Duration::from_millis(20))
                     .await;
-                core.set_latency(3 * a + 1, 3 * b + 1, Duration::from_millis(20))
+                core.set_latency(4 * a + 1, 4 * b + 1, Duration::from_millis(20))
                     .await;
             } else if (6..10).contains(&a) && (6..10).contains(&b) {
-                core.set_latency(3 * a, 3 * b, Duration::from_millis(60))
+                core.set_latency(4 * a, 4 * b, Duration::from_millis(60))
                     .await;
-                core.set_latency(3 * a + 1, 3 * b + 1, Duration::from_millis(60))
+                core.set_latency(4 * a + 1, 4 * b + 1, Duration::from_millis(60))
                     .await;
             } else {
-                core.set_latency(3 * a, 3 * b, Duration::from_millis(100))
+                core.set_latency(4 * a, 4 * b, Duration::from_millis(100))
                     .await;
-                core.set_latency(3 * a + 1, 3 * b + 1, Duration::from_millis(100))
+                core.set_latency(4 * a + 1, 4 * b + 1, Duration::from_millis(100))
                     .await;
             }
         }
@@ -77,8 +77,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let all2all_address = localhost_ip_sockaddr((3 * id).try_into().unwrap());
-        let disseminator_address = localhost_ip_sockaddr((3 * id + 1).try_into().unwrap());
+        let all2all_address = localhost_ip_sockaddr((4 * id).try_into().unwrap());
+        let disseminator_address = localhost_ip_sockaddr((4 * id + 1).try_into().unwrap());
         let repair_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id,
