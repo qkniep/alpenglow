@@ -20,6 +20,7 @@ use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
 use crate::network::{Network, NetworkMessage};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{
     BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
@@ -230,9 +231,20 @@ where
 
         for slice_index in SliceIndex::all() {
             let slice_parent = slice_index.is_first().then_some(parent);
+            let min_time_for_slice = if parent_ready_receiver.is_some()
+                && slice_index.inner() == MAX_SLICES_PER_BLOCK / 2
+            {
+                Duration::MAX
+            } else {
+                Duration::ZERO
+            };
             let (preempt_sender, preempt_receiver) = oneshot::channel();
-            let produce_slice_future =
-                produce_slice_payload(&self.txs_receiver, slice_parent, preempt_receiver);
+            let produce_slice_future = produce_slice_payload(
+                &self.txs_receiver,
+                slice_parent,
+                min_time_for_slice,
+                preempt_receiver,
+            );
             pin!(produce_slice_future);
 
             let (payload, new_duration_left, txs_in_slice) =
@@ -371,6 +383,7 @@ where
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
+    min_duration: Duration,
     mut preempt_receiver: oneshot::Receiver<()>,
 ) -> (SlicePayload, Duration, usize)
 where
@@ -421,6 +434,16 @@ where
     let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
         .expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
+
+    // idle if necessary
+    // TODO: instead actually spend more time waiting for and selecting transactions
+    if start_time.elapsed() < min_duration {
+        tokio::select! {
+            res = &mut preempt_receiver => res.expect("sender dropped"),
+            () = tokio::time::sleep(min_duration - start_time.elapsed()) => {}
+        }
+    }
+
     (payload, start_time.elapsed(), num_txs)
 }
 
@@ -524,7 +547,7 @@ mod tests {
         preempt_sender.send(()).unwrap();
         let parent = None;
         let (payload, _, num_txs) =
-            produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
+            produce_slice_payload(&txs_receiver, parent, Duration::ZERO, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
@@ -534,7 +557,7 @@ mod tests {
         preempt_sender.send(()).unwrap();
         let parent = Some((Slot::genesis(), Hash::default()));
         let (payload, _, num_txs) =
-            produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
+            produce_slice_payload(&txs_receiver, parent, Duration::ZERO, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
@@ -559,7 +582,7 @@ mod tests {
 
         let parent = None;
         let (payload, _, num_txs) =
-            produce_slice_payload(&txs_receiver, parent, preempt_receiver).await;
+            produce_slice_payload(&txs_receiver, parent, Duration::ZERO, preempt_receiver).await;
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
         assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
