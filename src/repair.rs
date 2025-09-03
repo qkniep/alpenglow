@@ -78,10 +78,6 @@ pub struct Repair<N: Network> {
     request_timeouts: BinaryHeap<(Instant, Hash)>,
 
     network: N,
-    repair_channel: (
-        tokio::sync::mpsc::Sender<BlockId>,
-        Option<tokio::sync::mpsc::Receiver<BlockId>>,
-    ),
     sampler: StakeWeightedSampler,
     epoch_info: Arc<EpochInfo>,
 }
@@ -95,25 +91,17 @@ impl<N: Network> Repair<N> {
         blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
         pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         network: N,
-        repair_channel: (
-            tokio::sync::mpsc::Sender<BlockId>,
-            tokio::sync::mpsc::Receiver<BlockId>,
-        ),
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler = StakeWeightedSampler::new(validators);
-        let repair_channel = (repair_channel.0, Some(repair_channel.1));
         Self {
             blockstore,
             pool,
-
             slice_roots: BTreeMap::new(),
             outstanding_requests: BTreeMap::new(),
             request_timeouts: BinaryHeap::new(),
-
             network,
-            repair_channel,
             sampler,
             epoch_info,
         }
@@ -124,8 +112,7 @@ impl<N: Network> Repair<N> {
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
     /// Inititates the corresponding repair process and handles ongoing repairs.
     /// Also, listens to incoming repair messages from the network and handles them.
-    pub async fn repair_loop(&mut self) {
-        let mut repair_receiver = self.repair_channel.1.take().unwrap();
+    pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
         loop {
             let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
             let sleep_duration = match next_timeout {
@@ -482,15 +469,9 @@ mod tests {
         let network1 = core.join_unlimited(1).await;
 
         // create and start Repair instance
-        let mut repair = Repair::new(
-            Arc::clone(&blockstore),
-            pool,
-            network1,
-            (repair_tx.clone(), repair_rx),
-            epoch_info,
-        );
+        let mut repair = Repair::new(Arc::clone(&blockstore), pool, network1, epoch_info);
         tokio::spawn(async move {
-            repair.repair_loop().await;
+            repair.repair_loop(repair_rx).await;
             // keep votor_rx alive
             drop(votor_rx);
         });
