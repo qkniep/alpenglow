@@ -22,7 +22,9 @@ use tokio::sync::RwLock;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::{
+    FromNetworkMessage, Network, NetworkMessage, NetworkReceiveError, NetworkSendError,
+};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -40,6 +42,15 @@ pub enum RepairMessage {
     Request(RepairRequest, ValidatorId),
     /// Response to a request from another validator.
     Response(RepairResponse),
+}
+
+impl FromNetworkMessage for RepairMessage {
+    fn convert(src: NetworkMessage) -> Option<Self> {
+        match src {
+            NetworkMessage::Repair(r) => Some(r),
+            _ => None,
+        }
+    }
 }
 
 /// Request messages for the repair sub-protocol.

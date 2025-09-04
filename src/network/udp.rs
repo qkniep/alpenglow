@@ -13,7 +13,7 @@ use log::warn;
 use tokio::net::UdpSocket;
 
 use super::{MTU_BYTES, Network, NetworkMessage};
-use crate::network::{NetworkReceiveError, NetworkSendError};
+use crate::network::{FromNetworkMessage, NetworkReceiveError, NetworkSendError};
 
 /// Number of bytes used as buffer for any incoming packet.
 ///
@@ -64,12 +64,15 @@ impl Network for UdpNetwork {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
+    async fn receive<T: FromNetworkMessage>(&self) -> Result<T, NetworkReceiveError> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
             let len = self.socket.recv(&mut buf).await?;
             match NetworkMessage::from_bytes(&buf[..len]) {
-                Ok(msg) => return Ok(msg),
+                Ok(msg) => match T::convert(msg) {
+                    Some(res) => return Ok(res),
+                    None => (),
+                },
                 Err(err) => {
                     warn!("deserializing msg failed with {err:?}")
                 }

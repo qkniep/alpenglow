@@ -14,6 +14,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
+use alpenglow::repair::RepairMessage;
 use alpenglow::{ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;

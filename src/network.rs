@@ -47,14 +47,24 @@ pub const MTU_BYTES: usize = 1500;
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
+pub trait FromNetworkMessage<T = Self> {
+    fn convert(network_message: NetworkMessage) -> Option<T>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Ping;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Pong;
+
 /// Network message type.
 ///
 /// Everything that the Alpenglow validator will send over the network is a `NetworkMessage`.
 // TODO: zero-copy deserialization
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetworkMessage {
-    Ping,
-    Pong,
+    Ping(Ping),
+    Pong(Pong),
     Shred(Shred),
     Vote(Vote),
     Cert(Cert),
@@ -164,7 +174,7 @@ pub trait Network: Send + Sync {
 
     // TODO: implement brodcast at `Network` level?
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+    async fn receive<T: FromNetworkMessage>(&self) -> Result<T, NetworkReceiveError>;
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
