@@ -106,16 +106,10 @@ impl<N: Network> RepairRequestHandler<N> {
                     RepairMessage::Request(request, sender) => {
                         self.answer_request(request, sender).await.unwrap()
                     }
-                    msg => panic!(
-                        "validator: {} Unexpected msg type: {:?}",
-                        self.epoch_info.own_id, msg
-                    ),
+                    msg => warn!("Unexpected msg type: {msg:?}"),
                 },
                 msg => {
-                    panic!(
-                        "validator {}: Unexpected msg type: {:?}",
-                        self.epoch_info.own_id, msg
-                    );
+                    warn!("Unexpected msg type: {msg:?}");
                 }
             }
         }
@@ -394,15 +388,9 @@ impl<N: Network> Repair<N> {
             match msg {
                 NetworkMessage::Repair(msg) => match msg {
                     RepairMessage::Response(msg) => return Ok(msg),
-                    rest => panic!(
-                        "validator {}: unexpected msg type: {rest:?}",
-                        self.epoch_info.own_id
-                    ),
+                    rest => warn!("unexpected msg type: {rest:?}"),
                 },
-                m => panic!(
-                    "validator {}: unexpected message type for repair: {m:?}",
-                    self.epoch_info.own_id
-                ),
+                m => warn!("unexpected message type for repair: {m:?}"),
             }
         }
     }
