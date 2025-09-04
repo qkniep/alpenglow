@@ -365,10 +365,10 @@ impl<N: Network> Repair<N> {
         }
     }
 
-    /// Tries to receive a repair message from the underlying [`Network`].
+    /// Tries to receive a [`RepairResponse`] message from the underlying [`Network`].
     ///
-    /// Resolves to the next successfully deserialized [`RepairMessage`].
-    /// Ignores any potentially received [`NetworkMessage`] of a different type.
+    /// Resolves to the next successfully deserialized [`RepairResponse`].
+    /// All other types of messages are ignored.
     ///
     /// # Errors
     ///
