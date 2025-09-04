@@ -107,7 +107,7 @@ impl<N: Network> RepairRequestHandler<N> {
                         self.answer_request(request, sender).await.unwrap()
                     }
                     msg => panic!(
-                        "validator: {} Unexpected msg tpe: {:?}",
+                        "validator: {} Unexpected msg type: {:?}",
                         self.epoch_info.own_id, msg
                     ),
                 },
