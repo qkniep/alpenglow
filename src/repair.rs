@@ -123,7 +123,7 @@ impl<N: Network> RepairRequestHandler<N> {
 
     /// Tries to answer the given repair request.
     ///
-    /// If we do not have the block the request refers to, the request is ignored.
+    /// If we do not have the necessary information in blockstore, the request is ignored.
     /// Otherwise, the correct response is sent back to the sender of the request.
     async fn answer_request(
         &self,
