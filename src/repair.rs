@@ -581,15 +581,11 @@ mod tests {
         let (block_hash, merkle_tree, shreds) = create_random_shredded_block(slot, num_slices, &sk);
         let block_to_repair = (slot, block_hash);
 
-        println!("sending repair on channel");
         // ask repair instance to repair this block
         repair_channel.send(block_to_repair).await.unwrap();
-        println!("sent repair on channel");
 
         // expect LastSliceRoot request first
-        println!("waiting for request on network");
         let msg = other_network_request.receive().await.unwrap();
-        println!("got request on network");
         let req = RepairRequest::LastSliceRoot(block_to_repair);
         assert!(msg_matches_request(&msg, &req));
 
