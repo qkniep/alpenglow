@@ -140,7 +140,7 @@ impl<N: Network> Disseminator for Turbine<N> {
 
     async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
         loop {
-            match self.network.receive().await? {
+            match self.network.receive_net_msg().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
                 m => warn!("unexpected message type for Turbine: {m:?}"),
             }

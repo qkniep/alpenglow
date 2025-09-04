@@ -278,7 +278,7 @@ mod tests {
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         let now = Instant::now();
-        let _ = net2.receive().await.unwrap();
+        let _ = net2.receive_net_msg().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -288,7 +288,7 @@ mod tests {
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
         let now = Instant::now();
-        let _ = net1.receive().await.unwrap();
+        let _ = net1.receive_net_msg().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -318,7 +318,7 @@ mod tests {
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         let now = Instant::now();
-        let _ = net2.receive().await.unwrap();
+        let _ = net2.receive_net_msg().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -334,7 +334,7 @@ mod tests {
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
         let now = Instant::now();
-        let _ = net1.receive().await.unwrap();
+        let _ = net1.receive_net_msg().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (100_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (100_000.0 * (1.0 + ACCURACY)) as u128;
@@ -361,9 +361,9 @@ mod tests {
         net3.send(&msg, sock0).await.unwrap();
 
         // ping should arrive before pong
-        let received = net1.receive().await.unwrap();
+        let received = net1.receive_net_msg().await.unwrap();
         assert!(matches!(received, NetworkMessage::Ping));
-        let received = net1.receive().await.unwrap();
+        let received = net1.receive_net_msg().await.unwrap();
         assert!(matches!(received, NetworkMessage::Pong));
 
         // queue messages in the other order
@@ -373,9 +373,9 @@ mod tests {
         net2.send(&msg, sock0).await.unwrap();
 
         // ping should still arrive before pong
-        let received = net1.receive().await.unwrap();
+        let received = net1.receive_net_msg().await.unwrap();
         assert!(matches!(received, NetworkMessage::Ping));
-        let received = net1.receive().await.unwrap();
+        let received = net1.receive_net_msg().await.unwrap();
         assert!(matches!(received, NetworkMessage::Pong));
     }
 
@@ -394,7 +394,7 @@ mod tests {
 
         let mut pings_received = 0;
         while let Ok(Ok(NetworkMessage::Ping)) =
-            timeout(Duration::from_millis(100), net2.receive()).await
+            timeout(Duration::from_millis(100), net2.receive_net_msg()).await
         {
             pings_received += 1;
         }
