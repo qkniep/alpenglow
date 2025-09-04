@@ -145,7 +145,7 @@ where
                 }
             };
             info!(
-                "produced block {} ({} txs) in {} ms",
+                "produced first block in window {} ({} txs) in {} ms",
                 first_slot_in_window,
                 num_txs,
                 start.elapsed().as_millis()
