@@ -96,21 +96,22 @@ impl NetworkMessage {
 
     /// Serializes this message into an existing buffer using [`bincode`].
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`bincode::error::EncodeError`] if bincode encoding fails.
-    /// This includes the case where `buf` is to small to fit this message.
-    pub fn to_slice(&self, buf: &mut [u8]) -> Result<usize, bincode::error::EncodeError> {
+    /// Number of bytes used in `buf`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if encoding returns an error, including if `buf` was not big enough.
+    /// Panics if encoding used more than [`MTU_BYTES`].
+    pub fn to_slice(&self, buf: &mut [u8]) -> usize {
         let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
         match res {
             Ok(written) => {
                 assert!(written <= MTU_BYTES, "each message should fit in MTU");
-                Ok(written)
+                written
             }
-            Err(bincode::error::EncodeError::UnexpectedEnd) => {
-                Err(bincode::error::EncodeError::UnexpectedEnd)
-            }
-            _ => panic!("unexpected serialization error"),
+            Err(err) => panic!("serialization failed with {err:?}"),
         }
     }
 }
@@ -207,7 +208,7 @@ mod tests {
         let mut buf = [0u8; MTU_BYTES];
         for _ in 0..10 {
             let msg = NetworkMessage::Ping;
-            let num_bytes = msg.to_slice(&mut buf).unwrap();
+            let num_bytes = msg.to_slice(&mut buf);
             let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
             assert!(matches!(deserialized, NetworkMessage::Ping));
         }
@@ -223,9 +224,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[should_panic]
     async fn serialize_buffer_too_small() {
         let mut buf = [0u8; 1];
         let msg = NetworkMessage::Transaction(Transaction(vec![1; MAX_TRANSACTION_SIZE]));
-        assert!(msg.to_slice(&mut buf).is_err());
+        // this should panic
+        msg.to_slice(&mut buf);
     }
 }
