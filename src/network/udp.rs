@@ -64,7 +64,7 @@ impl Network for UdpNetwork {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
+    async fn receive_net_msg(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
             let len = self.socket.recv(&mut buf).await?;
@@ -91,13 +91,13 @@ mod tests {
 
         // regular send()
         socket2.send(&NetworkMessage::Ping, addr1).await.unwrap();
-        let msg = socket1.receive().await.unwrap();
+        let msg = socket1.receive_net_msg().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
 
         // send_serialized()
         let bytes = NetworkMessage::Ping.to_bytes();
         socket2.send_serialized(&bytes, addr1).await.unwrap();
-        let msg = socket1.receive().await.unwrap();
+        let msg = socket1.receive_net_msg().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
     }
 
@@ -109,10 +109,10 @@ mod tests {
         let addr2 = localhost_ip_sockaddr(socket2.port());
 
         socket1.send(&NetworkMessage::Ping, addr2).await.unwrap();
-        let msg = socket2.receive().await.unwrap();
+        let msg = socket2.receive_net_msg().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
         socket2.send(&NetworkMessage::Pong, addr1).await.unwrap();
-        let msg = socket1.receive().await.unwrap();
+        let msg = socket1.receive_net_msg().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Pong));
     }
 }

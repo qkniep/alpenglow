@@ -77,7 +77,7 @@ impl Network for TcpNetwork {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
+    async fn receive_net_msg(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         loop {
             tokio::select! {
                 // accept new incoming connections

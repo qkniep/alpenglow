@@ -101,7 +101,7 @@ impl<N: Network> RepairRequestHandler<N> {
     /// Looks up the corresponding data in `self.blockstore` and sends replies.
     pub async fn run(&self) {
         loop {
-            match self.network.receive().await.unwrap() {
+            match self.network.receive_net_msg().await.unwrap() {
                 NetworkMessage::Repair(message) => match message {
                     RepairMessage::Request(request, sender) => {
                         self.answer_request(request, sender).await.unwrap()
@@ -375,7 +375,7 @@ impl<N: Network> Repair<N> {
     /// Returns [`std::io::Error`] if the underlying network fails.
     async fn receive(&self) -> io::Result<RepairResponse> {
         loop {
-            let msg = match self.network.receive().await {
+            let msg = match self.network.receive_net_msg().await {
                 Ok(msg) => msg,
                 Err(NetworkReceiveError::BadSocket(err)) => {
                     return Err(err);
@@ -585,7 +585,7 @@ mod tests {
         repair_channel.send(block_to_repair).await.unwrap();
 
         // expect LastSliceRoot request first
-        let msg = other_network_request.receive().await.unwrap();
+        let msg = other_network_request.receive_net_msg().await.unwrap();
         let req = RepairRequest::LastSliceRoot(block_to_repair);
         assert!(msg_matches_request(&msg, &req));
 
@@ -603,7 +603,7 @@ mod tests {
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
         for _ in 0..num_slices {
-            let msg = other_network_request.receive().await.unwrap();
+            let msg = other_network_request.receive_net_msg().await.unwrap();
 
             for slice in SliceIndex::all().take(num_slices) {
                 let req = RepairRequest::SliceRoot(block_to_repair, slice);
@@ -627,7 +627,7 @@ mod tests {
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
             for _ in 0..TOTAL_SHREDS {
-                let msg = other_network_request.receive().await.unwrap();
+                let msg = other_network_request.receive_net_msg().await.unwrap();
                 for shred_index in 0..TOTAL_SHREDS {
                     let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                     if msg_matches_request(&msg, &req) {
@@ -684,7 +684,7 @@ mod tests {
         other_network.send(&msg, port1).await.unwrap();
 
         // verify reponse
-        let msg = other_network.receive().await.unwrap();
+        let msg = other_network.receive_net_msg().await.unwrap();
         let RepairResponse::LastSliceRoot(req, last_slice, root, proof) = parse_response(msg)
         else {
             panic!("not LastSliceRoot response");
@@ -706,7 +706,7 @@ mod tests {
             other_network.send(&msg, port1).await.unwrap();
 
             // verify response
-            let msg = other_network.receive().await.unwrap();
+            let msg = other_network.receive_net_msg().await.unwrap();
             let RepairResponse::SliceRoot(req, root, proof) = parse_response(msg) else {
                 panic!("not SliceRoot response");
             };
@@ -726,7 +726,7 @@ mod tests {
                 other_network.send(&msg, port1).await.unwrap();
 
                 // verify response
-                let msg = other_network.receive().await.unwrap();
+                let msg = other_network.receive_net_msg().await.unwrap();
                 let RepairResponse::Shred(req, shred) = parse_response(msg) else {
                     panic!("not Shred response");
                 };

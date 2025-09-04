@@ -155,6 +155,10 @@ pub enum NetworkReceiveError {
     BadSocket(#[from] std::io::Error),
 }
 
+pub trait FromNetworkMessage<T = Self> {
+    fn convert(src: NetworkMessage) -> Option<T>;
+}
+
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
@@ -164,7 +168,16 @@ pub trait Network: Send + Sync {
 
     // TODO: implement brodcast at `Network` level?
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+    async fn receive_net_msg(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+
+    async fn receive_msg<T: FromNetworkMessage>(&self) -> Result<T, NetworkReceiveError> {
+        loop {
+            let net_msg = self.receive_net_msg().await?;
+            if let Some(msg) = T::convert(net_msg) {
+                return Ok(msg);
+            }
+        }
+    }
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.

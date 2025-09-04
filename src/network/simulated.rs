@@ -72,7 +72,7 @@ impl Network for SimulatedNetwork {
         self.send_byte_vec(bytes.to_vec(), validator_id).await
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
+    async fn receive_net_msg(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         loop {
             let Some(bytes) = self.receiver.lock().await.recv().await else {
                 let io_error = std::io::Error::other("channel closed");
@@ -112,13 +112,13 @@ mod tests {
 
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
-        if !matches!(net2.receive().await, Ok(NetworkMessage::Ping)) {
+        if !matches!(net2.receive_net_msg().await, Ok(NetworkMessage::Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
-        if !matches!(net1.receive().await, Ok(NetworkMessage::Ping)) {
+        if !matches!(net1.receive_net_msg().await, Ok(NetworkMessage::Ping)) {
             panic!("received wrong message");
         }
     }
@@ -161,7 +161,7 @@ mod tests {
         let receiver = tokio::spawn(async move {
             let mut shreds_received = 0;
             let now = Instant::now();
-            while let Ok(msg) = net2.receive().await {
+            while let Ok(msg) = net2.receive_net_msg().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
                     if shreds_received == 2 * TOTAL_SHREDS {
@@ -221,7 +221,7 @@ mod tests {
         let receiver = tokio::spawn(async move {
             let mut shreds_received = 0;
             let now = Instant::now();
-            while let Ok(msg) = net2.receive().await {
+            while let Ok(msg) = net2.receive_net_msg().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
                     if shreds_received == 1024 * TOTAL_SHREDS {
@@ -281,7 +281,7 @@ mod tests {
         let receiver = tokio::spawn(async move {
             let mut shreds_received = 0;
             let now = Instant::now();
-            while let Ok(msg) = net2.receive().await {
+            while let Ok(msg) = net2.receive_net_msg().await {
                 if matches!(msg, NetworkMessage::Shred(_)) {
                     shreds_received += 1;
                     if shreds_received == 1024 * TOTAL_SHREDS {

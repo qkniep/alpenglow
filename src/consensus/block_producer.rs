@@ -414,7 +414,7 @@ where
             () = tokio::time::sleep(sleep_duration) => {
                 break Duration::ZERO;
             }
-            res = txs_receiver.receive() => {
+            res = txs_receiver.receive_net_msg() => {
                 res
             }
         };

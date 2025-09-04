@@ -39,7 +39,7 @@ impl<N: Network> All2All for TrivialAll2All<N> {
     }
 
     async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
-        self.network.receive().await
+        self.network.receive_net_msg().await
     }
 }
 
