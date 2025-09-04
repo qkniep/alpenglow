@@ -6,6 +6,7 @@
 //!
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use log::{debug, trace, warn};
 use thiserror::Error;
@@ -101,6 +102,27 @@ impl SlotBlockData {
     }
 }
 
+/// Returned value from [`try_reconstruct_slice`]
+enum ReconstructSliceResult {
+    /// Either slice was already reconstructed or not enough data.
+    NoAction,
+    /// Encountered an error reconstructing the slice.
+    Error,
+    /// Slice successfully reconstructed.
+    Complete,
+}
+
+/// Returned value from [`try_reconstruct_block`]
+enum ReconstructBlockResult {
+    /// Either block was already reconstructed or not enough data.
+    NoAction,
+    /// Encountered an error reconstructing the block.
+    Error,
+    /// Block successfully reconstructed.
+    /// [`BlockInfo`] describing the block is returned.
+    Complete(BlockInfo),
+}
+
 /// Holds all data corresponding to a single block.
 pub struct BlockData {
     /// Slot number this block is in.
@@ -161,14 +183,16 @@ impl BlockData {
         }
 
         // maybe reconstruct slice and block
-        if self.try_reconstruct_slice(slice_index) {
-            self.try_reconstruct_block()
-                .map(|block_info| VotorEvent::Block {
+        // TODO: handle error cases.
+        match self.try_reconstruct_slice(slice_index) {
+            ReconstructSliceResult::NoAction | ReconstructSliceResult::Error => None,
+            ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
+                ReconstructBlockResult::NoAction | ReconstructBlockResult::Error => None,
+                ReconstructBlockResult::Complete(block_info) => Some(VotorEvent::Block {
                     slot: self.slot,
                     block_info,
-                })
-        } else {
-            None
+                }),
+            },
         }
     }
 
@@ -217,55 +241,59 @@ impl BlockData {
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
-    /// Returns `true` if a slice was reconstructed, `false` otherwise.
-    fn try_reconstruct_slice(&mut self, slice: SliceIndex) -> bool {
+    /// See [`ReconstructSliceResult`] for more info on what the function returns.
+    fn try_reconstruct_slice(&mut self, index: SliceIndex) -> ReconstructSliceResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
-            return false;
+            return ReconstructSliceResult::NoAction;
         }
-        if self.slices.contains_key(&slice) {
-            trace!("already have slice {} in slot {}", slice, self.slot);
-            return false;
-        }
-        let slice_shreds = self.shreds.get_mut(&slice).unwrap();
+
+        let entry = match self.slices.entry(index) {
+            Entry::Occupied(_) => return ReconstructSliceResult::NoAction,
+            Entry::Vacant(entry) => entry,
+        };
+
+        // assuming caller has inserted at least one valid shred so unwrap() should be safe
+        let slice_shreds = self.shreds.get_mut(&index).unwrap();
         let (reconstructed_slice, mut reconstructed_shreds) =
             match RegularShredder::deshred(slice_shreds) {
                 Ok(output) => output,
-                Err(DeshredError::NotEnoughShreds) => return false,
+                Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
                 rest => {
                     warn!("deshreding failed with {rest:?}");
-                    return false;
+                    return ReconstructSliceResult::Error;
                 }
             };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
             warn!(
                 "reconstructed slice {} in slot {} expected to contain parent",
-                slice, self.slot
+                index, self.slot
             );
-            return false;
+            return ReconstructSliceResult::Error;
         }
 
         // insert reconstructed slice and shreds
-        self.slices.insert(slice, reconstructed_slice);
+        entry.insert(reconstructed_slice);
         std::mem::swap(slice_shreds, &mut reconstructed_shreds);
-        trace!("reconstructed slice {} in slot {}", slice, self.slot);
+        trace!("reconstructed slice {} in slot {}", index, self.slot);
 
-        true
+        ReconstructSliceResult::Complete
     }
 
     /// Reconstructs the block if the blockstore contains all slices.
     ///
-    /// Returns `Some(block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
-    fn try_reconstruct_block(&mut self) -> Option<BlockInfo> {
+    /// See [`ReconstructBlockResult`] for more info on what the function returns.
+    fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
-            return None;
+            return ReconstructBlockResult::NoAction;
         }
-        let last_slice = self.last_slice?;
+        let Some(last_slice) = self.last_slice else {
+            return ReconstructBlockResult::NoAction;
+        };
         if self.slices.len() != last_slice.inner() + 1 {
             trace!("don't have all slices for slot {} yet", self.slot);
-            return None;
+            return ReconstructBlockResult::NoAction;
         }
 
         // calculate double-Merkle tree & block hash
@@ -292,11 +320,11 @@ impl BlockData {
             {
                 if new_parent == parent {
                     warn!("parent switched to same value");
-                    return None;
+                    return ReconstructBlockResult::Error;
                 }
                 if parent_switched {
                     warn!("parent switched more than once");
-                    return None;
+                    return ReconstructBlockResult::Error;
                 }
                 parent_switched = true;
                 parent = new_parent;
@@ -307,7 +335,7 @@ impl BlockData {
                     Ok(r) => r,
                     Err(err) => {
                         warn!("decoding slice {ind} failed with {err:?}");
-                        return None;
+                        return ReconstructBlockResult::Error;
                     }
                 };
             if bytes_read != slice.data.len() {
@@ -317,7 +345,7 @@ impl BlockData {
                     bytes_read,
                     slice.data.len()
                 );
-                return None;
+                return ReconstructBlockResult::Error;
             }
             transactions.append(&mut txs);
         }
@@ -337,7 +365,7 @@ impl BlockData {
             self.slices.remove(&slice_index);
         }
 
-        Some(block_info)
+        ReconstructBlockResult::Complete(block_info)
     }
 }
 
