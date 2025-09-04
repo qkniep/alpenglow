@@ -577,7 +577,8 @@ mod tests {
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
-                repair_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
 
