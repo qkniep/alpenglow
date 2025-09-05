@@ -19,6 +19,8 @@
 
 mod reed_solomon;
 
+use std::collections::btree_map::Entry;
+
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
 use ctr::Ctr64LE;
@@ -31,7 +33,7 @@ use self::reed_solomon::{
 };
 use crate::crypto::signature::{PublicKey, SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
-use crate::types::{Slice, SliceHeader};
+use crate::types::{Slice, SliceHeader, SliceIndex};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -112,6 +114,17 @@ impl ShredPayloadType {
     }
 }
 
+/// Different errors returned from [`Shred::verify()`].
+pub enum ShredVerifyError {
+    /// The shred contained an invalid merkle proof.
+    InvalidProof,
+    /// The signature verification failed.
+    InvalidSignature,
+    /// Leader showed equivocation.
+    /// The merkle root that does not match the root from a previous shred.
+    Equivocation,
+}
+
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -124,20 +137,39 @@ pub struct Shred {
 
 impl Shred {
     /// Verifies the proof and signature of this shred.
-    #[must_use]
-    pub fn verify(&self, pk: &PublicKey, cached_merkle_root: Option<&Hash>) -> bool {
+    ///
+    /// Uses a cached entry to potentially skip signature verification and to detect equivocation.
+    pub fn verify(
+        &self,
+        pk: &PublicKey,
+        cached_merkle_root: Entry<SliceIndex, Hash>,
+    ) -> Result<(), ShredVerifyError> {
         if !MerkleTree::check_proof(
             &self.payload().data,
             self.payload().index_in_slice,
             self.merkle_root,
             &self.merkle_path,
         ) {
-            return false;
+            return Err(ShredVerifyError::InvalidProof);
         }
-        if Some(&self.merkle_root) == cached_merkle_root {
-            return true;
+
+        match cached_merkle_root {
+            Entry::Occupied(entry) => {
+                if entry.get() == &self.merkle_root {
+                    Ok(())
+                } else {
+                    Err(ShredVerifyError::Equivocation)
+                }
+            }
+            Entry::Vacant(entry) => {
+                if self.merkle_root_sig.verify(&self.merkle_root, pk) {
+                    entry.insert(self.merkle_root);
+                    Ok(())
+                } else {
+                    Err(ShredVerifyError::InvalidSignature)
+                }
+            }
         }
-        self.merkle_root_sig.verify(&self.merkle_root, pk)
     }
 
     /// Verifies only the Merkle proof of this shred.
