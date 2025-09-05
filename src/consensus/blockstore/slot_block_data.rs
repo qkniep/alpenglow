@@ -15,7 +15,7 @@ use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
-use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
+use crate::shredder::{DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder};
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
 
@@ -207,16 +207,20 @@ impl BlockData {
         let slice_shreds = self.shreds.entry(slice_index).or_default();
 
         // check Merkle root and signature
-        let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
-        if !shred.verify(&leader_pk, cached_merkle_root) {
-            debug!("dropping invalid shred in slot {}", self.slot);
-            return Err(AddShredError::InvalidSignature);
-        } else if cached_merkle_root.is_none() {
-            self.merkle_root_cache
-                .insert(slice_index, shred.merkle_root);
-        } else if cached_merkle_root != Some(&shred.merkle_root) {
-            warn!("shreds show leader equivocation in slot {}", self.slot);
-            return Err(AddShredError::Equivocation);
+        let entry = self.merkle_root_cache.entry(slice_index);
+        let res = shred.verify(&leader_pk, entry);
+        match res {
+            Ok(()) => (),
+            Err(err) => match err {
+                ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
+                    debug!("dropping invalid shred in slot {}", self.slot);
+                    return Err(AddShredError::InvalidSignature);
+                }
+                ShredVerifyError::Equivocation => {
+                    warn!("shreds show leader equivocation in slot {}", self.slot);
+                    return Err(AddShredError::Equivocation);
+                }
+            },
         }
 
         // store and handle this shred only if it is not yet stored
