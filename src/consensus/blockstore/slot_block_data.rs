@@ -15,6 +15,7 @@ use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
+use crate::shredder::validated_shred::ValidatedShred;
 use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
@@ -68,12 +69,15 @@ impl SlotBlockData {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
         }
-        let add_shred_result = self.disseminated.check_shred_to_add(&shred, leader_pk);
-        if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
-            self.equivocated = true;
-        }
-        add_shred_result?;
-        Ok(self.disseminated.add_valid_shred(shred))
+
+        self.disseminated
+            .add_shred(shred, leader_pk)
+            .map_err(|err| {
+                if matches!(err, AddShredError::Equivocation) {
+                    self.equivocated = true;
+                }
+                err
+            })
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -90,15 +94,13 @@ impl SlotBlockData {
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        match block_data.check_shred_to_add(&shred, leader_pk) {
-            Ok(()) => Ok(block_data.add_valid_shred(shred)),
-            Err(err) => {
-                if let AddShredError::Equivocation = &err {
-                    self.equivocated = true;
-                }
-                Err(err)
+
+        block_data.add_shred(shred, leader_pk).map_err(|err| {
+            if matches!(err, AddShredError::Equivocation) {
+                self.equivocated = true;
             }
-        }
+            err
+        })
     }
 }
 
@@ -130,6 +132,8 @@ pub struct BlockData {
     /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
+    //
+    // TODO: Consider storing [`ValidatedShred`] here instead.
     pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
     /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<SliceIndex, Slice>,
@@ -155,6 +159,79 @@ impl BlockData {
         }
     }
 
+    fn add_validated_shred(
+        &mut self,
+        validated_shred: ValidatedShred,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        let shred = validated_shred.to_shred();
+        assert!(shred.payload().header.slot == self.slot);
+        let slice_index = shred.payload().header.slice_index;
+        if self.last_slice.is_some_and(|l| slice_index > l) {
+            return Err(AddShredError::AfterLastSlice);
+        }
+
+        let is_first_shred = self.shreds.is_empty();
+
+        let slice_shreds = {
+            let shred_index = shred.payload().index_in_slice;
+            let slice_shreds = self.shreds.entry(slice_index).or_default();
+            let exists = slice_shreds
+                .iter()
+                .any(|s| s.payload().index_in_slice == shred_index);
+            if exists {
+                debug!(
+                    "dropping duplicate shred {}-{} in slot {}",
+                    slice_index, shred_index, self.slot
+                );
+                return Err(AddShredError::Duplicate);
+            }
+            slice_shreds
+        };
+
+        let is_last_slice = shred.payload().header.is_last;
+        slice_shreds.push(validated_shred.into_shred());
+
+        if is_last_slice {
+            match self.last_slice {
+                Some(_l) => unimplemented!(),
+                None => {
+                    self.last_slice = Some(slice_index);
+                    self.slices.retain(|&ind, _| ind <= slice_index);
+                    self.shreds.retain(|&ind, _| ind <= slice_index);
+                }
+            }
+        }
+
+        if is_first_shred {
+            return Ok(Some(VotorEvent::FirstShred(self.slot)));
+        }
+
+        match self.try_reconstruct_slice(slice_index) {
+            ReconstructSliceResult::NoAction | ReconstructSliceResult::Error => Ok(None),
+            ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
+                ReconstructBlockResult::NoAction | ReconstructBlockResult::Error => Ok(None),
+                ReconstructBlockResult::Complete(block_info) => Ok(Some(VotorEvent::Block {
+                    slot: self.slot,
+                    block_info,
+                })),
+            },
+        }
+    }
+
+    fn add_shred(
+        &mut self,
+        shred: Shred,
+        leader_pk: PublicKey,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        assert!(shred.payload().header.slot == self.slot);
+        let slice_index = shred.payload().header.slice_index;
+        // XXX: depending on how things fail, we have equivocation or not.
+        let validated_shred =
+            ValidatedShred::new(shred, self.merkle_root_cache.entry(slice_index), &leader_pk)
+                .ok_or(AddShredError::Equivocation)?;
+        self.add_validated_shred(validated_shred)
+    }
+
     /// Adds a new valid shred to the block.
     ///
     /// Assumes that the shred is valid, performs no more validity checks.
@@ -163,81 +240,81 @@ impl BlockData {
     /// - `Some(VotorEvent::FirstShred)` if this was the first shred of this block,
     /// - `Some(VotorEvent::Block)` if the block was successfully reconstructed,
     /// - `None` otherwise.
-    pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
-        assert!(shred.payload().header.slot == self.slot);
-        let slice_index = shred.payload().header.slice_index;
-        let is_last_slice = shred.payload().header.is_last;
-        let is_first_shred = self.shreds.is_empty();
-        self.shreds.entry(slice_index).or_default().push(shred);
+    // pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
+    //     assert!(shred.payload().header.slot == self.slot);
+    //     let slice_index = shred.payload().header.slice_index;
+    //     let is_last_slice = shred.payload().header.is_last;
+    //     let is_first_shred = self.shreds.is_empty();
+    //     self.shreds.entry(slice_index).or_default().push(shred);
 
-        // store last slice index, delete everything after last slice
-        if is_last_slice && self.last_slice.is_none() {
-            self.last_slice = Some(slice_index);
-            self.slices.retain(|&ind, _| ind <= slice_index);
-            self.shreds.retain(|&ind, _| ind <= slice_index);
-        }
+    //     // store last slice index, delete everything after last slice
+    //     if is_last_slice && self.last_slice.is_none() {
+    //         self.last_slice = Some(slice_index);
+    //         self.slices.retain(|&ind, _| ind <= slice_index);
+    //         self.shreds.retain(|&ind, _| ind <= slice_index);
+    //     }
 
-        // maybe send first shred notification
-        if is_first_shred {
-            return Some(VotorEvent::FirstShred(self.slot));
-        }
+    //     // maybe send first shred notification
+    //     if is_first_shred {
+    //         return Some(VotorEvent::FirstShred(self.slot));
+    //     }
 
-        // maybe reconstruct slice and block
-        // TODO: handle error cases.
-        match self.try_reconstruct_slice(slice_index) {
-            ReconstructSliceResult::NoAction | ReconstructSliceResult::Error => None,
-            ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
-                ReconstructBlockResult::NoAction | ReconstructBlockResult::Error => None,
-                ReconstructBlockResult::Complete(block_info) => Some(VotorEvent::Block {
-                    slot: self.slot,
-                    block_info,
-                }),
-            },
-        }
-    }
+    //     // maybe reconstruct slice and block
+    //     // TODO: handle error cases.
+    //     match self.try_reconstruct_slice(slice_index) {
+    //         ReconstructSliceResult::NoAction | ReconstructSliceResult::Error => None,
+    //         ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
+    //             ReconstructBlockResult::NoAction | ReconstructBlockResult::Error => None,
+    //             ReconstructBlockResult::Complete(block_info) => Some(VotorEvent::Block {
+    //                 slot: self.slot,
+    //                 block_info,
+    //             }),
+    //         },
+    //     }
+    // }
 
-    fn check_shred_to_add(
-        &mut self,
-        shred: &Shred,
-        leader_pk: PublicKey,
-    ) -> Result<(), AddShredError> {
-        assert!(shred.payload().header.slot == self.slot);
-        let slice_index = shred.payload().header.slice_index;
-        let shred_index = shred.payload().index_in_slice;
-        let slice_shreds = self.shreds.entry(slice_index).or_default();
+    // fn check_shred_to_add(
+    //     &mut self,
+    //     shred: &Shred,
+    //     leader_pk: PublicKey,
+    // ) -> Result<(), AddShredError> {
+    //     assert!(shred.payload().header.slot == self.slot);
+    //     let slice_index = shred.payload().header.slice_index;
+    //     let shred_index = shred.payload().index_in_slice;
+    //     let slice_shreds = self.shreds.entry(slice_index).or_default();
 
-        // check Merkle root and signature
-        let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
-        if !shred.verify(&leader_pk, cached_merkle_root) {
-            debug!("dropping invalid shred in slot {}", self.slot);
-            return Err(AddShredError::InvalidSignature);
-        } else if cached_merkle_root.is_none() {
-            self.merkle_root_cache
-                .insert(slice_index, shred.merkle_root);
-        } else if cached_merkle_root != Some(&shred.merkle_root) {
-            warn!("shreds show leader equivocation in slot {}", self.slot);
-            return Err(AddShredError::Equivocation);
-        }
+    //     // check Merkle root and signature
+    //     let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
+    //     if !shred.verify(&leader_pk, cached_merkle_root) {
+    //         debug!("dropping invalid shred in slot {}", self.slot);
+    //         return Err(AddShredError::InvalidSignature);
+    //     } else if cached_merkle_root.is_none() {
+    //         self.merkle_root_cache
+    //             .insert(slice_index, shred.merkle_root);
+    //     } else if cached_merkle_root != Some(&shred.merkle_root) {
+    //         warn!("shreds show leader equivocation in slot {}", self.slot);
+    //         return Err(AddShredError::Equivocation);
+    //     }
 
-        // store and handle this shred only if it is not yet stored
-        let exists = slice_shreds
-            .iter()
-            .any(|s| s.payload().index_in_slice == shred_index);
-        if exists {
-            debug!(
-                "dropping duplicate shred {}-{} in slot {}",
-                slice_index, shred_index, self.slot
-            );
-            return Err(AddShredError::Duplicate);
-        }
+    //     // store and handle this shred only if it is not yet stored
+    //     let exists = slice_shreds
+    //         .iter()
+    //         .any(|s| s.payload().index_in_slice == shred_index);
+    //     if exists {
+    //         debug!(
+    //             "dropping duplicate shred {}-{} in slot {}",
+    //             slice_index, shred_index, self.slot
+    //         );
+    //         return Err(AddShredError::Duplicate);
+    //     }
 
-        // store and handle this shred only if it is not (known to be) after the last slice
-        if self.last_slice.is_some_and(|l| slice_index > l) {
-            return Err(AddShredError::AfterLastSlice);
-        }
+    //     // store and handle this shred only if it is not (known to be) after the last slice
+    //     if self.last_slice.is_some_and(|l| slice_index > l) {
+    //         return Err(AddShredError::AfterLastSlice);
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
@@ -378,10 +455,11 @@ mod tests {
 
     fn handle_slice(slice: Slice, sk: &SecretKey) -> Vec<VotorEvent> {
         let mut block_data = BlockData::new(slice.slot);
+        let pk = sk.to_pk();
         let shreds = RegularShredder::shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            if let Some(event) = block_data.add_valid_shred(shred) {
+            if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
                 events.push(event);
             }
         }
@@ -401,6 +479,7 @@ mod tests {
     #[test]
     fn reconstruct_slice_and_shreds() {
         let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
         let slot = Slot::new(123);
 
         // manage to construct block from just enough shreds
@@ -409,7 +488,7 @@ mod tests {
         let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_valid_shred(shred) {
+            if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
                 events.push(event);
             }
         }
@@ -461,6 +540,7 @@ mod tests {
     #[test]
     fn reconstruct_block_optimistic_handover_duplicate_parent() {
         let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
         slices[2].parent = slices[0].parent;
@@ -470,7 +550,7 @@ mod tests {
         for slice in slices {
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             for shred in shreds {
-                if let Some(event) = block_data.add_valid_shred(shred) {
+                if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
                     events.push(event);
                 }
             }
@@ -486,6 +566,7 @@ mod tests {
     #[test]
     fn reconstruct_block_optimistic_handover_two_switches() {
         let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
         let parent = slices[0].parent.unwrap();
@@ -501,7 +582,7 @@ mod tests {
         for slice in slices {
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             for shred in shreds {
-                if let Some(event) = block_data.add_valid_shred(shred) {
+                if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
                     events.push(event);
                 }
             }
@@ -517,6 +598,7 @@ mod tests {
     #[test]
     fn reconstruct_block_optimistic_handover_works() {
         let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
         let parent = slices[0].parent.unwrap();
@@ -529,7 +611,7 @@ mod tests {
         for slice in slices {
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             for shred in shreds {
-                if let Some(event) = block_data.add_valid_shred(shred) {
+                if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
                     events.push(event);
                 }
             }
