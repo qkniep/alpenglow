@@ -18,6 +18,7 @@
 //! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
 
 mod reed_solomon;
+pub mod validated_shred;
 
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
