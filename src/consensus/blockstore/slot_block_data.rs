@@ -15,7 +15,8 @@ use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
-use crate::shredder::{DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder};
+use crate::shredder::validated_shred::{ShredVerifyError, ValidatedShred};
+use crate::shredder::{DeshredError, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
 
@@ -28,8 +29,23 @@ pub enum AddShredError {
     Duplicate,
     #[error("shred shows leader equivocation")]
     Equivocation,
-    #[error("shred is after slice marked as last")]
-    AfterLastSlice,
+    #[error("slice index mismatch")]
+    InvalidSliceIndex,
+    #[error("slice reconstruction failed")]
+    ReconstructSlice,
+    #[error("block reconstruction failed")]
+    ReconstructBlock,
+}
+
+impl From<ShredVerifyError> for AddShredError {
+    fn from(src: ShredVerifyError) -> Self {
+        match src {
+            ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
+                AddShredError::InvalidSignature
+            }
+            ShredVerifyError::Equivocation => AddShredError::Equivocation,
+        }
+    }
 }
 
 /// Holds all data corresponding to any blocks for a single slot.
@@ -68,12 +84,13 @@ impl SlotBlockData {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
         }
-        let add_shred_result = self.disseminated.check_shred_to_add(&shred, leader_pk);
-        if matches!(add_shred_result, Err(AddShredError::Equivocation)) {
-            self.equivocated = true;
-        }
-        add_shred_result?;
-        Ok(self.disseminated.add_valid_shred(shred))
+        self.disseminated
+            .add_shred(shred, leader_pk)
+            .inspect_err(|err| {
+                if matches!(err, AddShredError::Equivocation) {
+                    self.equivocated = true;
+                }
+            })
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -90,15 +107,11 @@ impl SlotBlockData {
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        match block_data.check_shred_to_add(&shred, leader_pk) {
-            Ok(()) => Ok(block_data.add_valid_shred(shred)),
-            Err(err) => {
-                if let AddShredError::Equivocation = &err {
-                    self.equivocated = true;
-                }
-                Err(err)
+        block_data.add_shred(shred, leader_pk).inspect_err(|err| {
+            if matches!(err, AddShredError::Equivocation) {
+                self.equivocated = true;
             }
-        }
+        })
     }
 }
 
@@ -130,6 +143,8 @@ pub struct BlockData {
     /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
+    //
+    // TODO: Consider storing [`ValidatedShred`] here instead.
     pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
     /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<SliceIndex, Slice>,
@@ -155,92 +170,81 @@ impl BlockData {
         }
     }
 
-    /// Adds a new valid shred to the block.
-    ///
-    /// Assumes that the shred is valid, performs no more validity checks.
-    ///
-    /// Returns:
-    /// - `Some(VotorEvent::FirstShred)` if this was the first shred of this block,
-    /// - `Some(VotorEvent::Block)` if the block was successfully reconstructed,
-    /// - `None` otherwise.
-    pub fn add_valid_shred(&mut self, shred: Shred) -> Option<VotorEvent> {
-        assert!(shred.payload().header.slot == self.slot);
-        let slice_index = shred.payload().header.slice_index;
-        let is_last_slice = shred.payload().header.is_last;
+    fn add_validated_shred(
+        &mut self,
+        validated_shred: ValidatedShred,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        let shred = validated_shred.to_shred();
+        let header = &shred.payload().header;
+        assert!(header.slot == self.slot);
+        let slice_index = header.slice_index;
+
+        match (header.is_last, self.last_slice) {
+            (true, None) => {
+                self.last_slice = Some(slice_index);
+                self.slices.retain(|&ind, _| ind <= slice_index);
+                self.shreds.retain(|&ind, _| ind <= slice_index);
+            }
+            (true, Some(l)) => {
+                if slice_index != l {
+                    return Err(AddShredError::InvalidSliceIndex);
+                }
+            }
+            (false, None) => (),
+            (false, Some(l)) => {
+                if slice_index >= l {
+                    return Err(AddShredError::InvalidSliceIndex);
+                }
+            }
+        }
+
         let is_first_shred = self.shreds.is_empty();
-        self.shreds.entry(slice_index).or_default().push(shred);
+        let slice_shreds = {
+            let shred_index = shred.payload().index_in_slice;
+            let slice_shreds = self.shreds.entry(slice_index).or_default();
+            let exists = slice_shreds
+                .iter()
+                .any(|s| s.payload().index_in_slice == shred_index);
+            if exists {
+                debug!(
+                    "dropping duplicate shred {}-{} in slot {}",
+                    slice_index, shred_index, self.slot
+                );
+                return Err(AddShredError::Duplicate);
+            }
+            slice_shreds
+        };
 
-        // store last slice index, delete everything after last slice
-        if is_last_slice && self.last_slice.is_none() {
-            self.last_slice = Some(slice_index);
-            self.slices.retain(|&ind, _| ind <= slice_index);
-            self.shreds.retain(|&ind, _| ind <= slice_index);
-        }
+        slice_shreds.push(validated_shred.into_shred());
 
-        // maybe send first shred notification
         if is_first_shred {
-            return Some(VotorEvent::FirstShred(self.slot));
+            return Ok(Some(VotorEvent::FirstShred(self.slot)));
         }
 
-        // maybe reconstruct slice and block
-        // TODO: handle error cases.
         match self.try_reconstruct_slice(slice_index) {
-            ReconstructSliceResult::NoAction | ReconstructSliceResult::Error => None,
+            ReconstructSliceResult::NoAction => Ok(None),
+            ReconstructSliceResult::Error => Err(AddShredError::ReconstructSlice),
             ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
-                ReconstructBlockResult::NoAction | ReconstructBlockResult::Error => None,
-                ReconstructBlockResult::Complete(block_info) => Some(VotorEvent::Block {
+                ReconstructBlockResult::NoAction => Ok(None),
+                ReconstructBlockResult::Error => Err(AddShredError::ReconstructBlock),
+                ReconstructBlockResult::Complete(block_info) => Ok(Some(VotorEvent::Block {
                     slot: self.slot,
                     block_info,
-                }),
+                })),
             },
         }
     }
 
-    fn check_shred_to_add(
+    fn add_shred(
         &mut self,
-        shred: &Shred,
+        shred: Shred,
         leader_pk: PublicKey,
-    ) -> Result<(), AddShredError> {
+    ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
-        let shred_index = shred.payload().index_in_slice;
-        let slice_shreds = self.shreds.entry(slice_index).or_default();
-
-        // check Merkle root and signature
-        let entry = self.merkle_root_cache.entry(slice_index);
-        let res = shred.verify(&leader_pk, entry);
-        match res {
-            Ok(()) => (),
-            Err(err) => match err {
-                ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
-                    debug!("dropping invalid shred in slot {}", self.slot);
-                    return Err(AddShredError::InvalidSignature);
-                }
-                ShredVerifyError::Equivocation => {
-                    warn!("shreds show leader equivocation in slot {}", self.slot);
-                    return Err(AddShredError::Equivocation);
-                }
-            },
-        }
-
-        // store and handle this shred only if it is not yet stored
-        let exists = slice_shreds
-            .iter()
-            .any(|s| s.payload().index_in_slice == shred_index);
-        if exists {
-            debug!(
-                "dropping duplicate shred {}-{} in slot {}",
-                slice_index, shred_index, self.slot
-            );
-            return Err(AddShredError::Duplicate);
-        }
-
-        // store and handle this shred only if it is not (known to be) after the last slice
-        if self.last_slice.is_some_and(|l| slice_index > l) {
-            return Err(AddShredError::AfterLastSlice);
-        }
-
-        Ok(())
+        let validated_shred =
+            ValidatedShred::new(shred, self.merkle_root_cache.entry(slice_index), &leader_pk)?;
+        self.add_validated_shred(validated_shred)
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
@@ -380,16 +384,29 @@ mod tests {
     use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
 
-    fn handle_slice(slice: Slice, sk: &SecretKey) -> Vec<VotorEvent> {
-        let mut block_data = BlockData::new(slice.slot);
+    fn handle_slice(
+        block_data: &mut BlockData,
+        slice: Slice,
+        sk: &SecretKey,
+    ) -> (Vec<VotorEvent>, Result<(), AddShredError>) {
+        let pk = sk.to_pk();
         let shreds = RegularShredder::shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            if let Some(event) = block_data.add_valid_shred(shred) {
-                events.push(event);
+            match block_data.add_shred(shred, pk) {
+                Ok(maybe_event) => {
+                    if let Some(event) = maybe_event {
+                        events.push(event);
+                    }
+                }
+                Err(err) => {
+                    if AddShredError::Duplicate != err {
+                        return (events, Err(err));
+                    }
+                }
             }
         }
-        events
+        (events, Ok(()))
     }
 
     fn get_block_hash_from_votor_event(event: &VotorEvent) -> Hash {
@@ -405,6 +422,7 @@ mod tests {
     #[test]
     fn reconstruct_slice_and_shreds() {
         let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
         let slot = Slot::new(123);
 
         // manage to construct block from just enough shreds
@@ -413,7 +431,7 @@ mod tests {
         let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_valid_shred(shred) {
+            if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
                 events.push(event);
             }
         }
@@ -438,7 +456,9 @@ mod tests {
 
         // manage to construct a valid block
         let slices = create_random_block(slot, 1);
-        let events = handle_slice(slices[0].clone(), &sk);
+        let (events, res) =
+            handle_slice(&mut BlockData::new(slices[0].slot), slices[0].clone(), &sk);
+        let () = res.unwrap();
         assert_eq!(events.len(), 2);
         let first_shred_event = VotorEvent::FirstShred(slot);
         assert_votor_events_match(events[0].clone(), first_shred_event);
@@ -455,7 +475,9 @@ mod tests {
         // do not construct a valid block when slice is invalid
         let mut slices = create_random_block(slot, 1);
         slices[0].parent = None;
-        let events = handle_slice(slices[0].clone(), &sk);
+        let (events, res) =
+            handle_slice(&mut BlockData::new(slices[0].slot), slices[0].clone(), &sk);
+        assert_eq!(res.unwrap_err(), AddShredError::ReconstructSlice);
         assert_eq!(events.len(), 1);
         let first_shred_event = VotorEvent::FirstShred(slot);
         assert_votor_events_match(events[0].clone(), first_shred_event);
@@ -471,12 +493,13 @@ mod tests {
 
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];
-        for slice in slices {
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
-            for shred in shreds {
-                if let Some(event) = block_data.add_valid_shred(shred) {
-                    events.push(event);
-                }
+        for (ind, slice) in slices.into_iter().enumerate() {
+            let (mut evs, res) = handle_slice(&mut block_data, slice, &sk);
+            events.append(&mut evs);
+            if ind == 0 || ind == 1 {
+                let () = res.unwrap();
+            } else {
+                assert_eq!(res.unwrap_err(), AddShredError::ReconstructBlock);
             }
         }
         assert_eq!(events.len(), 1);
@@ -502,12 +525,13 @@ mod tests {
 
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];
-        for slice in slices {
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
-            for shred in shreds {
-                if let Some(event) = block_data.add_valid_shred(shred) {
-                    events.push(event);
-                }
+        for (ind, slice) in slices.into_iter().enumerate() {
+            let (mut evs, res) = handle_slice(&mut block_data, slice, &sk);
+            events.append(&mut evs);
+            if ind == 0 || ind == 1 {
+                let () = res.unwrap();
+            } else {
+                assert_eq!(res.unwrap_err(), AddShredError::ReconstructBlock);
             }
         }
         assert_eq!(events.len(), 1);
@@ -531,12 +555,9 @@ mod tests {
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];
         for slice in slices {
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
-            for shred in shreds {
-                if let Some(event) = block_data.add_valid_shred(shred) {
-                    events.push(event);
-                }
-            }
+            let (mut evs, res) = handle_slice(&mut block_data, slice, &sk);
+            events.append(&mut evs);
+            let () = res.unwrap();
         }
         assert_eq!(events.len(), 2);
         match events[0] {
