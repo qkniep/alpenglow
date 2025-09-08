@@ -116,12 +116,12 @@ impl ShredPayloadType {
 
 /// Different errors returned from [`Shred::verify()`].
 pub enum ShredVerifyError {
-    /// The shred contained an invalid merkle proof.
+    /// The shred contained an invalid Merkle proof.
     InvalidProof,
     /// The signature verification failed.
     InvalidSignature,
     /// Leader showed equivocation.
-    /// The merkle root that does not match the root from a previous shred.
+    /// The Merkle root does not match the root from a previous shred.
     Equivocation,
 }
 
