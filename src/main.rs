@@ -18,7 +18,6 @@ async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    // enable `fastrace` tracing
     let reporter = OpenTelemetryReporter::new(
         SpanExporter::builder()
             .with_tonic()
