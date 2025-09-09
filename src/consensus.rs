@@ -46,7 +46,7 @@ use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkMessage, NetworkSendError};
-use crate::repair::Repair;
+use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -93,13 +93,18 @@ where
     T: Network + Sync + Send + 'static,
 {
     /// Creates a new Alpenglow consensus node.
+    ///
+    /// `repair_network` - Network from which the node sends [`RepairRequest`] messages and receives [`RepairResponse`] messages.
+    /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new<R: Network + Sync + Send + 'static>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
         repair_network: R,
+        repair_request_network: R,
         epoch_info: Arc<EpochInfo>,
         txs_receiver: T,
     ) -> Self {
@@ -118,6 +123,14 @@ where
             repair_tx,
         ));
         let pool = Arc::new(RwLock::new(pool));
+
+        let repair_request_handler = RepairRequestHandler::new(
+            epoch_info.clone(),
+            blockstore.clone(),
+            repair_request_network,
+        );
+        let _repair_request_handler =
+            tokio::spawn(async move { repair_request_handler.run().await });
 
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
