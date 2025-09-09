@@ -16,19 +16,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Cache build files
-        id: cache-build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
 
+      - name: Cache build files
+        uses: mozilla-actions/sccache-action@v0.0.9
+      
       - name: Cache downloaded data
         id: cache-data
         uses: actions/cache@v4
@@ -56,9 +47,15 @@ jobs:
           tool: nextest,cargo-llvm-cov,cargo-machete
 
       - name: Build (debug)
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: cargo build --all-targets --verbose
 
       - name: Build (release)
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: cargo build --all-targets --release --verbose
 
       - name: Linting (clippy)
@@ -76,6 +73,9 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         with:
           fail_ci_if_error: true
           files: lcov.info
