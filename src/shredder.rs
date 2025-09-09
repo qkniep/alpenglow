@@ -780,22 +780,28 @@ mod tests {
     fn shred_verification() {
         let mut map = BTreeMap::new();
         let slice_index = SliceIndex::first();
+        let random_pk = SecretKey::new(&mut rng()).to_pk();
 
         let (shred, sk) = create_random_shred();
 
-        let res = shred.verify(&SecretKey::new(&mut rng()).to_pk(), map.entry(slice_index));
+        // checking against other public key should fail
+        let res = shred.verify(&random_pk, map.entry(slice_index));
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
         assert!(!map.contains_key(&slice_index));
 
+        // checking against correct public key should succeed
         let res = shred.verify(&sk.to_pk(), map.entry(slice_index));
         assert!(matches!(res, Ok(())));
         assert!(map.contains_key(&slice_index));
 
         let (invalid_shred, invalid_shred_sk) = create_random_shred();
 
-        let res = invalid_shred.verify(&SecretKey::new(&mut rng()).to_pk(), map.entry(slice_index));
+        // checking against other public key should fail
+        let res = invalid_shred.verify(&random_pk, map.entry(slice_index));
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
 
+        // checking different shred (with different Merkle root)
+        // against existing map entry should detect equivocation
         let res = invalid_shred.verify(&invalid_shred_sk.to_pk(), map.entry(slice_index));
         assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
