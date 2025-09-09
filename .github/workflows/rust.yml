@@ -16,15 +16,8 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
@@ -93,14 +86,10 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install Rust (nightly + rustfmt)
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          components: rustfmt
-          profile: minimal
+      - name: Use nightly
+        run: rustup override set nightly
 
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check
