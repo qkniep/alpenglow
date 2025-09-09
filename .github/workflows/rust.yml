@@ -8,14 +8,32 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: true
 
 jobs:
-  build:
+  main:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,cargo-llvm-cov,cargo-machete
+
+      - name: Cache rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
 
       - name: Cache build files
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -33,18 +51,6 @@ jobs:
             ./download_data.sh
             touch data/dataset.ok
           fi
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-
-      - name: Install tools
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest,cargo-llvm-cov,cargo-machete
 
       - name: Build (debug)
         env:
