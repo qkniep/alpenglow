@@ -797,11 +797,12 @@ mod tests {
         let (invalid_shred, invalid_shred_sk) = create_random_shred();
 
         // checking against other public key should fail
+        // and should not be considered as equivocation
         let res = invalid_shred.verify(&random_pk, map.entry(slice_index));
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
 
-        // checking different shred (with different Merkle root)
-        // against existing map entry should detect equivocation
+        // checking different shred (with different Merkle root and valid sig)
+        // against existing map entry should fail and detect equivocation
         let res = invalid_shred.verify(&invalid_shred_sk.to_pk(), map.entry(slice_index));
         assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
