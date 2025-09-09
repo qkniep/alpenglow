@@ -115,6 +115,7 @@ impl ShredPayloadType {
 }
 
 /// Different errors returned from [`Shred::verify()`].
+#[derive(Debug)]
 pub enum ShredVerifyError {
     /// The shred contained an invalid Merkle proof.
     InvalidProof,
@@ -156,9 +157,12 @@ impl Shred {
         match cached_merkle_root {
             Entry::Occupied(entry) => {
                 if entry.get() == &self.merkle_root {
-                    Ok(())
-                } else {
+                    return Ok(());
+                }
+                if self.merkle_root_sig.verify(&self.merkle_root, pk) {
                     Err(ShredVerifyError::Equivocation)
+                } else {
+                    Err(ShredVerifyError::InvalidSignature)
                 }
             }
             Entry::Vacant(entry) => {
@@ -592,10 +596,19 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use color_eyre::Result;
 
     use super::*;
     use crate::types::slice::create_slice_with_invalid_txs;
+
+    fn create_random_shred() -> (Shred, SecretKey) {
+        let sk = SecretKey::new(&mut rng());
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        let mut shreds = RegularShredder::shred(slice, &sk).unwrap();
+        (shreds.pop().unwrap(), sk)
+    }
 
     #[test]
     fn regular_shredding() -> Result<()> {
@@ -761,5 +774,29 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
+    }
+
+    #[test]
+    fn shred_verification() {
+        let mut map = BTreeMap::new();
+        let slice_index = SliceIndex::first();
+
+        let (shred, sk) = create_random_shred();
+
+        let res = shred.verify(&SecretKey::new(&mut rng()).to_pk(), map.entry(slice_index));
+        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+        assert!(!map.contains_key(&slice_index));
+
+        let res = shred.verify(&sk.to_pk(), map.entry(slice_index));
+        assert!(matches!(res, Ok(())));
+        assert!(map.contains_key(&slice_index));
+
+        let (invalid_shred, invalid_shred_sk) = create_random_shred();
+
+        let res = invalid_shred.verify(&SecretKey::new(&mut rng()).to_pk(), map.entry(slice_index));
+        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+
+        let res = invalid_shred.verify(&invalid_shred_sk.to_pk(), map.entry(slice_index));
+        assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
 }
