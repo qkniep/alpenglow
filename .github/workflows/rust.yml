@@ -87,9 +87,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: Use nightly
-        run: rustup override set nightly
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
 
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check
