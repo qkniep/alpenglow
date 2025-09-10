@@ -126,7 +126,7 @@ pub struct Shred {
 impl Shred {
     /// Verifies only the Merkle proof of this shred.
     ///
-    /// For full verification, see [`Shred::verify`].
+    /// For full verification, see [`ValidatedShred::new`].
     ///
     /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
     #[must_use]
