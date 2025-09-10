@@ -394,16 +394,11 @@ mod tests {
         let mut events = vec![];
         for shred in shreds {
             match block_data.add_shred(shred, pk) {
-                Ok(maybe_event) => {
-                    if let Some(event) = maybe_event {
-                        events.push(event);
-                    }
+                Ok(Some(event)) => {
+                    events.push(event);
                 }
-                Err(err) => {
-                    if AddShredError::Duplicate != err {
-                        return (events, Err(err));
-                    }
-                }
+                Ok(None) | Err(AddShredError::Duplicate) => (),
+                Err(err) => return (events, Err(err)),
             }
         }
         (events, Ok(()))

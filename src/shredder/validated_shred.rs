@@ -17,11 +17,15 @@ pub enum ShredVerifyError {
     Equivocation,
 }
 
+/// Using the new type pattern, this struct provides the guarantee that various verification checks have been performaned on the encapsulated [`Shred`].
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct ValidatedShred(Shred);
 
 impl ValidatedShred {
+    /// Performs various verification checks on the [`Shred`] and if they succeed, returns a shred.
+    ///
+    /// `cached_merkle_root`: is used to cache and skip certain checks for related shreds and detect equivocation.
     pub fn new(
         shred: Shred,
         cached_merkle_root: Entry<SliceIndex, Hash>,
@@ -58,10 +62,12 @@ impl ValidatedShred {
         }
     }
 
+    /// Get a reference to the inner [`Shred`].
     pub fn to_shred(&self) -> &Shred {
         &self.0
     }
 
+    /// Get access to the inner [`Shred`] consuming self.
     pub fn into_shred(self) -> Shred {
         self.0
     }
