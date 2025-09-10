@@ -5,7 +5,7 @@ use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 
-/// Different errors returned from [`Shred::verify()`].
+/// Different errors returned from [`ValidatedShred::new`].
 #[derive(Debug)]
 pub enum ShredVerifyError {
     /// The shred contained an invalid Merkle proof.
@@ -25,7 +25,8 @@ pub struct ValidatedShred(Shred);
 impl ValidatedShred {
     /// Performs various verification checks on the [`Shred`] and if they succeed, returns a shred.
     ///
-    /// `cached_merkle_root`: is used to cache and skip certain checks for related shreds and detect equivocation.
+    /// `cached_merkle_root`: Refers to Merkle root of the slice, if known from earlier shred.
+    /// It is used to potentially skip expensive signature verification or detect equivocation.
     pub fn new(
         shred: Shred,
         cached_merkle_root: Entry<SliceIndex, Hash>,
