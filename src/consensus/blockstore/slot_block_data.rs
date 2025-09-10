@@ -171,6 +171,18 @@ impl BlockData {
         }
     }
 
+    fn add_shred(
+        &mut self,
+        shred: Shred,
+        leader_pk: PublicKey,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        assert!(shred.payload().header.slot == self.slot);
+        let slice_index = shred.payload().header.slice_index;
+        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
+        let validated_shred = ValidatedShred::new(shred, cached_merkle_root, &leader_pk)?;
+        self.add_validated_shred(validated_shred)
+    }
+
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
@@ -234,18 +246,6 @@ impl BlockData {
                 })),
             },
         }
-    }
-
-    fn add_shred(
-        &mut self,
-        shred: Shred,
-        leader_pk: PublicKey,
-    ) -> Result<Option<VotorEvent>, AddShredError> {
-        assert!(shred.payload().header.slot == self.slot);
-        let slice_index = shred.payload().header.slice_index;
-        let validated_shred =
-            ValidatedShred::new(shred, self.merkle_root_cache.entry(slice_index), &leader_pk)?;
-        self.add_validated_shred(validated_shred)
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
