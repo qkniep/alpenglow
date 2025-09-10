@@ -30,7 +30,7 @@ impl ValidatedShred {
     ///
     /// `cached_merkle_root`: Refers to Merkle root of the slice, if known from earlier shred.
     /// It is used to potentially skip expensive signature verification or detect equivocation.
-    pub fn new(
+    pub fn try_new(
         shred: Shred,
         cached_merkle_root: Entry<SliceIndex, Hash>,
         pk: &PublicKey,
@@ -104,12 +104,12 @@ mod tests {
         let (shred, sk) = create_random_shred();
 
         // checking against other public key should fail
-        let res = ValidatedShred::new(shred.clone(), map.entry(slice_index), &random_pk);
+        let res = ValidatedShred::try_new(shred.clone(), map.entry(slice_index), &random_pk);
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
         assert!(!map.contains_key(&slice_index));
 
         // checking against correct public key should succeed
-        let res = ValidatedShred::new(shred, map.entry(slice_index), &sk.to_pk());
+        let res = ValidatedShred::try_new(shred, map.entry(slice_index), &sk.to_pk());
         assert!(res.is_ok());
         assert!(map.contains_key(&slice_index));
 
@@ -117,12 +117,13 @@ mod tests {
 
         // checking against other public key should fail
         // and should not be considered as equivocation
-        let res = ValidatedShred::new(invalid_shred.clone(), map.entry(slice_index), &random_pk);
+        let res =
+            ValidatedShred::try_new(invalid_shred.clone(), map.entry(slice_index), &random_pk);
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
 
         // checking different shred (with different Merkle root and valid sig)
         // against existing map entry should fail and detect equivocation
-        let res = ValidatedShred::new(
+        let res = ValidatedShred::try_new(
             invalid_shred,
             map.entry(slice_index),
             &invalid_shred_sk.to_pk(),

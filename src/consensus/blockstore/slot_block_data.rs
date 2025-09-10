@@ -30,12 +30,8 @@ pub enum AddShredError {
     Duplicate,
     #[error("shred shows leader equivocation")]
     Equivocation,
-    #[error("invalid slice index relative to last slice")]
-    InvalidSliceIndex,
-    #[error("slice reconstruction failed")]
-    ReconstructSlice,
-    #[error("block reconstruction failed")]
-    ReconstructBlock,
+    #[error("shred was invalid and leader did not equivocate")]
+    InvalidShred,
 }
 
 impl From<ShredVerifyError> for AddShredError {
@@ -179,7 +175,7 @@ impl BlockData {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
         let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
-        let validated_shred = ValidatedShred::new(shred, cached_merkle_root, &leader_pk)?;
+        let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
         self.add_validated_shred(validated_shred)
     }
 
@@ -200,13 +196,13 @@ impl BlockData {
             }
             (true, Some(l)) => {
                 if slice_index != l {
-                    return Err(AddShredError::InvalidSliceIndex);
+                    return Err(AddShredError::InvalidShred);
                 }
             }
             (false, None) => (),
             (false, Some(l)) => {
                 if slice_index >= l {
-                    return Err(AddShredError::InvalidSliceIndex);
+                    return Err(AddShredError::InvalidShred);
                 }
             }
         }
@@ -236,10 +232,10 @@ impl BlockData {
 
         match self.try_reconstruct_slice(slice_index) {
             ReconstructSliceResult::NoAction => Ok(None),
-            ReconstructSliceResult::Error => Err(AddShredError::ReconstructSlice),
+            ReconstructSliceResult::Error => Err(AddShredError::InvalidShred),
             ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
                 ReconstructBlockResult::NoAction => Ok(None),
-                ReconstructBlockResult::Error => Err(AddShredError::ReconstructBlock),
+                ReconstructBlockResult::Error => Err(AddShredError::InvalidShred),
                 ReconstructBlockResult::Complete(block_info) => Ok(Some(VotorEvent::Block {
                     slot: self.slot,
                     block_info,
@@ -473,7 +469,7 @@ mod tests {
         slices[0].parent = None;
         let (events, res) =
             handle_slice(&mut BlockData::new(slices[0].slot), slices[0].clone(), &sk);
-        assert_eq!(res.unwrap_err(), AddShredError::ReconstructSlice);
+        assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
         assert_eq!(events.len(), 1);
         let first_shred_event = VotorEvent::FirstShred(slot);
         assert_votor_events_match(events[0].clone(), first_shred_event);
@@ -495,7 +491,7 @@ mod tests {
             if ind == 0 || ind == 1 {
                 let () = res.unwrap();
             } else {
-                assert_eq!(res.unwrap_err(), AddShredError::ReconstructBlock);
+                assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
             }
         }
         assert_eq!(events.len(), 1);
@@ -527,7 +523,7 @@ mod tests {
             if ind == 0 || ind == 1 {
                 let () = res.unwrap();
             } else {
-                assert_eq!(res.unwrap_err(), AddShredError::ReconstructBlock);
+                assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
             }
         }
         assert_eq!(events.len(), 1);
