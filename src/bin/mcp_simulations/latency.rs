@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Simulated latency test for Rotor and Alpenglow.
+//! Simulated latency test for MCP.
 //!
 //!
 
@@ -21,35 +21,50 @@ use rayon::prelude::*;
 /// The sequential stages of the latency test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LatencyTestStage {
-    Direct,
-    Rotor,
-    Notar,
-    Final,
+    Propose,
+    Relay,
+    ConsensusDirect,
+    ConsensusRotor,
+    ConsensusNotar,
+    ConsensusFinal,
+    Reconstruct,
 }
 
 /// Simulated latency test.
-pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct LatencyTest<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     // core setup of the latency test
     validators: Vec<ValidatorInfo>,
     ping_servers: Vec<&'static PingServer>,
     leader_sampler: L,
-    rotor_sampler: R,
+    proposer_sampler: P,
+    relay_sampler: R,
     num_data_shreds: usize,
     num_shreds: usize,
+    num_proposers: usize,
+    num_relays: usize,
+    fraction_can_reconstruct: f64,
+    fraction_should_reconstruct: f64,
+    fraction_valid_block: f64,
     total_stake: Stake,
 
     // running aggregates (averages)
-    direct_stats: RwLock<LatencyStats>,
-    rotor_stats: RwLock<LatencyStats>,
-    shreds95_stats: RwLock<LatencyStats>,
-    notar_stats: RwLock<LatencyStats>,
-    notar65_stats: RwLock<LatencyStats>,
-    fast_final_stats: RwLock<LatencyStats>,
-    slow_final_stats: RwLock<LatencyStats>,
-    final_stats: RwLock<LatencyStats>,
+    propose_stats: RwLock<LatencyStats>,
+    relay_stats: RwLock<LatencyStats>,
+    consensus_direct_stats: RwLock<LatencyStats>,
+    consensus_rotor_stats: RwLock<LatencyStats>,
+    consensus_notar_stats: RwLock<LatencyStats>,
+    consensus_fast_final_stats: RwLock<LatencyStats>,
+    consensus_slow_final_stats: RwLock<LatencyStats>,
+    consensus_final_stats: RwLock<LatencyStats>,
+    reconstruct_stats: RwLock<LatencyStats>,
 }
 
-impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> LatencyTest<L, R> {
+impl<
+    L: SamplingStrategy + Sync + Send,
+    P: SamplingStrategy + Sync + Send,
+    R: SamplingStrategy + Sync + Send,
+> LatencyTest<L, P, R>
+{
     /// Creates a new latency test instance.
     ///
     /// Caller needs to make sure that `leader_sampler` and `rotor_smapler`
@@ -57,7 +72,8 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     pub fn new(
         validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
         leader_sampler: L,
-        rotor_sampler: R,
+        proposer_sampler: P,
+        relay_sampler: R,
         num_data_shreds: usize,
         num_shreds: usize,
     ) -> Self {
@@ -72,19 +88,26 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             validators,
             ping_servers,
             leader_sampler,
-            rotor_sampler,
+            proposer_sampler,
+            relay_sampler,
             num_data_shreds,
             num_shreds,
+            num_proposers: 8,
+            num_relays: 512,
+            fraction_can_reconstruct: 0.4,
+            fraction_should_reconstruct: 0.6,
+            fraction_valid_block: 0.8,
             total_stake,
 
-            direct_stats: RwLock::new(LatencyStats::new()),
-            rotor_stats: RwLock::new(LatencyStats::new()),
-            shreds95_stats: RwLock::new(LatencyStats::new()),
-            notar_stats: RwLock::new(LatencyStats::new()),
-            notar65_stats: RwLock::new(LatencyStats::new()),
-            fast_final_stats: RwLock::new(LatencyStats::new()),
-            slow_final_stats: RwLock::new(LatencyStats::new()),
-            final_stats: RwLock::new(LatencyStats::new()),
+            propose_stats: RwLock::new(LatencyStats::new()),
+            relay_stats: RwLock::new(LatencyStats::new()),
+            consensus_direct_stats: RwLock::new(LatencyStats::new()),
+            consensus_rotor_stats: RwLock::new(LatencyStats::new()),
+            consensus_notar_stats: RwLock::new(LatencyStats::new()),
+            consensus_fast_final_stats: RwLock::new(LatencyStats::new()),
+            consensus_slow_final_stats: RwLock::new(LatencyStats::new()),
+            consensus_final_stats: RwLock::new(LatencyStats::new()),
+            reconstruct_stats: RwLock::new(LatencyStats::new()),
         }
     }
 
@@ -125,7 +148,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
             let relays = self
-                .rotor_sampler
+                .relay_sampler
                 .sample_multiple(self.num_shreds, &mut rng);
             self.run_one_deterministic(up_to_stage, leader.id, relays);
         }
@@ -148,7 +171,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
         // sample leader and relays
         let leader = self.leader_sampler.sample(rng);
-        let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
+        let relays = self.relay_sampler.sample_multiple(self.num_shreds, rng);
         self.run_one_deterministic(up_to_stage, leader, relays);
     }
 
@@ -163,9 +186,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         let mut relay_latencies = vec![0.0; self.num_shreds];
         let mut direct_latencies = vec![(0.0, 0); num_val];
         let mut rotor_latencies = vec![(0.0, 0); num_val];
-        let mut shreds95_latencies = vec![(0.0, 0); num_val];
         let mut notar_latencies = vec![(0.0, 0); num_val];
-        let mut notar65_latencies = vec![(0.0, 0); num_val];
         let mut fast_final_latencies = vec![(0.0, 0); num_val];
         let mut slow_final_latencies = vec![(0.0, 0); num_val];
         let mut final_latencies = vec![(0.0, 0); num_val];
@@ -183,7 +204,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             relay_latencies[i] = direct_latencies[*relay as usize].0;
         }
 
-        if up_to_stage == LatencyTestStage::Direct {
+        if up_to_stage == LatencyTestStage::ConsensusDirect {
             return;
         }
 
@@ -198,11 +219,9 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
             let threshold_latency = tmp_rotor_latencies[self.num_data_shreds - 1];
             rotor_latencies[v.id as usize] = (threshold_latency, v.id);
-            let threshold_latency = tmp_rotor_latencies[61 - 1];
-            shreds95_latencies[v.id as usize] = (threshold_latency, v.id);
         }
 
-        if up_to_stage == LatencyTestStage::Rotor {
+        if up_to_stage == LatencyTestStage::ConsensusRotor {
             return;
         }
 
@@ -218,7 +237,6 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
             // measure latency until notarization and fast-finalization
             let mut notar_latency = None;
-            let mut notar65_latency = None;
             let mut fast_final_latency = None;
             let mut stake_so_far = 0;
             for (latency, v) in &tmp_latencies {
@@ -226,21 +244,15 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
                 if notar_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.6 {
                     notar_latency = Some(*latency);
                 }
-                if notar65_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.65
-                {
-                    notar65_latency = Some(*latency);
-                }
                 if stake_so_far as f64 > self.total_stake as f64 * 0.8 {
                     fast_final_latency = Some(*latency);
                     break;
                 }
             }
             let mut notar_latency = notar_latency.unwrap();
-            let notar65_latency = notar65_latency.unwrap();
             let mut fast_final_latency = fast_final_latency.unwrap();
             notar_latency = notar_latency.max(*v1_rotor_latency);
             notar_latencies[*v1 as usize] = (notar_latency, *v1);
-            notar65_latencies[*v1 as usize] = (notar65_latency, *v1);
             fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
             fast_final_latencies[*v1 as usize] = (fast_final_latency, *v1);
             final_latencies[*v1 as usize] = (fast_final_latency, *v1);
@@ -286,7 +298,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             }
         }
 
-        if up_to_stage == LatencyTestStage::Notar {
+        if up_to_stage == LatencyTestStage::ConsensusNotar {
             return;
         }
 
@@ -338,46 +350,38 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             }
         }
 
-        self.direct_stats.write().unwrap().record_latencies(
-            &mut direct_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.rotor_stats.write().unwrap().record_latencies(
-            &mut rotor_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.shreds95_stats.write().unwrap().record_latencies(
-            &mut shreds95_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.notar_stats.write().unwrap().record_latencies(
-            &mut notar_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.notar65_stats.write().unwrap().record_latencies(
-            &mut notar65_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.fast_final_stats.write().unwrap().record_latencies(
-            &mut fast_final_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.slow_final_stats.write().unwrap().record_latencies(
-            &mut slow_final_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
-        self.final_stats.write().unwrap().record_latencies(
-            &mut final_latencies,
-            &self.validators,
-            &self.ping_servers,
-        );
+        self.consensus_direct_stats
+            .write()
+            .unwrap()
+            .record_latencies(&mut direct_latencies, &self.validators, &self.ping_servers);
+        self.consensus_rotor_stats
+            .write()
+            .unwrap()
+            .record_latencies(&mut rotor_latencies, &self.validators, &self.ping_servers);
+        self.consensus_notar_stats
+            .write()
+            .unwrap()
+            .record_latencies(&mut notar_latencies, &self.validators, &self.ping_servers);
+        self.consensus_fast_final_stats
+            .write()
+            .unwrap()
+            .record_latencies(
+                &mut fast_final_latencies,
+                &self.validators,
+                &self.ping_servers,
+            );
+        self.consensus_slow_final_stats
+            .write()
+            .unwrap()
+            .record_latencies(
+                &mut slow_final_latencies,
+                &self.validators,
+                &self.ping_servers,
+            );
+        self.consensus_final_stats
+            .write()
+            .unwrap()
+            .record_latencies(&mut final_latencies, &self.validators, &self.ping_servers);
     }
 
     /// Writes latency test results to a CSV file.
@@ -388,37 +392,31 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
         writeln!(
             writer,
-            "percentile,direct,rotor,shreds95,notar,notar65,fast_final,slow_final,final"
+            "percentile,direct,rotor,notar,fast_final,slow_final,final"
         )
         .unwrap();
         for percentile in 1..=100 {
-            let direct_stats = self.direct_stats.read().unwrap();
+            let direct_stats = self.consensus_direct_stats.read().unwrap();
             let direct_latency = direct_stats.get_avg_percentile_latency(percentile);
 
-            let rotor_stats = self.rotor_stats.read().unwrap();
+            let rotor_stats = self.consensus_rotor_stats.read().unwrap();
             let rotor_latency = rotor_stats.get_avg_percentile_latency(percentile);
 
-            let shreds95_stats = self.shreds95_stats.read().unwrap();
-            let shreds95_latency = shreds95_stats.get_avg_percentile_latency(percentile);
-
-            let notar_stats = self.notar_stats.read().unwrap();
+            let notar_stats = self.consensus_notar_stats.read().unwrap();
             let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
 
-            let notar65_stats = self.notar65_stats.read().unwrap();
-            let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
-
-            let fast_final_stats = self.fast_final_stats.read().unwrap();
+            let fast_final_stats = self.consensus_fast_final_stats.read().unwrap();
             let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
 
-            let slow_final_stats = self.slow_final_stats.read().unwrap();
+            let slow_final_stats = self.consensus_slow_final_stats.read().unwrap();
             let slow_final_latency = slow_final_stats.get_avg_percentile_latency(percentile);
 
-            let final_stats = self.final_stats.read().unwrap();
+            let final_stats = self.consensus_final_stats.read().unwrap();
             let final_latency = final_stats.get_avg_percentile_latency(percentile);
 
             writeln!(
                 writer,
-                "{percentile},{direct_latency},{rotor_latency},{shreds95_latency},{notar_latency},{notar65_latency},{fast_final_latency},{slow_final_latency},{final_latency}",
+                "{percentile},{direct_latency},{rotor_latency},{notar_latency},{fast_final_latency},{slow_final_latency},{final_latency}",
             )
             .unwrap();
         }
