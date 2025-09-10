@@ -29,7 +29,7 @@ pub enum AddShredError {
     Duplicate,
     #[error("shred shows leader equivocation")]
     Equivocation,
-    #[error("slice index mismatch")]
+    #[error("invalid slice index relative to last slice")]
     InvalidSliceIndex,
     #[error("slice reconstruction failed")]
     ReconstructSlice,
