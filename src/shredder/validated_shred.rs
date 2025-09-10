@@ -17,7 +17,10 @@ pub enum ShredVerifyError {
     Equivocation,
 }
 
-/// Using the new type pattern, this struct provides the guarantee that various verification checks have been performaned on the encapsulated [`Shred`].
+/// A verified wrapper around a [`Shred`].
+///
+/// It uses the new type pattern to encode verification in the type system.  
+/// The encapsulated [`Shred`] has passed all required checks.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct ValidatedShred(Shred);
