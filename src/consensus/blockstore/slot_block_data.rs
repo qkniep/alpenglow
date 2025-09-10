@@ -116,7 +116,7 @@ impl SlotBlockData {
     }
 }
 
-/// Returned value from [`try_reconstruct_slice`]
+/// Returned value from [`BlockData::try_reconstruct_slice`]
 enum ReconstructSliceResult {
     /// Either slice was already reconstructed or not enough data.
     NoAction,
@@ -126,7 +126,7 @@ enum ReconstructSliceResult {
     Complete,
 }
 
-/// Returned value from [`try_reconstruct_block`]
+/// Returned value from [`BlockData::try_reconstruct_block`]
 enum ReconstructBlockResult {
     /// Either block was already reconstructed or not enough data.
     NoAction,
@@ -145,7 +145,7 @@ pub struct BlockData {
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
     //
-    // TODO: Consider storing [`ValidatedShred`] here instead.
+    // TODO: Consider storing ValidatedShred here instead.
     pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
     /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<SliceIndex, Slice>,
