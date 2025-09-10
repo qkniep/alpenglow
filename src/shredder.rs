@@ -18,7 +18,7 @@
 //! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
 
 mod reed_solomon;
-pub mod validated_shred;
+mod validated_shred;
 
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
@@ -30,6 +30,7 @@ use thiserror::Error;
 use self::reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
 };
+pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::types::{Slice, SliceHeader};
