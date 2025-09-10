@@ -35,7 +35,8 @@ use crate::consensus::EpochInfo;
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
 use crate::disseminator::rotor::StakeWeightedSampler;
-use crate::network::{UdpNetwork, localhost_ip_sockaddr};
+use crate::network::{NetworkMessage, UdpNetwork, localhost_ip_sockaddr};
+use crate::repair::RepairMessage;
 
 /// Validator ID number type.
 pub type ValidatorId = u64;
@@ -90,15 +91,18 @@ pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
     cnt
 }
 
-type TestNode =
-    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+type TestNode = Alpenglow<
+    TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
+    Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    UdpNetwork<Transaction, Transaction>,
+>;
 
 struct Networks {
-    all2all: UdpNetwork,
-    disseminator: UdpNetwork,
-    repair_response: UdpNetwork,
-    repair_request: UdpNetwork,
-    txs: UdpNetwork,
+    all2all: UdpNetwork<NetworkMessage, NetworkMessage>,
+    disseminator: UdpNetwork<NetworkMessage, NetworkMessage>,
+    repair_response: UdpNetwork<RepairMessage, RepairMessage>,
+    repair_request: UdpNetwork<RepairMessage, RepairMessage>,
+    txs: UdpNetwork<Transaction, Transaction>,
 }
 
 impl Networks {

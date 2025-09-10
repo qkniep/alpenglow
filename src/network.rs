@@ -159,13 +159,14 @@ pub enum NetworkReceiveError {
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
-    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError>;
+    type Send;
+    type Recv;
+
+    async fn send(&self, message: &Self::Send, to: SocketAddr) -> Result<(), NetworkSendError>;
 
     async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError>;
 
-    // TODO: implement brodcast at `Network` level?
-
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+    async fn receive(&self) -> Result<Self::Recv, NetworkReceiveError>;
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.

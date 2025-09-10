@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::{BinaryHeap, HashMap};
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -123,7 +124,7 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For limited bandwidth, use [`Self::join`] instead.
-    pub async fn join_unlimited(self: &Arc<Self>, id: ValidatorId) -> SimulatedNetwork {
+    pub async fn join_unlimited<S, R>(self: &Arc<Self>, id: ValidatorId) -> SimulatedNetwork<S, R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(65536);
         // background -> receiver
@@ -145,6 +146,8 @@ impl SimulatedNetworkCore {
             network_core,
             receiver,
             limiter: None,
+            s: PhantomData,
+            r: PhantomData,
         }
     }
 
@@ -156,12 +159,12 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For unlimited bandwidth, use [`Self::join_unlimited`] instead.
-    pub async fn join(
+    pub async fn join<S, R>(
         self: &Arc<Self>,
         id: ValidatorId,
         up_bandwidth: usize,
         down_bandwidth: usize,
-    ) -> SimulatedNetwork {
+    ) -> SimulatedNetwork<S, R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(1000);
         // background -> receiver
@@ -188,6 +191,8 @@ impl SimulatedNetworkCore {
             network_core,
             receiver,
             limiter: Some(limiter),
+            s: PhantomData,
+            r: PhantomData,
         }
     }
 
@@ -278,7 +283,7 @@ mod tests {
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         let now = Instant::now();
-        let _ = net2.receive().await.unwrap();
+        let _: NetworkMessage = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -288,7 +293,7 @@ mod tests {
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
         let now = Instant::now();
-        let _ = net1.receive().await.unwrap();
+        let _: NetworkMessage = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -308,8 +313,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(0).await;
-        let net2 = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
         core.set_asymmetric_latency(0, 1, Duration::from_millis(10))
             .await;
         core.set_asymmetric_latency(1, 0, Duration::from_millis(100))
@@ -346,9 +351,9 @@ mod tests {
     async fn latency_order() {
         // set up network with three nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-        let net1 = core.join_unlimited(0).await;
-        let net2 = core.join_unlimited(1).await;
-        let net3 = core.join_unlimited(2).await;
+        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
+        let net3: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(2).await;
         let sock0 = localhost_ip_sockaddr(0);
         core.set_latency(0, 1, Duration::from_millis(10)).await;
         core.set_latency(0, 2, Duration::from_millis(20)).await;
@@ -383,8 +388,8 @@ mod tests {
     async fn packet_loss() {
         // set up network with two nodes and 50% packet loss
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.5));
-        let net1 = core.join_unlimited(0).await;
-        let net2 = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
 
         // send 1000 pings
         let msg = NetworkMessage::Ping;

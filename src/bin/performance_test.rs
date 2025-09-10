@@ -12,9 +12,9 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
-use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::network::{NetworkMessage, SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::types::Slot;
-use alpenglow::{Alpenglow, ValidatorInfo, logging};
+use alpenglow::{Alpenglow, Transaction, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 
@@ -31,19 +31,22 @@ async fn main() -> Result<()> {
 }
 
 type TestNode = Alpenglow<
-    TrivialAll2All<SimulatedNetwork>,
-    Rotor<SimulatedNetwork, StakeWeightedSampler>,
-    UdpNetwork,
+    TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>,
+    Rotor<SimulatedNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    UdpNetwork<Transaction, Transaction>,
 >;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
-    let mut udp_networks = VecDeque::new();
+    let mut tx_receivers = VecDeque::new();
+    let mut repair_networks = VecDeque::new();
     for i in 0..5 * count {
-        if i % 5 == 2 || i % 5 == 3 || i % 5 == 4 {
-            udp_networks.push_back(UdpNetwork::new_with_any_port());
+        if i % 5 == 2 || i % 5 == 3 {
+            repair_networks.push_back(UdpNetwork::new_with_any_port());
+        } else if i % 5 == 4 {
+            tx_receivers.push_back(UdpNetwork::new_with_any_port());
         } else {
             networks.push_back(core.join_unlimited(i).await);
         }
@@ -79,8 +82,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr((5 * id).try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((5 * id + 1).try_into().unwrap());
-        let repair_request_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
-        let repair_response_address = localhost_ip_sockaddr(udp_networks[id as usize].port());
+        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id,
             stake: 1,
@@ -100,9 +103,9 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
-            let repair_network = udp_networks.pop_front().unwrap();
-            let repair_request_network = udp_networks.pop_front().unwrap();
-            let txs_receiver = udp_networks.pop_front().unwrap();
+            let repair_network = repair_networks.pop_front().unwrap();
+            let repair_request_network = repair_networks.pop_front().unwrap();
+            let txs_receiver = tx_receivers.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
                 voting_sks[v.id as usize].clone(),

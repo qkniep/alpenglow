@@ -32,7 +32,10 @@ impl<N: Network> RobustAll2All<N> {
     pub fn handle_retransmits(&self) {}
 }
 
-impl<N: Network> All2All for RobustAll2All<N> {
+impl<N> All2All for RobustAll2All<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkSendError> {
         for v in &self.validators {
             // HACK: stupidly expensive retransmits

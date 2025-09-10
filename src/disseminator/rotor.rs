@@ -57,7 +57,10 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     }
 }
 
-impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
+impl<N, S: SamplingStrategy> Rotor<N, S>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     /// Turns this instance into a new instance with a different sampling strategy.
     #[must_use]
     pub fn with_sampler(self, sampler: S) -> Self {
@@ -111,7 +114,10 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
 }
 
 #[async_trait]
-impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S> {
+impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         Self::send_as_leader(self, shred).await
     }
@@ -150,7 +156,10 @@ mod tests {
     fn create_rotor_instances(
         count: u64,
         base_port: u16,
-    ) -> (Vec<SecretKey>, Vec<Rotor<UdpNetwork, StakeWeightedSampler>>) {
+    ) -> (
+        Vec<SecretKey>,
+        Vec<Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>>,
+    ) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();
