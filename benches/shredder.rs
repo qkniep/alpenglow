@@ -3,7 +3,7 @@
 
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
-    AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shredder,
+    AontShredder, CodingOnlyShredder, PetsShredder, RegularShredder, Shredder, TOTAL_SHREDS,
     ValidatedShred,
 };
 use alpenglow::types::Slice;
@@ -41,9 +41,13 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
             let slice = create_slice_with_invalid_txs(size);
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
-            S::shred(slice, &sk).unwrap()
+            let mut shreds = S::shred(slice, &sk).unwrap().map(Some);
+            for shred in shreds.iter_mut() {
+                *shred = None;
+            }
+            shreds
         })
-        .bench_values(|shreds: Vec<ValidatedShred>| {
-            let _ = S::deshred(&shreds[DATA_SHREDS..]).unwrap();
+        .bench_values(|shreds: [Option<ValidatedShred>; TOTAL_SHREDS]| {
+            let _ = S::deshred(&shreds).unwrap();
         });
 }

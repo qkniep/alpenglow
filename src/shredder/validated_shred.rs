@@ -38,7 +38,7 @@ impl ValidatedShred {
     ) -> Result<Self, ShredVerifyError> {
         if !MerkleTree::check_proof(
             &shred.payload().data,
-            shred.payload().index_in_slice,
+            *shred.payload().shred_index,
             shred.merkle_root,
             &shred.merkle_path,
         ) {
@@ -102,7 +102,7 @@ mod tests {
     fn create_random_shred() -> (Shred, SecretKey) {
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let mut shreds = RegularShredder::shred(slice, &sk).unwrap();
+        let mut shreds = RegularShredder::shred(slice, &sk).unwrap().to_vec();
         (shreds.pop().unwrap().into_shred(), sk)
     }
 
