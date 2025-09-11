@@ -26,8 +26,8 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 /// Implementation of network abstraction over a simple UDP socket.
 pub struct UdpNetwork<S, R> {
     socket: UdpSocket,
-    p: PhantomData<S>,
-    p1: PhantomData<R>,
+    s: PhantomData<S>,
+    r: PhantomData<R>,
 }
 
 impl<S, R> UdpNetwork<S, R> {
@@ -42,8 +42,8 @@ impl<S, R> UdpNetwork<S, R> {
         let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
         Self {
             socket,
-            p: PhantomData,
-            p1: PhantomData,
+            s: PhantomData,
+            r: PhantomData,
         }
     }
 
