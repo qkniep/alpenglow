@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
 use crate::network::BINCODE_CONFIG;
-use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
+use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Slot, highest_non_zero_byte};
 
@@ -59,7 +59,7 @@ impl Slice {
 
     /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
     #[must_use]
-    pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &Shred) -> Self {
+    pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &ValidatedShred) -> Self {
         let header = any_shred.payload().header.clone();
         let merkle_root = Some(any_shred.merkle_root);
         Self::from_parts(header, payload, merkle_root)

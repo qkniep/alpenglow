@@ -168,7 +168,7 @@ where
                 let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
-                RepairResponse::Shred(request.req_type, shred)
+                RepairResponse::Shred(request.req_type, shred.into_shred())
             }
         };
         self.send_response(response, request.sender).await

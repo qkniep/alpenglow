@@ -19,6 +19,7 @@ use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::Hash;
 use crate::shredder::Shred;
+use crate::shredder::ValidatedShred;
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
 
@@ -64,7 +65,7 @@ pub trait Blockstore {
         block_id: BlockId,
         slice_index: SliceIndex,
         shred_index: usize,
-    ) -> Option<&'a Shred>;
+    ) -> Option<&'a ValidatedShred>;
     fn create_double_merkle_proof(
         &self,
         block_id: BlockId,
@@ -164,7 +165,7 @@ impl BlockstoreImpl {
         slot: Slot,
         slice: SliceIndex,
         shred_index: usize,
-    ) -> Option<&Shred> {
+    ) -> Option<&ValidatedShred> {
         self.slot_data(slot)
             .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index))
     }
@@ -290,7 +291,7 @@ impl Blockstore for BlockstoreImpl {
     fn get_slice_root(&self, block_id: BlockId, slice_index: SliceIndex) -> Option<Hash> {
         let block_data = self.get_block_data(block_id)?;
         let slice_shreds = block_data.shreds.get(&slice_index)?;
-        slice_shreds.first().map(|s| s.merkle_root)
+        slice_shreds.first().map(|s| s.to_shred().merkle_root)
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
@@ -301,12 +302,12 @@ impl Blockstore for BlockstoreImpl {
         block_id: BlockId,
         slice_index: SliceIndex,
         shred_index: usize,
-    ) -> Option<&Shred> {
+    ) -> Option<&ValidatedShred> {
         let block_data = self.get_block_data(block_id)?;
         let slice_shreds = block_data.shreds.get(&slice_index)?;
         slice_shreds
             .iter()
-            .find(|s| s.payload().index_in_slice == shred_index)
+            .find(|s| s.to_shred().payload().index_in_slice == shred_index)
     }
 
     /// Generates a Merkle proof for the given `slice_index` of the given `block_id`.
@@ -390,7 +391,7 @@ mod tests {
             ) else {
                 panic!("shred not stored");
             };
-            assert_eq!(stored_shred.payload().data, shred.payload().data);
+            assert_eq!(stored_shred.to_shred().payload().data, shred.payload().data);
         }
 
         // create and check double-Merkle proof

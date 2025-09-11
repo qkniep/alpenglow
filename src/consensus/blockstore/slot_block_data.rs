@@ -141,9 +141,7 @@ pub struct BlockData {
     /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
-    //
-    // TODO: Consider storing ValidatedShred here instead.
-    pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
+    pub(super) shreds: BTreeMap<SliceIndex, Vec<ValidatedShred>>,
     /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<SliceIndex, Slice>,
     /// Index of the slice marked as last, if any.
@@ -213,7 +211,7 @@ impl BlockData {
             let slice_shreds = self.shreds.entry(slice_index).or_default();
             let exists = slice_shreds
                 .iter()
-                .any(|s| s.payload().index_in_slice == shred_index);
+                .any(|s| s.to_shred().payload().index_in_slice == shred_index);
             if exists {
                 debug!(
                     "dropping duplicate shred {}-{} in slot {}",
@@ -224,7 +222,7 @@ impl BlockData {
             slice_shreds
         };
 
-        slice_shreds.push(validated_shred.into_shred());
+        slice_shreds.push(validated_shred);
 
         if is_first_shred {
             return Ok(Some(VotorEvent::FirstShred(self.slot)));
