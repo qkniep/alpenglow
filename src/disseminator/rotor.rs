@@ -153,13 +153,9 @@ mod tests {
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
-    fn create_rotor_instances(
-        count: u64,
-        base_port: u16,
-    ) -> (
-        Vec<SecretKey>,
-        Vec<Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>>,
-    ) {
+    type MyRotor = Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>;
+
+    fn create_rotor_instances(count: u64, base_port: u16) -> (Vec<SecretKey>, Vec<MyRotor>) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();
