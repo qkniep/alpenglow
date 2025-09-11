@@ -72,7 +72,7 @@ pub enum RepairResponse {
 ///
 /// This is separated from [`Repair`] to handle repair requests and responses on separate sockets and tokio tasks.
 /// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
-pub struct RepairRequestHandler<N> {
+pub struct RepairRequestHandler<N: Network> {
     epoch_info: Arc<EpochInfo>,
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     network: N,
@@ -176,7 +176,7 @@ impl<N: Network> RepairRequestHandler<N> {
 ///
 /// This is used by the node to repair blocks that it is missing.
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
-pub struct Repair<N> {
+pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
     slice_roots: BTreeMap<(BlockId, SliceIndex), Hash>,

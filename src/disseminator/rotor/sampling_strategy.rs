@@ -413,7 +413,7 @@ impl SamplingStrategy for PartitionSampler {
 ///    with modified stake weights: `S'(v) = S(v) - floor(S(v) * k) / k`
 ///
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
-pub struct FaitAccompli1Sampler<F> {
+pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     required_samples: Vec<ValidatorId>,
     pub fallback_sampler: F,

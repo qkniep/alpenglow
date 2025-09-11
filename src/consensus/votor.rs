@@ -70,7 +70,7 @@ pub enum VotorEvent {
 /// [`super::Blockstore`] and itself.
 /// Informed by these events Votor updates its state and generates votes.
 /// Votes are signed with [`Votor::voting_key`] and broadcast using [`Votor::all2all`].
-pub struct Votor<A> {
+pub struct Votor<A: All2All> {
     // TODO: merge all of these into `SlotState` struct?
     /// Indicates for which slots we already voted notar or skip.
     voted: BTreeSet<Slot>,

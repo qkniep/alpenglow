@@ -27,7 +27,7 @@ use rand::prelude::*;
 ///
 /// This is a wrapper around [`WorkloadTest`].
 /// It augments the workload test with bandwidth information.
-pub struct BandwidthTest<L, R> {
+pub struct BandwidthTest<L: SamplingStrategy, R: SamplingStrategy> {
     leader_bandwidth: u64,
     bandwidths: Vec<u64>,
     workload_test: WorkloadTest<L, R>,
@@ -37,7 +37,7 @@ pub struct BandwidthTest<L, R> {
 ///
 /// This simulates the distribution of shreds via Rotor.
 /// It tracks the workload (number of shreds/datagrams sent) for each validator.
-pub struct WorkloadTest<L, R> {
+pub struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     leader_sampler: L,
     rotor_sampler: R,

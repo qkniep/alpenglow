@@ -31,7 +31,7 @@ use crate::{
 /// Produces blocks in accordance with the consensus protocol's timeouts.
 /// Receives transactions from clients via a [`Network`] instance and packs them into blocks.
 /// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
-pub(super) struct BlockProducer<D, T> {
+pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
     /// This is not the same as the voting secret key, which is held by [`Votor`].
     secret_key: signature::SecretKey,

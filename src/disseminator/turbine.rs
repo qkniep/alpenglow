@@ -31,7 +31,7 @@ pub const DEFAULT_FANOUT: usize = 200;
 const MAX_CACHED_TREES: u64 = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
-pub struct Turbine<N> {
+pub struct Turbine<N: Network> {
     validator_id: ValidatorId,
     validators: Vec<ValidatorInfo>,
     network: N,
