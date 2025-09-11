@@ -8,8 +8,9 @@ use thiserror::Error;
 
 use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
-    Shred, ShredPayload, ShredPayloadType, SliceHeader, TOTAL_SHREDS,
+    ShredPayload, ShredPayloadType, SliceHeader, TOTAL_SHREDS,
 };
+use crate::shredder::Shred;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
