@@ -18,13 +18,13 @@ use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
-pub struct Rotor<N: Network, S: SamplingStrategy> {
+pub struct Rotor<N, S> {
     network: N,
     sampler: S,
     epoch_info: Arc<EpochInfo>,
 }
 
-impl<N: Network> Rotor<N, StakeWeightedSampler> {
+impl<N> Rotor<N, StakeWeightedSampler> {
     /// Creates a new Rotor instance with the default sampling strategy.
     ///
     /// Contact information for all validators is provided in `validators`.
@@ -40,7 +40,7 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     }
 }
 
-impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
+impl<N> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     /// Creates a new Rotor instance with the FA1 sampling strategy.
     ///
     /// Contact information for all validators is provided in `validators`.

@@ -63,7 +63,7 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, T: Network> {
+pub struct Alpenglow<A, D, T> {
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 

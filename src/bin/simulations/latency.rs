@@ -28,7 +28,7 @@ pub enum LatencyTestStage {
 }
 
 /// Simulated latency test.
-pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct LatencyTest<L, R> {
     // core setup of the latency test
     validators: Vec<ValidatorInfo>,
     ping_servers: Vec<&'static PingServer>,

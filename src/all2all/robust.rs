@@ -12,12 +12,12 @@ use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendEr
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
-pub struct RobustAll2All<N: Network> {
+pub struct RobustAll2All<N> {
     validators: Vec<ValidatorInfo>,
     network: N,
 }
 
-impl<N: Network> RobustAll2All<N> {
+impl<N> RobustAll2All<N> {
     /// Creates a new `RobustAll2All` instance.
     ///
     /// Messages will be broadcast to all `validators` over the provided `network`.

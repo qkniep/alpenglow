@@ -11,12 +11,12 @@ use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
 /// The leader just sends each shred directly to every validator.
-pub struct TrivialDisseminator<N: Network> {
+pub struct TrivialDisseminator<N> {
     validators: Vec<ValidatorInfo>,
     network: N,
 }
 
-impl<N: Network> TrivialDisseminator<N> {
+impl<N> TrivialDisseminator<N> {
     pub const fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
         Self {
             validators,

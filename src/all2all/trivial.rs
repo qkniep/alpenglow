@@ -12,12 +12,12 @@ use crate::ValidatorInfo;
 use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 
 /// Instance of the trivial all-to-all broadcast protocol.
-pub struct TrivialAll2All<N: Network> {
+pub struct TrivialAll2All<N> {
     validators: Vec<ValidatorInfo>,
     network: N,
 }
 
-impl<N: Network> TrivialAll2All<N> {
+impl<N> TrivialAll2All<N> {
     /// Creates a new `TrivialAll2All` instance.
     ///
     /// Messages will be broadcast to all `validators` over the provided `network`.
