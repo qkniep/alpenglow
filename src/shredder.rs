@@ -500,7 +500,7 @@ pub fn data_and_coding_to_output_shreds(
 /// Also, requires the Merkle tree to already be calculated from reconstructed shreds.
 ///
 /// Each returned shred contains the Merkle root, its own path and the signature.
-pub fn create_output_shreds_for_other_leader(
+fn create_output_shreds_for_other_leader(
     data: Vec<DataShred>,
     coding: Vec<CodingShred>,
     tree: MerkleTree,
@@ -512,26 +512,27 @@ pub fn create_output_shreds_for_other_leader(
 
     for d in data {
         let merkle_path = tree.create_proof(d.0.index_in_slice);
-        shreds.push(Shred {
+        let shred = Shred {
             payload_type: ShredPayloadType::Data(d.0),
             merkle_root,
             merkle_root_sig: leader_signature,
             merkle_path,
-        });
+        };
+        shreds.push(ValidatedShred::new_validated(shred));
     }
     for mut c in coding {
         c.0.index_in_slice += num_data_shreds;
         let merkle_path = tree.create_proof(c.0.index_in_slice);
-        shreds.push(Shred {
+        let shred = Shred {
             payload_type: ShredPayloadType::Coding(c.0),
             merkle_root,
             merkle_root_sig: leader_signature,
             merkle_path,
-        });
+        };
+        shreds.push(ValidatedShred::new_validated(shred));
     }
-    unimplemented!()
 
-    // shreds
+    shreds
 }
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
