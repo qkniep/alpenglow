@@ -155,7 +155,7 @@ impl<N: Network> RepairRequestHandler<N> {
                 let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
-                RepairResponse::Shred(request, shred)
+                RepairResponse::Shred(request, shred.into_shred())
             }
         };
         self.send_response(response, sender).await

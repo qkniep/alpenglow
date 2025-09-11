@@ -214,7 +214,7 @@ pub trait Shredder {
     ///     1. Reconstruct all shreds (data and coding) under the Merkle tree.
     ///     2. Verify the entire Merkle tree.
     ///     3. Return [`DeshredError::InvalidMerkleTree`] if this fails.
-    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError>;
+    fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError>;
 }
 
 /// A shredder that augments the [`DATA_SHREDS`] data shreds with
@@ -235,13 +235,13 @@ impl Shredder for RegularShredder {
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
-    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+    fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
         let payload =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         let slice = Slice::from_shreds(payload.into(), &shreds[0]);
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root;
+        let merkle_root = shreds[0].to_shred().merkle_root;
         let (header, payload) = slice.clone().deconstruct();
         let (data, coding) = reed_solomon_shred(
             header,
@@ -255,7 +255,7 @@ impl Shredder for RegularShredder {
         }
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = shreds[0].merkle_root_sig;
+        let leader_sig = shreds[0].to_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(data, coding, tree, leader_sig);
 
@@ -276,12 +276,12 @@ impl Shredder for CodingOnlyShredder {
         Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
     }
 
-    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+    fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
         let slice = Slice::from_shreds(payload.into(), &shreds[0]);
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root;
+        let merkle_root = shreds[0].to_shred().merkle_root;
         let (header, payload) = slice.clone().deconstruct();
         let (_, coding) = reed_solomon_shred(header, payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
         let tree = build_merkle_tree(&[], &coding);
@@ -290,7 +290,7 @@ impl Shredder for CodingOnlyShredder {
         }
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = shreds[0].merkle_root_sig;
+        let leader_sig = shreds[0].to_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
 
@@ -332,7 +332,7 @@ impl Shredder for PetsShredder {
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
-    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+    fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
         let mut buffer = reed_solomon_deshred(
             shreds,
             DATA_SHREDS,
@@ -344,8 +344,8 @@ impl Shredder for PetsShredder {
         }
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root;
-        let header = shreds[0].payload().header.clone();
+        let merkle_root = shreds[0].to_shred().merkle_root;
+        let header = shreds[0].to_shred().payload().header.clone();
         let (mut data, coding) = reed_solomon_shred(
             header,
             buffer.clone(),
@@ -368,7 +368,7 @@ impl Shredder for PetsShredder {
         let slice = Slice::from_shreds(buffer.into(), &shreds[0]);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = shreds[0].merkle_root_sig;
+        let leader_sig = shreds[0].to_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
 
@@ -411,7 +411,7 @@ impl Shredder for AontShredder {
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
-    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+    fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
         let mut buffer =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         if buffer.len() < 16 {
@@ -419,8 +419,8 @@ impl Shredder for AontShredder {
         }
 
         // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root;
-        let header = shreds[0].payload().header.clone();
+        let merkle_root = shreds[0].to_shred().merkle_root;
+        let header = shreds[0].to_shred().payload().header.clone();
         let (data, coding) = reed_solomon_shred(
             header,
             buffer.clone(),
@@ -447,7 +447,7 @@ impl Shredder for AontShredder {
         let slice = Slice::from_shreds(buffer.into(), &shreds[0]);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = shreds[0].merkle_root_sig;
+        let leader_sig = shreds[0].to_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
 
@@ -505,7 +505,7 @@ pub fn create_output_shreds_for_other_leader(
     coding: Vec<CodingShred>,
     tree: MerkleTree,
     leader_signature: Signature,
-) -> Vec<Shred> {
+) -> Vec<ValidatedShred> {
     let mut shreds = Vec::with_capacity(data.len() + coding.len());
     let num_data_shreds = data.len();
     let merkle_root = tree.get_root();
@@ -529,8 +529,9 @@ pub fn create_output_shreds_for_other_leader(
             merkle_path,
         });
     }
+    unimplemented!()
 
-    shreds
+    // shreds
 }
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.

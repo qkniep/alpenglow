@@ -10,7 +10,7 @@ use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
     ShredPayload, ShredPayloadType, SliceHeader, TOTAL_SHREDS,
 };
-use crate::shredder::Shred;
+use crate::shredder::ValidatedShred;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
@@ -72,7 +72,7 @@ pub(super) fn reed_solomon_shred(
 
 /// Reconstructs the raw data from the given shreds.
 pub(super) fn reed_solomon_deshred(
-    shreds: &[Shred],
+    shreds: &[ValidatedShred],
     num_data: usize,
     num_coding: usize,
     coding_offset: usize,
@@ -86,14 +86,18 @@ pub(super) fn reed_solomon_deshred(
     }
 
     // filter to split data and coding shreds
-    let data = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
-        ShredPayloadType::Coding(_) => None,
-    });
-    let coding = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
-        ShredPayloadType::Data(_) => None,
-    });
+    let data = shreds
+        .iter()
+        .filter_map(|s| match &s.to_shred().payload_type {
+            ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
+            ShredPayloadType::Coding(_) => None,
+        });
+    let coding = shreds
+        .iter()
+        .filter_map(|s| match &s.to_shred().payload_type {
+            ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
+            ShredPayloadType::Data(_) => None,
+        });
 
     let restored = rs::decode(num_data, num_coding, data.clone(), coding).unwrap();
 
