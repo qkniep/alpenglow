@@ -62,8 +62,10 @@ impl<S, R> SimulatedNetwork<S, R> {
 }
 
 #[async_trait]
-impl<S: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync> Network
-    for SimulatedNetwork<S, R>
+impl<S, R> Network for SimulatedNetwork<S, R>
+where
+    S: Serialize + Send + Sync,
+    R: DeserializeOwned + Send + Sync,
 {
     type Recv = R;
     type Send = S;

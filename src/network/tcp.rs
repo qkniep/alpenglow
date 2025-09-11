@@ -69,7 +69,11 @@ impl<S, R> TcpNetwork<S, R> {
 }
 
 #[async_trait]
-impl<S: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync> Network for TcpNetwork<S, R> {
+impl<S, R> Network for TcpNetwork<S, R>
+where
+    S: Serialize + Send + Sync,
+    R: DeserializeOwned + Send + Sync,
+{
     type Recv = R;
     type Send = S;
 

@@ -60,7 +60,11 @@ impl<S, R> UdpNetwork<S, R> {
 }
 
 #[async_trait]
-impl<S: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync> Network for UdpNetwork<S, R> {
+impl<S, R> Network for UdpNetwork<S, R>
+where
+    S: Serialize + Send + Sync,
+    R: DeserializeOwned + Send + Sync,
+{
     type Recv = R;
     type Send = S;
 
