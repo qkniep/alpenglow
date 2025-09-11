@@ -358,7 +358,7 @@ where
                 .blockstore
                 .write()
                 .await
-                .add_shred_from_disseminator(s)
+                .add_shred_from_disseminator(s.into_shred())
                 .await;
             if let Ok(Some((block_slot, block_info))) = block {
                 assert_eq!(block_slot, slot);

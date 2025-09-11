@@ -211,7 +211,7 @@ impl BlockData {
             let slice_shreds = self.shreds.entry(slice_index).or_default();
             let exists = slice_shreds
                 .iter()
-                .any(|s| s.to_shred().payload().index_in_slice == shred_index);
+                .any(|s| s.payload().index_in_slice == shred_index);
             if exists {
                 debug!(
                     "dropping duplicate shred {}-{} in slot {}",
@@ -388,7 +388,7 @@ mod tests {
         let shreds = RegularShredder::shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred, pk) {
+            match block_data.add_shred(shred.into_shred(), pk) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
@@ -421,7 +421,7 @@ mod tests {
         let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
+            if let Some(event) = block_data.add_shred(shred.into_shred(), pk).unwrap() {
                 events.push(event);
             }
         }

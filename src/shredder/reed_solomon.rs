@@ -86,18 +86,14 @@ pub(super) fn reed_solomon_deshred(
     }
 
     // filter to split data and coding shreds
-    let data = shreds
-        .iter()
-        .filter_map(|s| match &s.to_shred().payload_type {
-            ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
-            ShredPayloadType::Coding(_) => None,
-        });
-    let coding = shreds
-        .iter()
-        .filter_map(|s| match &s.to_shred().payload_type {
-            ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
-            ShredPayloadType::Data(_) => None,
-        });
+    let data = shreds.iter().filter_map(|s| match &s.payload_type {
+        ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
+        ShredPayloadType::Coding(_) => None,
+    });
+    let coding = shreds.iter().filter_map(|s| match &s.payload_type {
+        ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
+        ShredPayloadType::Data(_) => None,
+    });
 
     let restored = rs::decode(num_data, num_coding, data.clone(), coding).unwrap();
 
@@ -219,7 +215,10 @@ mod tests {
         assert_eq!(restored, payload);
     }
 
-    fn take_and_map_enough_shreds(data: Vec<DataShred>, coding: Vec<CodingShred>) -> Vec<Shred> {
+    fn take_and_map_enough_shreds(
+        data: Vec<DataShred>,
+        coding: Vec<CodingShred>,
+    ) -> Vec<ValidatedShred> {
         let sk = SecretKey::new(&mut rand::rng());
         let shreds = data_and_coding_to_output_shreds(data, coding, &sk);
         // reverse order to get coding shreds, not just data shreds
