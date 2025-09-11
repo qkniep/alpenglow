@@ -45,8 +45,8 @@ pub use self::vote::Vote;
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::repair::Repair;
+use crate::network::{Network, NetworkMessage, NetworkSendError};
+use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -93,13 +93,18 @@ where
     T: Network + Sync + Send + 'static,
 {
     /// Creates a new Alpenglow consensus node.
+    ///
+    /// `repair_network` - Network from which the node sends [`RepairRequest`] messages and receives [`RepairResponse`] messages.
+    /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new<R: Network + Sync + Send + 'static>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
         repair_network: R,
+        repair_request_network: R,
         epoch_info: Arc<EpochInfo>,
         txs_receiver: T,
     ) -> Self {
@@ -115,20 +120,27 @@ where
         let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
             epoch_info.clone(),
             votor_tx.clone(),
-            repair_tx.clone(),
+            repair_tx,
         ));
         let pool = Arc::new(RwLock::new(pool));
+
+        let repair_request_handler = RepairRequestHandler::new(
+            epoch_info.clone(),
+            blockstore.clone(),
+            repair_request_network,
+        );
+        let _repair_request_handler =
+            tokio::spawn(async move { repair_request_handler.run().await });
 
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
             repair_network,
-            (repair_tx, repair_rx),
             epoch_info.clone(),
         );
 
         let _repair_handle = tokio::spawn(
-            async move { repair.repair_loop().await }
+            async move { repair.repair_loop(repair_rx).await }
                 .in_span(Span::enter_with_local_parent("repair loop")),
         );
 
@@ -226,7 +238,7 @@ where
         loop {
             tokio::select! {
                 // handle incoming votes and certificates
-                res = self.all2all.receive() => self.handle_all2all_message(res?).await?,
+                res = self.all2all.receive() => self.handle_all2all_message(res?).await,
                 // handle shreds received by block dissemination protocol
                 res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
 
@@ -256,7 +268,7 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_all2all_message(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
+    async fn handle_all2all_message(&self, msg: NetworkMessage) {
         trace!("received all2all msg: {msg:?}");
         match msg {
             NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
@@ -272,11 +284,10 @@ where
             },
             msg => warn!("unexpected message on all2all port: {msg:?}"),
         }
-        Ok(())
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkError> {
+    async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkSendError> {
         // potentially forward shred
         self.disseminator.forward(&shred).await?;
 

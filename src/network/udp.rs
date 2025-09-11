@@ -12,7 +12,8 @@ use async_trait::async_trait;
 use log::warn;
 use tokio::net::UdpSocket;
 
-use super::{MTU_BYTES, Network, NetworkError, NetworkMessage};
+use super::{MTU_BYTES, Network, NetworkMessage};
+use crate::network::{NetworkReceiveError, NetworkSendError};
 
 /// Number of bytes used as buffer for any incoming packet.
 ///
@@ -53,35 +54,25 @@ impl UdpNetwork {
 
 #[async_trait]
 impl Network for UdpNetwork {
-    type Address = SocketAddr;
-
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError> {
         let bytes = message.to_bytes();
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
-        let to_addr = Self::parse_addr(to).unwrap();
-        self.socket.send_to(bytes, to_addr).await?;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError> {
+        self.socket.send_to(bytes, to).await?;
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
             let len = self.socket.recv(&mut buf).await?;
             match NetworkMessage::from_bytes(&buf[..len]) {
                 Ok(msg) => return Ok(msg),
-                Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
-                Err(err) => return Err(err),
+                Err(err) => {
+                    warn!("deserializing msg failed with {err:?}")
+                }
             }
         }
     }
@@ -90,21 +81,22 @@ impl Network for UdpNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::localhost_ip_sockaddr;
 
     #[tokio::test]
     async fn ping() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = format!("127.0.0.1:{}", socket1.port());
+        let addr1 = localhost_ip_sockaddr(socket1.port());
 
         // regular send()
-        socket2.send(&NetworkMessage::Ping, &addr1).await.unwrap();
+        socket2.send(&NetworkMessage::Ping, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
 
         // send_serialized()
         let bytes = NetworkMessage::Ping.to_bytes();
-        socket2.send_serialized(&bytes, &addr1).await.unwrap();
+        socket2.send_serialized(&bytes, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
     }
@@ -113,13 +105,13 @@ mod tests {
     async fn ping_pong() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = format!("127.0.0.1:{}", socket1.port());
-        let addr2 = format!("127.0.0.1:{}", socket2.port());
+        let addr1 = localhost_ip_sockaddr(socket1.port());
+        let addr2 = localhost_ip_sockaddr(socket2.port());
 
-        socket1.send(&NetworkMessage::Ping, &addr2).await.unwrap();
+        socket1.send(&NetworkMessage::Ping, addr2).await.unwrap();
         let msg = socket2.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Ping));
-        socket2.send(&NetworkMessage::Pong, &addr1).await.unwrap();
+        socket2.send(&NetworkMessage::Pong, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, NetworkMessage::Pong));
     }

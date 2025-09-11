@@ -21,6 +21,7 @@ pub mod ping_data;
 pub mod stake_distribution;
 mod token_bucket;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -29,8 +30,9 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
-use super::{Network, NetworkError, NetworkMessage};
+use super::{Network, NetworkMessage};
 use crate::ValidatorId;
+use crate::network::{NetworkReceiveError, NetworkSendError};
 
 /// A simulated network interface for local testing and simulations.
 ///
@@ -48,51 +50,39 @@ pub struct SimulatedNetwork {
 }
 
 impl SimulatedNetwork {
-    async fn send_byte_vec(
-        &self,
-        bytes: Vec<u8>,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
-        let to_addr = Self::parse_addr(to)?;
+    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> Result<(), NetworkSendError> {
         if let Some(limiter) = &self.limiter {
             limiter.write().await.wait_for(bytes.len()).await;
         }
-        self.network_core.send(bytes, self.id, to_addr).await;
+        self.network_core.send(bytes, self.id, to).await;
         Ok(())
     }
 }
 
 #[async_trait]
 impl Network for SimulatedNetwork {
-    type Address = ValidatorId;
-
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError> {
         let bytes = message.to_bytes();
-        self.send_byte_vec(bytes, to).await
+        let validator_id = to.port() as ValidatorId;
+        self.send_byte_vec(bytes, validator_id).await
     }
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
-        self.send_byte_vec(bytes.to_vec(), to).await
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError> {
+        let validator_id = to.port() as ValidatorId;
+        self.send_byte_vec(bytes.to_vec(), validator_id).await
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         loop {
             let Some(bytes) = self.receiver.lock().await.recv().await else {
                 let io_error = std::io::Error::other("channel closed");
-                return Err(NetworkError::BadSocket(io_error));
+                return Err(NetworkReceiveError::BadSocket(io_error));
             };
             match NetworkMessage::from_bytes(&bytes) {
                 Ok(msg) => return Ok(msg),
-                Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
-                Err(err) => return Err(err),
+                Err(err) => {
+                    warn!("deserializing msg failed with {err:?}")
+                }
             }
         }
     }
@@ -105,6 +95,7 @@ mod tests {
     use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
+    use crate::network::localhost_ip_sockaddr;
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
     };
@@ -120,13 +111,13 @@ mod tests {
         let msg = NetworkMessage::Ping;
 
         // one direction
-        net1.send(&msg, "1").await.unwrap();
+        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         if !matches!(net2.receive().await, Ok(NetworkMessage::Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
-        net2.send(&msg, "0").await.unwrap();
+        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
         if !matches!(net1.receive().await, Ok(NetworkMessage::Ping)) {
             panic!("received wrong message");
         }
@@ -183,7 +174,7 @@ mod tests {
 
         for shred in shreds {
             let msg: NetworkMessage = shred.into();
-            net1.send(&msg, "1").await.unwrap();
+            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -243,7 +234,7 @@ mod tests {
 
         for shred in shreds {
             let msg: NetworkMessage = shred.into();
-            net1.send(&msg, "1").await.unwrap();
+            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -303,7 +294,7 @@ mod tests {
 
         for shred in shreds {
             let msg: NetworkMessage = shred.into();
-            net1.send(&msg, "1").await.unwrap();
+            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();

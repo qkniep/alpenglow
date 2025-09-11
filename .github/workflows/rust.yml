@@ -8,26 +8,29 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: true
 
 jobs:
-  build:
+  main:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
-      - name: Cache build files
-        id: cache-build
-        uses: actions/cache@v4
+      - name: Install tools
+        uses: taiki-e/install-action@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          tool: nextest,cargo-llvm-cov,cargo-machete
 
+      - name: Cache rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
+      - name: Cache build files
+        uses: mozilla-actions/sccache-action@v0.0.9
+      
       - name: Cache downloaded data
         id: cache-data
         uses: actions/cache@v4
@@ -42,22 +45,16 @@ jobs:
             touch data/dataset.ok
           fi
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-
-      - name: Install tools
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest,cargo-llvm-cov,cargo-machete
-
       - name: Build (debug)
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: cargo build --all-targets --verbose
 
-      - name: Build (debug)
+      - name: Build (release)
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: cargo build --all-targets --release --verbose
 
       - name: Linting (clippy)
@@ -71,6 +68,9 @@ jobs:
 
       # test coverage
       - name: Collect coverage data
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: cargo llvm-cov --lcov --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --release --output-path lcov.info nextest
 
       - name: Upload coverage to Codecov
@@ -83,16 +83,13 @@ jobs:
 
   rustfmt:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust (nightly + rustfmt)
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly
           components: rustfmt
-          profile: minimal
 
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check

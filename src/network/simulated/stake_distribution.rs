@@ -30,6 +30,7 @@ use serde::Deserialize;
 use super::ping_data::{PingServer, coordinates_for_city, find_closest_ping_server, get_ping};
 use crate::crypto::aggsig;
 use crate::crypto::signature::SecretKey;
+use crate::network::dontcare_sockaddr;
 use crate::{Stake, ValidatorId, ValidatorInfo};
 
 /// Information about all validators on Solana mainnet.
@@ -202,9 +203,10 @@ pub fn validators_from_validator_data(
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
     }
@@ -231,9 +233,10 @@ pub fn validators_from_validator_data(
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             },
             ping_server,
         ));

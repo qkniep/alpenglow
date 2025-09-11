@@ -19,6 +19,9 @@ pub mod test_utils;
 pub mod types;
 pub mod validator;
 
+use std::net::SocketAddr;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 pub use self::all2all::All2All;
@@ -28,6 +31,12 @@ use self::crypto::{Hash, aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;
 pub use self::validator::Validator;
+use crate::all2all::TrivialAll2All;
+use crate::consensus::EpochInfo;
+use crate::crypto::signature::SecretKey;
+use crate::disseminator::Rotor;
+use crate::disseminator::rotor::StakeWeightedSampler;
+use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 
 /// Validator ID number type.
 pub type ValidatorId = u64;
@@ -64,9 +73,12 @@ pub struct ValidatorInfo {
     pub pubkey: signature::PublicKey,
     #[serde(deserialize_with = "aggsig::PublicKey::from_array_of_bytes")]
     pub voting_pubkey: aggsig::PublicKey,
-    pub all2all_address: String,
-    pub disseminator_address: String,
-    pub repair_address: String,
+    pub all2all_address: SocketAddr,
+    pub disseminator_address: SocketAddr,
+    /// Send [`RepairRequest`] messages to this address to ask the node to repair a block.
+    pub repair_request_address: SocketAddr,
+    /// Send [`RepairResponse`] messages to this address when replying to a node's [`RepairRequest`] message.
+    pub repair_response_address: SocketAddr,
 }
 
 /// Returns the highest non-zero byte in `val`.
@@ -77,4 +89,84 @@ pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
         cnt += 1;
     }
     cnt
+}
+
+type TestNode =
+    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+
+struct Networks {
+    all2all: UdpNetwork,
+    disseminator: UdpNetwork,
+    repair_response: UdpNetwork,
+    repair_request: UdpNetwork,
+    txs: UdpNetwork,
+}
+
+impl Networks {
+    fn new() -> Self {
+        Self {
+            all2all: UdpNetwork::new_with_any_port(),
+            disseminator: UdpNetwork::new_with_any_port(),
+            repair_response: UdpNetwork::new_with_any_port(),
+            repair_request: UdpNetwork::new_with_any_port(),
+            txs: UdpNetwork::new_with_any_port(),
+        }
+    }
+}
+
+/// Creates [`TestNode`] for testing and benchmarking purposes.
+///
+/// This code lives here to enable sharing between different testing and benchmarking.
+/// It should not be used in production code.
+pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
+    // open sockets with arbitrary ports
+    let networks = (0..count).map(|_| Networks::new()).collect::<Vec<_>>();
+
+    // prepare validator info for all nodes
+    let mut rng = rand::rng();
+    let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
+    let mut validators = Vec::new();
+    for (id, network) in networks.iter().enumerate() {
+        sks.push(SecretKey::new(&mut rng));
+        voting_sks.push(aggsig::SecretKey::new(&mut rng));
+        let all2all_address = localhost_ip_sockaddr(network.all2all.port());
+        let disseminator_address = localhost_ip_sockaddr(network.disseminator.port());
+        let repair_response_address = localhost_ip_sockaddr(network.repair_response.port());
+        let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
+        validators.push(ValidatorInfo {
+            id: id as u64,
+            stake: 1,
+            pubkey: sks[id].to_pk(),
+            voting_pubkey: voting_sks[id].to_pk(),
+            all2all_address,
+            disseminator_address,
+            repair_request_address,
+            repair_response_address,
+        });
+    }
+
+    // turn validator info into actual nodes
+    networks
+        .into_iter()
+        .enumerate()
+        .map(|(id, network)| {
+            let epoch_info = Arc::new(EpochInfo::new(id as u64, validators.clone()));
+            let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
+            let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
+            let repair_network = network.repair_response;
+            let repair_request_network = network.repair_request;
+            let txs_receiver = network.txs;
+            Alpenglow::new(
+                sks[id].clone(),
+                voting_sks[id].clone(),
+                all2all,
+                disseminator,
+                repair_network,
+                repair_request_network,
+                epoch_info,
+                txs_receiver,
+            )
+        })
+        .collect()
 }

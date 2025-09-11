@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use alpenglow::all2all::TrivialAll2All;
@@ -120,13 +120,15 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
     let repair_network = UdpNetwork::new(start_port + 2);
-    let txs_receiver = UdpNetwork::new(start_port + 3);
+    let repair_request_network = UdpNetwork::new(start_port + 3);
+    let txs_receiver = UdpNetwork::new(start_port + 4);
     Ok(Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
         disseminator,
         repair_network,
+        repair_request_network,
         epoch_info,
         txs_receiver,
     ))
@@ -148,19 +150,21 @@ async fn create_node_configs(
         let Some(line) = socket_list.next_line().await? else {
             break;
         };
-        let sockaddr: SocketAddrV4 = line.parse().context("Can not parse socket list")?;
+        let sockaddr = line
+            .parse::<SocketAddr>()
+            .context("Can not parse socket list")?;
         sks.push(SecretKey::new(&mut rng));
-        let port = sockaddr.port();
-        ports.push(port);
+        ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
             id,
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("{}:{}", sockaddr.ip(), port),
-            disseminator_address: format!("{}:{}", sockaddr.ip(), port + 1),
-            repair_address: format!("{}:{}", sockaddr.ip(), port + 2),
+            all2all_address: sockaddr,
+            disseminator_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 1),
+            repair_request_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
+            repair_response_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 3),
         });
     }
 

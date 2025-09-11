@@ -13,7 +13,7 @@ use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -65,16 +65,16 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
     }
 
     /// Sends the shred to the correct relay.
-    async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let msg: NetworkMessage = shred.clone().into();
-        let v = &self.epoch_info.validator(relay);
-        self.network.send(&msg, &v.disseminator_address).await
+        let v = self.epoch_info.validator(relay);
+        self.network.send(&msg, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
-    async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let leader = self.epoch_info.leader(shred.payload().header.slot).id;
 
         // do nothing if we are not the relay
@@ -91,7 +91,7 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
                 continue;
             }
             self.network
-                .send_serialized(&bytes, &v.disseminator_address)
+                .send_serialized(&bytes, v.disseminator_address)
                 .await?;
         }
         Ok(())
@@ -112,15 +112,15 @@ impl<N: Network, S: SamplingStrategy> Rotor<N, S> {
 
 #[async_trait]
 impl<N: Network, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         Self::send_as_leader(self, shred).await
     }
 
-    async fn forward(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn forward(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         Self::broadcast_if_relay(self, shred).await
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkError> {
+    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
@@ -143,7 +143,7 @@ mod tests {
     use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::UdpNetwork;
+    use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
@@ -162,9 +162,10 @@ mod tests {
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: format!("127.0.0.1:{}", base_port + i as u16),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
 

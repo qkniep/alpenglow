@@ -15,7 +15,8 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use super::{Network, NetworkError, NetworkMessage};
+use super::{Network, NetworkMessage};
+use crate::network::{NetworkReceiveError, NetworkSendError};
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
@@ -64,29 +65,19 @@ impl TcpNetwork {
 
 #[async_trait]
 impl Network for TcpNetwork {
-    type Address = SocketAddr;
-
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError> {
         let bytes = message.to_bytes();
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        _to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send_serialized(&self, bytes: &[u8], _to: SocketAddr) -> Result<(), NetworkSendError> {
         // TODO: use correct socket
         let writer = &self.writers.read().await[0];
         writer.lock().await.send(bytes.to_vec().into()).await?;
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         loop {
             tokio::select! {
                 // accept new incoming connections
@@ -114,7 +105,7 @@ impl Network for TcpNetwork {
                 // Some(Ok(msg)) = readers[0].lock().await.next() => {
                 //     match NetworkMessage::from_bytes(&msg) {
                 //         Ok(msg) => return Ok(msg),
-                //         Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
+                //         Err(NetworkReceiveError:Deserialization(_)) => warn!("failed deserializing message"),
                 //         Err(err) => return Err(err),
                 //     }
                 // },

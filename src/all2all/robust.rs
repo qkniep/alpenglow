@@ -8,7 +8,7 @@
 
 use super::All2All;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -33,17 +33,17 @@ impl<N: Network> RobustAll2All<N> {
 }
 
 impl<N: Network> All2All for RobustAll2All<N> {
-    async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkError> {
+    async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkSendError> {
         for v in &self.validators {
             // HACK: stupidly expensive retransmits
             for _ in 0..1000 {
-                self.network.send(msg, &v.all2all_address).await?;
+                self.network.send(msg, v.all2all_address).await?;
             }
         }
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
         self.network.receive().await
         // loop {
         //     let msg = self.network.receive().await;
@@ -69,6 +69,7 @@ mod tests {
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
+    use crate::network::{dontcare_sockaddr, localhost_ip_sockaddr};
 
     async fn broadcast_test(packet_loss: f64) {
         // set up network and nodes
@@ -91,9 +92,10 @@ mod tests {
                 stake: 1,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: i.to_string(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),
+                disseminator_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
 

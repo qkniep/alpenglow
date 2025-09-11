@@ -17,7 +17,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -82,14 +82,13 @@ impl<N: Network> Turbine<N> {
     /// # Errors
     ///
     /// Returns an error if the send operation on the underlying network fails.
-    pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkError> {
-        // TODO: fix duplicate use indices between data and coding shreds
+    pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
         let msg: NetworkMessage = shred.clone().into();
-        let addr = &self.validators[root as usize].disseminator_address;
+        let addr = self.validators[root as usize].disseminator_address;
         self.network.send(&msg, addr).await
     }
 
@@ -99,13 +98,13 @@ impl<N: Network> Turbine<N> {
     /// # Errors
     ///
     /// Returns an error if the send operation on the underlying network fails.
-    pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkError> {
+    pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let msg: NetworkMessage = shred.clone().into();
         for child in tree.get_children() {
-            let addr = &self.validators[*child as usize].disseminator_address;
+            let addr = self.validators[*child as usize].disseminator_address;
             self.network.send(&msg, addr).await?;
         }
         Ok(())
@@ -131,15 +130,15 @@ impl<N: Network> Turbine<N> {
 
 #[async_trait]
 impl<N: Network> Disseminator for Turbine<N> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         self.send_shred_to_root(shred).await
     }
 
-    async fn forward(&self, shred: &Shred) -> Result<(), NetworkError> {
+    async fn forward(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         self.forward_shred(shred).await
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkError> {
+    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
@@ -233,8 +232,8 @@ mod tests {
     use super::*;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::SimulatedNetwork;
     use crate::network::simulated::SimulatedNetworkCore;
+    use crate::network::{SimulatedNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
@@ -250,9 +249,10 @@ mod tests {
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
         (sks, validators)
@@ -267,7 +267,7 @@ mod tests {
                 .with_packet_loss(0.0),
         );
         for (i, v) in validators.iter_mut().enumerate() {
-            v.disseminator_address = i.to_string();
+            v.disseminator_address = localhost_ip_sockaddr(i.try_into().unwrap());
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {

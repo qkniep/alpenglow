@@ -2,16 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
-use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::{Alpenglow, EpochInfo};
-use alpenglow::crypto::aggsig;
-use alpenglow::crypto::signature::SecretKey;
-use alpenglow::disseminator::Rotor;
-use alpenglow::disseminator::rotor::StakeWeightedSampler;
-use alpenglow::network::UdpNetwork;
-use alpenglow::{ValidatorInfo, logging};
+use alpenglow::{create_test_nodes, logging};
 use color_eyre::Result;
 use fastrace::collector::Config;
 use fastrace::prelude::*;
@@ -20,7 +12,6 @@ use log::warn;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
-use rand::rng;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -74,54 +65,4 @@ async fn main() -> Result<()> {
     fastrace::flush();
 
     Ok(())
-}
-
-type TestNode =
-    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
-
-fn create_test_nodes(count: u64) -> Vec<TestNode> {
-    // prepare validator info for all nodes
-    let mut port = 3000;
-    let mut rng = rng();
-    let mut sks = Vec::new();
-    let mut voting_sks = Vec::new();
-    let mut validators = Vec::new();
-    for id in 0..count {
-        sks.push(SecretKey::new(&mut rng));
-        voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        validators.push(ValidatorInfo {
-            id,
-            stake: 1,
-            pubkey: sks[id as usize].to_pk(),
-            voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("127.0.0.1:{port}"),
-            disseminator_address: format!("127.0.0.1:{}", port + 1),
-            repair_address: format!("127.0.0.1:{}", port + 2),
-        });
-        port += 4;
-    }
-
-    // turn validator info into actual nodes
-    validators
-        .iter()
-        .map(|v| {
-            let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
-            let start_port = 3000 + (v.id * 4) as u16;
-            let network = UdpNetwork::new(start_port);
-            let all2all = TrivialAll2All::new(validators.clone(), network);
-            let network = UdpNetwork::new(start_port + 1);
-            let disseminator = Rotor::new(network, epoch_info.clone());
-            let repair_network = UdpNetwork::new(start_port + 2);
-            let txs_receiver = UdpNetwork::new(start_port + 3);
-            Alpenglow::new(
-                sks[v.id as usize].clone(),
-                voting_sks[v.id as usize].clone(),
-                all2all,
-                disseminator,
-                repair_network,
-                epoch_info,
-                txs_receiver,
-            )
-        })
-        .collect()
 }

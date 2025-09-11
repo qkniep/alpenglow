@@ -28,7 +28,7 @@ pub mod simulated;
 mod tcp;
 mod udp;
 
-use std::str::FromStr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -69,16 +69,19 @@ impl NetworkMessage {
     ///
     /// # Errors
     ///
-    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
+    /// Returns [`bincode::error::DecodeError`] if bincode decoding fails.
     /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
         if bytes.len() > MTU_BYTES {
-            return Err(NetworkError::Deserialization(
-                bincode::error::DecodeError::LimitExceeded,
-            ));
+            return Err(bincode::error::DecodeError::LimitExceeded);
         }
         // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
+        let (msg, bytes_read) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
+        if bytes_read != bytes.len() {
+            return Err(bincode::error::DecodeError::UnexpectedEnd {
+                additional: bytes.len() - bytes_read,
+            });
+        }
         Ok(msg)
     }
 
@@ -93,21 +96,22 @@ impl NetworkMessage {
 
     /// Serializes this message into an existing buffer using [`bincode`].
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`NetworkError::Serialization`] if bincode encoding fails.
-    /// This includes the case where `buf` is to small to fit this message.
-    pub fn to_slice(&self, buf: &mut [u8]) -> Result<usize, NetworkError> {
+    /// Number of bytes used in `buf`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if encoding returns an error, including if `buf` was not big enough.
+    /// Panics if encoding used more than [`MTU_BYTES`].
+    pub fn to_slice(&self, buf: &mut [u8]) -> usize {
         let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
         match res {
             Ok(written) => {
                 assert!(written <= MTU_BYTES, "each message should fit in MTU");
-                Ok(written)
+                written
             }
-            Err(bincode::error::EncodeError::UnexpectedEnd) => Err(NetworkError::Serialization(
-                bincode::error::EncodeError::UnexpectedEnd,
-            )),
-            _ => panic!("unexpected serialization error"),
+            Err(err) => panic!("serialization failed with {err:?}"),
         }
     }
 }
@@ -138,50 +142,47 @@ impl From<RepairMessage> for NetworkMessage {
 
 /// Error type for network operations.
 #[derive(Debug, Error)]
-pub enum NetworkError {
-    #[error("unexpected message type for this socket")]
-    UnexpectedMessageType,
-    #[error("malformed address")]
-    MalformedAddress,
-    #[error("serialization error")]
-    Serialization(#[from] bincode::error::EncodeError),
+pub enum NetworkSendError {
+    #[error("bad socket state")]
+    BadSocket(#[from] std::io::Error),
+}
+
+/// Error type for network operations.
+#[derive(Debug, Error)]
+pub enum NetworkReceiveError {
     #[error("deserialization error")]
     Deserialization(#[from] bincode::error::DecodeError),
     #[error("bad socket state")]
     BadSocket(#[from] std::io::Error),
-    #[error("unknown network error")]
-    Unknown,
 }
 
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
-    type Address: Send;
+    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError>;
 
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError>;
-
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError>;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError>;
 
     // TODO: implement brodcast at `Network` level?
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError>;
+    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+}
 
-    fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
-    where
-        Self::Address: FromStr,
-    {
-        str.as_ref()
-            .parse()
-            .map_err(|_| NetworkError::MalformedAddress)
-    }
+/// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
+///
+/// NOTE: port 0 is generally reserved and used to get the OS to assign a port.
+/// Using this function with port=0 on actual networks might lead to unexpected behaviour.
+/// TODO: prevent being able to call this function with port = 0.
+pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+}
+
+/// Returns a [`SocketAddr`] that could be bound any arbitrary IP and port.
+///
+/// This is present here to enable sharing of code between testing and benchmarking.
+/// This should not be used in production.
+pub fn dontcare_sockaddr() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
 }
 
 #[cfg(test)]
@@ -207,7 +208,7 @@ mod tests {
         let mut buf = [0u8; MTU_BYTES];
         for _ in 0..10 {
             let msg = NetworkMessage::Ping;
-            let num_bytes = msg.to_slice(&mut buf).unwrap();
+            let num_bytes = msg.to_slice(&mut buf);
             let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
             assert!(matches!(deserialized, NetworkMessage::Ping));
         }
@@ -223,9 +224,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[should_panic]
     async fn serialize_buffer_too_small() {
         let mut buf = [0u8; 1];
         let msg = NetworkMessage::Transaction(Transaction(vec![1; MAX_TRANSACTION_SIZE]));
-        assert!(msg.to_slice(&mut buf).is_err());
+        // this should panic
+        msg.to_slice(&mut buf);
     }
 }
