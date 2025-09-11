@@ -166,6 +166,8 @@ pub trait Network: Send + Sync {
 
     async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError>;
 
+    // TODO: implement brodcast at `Network` level?
+
     async fn receive(&self) -> Result<Self::Recv, NetworkReceiveError>;
 }
 
