@@ -66,6 +66,10 @@ impl ValidatedShred {
         }
     }
 
+    pub(super) fn new_validated(shred: Shred) -> Self {
+        Self(shred)
+    }
+
     /// Get a reference to the inner [`Shred`].
     pub fn to_shred(&self) -> &Shred {
         &self.0
