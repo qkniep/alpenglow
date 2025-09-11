@@ -61,7 +61,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 
 impl<D, T> BlockProducer<D, T>
 where
-    D: Disseminator + Sync + Send + 'static,
+    D: Disseminator,
     T: Network + Sync + Send + 'static,
 {
     #[allow(clippy::too_many_arguments)]

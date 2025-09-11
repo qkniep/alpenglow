@@ -14,7 +14,7 @@ const SLICES: usize = 1;
 
 const MAX_FAILURES: usize = 10_000;
 
-pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {
+pub struct RotorSafetyTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
     sampler: RwLock<S>,
