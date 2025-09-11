@@ -30,8 +30,7 @@ pub struct TcpNetwork<S, R> {
     listener: TcpListener,
     readers: RwLock<Vec<Mutex<StreamReader>>>,
     writers: RwLock<Vec<Mutex<StreamWriter>>>,
-    s: PhantomData<S>,
-    r: PhantomData<R>,
+    _msg_types: PhantomData<(S, R)>,
 }
 
 impl<S, R> TcpNetwork<S, R> {
@@ -49,8 +48,7 @@ impl<S, R> TcpNetwork<S, R> {
             listener,
             readers: RwLock::new(Vec::new()),
             writers: RwLock::new(Vec::new()),
-            s: PhantomData,
-            r: PhantomData,
+            _msg_types: PhantomData,
         }
     }
 

@@ -38,8 +38,6 @@ use crate::ValidatorId;
 use crate::network::{BINCODE_CONFIG, MTU_BYTES, NetworkReceiveError, NetworkSendError};
 
 /// A simulated network interface for local testing and simulations.
-///
-/// # Examples
 // TODO: add examples
 pub struct SimulatedNetwork<S, R> {
     /// ID of the validator this network interface belongs to.
@@ -50,8 +48,7 @@ pub struct SimulatedNetwork<S, R> {
     receiver: Mutex<mpsc::Receiver<Vec<u8>>>,
     /// Optional rate limiter.
     limiter: Option<RwLock<TokenBucket>>,
-    s: PhantomData<S>,
-    r: PhantomData<R>,
+    _msg_types: PhantomData<(S, R)>,
 }
 
 impl<S, R> SimulatedNetwork<S, R> {

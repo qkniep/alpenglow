@@ -146,8 +146,7 @@ impl SimulatedNetworkCore {
             network_core,
             receiver,
             limiter: None,
-            s: PhantomData,
-            r: PhantomData,
+            _msg_types: PhantomData,
         }
     }
 
@@ -191,8 +190,7 @@ impl SimulatedNetworkCore {
             network_core,
             receiver,
             limiter: Some(limiter),
-            s: PhantomData,
-            r: PhantomData,
+            _msg_types: PhantomData,
         }
     }
 
