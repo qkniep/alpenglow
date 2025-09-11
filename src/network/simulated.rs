@@ -150,10 +150,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> =
-            core.join(0, 32_768, 32_768).await; // 32 KiB/s
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> =
-            core.join(1, 32_768, 32_768).await; // 32 KiB/s
+        let net1: SimulatedNetwork<_, NetworkMessage> = core.join(0, 32_768, 32_768).await; // 32 KiB/s
+        let net2: SimulatedNetwork<NetworkMessage, _> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
         let mut rng = rand::rng();
@@ -212,9 +210,9 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> =
+        let net1: SimulatedNetwork<_, NetworkMessage> =
             core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> =
+        let net2: SimulatedNetwork<NetworkMessage, _> =
             core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
         // create a full block (1024 slices)
@@ -274,8 +272,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<_, NetworkMessage> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<NetworkMessage, _> = core.join_unlimited(1).await;
 
         // create a full block (1024 slices)
         let mut rng = rand::rng();
