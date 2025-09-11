@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
+use log::warn;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::UdpSocket;
@@ -79,12 +80,22 @@ impl<S: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync> Network for 
     async fn receive(&self) -> Result<R, NetworkReceiveError> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
-            let len = self.socket.recv(&mut buf).await?;
-            if let Ok((msg, bytes_read)) = bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG)
-                && bytes_read == len
-            {
-                return Ok(msg);
+            let bytes_recved = self.socket.recv(&mut buf).await?;
+            let (msg, bytes_used) = match bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG) {
+                Ok(r) => r,
+                Err(err) => {
+                    warn!("deserializing failed with {err:?}");
+                    continue;
+                }
+            };
+            if bytes_used != bytes_recved {
+                warn!(
+                    "deserialization used {bytes_used} bytes; expected to use {}",
+                    buf.len()
+                );
+                continue;
             }
+            return Ok(msg);
         }
     }
 }

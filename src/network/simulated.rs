@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use log::warn;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -88,11 +89,21 @@ impl<S: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync> Network
                 let io_error = std::io::Error::other("channel closed");
                 return Err(NetworkReceiveError::BadSocket(io_error));
             };
-            if let Ok((msg, bytes_read)) = bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG)
-                && bytes_read == buf.len()
-            {
-                return Ok(msg);
+            let (msg, bytes_used) = match bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG) {
+                Ok(r) => r,
+                Err(err) => {
+                    warn!("deserializing failed with {err:?}");
+                    continue;
+                }
+            };
+            if bytes_used != buf.len() {
+                warn!(
+                    "deserialization used {bytes_used} bytes; expected to use {}",
+                    buf.len()
+                );
+                continue;
             }
+            return Ok(msg);
         }
     }
 }
