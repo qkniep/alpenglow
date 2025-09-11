@@ -23,8 +23,9 @@ use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
-use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::shredder::Shred;
 use crate::types::SliceIndex;
+use crate::types::shred_index::ShredIndex;
 use crate::{BlockId, ValidatorId};
 
 /// Maximum time to wait for a response to a repair request.
@@ -50,7 +51,7 @@ pub enum RepairRequest {
     /// Request for the root hash of a slice, identified by block hash and slice index.
     SliceRoot(BlockId, SliceIndex),
     /// Request for shred, identified by block hash, slice index and shred index.
-    Shred(BlockId, SliceIndex, usize),
+    Shred(BlockId, SliceIndex, ShredIndex),
 }
 
 /// Response messages for the repair sub-protocol.
@@ -321,7 +322,7 @@ where
 
                 // issue next requests
                 // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
-                for shred_index in 0..TOTAL_SHREDS {
+                for shred_index in ShredIndex::all() {
                     let req = RepairRequest::Shred(block_id, slice, shred_index);
                     self.send_request(req).await.unwrap();
                 }
@@ -335,7 +336,7 @@ where
                 let (slot, block_hash) = block_id;
                 if shred.payload().header.slot != slot
                     || shred.payload().header.slice_index != slice
-                    || shred.payload().index_in_slice != index
+                    || shred.payload().shred_index != index
                 {
                     warn!("repair response (Shred) for mismatching shred index");
                     return;
@@ -466,6 +467,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
+    use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
@@ -629,9 +631,9 @@ mod tests {
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
-            for _ in 0..TOTAL_SHREDS {
+            for _ in ShredIndex::all() {
                 let msg = other_network_request.receive().await.unwrap();
-                for shred_index in 0..TOTAL_SHREDS {
+                for shred_index in ShredIndex::all() {
                     let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                     if msg_matches_request(&msg, &req) {
                         shreds_requested.insert(shred_index);
@@ -643,6 +645,7 @@ mod tests {
             // assert all shreds requested + answer the requests
             let slice_shreds = shreds[slice.inner()].clone();
             for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
+                let shred_index = ShredIndex::new(shred_index).unwrap();
                 assert!(shreds_requested.contains(&shred_index));
                 let req = RepairRequest::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req, shred);
@@ -723,7 +726,7 @@ mod tests {
             assert_eq!(proof, correct_proof);
 
             // request slice shreds
-            for shred_index in 0..TOTAL_SHREDS {
+            for shred_index in ShredIndex::all() {
                 let request = RepairRequest::Shred(block_to_repair, slice, shred_index);
                 let msg = RepairMessage::Request(request.clone(), 0);
                 other_network.send(&msg, port1).await.unwrap();
@@ -736,7 +739,7 @@ mod tests {
                 assert_eq!(req, request);
                 assert_eq!(
                     shred.payload().data,
-                    shreds[slice.inner()][shred_index].payload().data
+                    shreds[slice.inner()][shred_index.inner()].payload().data
                 );
             }
         }
