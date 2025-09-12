@@ -37,7 +37,7 @@ impl ValidatedShred {
     ) -> Result<Self, ShredVerifyError> {
         if !MerkleTree::check_proof(
             &shred.payload().data,
-            shred.payload().index_in_slice,
+            shred.payload().shred_index.inner(),
             shred.merkle_root,
             &shred.merkle_path,
         ) {

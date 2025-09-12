@@ -209,11 +209,11 @@ impl BlockData {
 
         let is_first_shred = self.shreds.is_empty();
         let slice_shreds = {
-            let shred_index = shred.payload().index_in_slice;
+            let shred_index = shred.payload().shred_index;
             let slice_shreds = self.shreds.entry(slice_index).or_default();
             let exists = slice_shreds
                 .iter()
-                .any(|s| s.payload().index_in_slice == shred_index);
+                .any(|s| s.payload().shred_index == shred_index);
             if exists {
                 debug!(
                     "dropping duplicate shred {}-{} in slot {}",
@@ -380,6 +380,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
+    use crate::types::shred_index::ShredIndex;
 
     fn handle_slice(
         block_data: &mut BlockData,
@@ -432,11 +433,11 @@ mod tests {
         // all shreds should have been reconstructed
         let slice_shreds = block_data.shreds.get(&SliceIndex::first()).unwrap();
         assert_eq!(slice_shreds.len(), TOTAL_SHREDS);
-        for shred_index in 0..TOTAL_SHREDS {
+        for shred_index in ShredIndex::all() {
             assert!(
                 slice_shreds
                     .iter()
-                    .any(|s| s.payload().index_in_slice == shred_index)
+                    .any(|s| s.payload().shred_index == shred_index)
             );
         }
     }

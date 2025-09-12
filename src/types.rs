@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod shred_index;
 pub mod slice;
 pub mod slice_index;
 pub mod slot;
