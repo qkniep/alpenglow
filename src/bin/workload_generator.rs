@@ -5,7 +5,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alpenglow::network::NetworkMessage;
+use alpenglow::network::BINCODE_CONFIG;
 use alpenglow::{Transaction, logging};
 use clap::Parser;
 use color_eyre::Result;
@@ -60,8 +60,8 @@ fn main() -> Result<()> {
     loop {
         rng.fill_bytes(&mut buf);
         let tx = Transaction(buf.clone());
-        let msg = NetworkMessage::Transaction(tx);
-        socket.send_to(&msg.to_bytes(), validator_addr).unwrap();
+        let msg_bytes = bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG)?;
+        socket.send_to(&msg_bytes, validator_addr).unwrap();
         txs_sent += 1;
 
         let elapsed = start_time.elapsed().as_secs_f64();
