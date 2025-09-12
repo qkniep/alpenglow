@@ -32,7 +32,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
@@ -140,35 +139,19 @@ impl From<RepairMessage> for NetworkMessage {
     }
 }
 
-/// Error type for network operations.
-#[derive(Debug, Error)]
-pub enum NetworkSendError {
-    #[error("bad socket state")]
-    BadSocket(#[from] std::io::Error),
-}
-
-/// Error type for network operations.
-#[derive(Debug, Error)]
-pub enum NetworkReceiveError {
-    #[error("deserialization error")]
-    Deserialization(#[from] bincode::error::DecodeError),
-    #[error("bad socket state")]
-    BadSocket(#[from] std::io::Error),
-}
-
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
     type Send;
     type Recv;
 
-    async fn send(&self, message: &Self::Send, to: SocketAddr) -> Result<(), NetworkSendError>;
+    async fn send(&self, message: &Self::Send, to: SocketAddr) -> std::io::Result<()>;
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError>;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 
-    async fn receive(&self) -> Result<Self::Recv, NetworkReceiveError>;
+    async fn receive(&self) -> std::io::Result<Self::Recv>;
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.

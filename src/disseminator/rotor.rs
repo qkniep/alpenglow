@@ -13,7 +13,7 @@ use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::{Network, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -68,7 +68,7 @@ where
     }
 
     /// Sends the shred to the correct relay.
-    async fn send_as_leader(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let msg: NetworkMessage = shred.clone().into();
         let v = self.epoch_info.validator(relay);
@@ -77,7 +77,7 @@ where
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
-    async fn broadcast_if_relay(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
         let leader = self.epoch_info.leader(shred.payload().header.slot).id;
 
         // do nothing if we are not the relay
@@ -118,15 +118,15 @@ impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S
 where
     N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
 {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         Self::send_as_leader(self, shred).await
     }
 
-    async fn forward(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    async fn forward(&self, shred: &Shred) -> std::io::Result<()> {
         Self::broadcast_if_relay(self, shred).await
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<Shred> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),

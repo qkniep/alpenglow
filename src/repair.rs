@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::{Network, NetworkMessage};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -120,11 +120,7 @@ where
     ///
     /// If we do not have the necessary information in blockstore, the request is ignored.
     /// Otherwise, the correct response is sent back to the sender of the request.
-    async fn answer_request(
-        &self,
-        request: RepairRequest,
-        sender: ValidatorId,
-    ) -> Result<(), NetworkSendError> {
+    async fn answer_request(&self, request: RepairRequest, sender: ValidatorId) -> io::Result<()> {
         trace!("answering repair request: {request:?}");
         let response = match request {
             RepairRequest::LastSliceRoot(block_id) => {
@@ -166,7 +162,7 @@ where
         &self,
         response: RepairResponse,
         validator: ValidatorId,
-    ) -> Result<(), NetworkSendError> {
+    ) -> io::Result<()> {
         let msg = RepairMessage::Response(response);
         let to = self.epoch_info.validator(validator).repair_response_address;
         self.network.send(&msg, to).await
@@ -382,16 +378,7 @@ where
     /// Returns [`std::io::Error`] if the underlying network fails.
     async fn receive(&self) -> io::Result<RepairResponse> {
         loop {
-            let msg = match self.network.receive().await {
-                Ok(msg) => msg,
-                Err(NetworkReceiveError::BadSocket(err)) => {
-                    return Err(err);
-                }
-                Err(NetworkReceiveError::Deserialization(err)) => {
-                    warn!("msg deserialization failed with {err:?}");
-                    continue;
-                }
-            };
+            let msg = self.network.receive().await?;
             match msg {
                 RepairMessage::Response(msg) => return Ok(msg),
                 rest => warn!("unexpected msg type: {rest:?}"),
@@ -399,7 +386,7 @@ where
         }
     }
 
-    async fn send_request(&mut self, request: RepairRequest) -> Result<(), NetworkSendError> {
+    async fn send_request(&mut self, request: RepairRequest) -> std::io::Result<()> {
         let hash = request.hash();
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;

@@ -39,7 +39,7 @@ use async_trait::async_trait;
 
 pub use self::robust::RobustAll2All;
 pub use self::trivial::TrivialAll2All;
-use crate::network::{NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::NetworkMessage;
 
 /// Abstraction for a direct all-to-all network communication protocol.
 #[async_trait]
@@ -53,7 +53,7 @@ pub trait All2All {
     /// # Errors
     ///
     /// Implementors should return [`NetworkSendError`] iff the underlying network fails.
-    async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkSendError>;
+    async fn broadcast(&self, msg: &NetworkMessage) -> std::io::Result<()>;
 
     /// Receives a message from any of the other nodes.
     ///
@@ -63,5 +63,5 @@ pub trait All2All {
     /// # Errors
     ///
     /// Implementors should return [`NetworkReceiveError`] iff the underlying network fails.
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+    async fn receive(&self) -> std::io::Result<NetworkMessage>;
 }

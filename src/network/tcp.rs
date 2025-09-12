@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use super::{Network, NetworkMessage};
-use crate::network::{BINCODE_CONFIG, MTU_BYTES, NetworkReceiveError, NetworkSendError};
+use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
@@ -77,20 +77,20 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> Result<(), NetworkSendError> {
+    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(&self, bytes: &[u8], _to: SocketAddr) -> Result<(), NetworkSendError> {
+    async fn send_serialized(&self, bytes: &[u8], _to: SocketAddr) -> std::io::Result<()> {
         // TODO: use correct socket
         let writer = &self.writers.read().await[0];
         writer.lock().await.send(bytes.to_vec().into()).await?;
         Ok(())
     }
 
-    async fn receive(&self) -> Result<R, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<R> {
         loop {
             tokio::select! {
                 // accept new incoming connections

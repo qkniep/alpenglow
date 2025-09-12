@@ -419,7 +419,7 @@ where
                 res
             }
         };
-        let tx = res.expect("unexpected error");
+        let tx = res.expect("receiving tx");
         let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
             .expect("serialization should not panic");
         slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
