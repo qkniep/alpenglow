@@ -1,13 +1,13 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use async_trait::async_trait;
 use log::warn;
 
-use crate::ValidatorInfo;
-use crate::network::{Network, NetworkError, NetworkMessage};
-use crate::shredder::Shred;
-
 use super::Disseminator;
+use crate::ValidatorInfo;
+use crate::network::{Network, NetworkMessage};
+use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
 /// The leader just sends each shred directly to every validator.
@@ -25,21 +25,25 @@ impl<N: Network> TrivialDisseminator<N> {
     }
 }
 
-impl<N: Network> Disseminator for TrivialDisseminator<N> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkError> {
+#[async_trait]
+impl<N> Disseminator for TrivialDisseminator<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
+    async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         let msg = NetworkMessage::Shred(shred.clone());
         for v in &self.validators {
-            self.network.send(&msg, &v.disseminator_address).await?;
+            self.network.send(&msg, v.disseminator_address).await?;
         }
         Ok(())
     }
 
-    async fn forward(&self, _shred: &Shred) -> Result<(), NetworkError> {
+    async fn forward(&self, _shred: &Shred) -> std::io::Result<()> {
         // nothing to do
         Ok(())
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkError> {
+    async fn receive(&self) -> std::io::Result<Shred> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
@@ -51,21 +55,26 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
 
+    use tokio::sync::Mutex;
+    use tokio::task;
+
+    use super::*;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
-    use crate::network::UdpNetwork;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, Slice, TOTAL_SHREDS};
-
-    use tokio::{sync::Mutex, task};
-
-    use std::{sync::Arc, time::Duration};
+    use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     fn create_disseminator_instances(
         count: u64,
         base_port: u16,
-    ) -> (Vec<SecretKey>, Vec<TrivialDisseminator<UdpNetwork>>) {
+    ) -> (
+        Vec<SecretKey>,
+        Vec<TrivialDisseminator<UdpNetwork<NetworkMessage, NetworkMessage>>>,
+    ) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();
@@ -77,9 +86,10 @@ mod tests {
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: format!("127.0.0.1:{}", base_port + i as u16),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
 
@@ -94,14 +104,8 @@ mod tests {
     #[tokio::test]
     async fn dissemination() {
         let (sks, mut disseminators) = create_disseminator_instances(20, 5000);
-        let slice = Slice {
-            slot: 0,
-            slice_index: 0,
-            is_last: true,
-            merkle_root: None,
-            data: vec![42; MAX_DATA_PER_SLICE],
-        };
-        let shreds = RegularShredder::shred(&slice, &sks[0]).unwrap();
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
         let mut tasks = Vec::new();

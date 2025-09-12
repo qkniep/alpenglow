@@ -28,21 +28,21 @@ pub mod simulated;
 mod tcp;
 mod udp;
 
-use std::str::FromStr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
+pub use self::simulated::SimulatedNetwork;
+pub use self::tcp::TcpNetwork;
+pub use self::udp::UdpNetwork;
 use crate::consensus::{Cert, Vote};
-use crate::repair::RepairMessage;
 use crate::shredder::Shred;
-
-pub use simulated::SimulatedNetwork;
-pub use tcp::TcpNetwork;
-pub use udp::UdpNetwork;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
+
+pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// Network message type.
 ///
@@ -55,7 +55,6 @@ pub enum NetworkMessage {
     Shred(Shred),
     Vote(Vote),
     Cert(Cert),
-    Repair(RepairMessage),
 }
 
 impl NetworkMessage {
@@ -63,35 +62,50 @@ impl NetworkMessage {
     ///
     /// # Errors
     ///
-    /// Returns [`NetworkError::Deserialization`] if bincode decoding fails.
+    /// Returns [`bincode::error::DecodeError`] if bincode decoding fails.
     /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, NetworkError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
         if bytes.len() > MTU_BYTES {
-            return Err(NetworkError::Deserialization(
-                bincode::error::DecodeError::LimitExceeded,
-            ));
+            return Err(bincode::error::DecodeError::LimitExceeded);
         }
         // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        let (msg, bytes_read) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
+        if bytes_read != bytes.len() {
+            return Err(bincode::error::DecodeError::UnexpectedEnd {
+                additional: bytes.len() - bytes_read,
+            });
+        }
         Ok(msg)
     }
 
-    /// Serializes this `NetworkMessage` into owned bytes using [`bincode`].
+    /// Serializes this message into owned bytes using [`bincode`].
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let bytes = bincode::serde::encode_to_vec(self, bincode::config::standard())
+        let bytes = bincode::serde::encode_to_vec(self, BINCODE_CONFIG)
             .expect("serialization should not panic");
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         bytes
     }
 
-    /// Serializes this `NetworkMessage` into an existing buffer using [`bincode`].
-    #[must_use]
-    pub fn write_bytes(&self, buf: &mut [u8]) -> usize {
-        let written = bincode::serde::encode_into_slice(self, buf, bincode::config::standard())
-            .expect("serialization should not panic");
-        assert!(written <= MTU_BYTES, "each message should fit in MTU");
-        written
+    /// Serializes this message into an existing buffer using [`bincode`].
+    ///
+    /// # Returns
+    ///
+    /// Number of bytes used in `buf`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if encoding returns an error, including if `buf` was not big enough.
+    /// Panics if encoding used more than [`MTU_BYTES`].
+    pub fn to_slice(&self, buf: &mut [u8]) -> usize {
+        let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
+        match res {
+            Ok(written) => {
+                assert!(written <= MTU_BYTES, "each message should fit in MTU");
+                written
+            }
+            Err(err) => panic!("serialization failed with {err:?}"),
+        }
     }
 }
 
@@ -113,57 +127,36 @@ impl From<Cert> for NetworkMessage {
     }
 }
 
-impl From<RepairMessage> for NetworkMessage {
-    fn from(repair: RepairMessage) -> Self {
-        Self::Repair(repair)
-    }
-}
-
-/// Error type for network operations.
-#[derive(Debug, Error)]
-pub enum NetworkError {
-    #[error("unexpected message type for this socket")]
-    UnexpectedMessageType,
-    #[error("malformed address")]
-    MalformedAddress,
-    #[error("serialization error")]
-    Serialization(#[from] bincode::error::EncodeError),
-    #[error("deserialization error")]
-    Deserialization(#[from] bincode::error::DecodeError),
-    #[error("bad socket state")]
-    BadSocket(#[from] std::io::Error),
-    #[error("unknown network error")]
-    Unknown,
-}
-
 /// Abstraction of a network interface for sending and receiving messages.
+#[async_trait]
 pub trait Network: Send + Sync {
-    type Address: Send;
+    type Send;
+    type Recv;
 
-    fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+    async fn send(&self, message: &Self::Send, to: SocketAddr) -> std::io::Result<()>;
 
-    fn send_serialized(
-        &self,
-        bytes: &[u8],
-        to: impl AsRef<str> + Send,
-    ) -> impl Future<Output = Result<(), NetworkError>> + Send;
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 
-    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkError>> + Send;
+    async fn receive(&self) -> std::io::Result<Self::Recv>;
+}
 
-    fn parse_addr(str: impl AsRef<str>) -> Result<Self::Address, NetworkError>
-    where
-        Self::Address: FromStr,
-    {
-        str.as_ref()
-            .parse()
-            .map_err(|_| NetworkError::MalformedAddress)
-    }
+/// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
+///
+/// NOTE: port 0 is generally reserved and used to get the OS to assign a port.
+/// Using this function with port=0 on actual networks might lead to unexpected behaviour.
+/// TODO: prevent being able to call this function with port = 0.
+pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+}
+
+/// Returns a [`SocketAddr`] that could be bound any arbitrary IP and port.
+///
+/// This is present here to enable sharing of code between testing and benchmarking.
+/// This should not be used in production.
+pub fn dontcare_sockaddr() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
 }
 
 #[cfg(test)]
@@ -171,7 +164,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn serialization() {
+    async fn basic() {
         let msg = NetworkMessage::Ping;
         let bytes = msg.to_bytes();
         let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
@@ -181,5 +174,25 @@ mod tests {
         let bytes = msg.to_bytes();
         let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
         assert!(matches!(deserialized, NetworkMessage::Pong));
+    }
+
+    #[tokio::test]
+    async fn serialize_reuse_buffer() {
+        let mut buf = [0u8; MTU_BYTES];
+        for _ in 0..10 {
+            let msg = NetworkMessage::Ping;
+            let num_bytes = msg.to_slice(&mut buf);
+            let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
+            assert!(matches!(deserialized, NetworkMessage::Ping));
+        }
+    }
+
+    #[tokio::test]
+    async fn deserialize_too_large() {
+        let bytes = vec![0u8; MTU_BYTES + 1];
+        assert!(NetworkMessage::from_bytes(&bytes).is_err());
+
+        let bytes = vec![0u8; 10 * MTU_BYTES];
+        assert!(NetworkMessage::from_bytes(&bytes).is_err());
     }
 }

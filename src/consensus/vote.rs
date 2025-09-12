@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::aggsig::{PublicKey, SecretKey};
 use crate::crypto::{Hash, IndividualSignature, Signable};
+use crate::network::BINCODE_CONFIG;
 use crate::{Slot, ValidatorId};
 
 /// A signed vote used in consensus.
@@ -17,7 +18,7 @@ use crate::{Slot, ValidatorId};
 /// allowing type-specific data to be authenticated and verified.
 ///
 /// This struct is produced by signing the bytes of a `VoteKind` instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Vote {
     kind: VoteKind,
     sig: IndividualSignature,
@@ -25,7 +26,7 @@ pub struct Vote {
 }
 
 /// Represents the type-specific vote payload as per the protocol.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VoteKind {
     /// A notarization vote for a given block hash in a given slot.
     Notar(Slot, Hash),
@@ -189,8 +190,7 @@ impl VoteKind {
 
 impl Signable for VoteKind {
     fn bytes_to_sign(&self) -> Vec<u8> {
-        bincode::serde::encode_to_vec(self, bincode::config::standard())
-            .expect("serialization should not panic")
+        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).expect("serialization should not panic")
     }
 }
 
@@ -203,23 +203,23 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
-        let vote = Vote::new_notar(0, Hash::default(), &sk, 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sk, 0);
         assert!(vote.is_notar());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_notar_fallback(0, Hash::default(), &sk, 0);
+        let vote = Vote::new_notar_fallback(Slot::new(0), Hash::default(), &sk, 0);
         assert!(vote.is_notar_fallback());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_skip(0, &sk, 0);
+        let vote = Vote::new_skip(Slot::new(0), &sk, 0);
         assert!(vote.is_skip());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_skip_fallback(0, &sk, 0);
+        let vote = Vote::new_skip_fallback(Slot::new(0), &sk, 0);
         assert!(vote.is_skip_fallback());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_final(0, &sk, 0);
+        let vote = Vote::new_final(Slot::new(0), &sk, 0);
         assert!(vote.is_final());
         assert!(vote.check_sig(&pk));
     }

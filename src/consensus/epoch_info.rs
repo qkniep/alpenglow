@@ -1,9 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
-
-use super::SLOTS_PER_WINDOW;
 
 /// Epoch-specfic validator information.
 #[derive(Clone, Debug)]
@@ -32,7 +31,7 @@ impl EpochInfo {
     // TODO: actual stake-based pseudorandom leader schedule
     #[must_use]
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
-        let window = slot / SLOTS_PER_WINDOW;
+        let window = slot.inner() / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
         self.validator(leader_id)
     }

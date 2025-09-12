@@ -11,22 +11,29 @@
 //! - [`AontShredder`] uses the RAONT-RS all-or-nothing construction.
 //! - [`PetsShredder`] uses the PETS all-or-nothing construction.
 //!
-//! Finally, it defines some of the low-level data types representing a block:
-//! - [`Shred`] is a single part of the block that fits into a UDP datagram.
-//! - [`Slice`] corresponds to a fixed number of shreds we perform erasure coding on.
-// TODO: split this file up
+//! Finally, it defines the relevant low-level data type:
+//! - [`Shred`] is a single part of the block that fits into a UDP datagram,
+//!   that also contains the slice header, Merkle path and leader signature.
+//!
+//! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
+
+mod reed_solomon;
+mod validated_shred;
 
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
 use ctr::Ctr64LE;
 use rand::{RngCore, rng};
-use reed_solomon_simd as rs;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::Slot;
-use crate::crypto::signature::{PublicKey, SecretKey, Signature};
+use self::reed_solomon::{
+    ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
+};
+pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
+use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
+use crate::types::{Slice, SliceHeader};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -37,12 +44,29 @@ pub const DATA_SHREDS: usize = 32;
 pub const TOTAL_SHREDS: usize = 64;
 /// Maximum number of payload bytes a single shred can hold.
 pub const MAX_DATA_PER_SHRED: usize = 1024;
-/// Maximum number of payload bytes an entire slice can hold.
-pub const MAX_DATA_PER_SLICE: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
+/// Maximum number of bytes an entire slice can hold, incl. padding.
+pub const MAX_DATA_PER_SLICE_AFTER_PADDING: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
+/// Maximum number of payload bytes a slice can hold.
+pub const MAX_DATA_PER_SLICE: usize = MAX_DATA_PER_SLICE_AFTER_PADDING - 1;
 
-/// Errors that may occur during shredding and deshredding.
+/// Errors that may occur during shredding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub enum ShredderError {
+pub enum ShredError {
+    #[error("too much data to fit into slice")]
+    TooMuchData,
+}
+
+impl From<ReedSolomonShredError> for ShredError {
+    fn from(err: ReedSolomonShredError) -> Self {
+        match err {
+            ReedSolomonShredError::TooMuchData => Self::TooMuchData,
+        }
+    }
+}
+
+/// Errors that may occur during deshredding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum DeshredError {
     #[error("could not deshred malformed input")]
     BadEncoding,
     #[error("too much data to fit into slice")]
@@ -55,43 +79,23 @@ pub enum ShredderError {
     InvalidMerkleTree,
 }
 
-/// A slice is the unit of data between block and shred.
-///
-/// It corresponds to a single batch of data that is disseminated by the leader.
-/// During shredding, a slice is turned into multiple shreds.
-/// During deshredding, multiple shreds are turned into a slice.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Slice {
-    /// Slot number this slice is part of.
-    pub slot: Slot,
-    /// Index of the slice within its slot.
-    pub slice_index: usize,
-    /// Indicates whether this is the last slice in the slot.
-    pub is_last: bool,
-    /// Merkle root hash over all shreds in this slice.
-    pub merkle_root: Option<Hash>,
-    /// Payload bytes.
-    pub data: Vec<u8>,
-}
-
-impl Slice {
-    /// Creates a slice from raw payload bytes and the metadata extracted from a shred.
-    #[must_use]
-    pub const fn from_parts(data: Vec<u8>, any_shred: &Shred) -> Self {
-        let slot = any_shred.payload().slot;
-        let slice_index = any_shred.payload().slice_index;
-        let is_last = any_shred.payload().is_last_slice;
-        let merkle_root = Some(any_shred.merkle_root);
-        Self {
-            slot,
-            slice_index,
-            is_last,
-            merkle_root,
-            data,
+impl From<ReedSolomonDeshredError> for DeshredError {
+    fn from(err: ReedSolomonDeshredError) -> Self {
+        match err {
+            ReedSolomonDeshredError::TooMuchData => Self::TooMuchData,
+            ReedSolomonDeshredError::NotEnoughShreds => Self::NotEnoughShreds,
+            ReedSolomonDeshredError::TooManyShreds => Self::TooManyShreds,
         }
     }
 }
 
+impl From<ReedSolomonShredError> for DeshredError {
+    fn from(err: ReedSolomonShredError) -> Self {
+        match err {
+            ReedSolomonShredError::TooMuchData => Self::TooMuchData,
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
@@ -121,31 +125,27 @@ pub struct Shred {
 }
 
 impl Shred {
-    /// Verifies the proof and signature of this shred.
+    /// Verifies only the Merkle proof of this shred.
+    ///
+    /// For full verification, see [`ValidatedShred::new`].
+    ///
+    /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
     #[must_use]
-    pub fn verify(&self, pk: &PublicKey, cached_merkle_root: Option<&Hash>) -> bool {
-        // FIX: make this work for all shredders
-        let index = match self.payload_type {
-            ShredPayloadType::Coding(_) => DATA_SHREDS + self.payload().index_in_slice,
-            ShredPayloadType::Data(_) => self.payload().index_in_slice,
-        };
-        if !MerkleTree::check_proof(
-            &self.payload().data,
-            index,
-            self.merkle_root,
-            &self.merkle_path,
-        ) {
+    pub fn verify_path_only(&self, root: &Hash) -> bool {
+        if &self.merkle_root != root {
             return false;
         }
-        if Some(&self.merkle_root) == cached_merkle_root {
-            return true;
-        }
-        self.merkle_root_sig.verify(&self.merkle_root, pk)
+        MerkleTree::check_proof(
+            &self.payload().data,
+            self.payload().index_in_slice,
+            self.merkle_root,
+            &self.merkle_path,
+        )
     }
 
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
-            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => &p,
+            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
     }
 }
@@ -160,18 +160,19 @@ pub struct CodingShred(ShredPayload);
 /// Base payload of a shred, regardless of its type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
-    pub(crate) slot: Slot,
-    pub(crate) slice_index: usize,
+    /// Slice header replicated in each shred.
+    pub(crate) header: SliceHeader,
+    /// Index of this shred within the slice.
     pub(crate) index_in_slice: usize,
-    pub(crate) is_last_slice: bool,
+    /// Raw payload bytes of this shred, part of the erasure-coded slice payload.
     pub(crate) data: bytes::Bytes,
 }
 
 impl ShredPayload {
     /// Returns the index of this shred within the entire slot.
     #[must_use]
-    pub const fn index_in_slot(&self) -> usize {
-        self.slice_index * DATA_SHREDS + self.index_in_slice
+    pub fn index_in_slot(&self) -> usize {
+        self.header.slice_index.inner() * TOTAL_SHREDS + self.index_in_slice
     }
 }
 
@@ -193,39 +194,109 @@ pub trait Shredder {
     ///
     /// - Implementations may return an error if the input is invalid or if the
     ///   shredding process fails for any implementation-specific reason.
-    /// - Should always return [`ShredderError::TooMuchData`] if the `slice` is
+    /// - Should always return [`ShredError::TooMuchData`] if the `slice` is
     ///   too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredderError>;
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError>;
 
     /// Puts the given shreds back together into a complete slice.
+    ///
+    /// Additionally, outputs all `TOTAL_SHREDS` reconstructed shreds.
+    /// This includes all (potentially data and coding) shreds sent originally.
     ///
     /// # Errors
     ///
     /// - Implementations may return an error if the input is invalid or if the
     ///   deshredding process fails for any implementation-specific reason.
-    /// - Should always return [`ShredderError::TooMuchData`] if the reconstructed
+    /// - Should always return [`DeshredError::TooMuchData`] if the reconstructed
     ///   slice is too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
+    ///
     /// - Any implementation of this needs to make sure to:
     ///     1. Reconstruct all shreds (data and coding) under the Merkle tree.
     ///     2. Verify the entire Merkle tree.
-    ///     3. Return [`ShredderError::InvalidMerkleTree`] if this fails.
-    fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError>;
+    ///     3. Return [`DeshredError::InvalidMerkleTree`] if this fails.
+    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError>;
 }
 
 /// A shredder that augments the [`DATA_SHREDS`] data shreds with
 /// `TOTAL_SHREDS - DATA_SHREDS` coding shreds and outputs both.
 pub struct RegularShredder;
 
+impl Shredder for RegularShredder {
+    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
+
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+        let (header, payload) = slice.deconstruct();
+        let (data, coding) = reed_solomon_shred(
+            header,
+            payload.into(),
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
+        Ok(data_and_coding_to_output_shreds(data, coding, sk))
+    }
+
+    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+        let payload =
+            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
+        let slice = Slice::from_shreds(payload.into(), &shreds[0]);
+
+        // additional Merkle tree validity check
+        let merkle_root = shreds[0].merkle_root;
+        let (header, payload) = slice.clone().deconstruct();
+        let (data, coding) = reed_solomon_shred(
+            header,
+            payload.into(),
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS,
+        )?;
+        let tree = build_merkle_tree(&data, &coding);
+        if tree.get_root() != merkle_root {
+            return Err(DeshredError::InvalidMerkleTree);
+        }
+
+        // turn reconstructed shreds into output shreds (with root, path, sig)
+        let leader_sig = shreds[0].merkle_root_sig;
+        let reconstructed_shreds =
+            create_output_shreds_for_other_leader(data, coding, tree, leader_sig);
+
+        Ok((slice, reconstructed_shreds))
+    }
+}
+
 /// A shredder that only produces [`TOTAL_SHREDS`] coding shreds.
 pub struct CodingOnlyShredder;
 
-/// A shredder that uses the RAONT-RS all-or-nothing construction.
-///
-/// It outputs [`DATA_SHREDS`] encrypted data shreds and
-/// `TOTAL_SHREDS - DATA_SHREDS` coding shreds.
-///
-/// See also: <https://eprint.iacr.org/2016/1014>
-pub struct AontShredder;
+impl Shredder for CodingOnlyShredder {
+    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
+
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+        let (header, payload) = slice.deconstruct();
+        let (_data, coding) =
+            reed_solomon_shred(header, payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
+        Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
+    }
+
+    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
+        let slice = Slice::from_shreds(payload.into(), &shreds[0]);
+
+        // additional Merkle tree validity check
+        let merkle_root = shreds[0].merkle_root;
+        let (header, payload) = slice.clone().deconstruct();
+        let (_, coding) = reed_solomon_shred(header, payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
+        let tree = build_merkle_tree(&[], &coding);
+        if tree.get_root() != merkle_root {
+            return Err(DeshredError::InvalidMerkleTree);
+        }
+
+        // turn reconstructed shreds into output shreds (with root, path, sig)
+        let leader_sig = shreds[0].merkle_root_sig;
+        let reconstructed_shreds =
+            create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
+
+        Ok((slice, reconstructed_shreds))
+    }
+}
 
 /// A shredder that uses the PETS all-or-nothing construction.
 ///
@@ -235,61 +306,14 @@ pub struct AontShredder;
 /// See also: <https://arxiv.org/abs/2502.02774>
 pub struct PetsShredder;
 
-impl Shredder for RegularShredder {
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
-
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredderError> {
-        let (data, coding) = shred_reed_solomon(slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        Ok(data_and_coding_to_output_shreds(data, coding, sk))
-    }
-
-    fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
-        let data = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        let slice = Slice::from_parts(data, &shreds[0]);
-
-        // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root;
-        let (data, coding) = shred_reed_solomon(&slice, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        let tree = build_merkle_tree(&data, &coding);
-        if tree.get_root() != merkle_root {
-            return Err(ShredderError::InvalidMerkleTree);
-        }
-
-        Ok(slice)
-    }
-}
-
-impl Shredder for CodingOnlyShredder {
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
-
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredderError> {
-        let (_data, coding) = shred_reed_solomon(slice, DATA_SHREDS, TOTAL_SHREDS)?;
-        Ok(data_and_coding_to_output_shreds(vec![], coding, sk))
-    }
-
-    fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
-        let data = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS)?;
-        let slice = Slice::from_parts(data, &shreds[0]);
-
-        // additional Merkle tree validity check
-        let merkle_root = shreds[0].merkle_root;
-        let (_, coding) = shred_reed_solomon(&slice, DATA_SHREDS, TOTAL_SHREDS)?;
-        let tree = build_merkle_tree(&[], &coding);
-        if tree.get_root() != merkle_root {
-            return Err(ShredderError::InvalidMerkleTree);
-        }
-
-        Ok(slice)
-    }
-}
-
 impl Shredder for PetsShredder {
+    // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredderError> {
-        assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let mut buffer = vec![0; slice.data.len()];
-        buffer.copy_from_slice(&slice.data);
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+        let (header, payload) = slice.deconstruct();
+        let mut payload: Vec<u8> = payload.into();
+        assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
         let mut rng = rng();
         let mut key = Array::from([0; 16]);
@@ -297,46 +321,41 @@ impl Shredder for PetsShredder {
         let iv = Array::from([0; 16]);
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
+        cipher.apply_keystream(&mut payload);
 
-        for i in 0..16 {
-            buffer.push(key[i]);
-        }
-
-        let (mut data, coding) = shred_reed_solomon_raw(
-            slice.slot,
-            slice.slice_index,
-            slice.is_last,
-            &buffer,
-            DATA_SHREDS,
-            TOTAL_SHREDS - DATA_SHREDS + 1,
-        )?;
+        payload.extend_from_slice(&key);
+        let (mut data, coding) =
+            reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         // delete data shred containing key
         data.pop();
 
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
-    fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
-        let mut buffer = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
+    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+        let mut buffer = reed_solomon_deshred(
+            shreds,
+            DATA_SHREDS,
+            TOTAL_SHREDS - DATA_SHREDS + 1,
+            DATA_SHREDS - 1,
+        )?;
         if buffer.len() < 16 {
-            return Err(ShredderError::BadEncoding);
+            return Err(DeshredError::BadEncoding);
         }
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (mut data, coding) = shred_reed_solomon_raw(
-            shreds[0].payload().slot,
-            shreds[0].payload().slice_index,
-            shreds[0].payload().is_last_slice,
-            &buffer,
+        let header = shreds[0].payload().header.clone();
+        let (mut data, coding) = reed_solomon_shred(
+            header,
+            buffer.clone(),
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS + 1,
         )?;
         data.pop();
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
-            return Err(ShredderError::InvalidMerkleTree);
+            return Err(DeshredError::InvalidMerkleTree);
         }
 
         // decrypt slice
@@ -346,18 +365,33 @@ impl Shredder for PetsShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
+        let slice = Slice::from_shreds(buffer.into(), &shreds[0]);
 
-        Ok(Slice::from_parts(buffer, &shreds[0]))
+        // turn reconstructed shreds into output shreds (with root, path, sig)
+        let leader_sig = shreds[0].merkle_root_sig;
+        let reconstructed_shreds =
+            create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
+
+        Ok((slice, reconstructed_shreds))
     }
 }
 
+/// A shredder that uses the RAONT-RS all-or-nothing construction.
+///
+/// It outputs [`DATA_SHREDS`] encrypted data shreds and
+/// `TOTAL_SHREDS - DATA_SHREDS` coding shreds.
+///
+/// See also: <https://eprint.iacr.org/2016/1014>
+pub struct AontShredder;
+
 impl Shredder for AontShredder {
+    // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
 
-    fn shred(slice: &Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredderError> {
-        assert!(slice.data.len() <= Self::MAX_DATA_SIZE);
-        let mut buffer = vec![0; slice.data.len()];
-        buffer.copy_from_slice(&slice.data);
+    fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<Shred>, ShredError> {
+        let (header, payload) = slice.deconstruct();
+        let mut payload: Vec<u8> = payload.into();
+        assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
         let mut rng = rng();
         let mut key = Array::from([0; 16]);
@@ -365,43 +399,37 @@ impl Shredder for AontShredder {
         let iv = Array::from([0u8; 16]);
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
+        cipher.apply_keystream(&mut payload);
 
-        let hash = hash(&buffer);
+        let hash = hash(&payload);
         for i in 0..16 {
-            buffer.push(hash[i] ^ key[i]);
+            payload.push(hash[i] ^ key[i]);
         }
 
-        let (data, coding) = shred_reed_solomon_raw(
-            slice.slot,
-            slice.slice_index,
-            slice.is_last,
-            &buffer,
-            DATA_SHREDS,
-            TOTAL_SHREDS - DATA_SHREDS,
-        )?;
+        let (data, coding) =
+            reed_solomon_shred(header, payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(data, coding, sk))
     }
 
-    fn deshred(shreds: &[Shred]) -> Result<Slice, ShredderError> {
-        let mut buffer = deshred_reed_solomon(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+    fn deshred(shreds: &[Shred]) -> Result<(Slice, Vec<Shred>), DeshredError> {
+        let mut buffer =
+            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         if buffer.len() < 16 {
-            return Err(ShredderError::BadEncoding);
+            return Err(DeshredError::BadEncoding);
         }
 
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
-        let (data, coding) = shred_reed_solomon_raw(
-            shreds[0].payload().slot,
-            shreds[0].payload().slice_index,
-            shreds[0].payload().is_last_slice,
-            &buffer,
+        let header = shreds[0].payload().header.clone();
+        let (data, coding) = reed_solomon_shred(
+            header,
+            buffer.clone(),
             DATA_SHREDS,
             TOTAL_SHREDS - DATA_SHREDS,
         )?;
         let tree = build_merkle_tree(&data, &coding);
         if tree.get_root() != merkle_root {
-            return Err(ShredderError::InvalidMerkleTree);
+            return Err(DeshredError::InvalidMerkleTree);
         }
 
         // decrypt slice
@@ -416,132 +444,21 @@ impl Shredder for AontShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
+        let slice = Slice::from_shreds(buffer.into(), &shreds[0]);
 
-        Ok(Slice::from_parts(buffer, &shreds[0]))
+        // turn reconstructed shreds into output shreds (with root, path, sig)
+        let leader_sig = shreds[0].merkle_root_sig;
+        let reconstructed_shreds =
+            create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
+
+        Ok((slice, reconstructed_shreds))
     }
-}
-
-/// Splits the given slice into `num_data` data shreds, then generates
-/// `num_coding_shreds` additional Reed-Solomon coding shreds.
-///
-/// # Errors
-///
-/// Returns [`ShredderError::TooMuchData`] if the slice contains too much data.
-fn shred_reed_solomon(
-    slice: &Slice,
-    num_data: usize,
-    num_coding: usize,
-) -> Result<(Vec<DataShred>, Vec<CodingShred>), ShredderError> {
-    let Slice {
-        slot,
-        slice_index,
-        is_last,
-        merkle_root: _,
-        data,
-    } = slice;
-    shred_reed_solomon_raw(*slot, *slice_index, *is_last, data, num_data, num_coding)
-}
-
-/// Splits the given data into `num_data` data shreds, then generates
-/// `num_coding_shreds` additional Reed-Solomon coding shreds.
-/// The slice-specific fields `slot`, `slice_index`, and `is_last` are included
-/// in every `DataShred` or `CodingShred`.
-///
-/// # Errors
-///
-/// Returns [`ShredderError::TooMuchData`] if `data` is too large.
-fn shred_reed_solomon_raw(
-    slot: Slot,
-    slice_index: usize,
-    is_last_slice: bool,
-    data: &[u8],
-    num_data: usize,
-    num_coding: usize,
-) -> Result<(Vec<DataShred>, Vec<CodingShred>), ShredderError> {
-    if data.len() > MAX_DATA_PER_SLICE {
-        return Err(ShredderError::TooMuchData);
-    }
-
-    let shred_bytes = data.len() / DATA_SHREDS;
-    let data_parts = data.chunks(shred_bytes);
-    let coding_parts = rs::encode(num_data, num_coding, data_parts.clone()).unwrap();
-
-    // map raw data/coding parts to `DataShred` and `CodingShred`
-    let payload_from_index_and_data = |index: usize, data: Vec<u8>| ShredPayload {
-        slot,
-        slice_index,
-        index_in_slice: index,
-        is_last_slice,
-        data: data.into(),
-    };
-    let data_shreds: Vec<_> = data_parts
-        .into_iter()
-        .enumerate()
-        .map(|(i, p)| DataShred(payload_from_index_and_data(i, p.to_vec())))
-        .collect();
-    let coding_shreds: Vec<_> = coding_parts
-        .into_iter()
-        .enumerate()
-        .map(|(i, p)| CodingShred(payload_from_index_and_data(i, p)))
-        .collect();
-
-    Ok((data_shreds, coding_shreds))
-}
-
-/// Reconstructs the raw data from the given shreds.
-///
-/// # Errors
-///
-/// - Returns [`ShredderError::NotEnoughShreds`] if less than `DATA_SHREDS` are provided.
-/// - Returns [`ShredderError::TooManyShreds`] if more than `TOTAL_SHREDS` are provided.
-/// - Returns [`ShredderError::TooMuchData`] if reconstructed data is larger than supported.
-fn deshred_reed_solomon(
-    shreds: &[Shred],
-    num_data: usize,
-    num_coding: usize,
-) -> Result<Vec<u8>, ShredderError> {
-    if shreds.len() < DATA_SHREDS {
-        return Err(ShredderError::NotEnoughShreds);
-    } else if shreds.len() > TOTAL_SHREDS {
-        return Err(ShredderError::TooManyShreds);
-    }
-
-    // filter to split data and coding shreds
-    let data = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
-        ShredPayloadType::Coding(_) => None,
-    });
-    let coding = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Coding(c) => Some((c.index_in_slice, &c.data)),
-        ShredPayloadType::Data(_) => None,
-    });
-
-    let restored = rs::decode(num_data, num_coding, data.clone(), coding).unwrap();
-
-    let mut data_shreds = vec![None; DATA_SHREDS];
-    for (i, d) in data {
-        data_shreds[i] = Some(d);
-    }
-
-    // restore data from data shreds (from input and restored)
-    let mut restored_payload = Vec::with_capacity(MAX_DATA_PER_SLICE);
-    for (i, d) in data_shreds.into_iter().enumerate() {
-        let shred_data = match d {
-            Some(data_ref) => data_ref.as_ref(),
-            None => restored.get(&i).unwrap(),
-        };
-        if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE {
-            return Err(ShredderError::TooMuchData);
-        }
-        restored_payload.extend_from_slice(shred_data);
-    }
-
-    Ok(restored_payload)
 }
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
-/// Each shred contains the Merkle root, its own path and the signature.
-fn data_and_coding_to_output_shreds(
+///
+/// Each returned shred contains the Merkle root, its own path and the signature.
+pub fn data_and_coding_to_output_shreds(
     data: Vec<DataShred>,
     coding: Vec<CodingShred>,
     sk: &SecretKey,
@@ -553,20 +470,63 @@ fn data_and_coding_to_output_shreds(
     let merkle_root = tree.get_root();
     let sig = sk.sign(&merkle_root);
 
-    for (i, d) in data.into_iter().enumerate() {
+    for d in data {
+        let merkle_path = tree.create_proof(d.0.index_in_slice);
         shreds.push(Shred {
             payload_type: ShredPayloadType::Data(d.0),
             merkle_root,
             merkle_root_sig: sig,
-            merkle_path: tree.create_proof(i),
+            merkle_path,
         });
     }
-    for (i, c) in coding.into_iter().enumerate() {
+    for mut c in coding {
+        c.0.index_in_slice += num_data_shreds;
+        let merkle_path = tree.create_proof(c.0.index_in_slice);
         shreds.push(Shred {
             payload_type: ShredPayloadType::Coding(c.0),
             merkle_root,
             merkle_root_sig: sig,
-            merkle_path: tree.create_proof(num_data_shreds + i),
+            merkle_path,
+        });
+    }
+
+    shreds
+}
+
+/// Puts the root, path, and signature of the leader into shreds.
+///
+/// This is analogous to [`data_and_coding_to_output_shreds`], but for another leader.
+/// Instead of signing the root, copies the existing signature from another shred.
+/// Also, requires the Merkle tree to already be calculated from reconstructed shreds.
+///
+/// Each returned shred contains the Merkle root, its own path and the signature.
+pub fn create_output_shreds_for_other_leader(
+    data: Vec<DataShred>,
+    coding: Vec<CodingShred>,
+    tree: MerkleTree,
+    leader_signature: Signature,
+) -> Vec<Shred> {
+    let mut shreds = Vec::with_capacity(data.len() + coding.len());
+    let num_data_shreds = data.len();
+    let merkle_root = tree.get_root();
+
+    for d in data {
+        let merkle_path = tree.create_proof(d.0.index_in_slice);
+        shreds.push(Shred {
+            payload_type: ShredPayloadType::Data(d.0),
+            merkle_root,
+            merkle_root_sig: leader_signature,
+            merkle_path,
+        });
+    }
+    for mut c in coding {
+        c.0.index_in_slice += num_data_shreds;
+        let merkle_path = tree.create_proof(c.0.index_in_slice);
+        shreds.push(Shred {
+            payload_type: ShredPayloadType::Coding(c.0),
+            merkle_root,
+            merkle_root_sig: leader_signature,
+            merkle_path,
         });
     }
 
@@ -575,6 +535,7 @@ fn data_and_coding_to_output_shreds(
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
 fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -> MerkleTree {
+    // zero-allocation chaining of slices
     let leaves = data_shreds
         .iter()
         .map(|d| d.0.data.as_ref())
@@ -584,65 +545,53 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use color_eyre::Result;
 
-    fn create_random_slice(padding: usize) -> Slice {
-        let mut rng = rng();
-        let mut buf = vec![0u8; MAX_DATA_PER_SLICE - padding];
-        rng.fill_bytes(&mut buf);
-        Slice {
-            slot: 0,
-            slice_index: 0,
-            is_last: true,
-            merkle_root: None,
-            data: buf,
-        }
-    }
+    use super::*;
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     #[test]
     fn regular_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(0);
-        let shreds = RegularShredder::shred(&slice, &sk)?;
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let shreds = RegularShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let slice_restored = RegularShredder::deshred(&shreds)?;
+        let (slice_restored, _) = RegularShredder::deshred(&shreds)?;
         slice.merkle_root = slice_restored.merkle_root;
         assert_eq!(slice_restored, slice);
 
         // restore only from coding shreds
-        let slice_restored = RegularShredder::deshred(&shreds[..DATA_SHREDS])?;
+        let (slice_restored, _) = RegularShredder::deshred(&shreds[..DATA_SHREDS])?;
         assert_eq!(slice_restored, slice);
 
         // restore only from data shreds
-        let slice_restored = RegularShredder::deshred(&shreds[DATA_SHREDS..])?;
+        let (slice_restored, _) = RegularShredder::deshred(&shreds[DATA_SHREDS..])?;
         assert_eq!(slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let slice_restored = RegularShredder::deshred(&nc_shreds)?;
+        let (slice_restored, _) = RegularShredder::deshred(&nc_shreds)?;
         assert_eq!(slice_restored, slice);
 
         // restore from half coding / half data shreds
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let slice_restored = RegularShredder::deshred(&shreds[start..end])?;
+        let (slice_restored, _) = RegularShredder::deshred(&shreds[start..end])?;
         assert_eq!(slice_restored, slice);
 
         // restore from all but one shred
-        let slice_restored = RegularShredder::deshred(&shreds[1..])?;
+        let (slice_restored, _) = RegularShredder::deshred(&shreds[1..])?;
         assert_eq!(slice_restored, slice);
 
         // cannot restore from one shred
         let result = RegularShredder::deshred(&shreds[..1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         // cannot restore from too few shreds
         let result = RegularShredder::deshred(&shreds[..DATA_SHREDS - 1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
     }
@@ -650,35 +599,35 @@ mod tests {
     #[test]
     fn coding_only_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(0);
-        let shreds = CodingOnlyShredder::shred(&slice, &sk)?;
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let shreds = CodingOnlyShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let slice_restored = CodingOnlyShredder::deshred(&shreds)?;
+        let (slice_restored, _) = CodingOnlyShredder::deshred(&shreds)?;
         slice.merkle_root = slice_restored.merkle_root;
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
-        let slice_restored = CodingOnlyShredder::deshred(&shreds[..DATA_SHREDS])?;
+        let (slice_restored, _) = CodingOnlyShredder::deshred(&shreds[..DATA_SHREDS])?;
         assert_eq!(slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let slice_restored = CodingOnlyShredder::deshred(&nc_shreds)?;
+        let (slice_restored, _) = CodingOnlyShredder::deshred(&nc_shreds)?;
         assert_eq!(slice_restored, slice);
 
         // restore from all but one shred
-        let slice_restored = CodingOnlyShredder::deshred(&shreds[1..])?;
+        let (slice_restored, _) = CodingOnlyShredder::deshred(&shreds[1..])?;
         assert_eq!(slice_restored, slice);
 
         // cannot restore from one shred
         let result = CodingOnlyShredder::deshred(&shreds[..1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         // cannot restore from too few shreds
         let result = CodingOnlyShredder::deshred(&shreds[..DATA_SHREDS - 1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
     }
@@ -686,41 +635,41 @@ mod tests {
     #[test]
     fn aont_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(16);
-        let shreds = AontShredder::shred(&slice, &sk)?;
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        let shreds = AontShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let slice_restored = AontShredder::deshred(&shreds)?;
+        let (slice_restored, _) = AontShredder::deshred(&shreds)?;
         slice.merkle_root = slice_restored.merkle_root;
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
-        let slice_restored = AontShredder::deshred(&shreds[..DATA_SHREDS])?;
+        let (slice_restored, _) = AontShredder::deshred(&shreds[..DATA_SHREDS])?;
         assert_eq!(slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let slice_restored = AontShredder::deshred(&nc_shreds)?;
+        let (slice_restored, _) = AontShredder::deshred(&nc_shreds)?;
         assert_eq!(slice_restored, slice);
 
         // restore from half coding / half data shreds
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let slice_restored = AontShredder::deshred(&shreds[start..end])?;
+        let (slice_restored, _) = AontShredder::deshred(&shreds[start..end])?;
         assert_eq!(slice_restored, slice);
 
         // restore from all but one shred
-        let slice_restored = AontShredder::deshred(&shreds[1..])?;
+        let (slice_restored, _) = AontShredder::deshred(&shreds[1..])?;
         assert_eq!(slice_restored, slice);
 
         // cannot restore from one shred
         let result = AontShredder::deshred(&shreds[..1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         // cannot restore from too few shreds
         let result = AontShredder::deshred(&shreds[..DATA_SHREDS - 1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
     }
@@ -728,41 +677,41 @@ mod tests {
     #[test]
     fn pets_shredding() -> Result<()> {
         let sk = SecretKey::new(&mut rng());
-        let mut slice = create_random_slice(16);
-        let shreds = PetsShredder::shred(&slice, &sk)?;
+        let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        let shreds = PetsShredder::shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let slice_restored = PetsShredder::deshred(&shreds)?;
+        let (slice_restored, _) = PetsShredder::deshred(&shreds)?;
         slice.merkle_root = slice_restored.merkle_root;
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
-        let slice_restored = PetsShredder::deshred(&shreds[..DATA_SHREDS])?;
+        let (slice_restored, _) = PetsShredder::deshred(&shreds[..DATA_SHREDS])?;
         assert_eq!(slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let slice_restored = PetsShredder::deshred(&nc_shreds)?;
+        let (slice_restored, _) = PetsShredder::deshred(&nc_shreds)?;
         assert_eq!(slice_restored, slice);
 
         // restore from half coding / half data shreds
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let slice_restored = PetsShredder::deshred(&shreds[start..end])?;
+        let (slice_restored, _) = PetsShredder::deshred(&shreds[start..end])?;
         assert_eq!(slice_restored, slice);
 
         // restore from all but one shred
-        let slice_restored = PetsShredder::deshred(&shreds[1..])?;
+        let (slice_restored, _) = PetsShredder::deshred(&shreds[1..])?;
         assert_eq!(slice_restored, slice);
 
         // cannot restore from one shred
         let result = PetsShredder::deshred(&shreds[..1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         // cannot restore from too few shreds
         let result = PetsShredder::deshred(&shreds[..DATA_SHREDS - 1]);
-        assert_eq!(result, Err(ShredderError::NotEnoughShreds));
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
     }

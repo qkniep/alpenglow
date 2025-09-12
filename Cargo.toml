@@ -14,46 +14,53 @@ publish = false
 [dependencies]
 aes = { version = "0.9.0-rc.0", features = ["hazmat", "zeroize"] }
 anyhow = "1"
+async-trait = "0.1"
 bincode = { version = "2", features = ["serde"] }
 bitvec = { version = "1", features = ["serde"] }
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
 bytes = { version = "1", features = ["serde"] }
-cipher = "=0.5.0-rc.0"
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 csv = "1"
 ctr = "0.10.0-rc.0"
 ed25519-consensus = "2"
+either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
-fastrace-opentelemetry = "0.10"
+fastrace-opentelemetry = "0.13"
 futures = "0.3"
-geo = "0.30"
+geo = "0.31"
 hex = "0.4"
+hex-literal = "1"
 log = "0.4"
-logforth = { version = "0.25", features = ["colored", "fastrace"] }
+logforth = { version = "0.27", features = ["colored", "append-fastrace"] }
+mockall = "0.13"
 moka = { version = "0.12", features = ["future"] }
-opentelemetry = "0.29"
-opentelemetry-otlp = { version = "0.29", features = ["grpc-tonic"] }
-opentelemetry_sdk = "0.29"
+opentelemetry = "0.30"
+opentelemetry-otlp = { version = "0.30", features = ["grpc-tonic"] }
+opentelemetry_sdk = "0.30"
 rand = "0.9"
 rayon = "1"
 reed-solomon-simd = "3"
-reqwest = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = { version = "0.10", features = ["asm-aarch64", "asm"] }
 smallvec = "1"
+static_assertions = "1"
 thiserror = "2"
 time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-toml = "0.8.22"
+toml = "0.9"
 
 [dev-dependencies]
 divan = "0.1"
 
+[lints.clippy]
+cast_possible_truncation = "allow"
+
 [profile.release]
 debug = true
+overflow-checks = true
 
 [[bench]]
 name = "crypto"

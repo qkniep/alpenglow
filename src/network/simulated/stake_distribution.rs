@@ -27,11 +27,11 @@ use std::sync::LazyLock;
 use log::{info, warn};
 use serde::Deserialize;
 
+use super::ping_data::{PingServer, coordinates_for_city, find_closest_ping_server, get_ping};
 use crate::crypto::aggsig;
 use crate::crypto::signature::SecretKey;
+use crate::network::dontcare_sockaddr;
 use crate::{Stake, ValidatorId, ValidatorInfo};
-
-use super::ping_data::{PingServer, coordinates_for_city, find_closest_ping_server, get_ping};
 
 /// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
@@ -203,9 +203,10 @@ pub fn validators_from_validator_data(
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             });
         }
     }
@@ -232,9 +233,10 @@ pub fn validators_from_validator_data(
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
-                all2all_address: String::new(),
-                disseminator_address: String::new(),
-                repair_address: String::new(),
+                all2all_address: dontcare_sockaddr(),
+                disseminator_address: dontcare_sockaddr(),
+                repair_request_address: dontcare_sockaddr(),
+                repair_response_address: dontcare_sockaddr(),
             },
             ping_server,
         ));
@@ -292,4 +294,36 @@ pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
         }
     }
     validators
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let validator_data = hub_validator_data(vec![("San Francisco".to_string(), 1.0)]);
+        let (_, vals_with_ping) = validators_from_validator_data(&validator_data);
+        assert_eq!(count_different_cities(&vals_with_ping), 1);
+
+        let (validators, _) = validators_from_validator_data(&VALIDATOR_DATA);
+        assert_eq!(validators.len(), 1283);
+
+        let (validators, _) = validators_from_validator_data(&SUI_VALIDATOR_DATA);
+        assert_eq!(validators.len(), 106);
+
+        let (_, vals_with_ping) = validators_from_validator_data(&FIVE_HUBS_VALIDATOR_DATA);
+        assert_eq!(count_different_cities(&vals_with_ping), 5);
+
+        let (_, vals_with_ping) = validators_from_validator_data(&STOCK_EXCHANGES_VALIDATOR_DATA);
+        assert_eq!(count_different_cities(&vals_with_ping), 8);
+    }
+
+    fn count_different_cities(validators: &[(ValidatorInfo, &PingServer)]) -> usize {
+        let mut cities = HashSet::new();
+        for (_, p) in validators {
+            cities.insert(&p.location);
+        }
+        cities.len()
+    }
 }

@@ -3,42 +3,65 @@
 
 //! Block repair sub-protocol.
 //!
-//!
-// WARN: this is incomplete!
+//! This module implements the double-Merkle based block repair protocol.
+//! It uses the fact that the block hash is the root of a Merkle tree, where
+//! the leaves of this tree are the Merkle roots of each of the block's slices.
+//! Each repair response is accompanied by a Merkle proof and can thus be
+//! individually verified.
 
+use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::Slot;
-use crate::consensus::{BlockInfo, Blockstore, EpochInfo, Pool};
-use crate::crypto::{Hash, MerkleTree};
+use crate::consensus::{Blockstore, EpochInfo, Pool};
+use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{Network, NetworkError, NetworkMessage};
+use crate::network::{BINCODE_CONFIG, Network};
 use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::types::SliceIndex;
+use crate::{BlockId, ValidatorId};
 
-/// Message types for the repair sub-protocol.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum RepairMessage {
-    /// Request for information from another validator.
-    Request(RepairRequest),
-    /// Response to a request from another validator.
-    Response(RepairResponse),
+/// Maximum time to wait for a response to a repair request.
+///
+/// After a request times out we retry it from another node.
+// TODO: make this tighter (can probably be close to `2 * DELTA`)
+const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Different types of [`RepairRequest`] messages.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepairRequestType {
+    /// Request for the total number of slices in block with a given hash.
+    LastSliceRoot(BlockId),
+    /// Request for the root hash of a slice, identified by block hash and slice index.
+    SliceRoot(BlockId, SliceIndex),
+    /// Request for shred, identified by block hash, slice index and shred index.
+    Shred(BlockId, SliceIndex, usize),
+}
+
+impl RepairRequestType {
+    /// Digests the [`RepairRequestType`] into a [`Hash`].
+    fn hash(&self) -> Hash {
+        let repair = RepairRequest {
+            req_type: self.clone(),
+            sender: 0,
+        };
+        let msg_bytes = bincode::serde::encode_to_vec(repair, BINCODE_CONFIG).unwrap();
+        hash(&msg_bytes)
+    }
 }
 
 /// Request messages for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum RepairRequest {
-    /// Request for the total number of slices in block with a given hash.
-    SliceCount(Slot, Hash),
-    /// Request for the root hash of a slice, identified by block hash and slice index.
-    SliceRoot(Slot, Hash, usize),
-    /// Request for shred, identified by block hash, slice index and shred index.
-    Shred(Slot, Hash, usize, usize),
-    ///
-    Parent(Slot, Hash),
+pub struct RepairRequest {
+    /// The validator that sent the message.
+    sender: ValidatorId,
+    /// The type of repair message sent.
+    req_type: RepairRequestType,
 }
 
 /// Response messages for the repair sub-protocol.
@@ -48,32 +71,145 @@ pub enum RepairRequest {
 /// If well-formed, it thus contains the corresponding variant of [`RepairRequest`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairResponse {
-    /// Response with the total number of slices for a specific block.
-    SliceCount(RepairRequest, usize),
+    /// Response with the last slice's Merkle root hash, plus corresponding proof.
+    LastSliceRoot(RepairRequestType, SliceIndex, Hash, Vec<Hash>),
     /// Response with the Merkle root hash of a specific slice, plus corresponding proof.
-    SliceRoot(RepairRequest, Hash, Vec<Hash>),
+    SliceRoot(RepairRequestType, Hash, Vec<Hash>),
     /// Response with a specific shred.
-    Shred(RepairRequest, Shred),
+    Shred(RepairRequestType, Shred),
+}
+
+impl RepairResponse {
+    /// Returns a reference to the [`RepairRequestType`] that this response corresponds to.
+    #[must_use]
+    const fn request_type(&self) -> &RepairRequestType {
+        match self {
+            Self::LastSliceRoot(req_type, _, _, _)
+            | Self::SliceRoot(req_type, _, _)
+            | Self::Shred(req_type, _) => req_type,
+        }
+    }
+}
+
+/// Handle repair requests from other nodes.
+///
+/// This is separated from [`Repair`] to handle repair requests and responses on separate sockets and tokio tasks.
+/// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
+pub struct RepairRequestHandler<N: Network> {
+    epoch_info: Arc<EpochInfo>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    network: N,
+}
+
+impl<N> RepairRequestHandler<N>
+where
+    N: Network<Recv = RepairRequest, Send = RepairResponse>,
+{
+    /// Creates a new repair request handler instance.
     ///
-    Parent(RepairRequest, Slot, Hash),
+    /// Given `network` instance will be used for receiving repair requests and sending repair responses.
+    /// The blockstore will be used to handle the repair requests.
+    pub fn new(
+        epoch_info: Arc<EpochInfo>,
+        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        network: N,
+    ) -> Self {
+        Self {
+            epoch_info,
+            blockstore,
+            network,
+        }
+    }
+
+    /// Main loop of the repair request handler.
+    ///
+    /// Listens for repair requests on `self.network`.
+    /// Looks up the corresponding data in `self.blockstore` and sends replies.
+    pub async fn run(&self) {
+        loop {
+            let request = self.network.receive().await.unwrap();
+            self.answer_request(request).await.unwrap();
+        }
+    }
+
+    /// Tries to answer the given repair request.
+    ///
+    /// If we do not have the necessary information in blockstore, the request is ignored.
+    /// Otherwise, the correct response is sent back to the sender of the request.
+    async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
+        trace!("answering repair request: {request:?}");
+        let response = match request.req_type {
+            RepairRequestType::LastSliceRoot(block_id) => {
+                let blockstore = self.blockstore.read().await;
+                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
+                    return Ok(());
+                };
+                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
+                    return Ok(());
+                };
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
+                else {
+                    return Ok(());
+                };
+                RepairResponse::LastSliceRoot(request.req_type, last_slice, root, proof)
+            }
+            RepairRequestType::SliceRoot(block_id, slice) => {
+                let blockstore = self.blockstore.read().await;
+                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
+                    return Ok(());
+                };
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
+                    return Ok(());
+                };
+                RepairResponse::SliceRoot(request.req_type, root, proof)
+            }
+            RepairRequestType::Shred(block_id, slice, shred) => {
+                let blockstore = self.blockstore.read().await;
+                let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
+                    return Ok(());
+                };
+                RepairResponse::Shred(request.req_type, shred)
+            }
+        };
+        self.send_response(response, request.sender).await
+    }
+
+    async fn send_response(
+        &self,
+        response: RepairResponse,
+        validator: ValidatorId,
+    ) -> std::io::Result<()> {
+        let to = self.epoch_info.validator(validator).repair_response_address;
+        self.network.send(&response, to).await
+    }
 }
 
 /// Instance of double-Merkle based block repair protocol.
+///
+/// This is used by the node to repair blocks that it is missing.
+/// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
 pub struct Repair<N: Network> {
-    blockstore: Arc<RwLock<Blockstore>>,
-    pool: Arc<RwLock<Pool>>,
+    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    slice_roots: BTreeMap<(BlockId, SliceIndex), Hash>,
+    outstanding_requests: BTreeMap<Hash, RepairRequestType>,
+    request_timeouts: BinaryHeap<(Instant, Hash)>,
     network: N,
     sampler: StakeWeightedSampler,
+    epoch_info: Arc<EpochInfo>,
 }
 
-impl<N: Network> Repair<N> {
+impl<N> Repair<N>
+where
+    N: Network<Recv = RepairResponse, Send = RepairRequest>,
+{
     /// Creates a new repair instance.
     ///
-    /// Given `network` will be used for sending and receiving repair messages.
+    /// Given `network` will be used for sending repair requests and receiving repair responses.
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
-        blockstore: Arc<RwLock<Blockstore>>,
-        pool: Arc<RwLock<Pool>>,
+        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         network: N,
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
@@ -82,68 +218,59 @@ impl<N: Network> Repair<N> {
         Self {
             blockstore,
             pool,
+            slice_roots: BTreeMap::new(),
+            outstanding_requests: BTreeMap::new(),
+            request_timeouts: BinaryHeap::new(),
             network,
             sampler,
+            epoch_info,
+        }
+    }
+
+    /// Main loop of the repair protocol.
+    ///
+    /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
+    /// Inititates the corresponding repair process and handles ongoing repairs.
+    pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
+        loop {
+            let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
+            let sleep_duration = match next_timeout {
+                None => std::time::Duration::MAX,
+                Some(t) => t.duration_since(Instant::now()),
+            };
+            tokio::select! {
+                // handle repair response from network
+                res = self.network.receive() => self.handle_response(res.unwrap()).await,
+                // handle request for repairing new block
+                Some(block_id) = repair_receiver.recv() => {
+                    self.repair_block(block_id).await;
+                }
+                // handle next request timeout
+                _ = tokio::time::sleep(sleep_duration) => {
+                    let Some((_, hash)) = self.request_timeouts.pop() else {
+                        continue;
+                    };
+                    if let Some(request) = self.outstanding_requests.remove(&hash) {
+                        debug!("retrying timed-out repair request {request:?}");
+                        self.send_request(request).await.unwrap();
+                    }
+                }
+            }
         }
     }
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
-    pub async fn repair_block(&self, slot: Slot, block_hash: Hash) {
-        let blockstore = self.blockstore.read().await;
-        if blockstore.get_block(slot, block_hash).is_some() {
+    pub async fn repair_block(&mut self, block_id: BlockId) {
+        let (slot, block_hash) = block_id;
+        let h = &hex::encode(block_hash)[..8];
+        if self.blockstore.read().await.get_block(block_id).is_some() {
+            trace!("ignoring repair for block {h} in slot {slot}, already have the block");
             return;
         }
-        drop(blockstore);
 
-        let h = &hex::encode(block_hash)[..8];
         debug!("repairing block {h} in slot {slot}");
-        // TODO: perform actual repair
-        for _ in 0..10 {
-            self.request_parent(slot, block_hash).await.unwrap();
-        }
-    }
-
-    /// Tries to answer the given repair request.
-    ///
-    /// If we do not have the block the request refers to, the request is ignored.
-    /// Otherwise, the correct response is sent back to the sender of the request.
-    pub async fn answer_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
-        trace!("answering repair request: {request:?}");
-        let slot = request.slot();
-        let hash = request.block_hash();
-        let blockstore = self.blockstore.read().await;
-        if blockstore.canonical_block_hash(slot) != Some(hash) {
-            return Ok(());
-        }
-        let response = match request {
-            RepairRequest::SliceCount(_, _) => {
-                let k = blockstore.stored_shreds_for_slot(slot) / TOTAL_SHREDS;
-                RepairResponse::SliceCount(request, k)
-            }
-            RepairRequest::SliceRoot(_, _, slice) => {
-                let shred_index = slice * TOTAL_SHREDS;
-                let Some(shred) = blockstore.get_shred(slot, slice, shred_index) else {
-                    return Ok(());
-                };
-                let root = shred.merkle_root;
-                let proof = blockstore.create_double_merkle_proof(slot, slice);
-                RepairResponse::SliceRoot(request, root, proof)
-            }
-            RepairRequest::Shred(_, _, slice, shred) => {
-                let Some(shred) = blockstore.get_shred(slot, slice, shred).cloned() else {
-                    return Ok(());
-                };
-                RepairResponse::Shred(request, shred)
-            }
-            RepairRequest::Parent(slot, hash) => {
-                let Some(block) = blockstore.get_block(slot, hash) else {
-                    return Ok(());
-                };
-                RepairResponse::Parent(request, block.parent, block.parent_hash)
-            }
-        };
-        drop(blockstore);
-        self.send_response(response).await
+        let req = RepairRequestType::LastSliceRoot(block_id);
+        self.send_request(req).await.unwrap();
     }
 
     /// Handles a repair response, storing the received data.
@@ -151,163 +278,431 @@ impl<N: Network> Repair<N> {
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
-    pub async fn handle_response(&self, response: RepairResponse) {
+    async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
-        let slot = response.slot();
-        let block_hash = response.block_hash();
+        let request_hash = response.request_type().hash();
+
+        // check whether we are (still) waiting on response to this request
+        let Some(_) = self.outstanding_requests.remove(&request_hash) else {
+            warn!("received repair response for unknown request {response:?}");
+            return;
+        };
+
         match response {
-            RepairResponse::SliceCount(req, _count) => {
-                let RepairRequest::SliceCount(_, _) = req else {
+            RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
+                // check validity of response
+                let RepairRequestType::LastSliceRoot(block_id) = req_type else {
+                    warn!("repair response (LastSliceRoot) to mismatching request {req_type:?}");
                     return;
                 };
-                // TODO: include & check proof
-                // self.slice_counts.insert((slot, block_hash), count);
-            }
-            RepairResponse::SliceRoot(req, slice_root, proof) => {
-                let RepairRequest::SliceRoot(_, _, slice) = req else {
-                    return;
-                };
-                if !MerkleTree::check_hash_proof(slice_root, slice, block_hash, &proof) {
+                let (_, block_hash) = block_id;
+                if !MerkleTree::check_proof_last(&root, last_slice.inner(), block_hash, &proof) {
+                    warn!("repair response (LastSliceRoot) with invalid proof");
                     return;
                 }
-                // self.slice_roots
-                //     .insert((slot, block_hash, slice), slice_root);
+
+                // store slice Merkle root
+                self.slice_roots.insert((block_id, last_slice), root);
+
+                // issue next requests
+                // TODO: do not request last slice root again
+                // TODO: already requests shreds for last slice here
+                for slice in last_slice.until() {
+                    let req_type = RepairRequestType::SliceRoot(block_id, slice);
+                    self.send_request(req_type).await.unwrap();
+                }
             }
-            RepairResponse::Shred(req, shred) => {
-                let RepairRequest::Shred(_, _, slice, index) = req else {
+            RepairResponse::SliceRoot(req_type, root, proof) => {
+                // check validity of response
+                let RepairRequestType::SliceRoot(block_id, slice) = req_type else {
+                    warn!("repair response (SliceRoot) to mismatching request {req_type:?}");
                     return;
                 };
-                if shred.payload().slot != slot
-                    || shred.payload().slice_index == slice
-                    || shred.payload().index_in_slice == index
+                let (_, block_hash) = block_id;
+                if !MerkleTree::check_proof(&root, slice.inner(), block_hash, &proof) {
+                    warn!("repair response (SliceRoot) with invalid proof");
+                    return;
+                }
+
+                // store slice Merkle root
+                self.slice_roots.insert((block_id, slice), root);
+
+                // issue next requests
+                // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
+                for shred_index in 0..TOTAL_SHREDS {
+                    let req = RepairRequestType::Shred(block_id, slice, shred_index);
+                    self.send_request(req).await.unwrap();
+                }
+            }
+            RepairResponse::Shred(req_type, shred) => {
+                // check validity of response
+                let RepairRequestType::Shred(block_id, slice, index) = req_type else {
+                    warn!("repair response (Shred) to mismatching request {req_type:?}");
+                    return;
+                };
+                let (slot, block_hash) = block_id;
+                if shred.payload().header.slot != slot
+                    || shred.payload().header.slice_index != slice
+                    || shred.payload().index_in_slice != index
                 {
+                    warn!("repair response (Shred) for mismatching shred index");
                     return;
                 }
-                // TODO: make sure shred is checked against correct merkle_root
-                //
-                /* if !shred.merkle_root ... { return; } */
-                self.blockstore.write().await.add_shred(shred, false).await;
-            }
-            RepairResponse::Parent(_, parent_slot, parent_hash) => {
-                let block_info = BlockInfo {
-                    hash: block_hash,
-                    parent_slot,
-                    parent_hash,
+                let Some(&root) = self.slice_roots.get(&(block_id, slice)) else {
+                    unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                self.pool.write().await.add_block(slot, block_info).await;
+                if !shred.verify_path_only(&root) {
+                    warn!("repair response (Shred) with invalid Merkle proof");
+                    return;
+                }
+
+                // store shred
+                let res = self
+                    .blockstore
+                    .write()
+                    .await
+                    .add_shred_from_repair(block_hash, shred)
+                    .await;
+                if let Ok(Some((slot, block_info))) = res {
+                    assert_eq!(block_info.hash, block_hash);
+                    self.pool
+                        .write()
+                        .await
+                        .add_block((slot, block_info.hash), block_info.parent)
+                        .await;
+                    debug!(
+                        "successfully repaired block {} in slot {}",
+                        &hex::encode(block_hash)[..8],
+                        slot
+                    );
+                }
             }
         }
     }
 
-    /// Tries to receive and deserialize messages from the underlying network.
-    ///
-    /// Resolves to the next successfully deserialized [`RepairMessage`].
-    /// Ignores any potentially received [`NetworkMessage`] of a different type.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NetworkError`] if the underlying network fails.
-    pub async fn receive(&self) -> Result<RepairMessage, NetworkError> {
-        loop {
-            match self.network.receive().await? {
-                NetworkMessage::Repair(r) => return Ok(r),
-                m => warn!("unexpected message type for repair: {m:?}"),
+    async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
+        let hash = req_type.hash();
+
+        let expiry = Instant::now() + REPAIR_TIMEOUT;
+        self.outstanding_requests.insert(hash, req_type.clone());
+        self.request_timeouts.retain(|(_, h)| h != &hash);
+        self.request_timeouts.push((expiry, hash));
+
+        let request = RepairRequest {
+            sender: self.epoch_info.own_id,
+            req_type,
+        };
+        let msg_bytes = bincode::serde::encode_to_vec(request, BINCODE_CONFIG).unwrap();
+        // HACK: magic number to fix high-failure scenarios
+        let mut to_all = HashSet::new();
+        for _ in 0..10 {
+            to_all.insert(self.pick_random_peer());
+            if to_all.len() == 3 {
+                break;
             }
         }
+        for to in to_all {
+            self.network.send_serialized(&msg_bytes, to).await?;
+        }
+        Ok(())
     }
 
-    async fn _request_slice_count(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
-        let req = RepairRequest::SliceCount(slot, hash);
-        self.send_request(req).await
-    }
-
-    async fn _request_slice_root(
-        &self,
-        slot: Slot,
-        hash: Hash,
-        slice: usize,
-    ) -> Result<(), NetworkError> {
-        let req = RepairRequest::SliceRoot(slot, hash, slice);
-        self.send_request(req).await
-    }
-
-    async fn _request_shred(
-        &self,
-        slot: Slot,
-        hash: Hash,
-        slice: usize,
-        shred: usize,
-    ) -> Result<(), NetworkError> {
-        let req = RepairRequest::Shred(slot, hash, slice, shred);
-        self.send_request(req).await
-    }
-
-    async fn request_parent(&self, slot: Slot, hash: Hash) -> Result<(), NetworkError> {
-        let req = RepairRequest::Parent(slot, hash);
-        self.send_request(req).await
-    }
-
-    async fn send_request(&self, request: RepairRequest) -> Result<(), NetworkError> {
-        let repair = RepairMessage::Request(request);
-        let msg = NetworkMessage::Repair(repair);
-        let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
-        self.network.send(&msg, to).await
-    }
-
-    async fn send_response(&self, response: RepairResponse) -> Result<(), NetworkError> {
-        let repair = RepairMessage::Response(response);
-        let msg = NetworkMessage::Repair(repair);
-        // TODO: send back to correct validator
-        let to = &self.sampler.sample_info(&mut rand::rng()).repair_address;
-        self.network.send(&msg, to).await
+    fn pick_random_peer(&self) -> SocketAddr {
+        let mut rng = rand::rng();
+        let mut peer_info = self.sampler.sample_info(&mut rng);
+        while peer_info.id == self.epoch_info.own_id {
+            peer_info = self.sampler.sample_info(&mut rng);
+        }
+        peer_info.repair_request_address
     }
 }
 
-impl RepairRequest {
-    /// Returns the slot number this request refers to.
-    #[must_use]
-    pub const fn slot(&self) -> Slot {
-        match self {
-            Self::SliceCount(slot, _)
-            | Self::SliceRoot(slot, _, _)
-            | Self::Shred(slot, _, _, _)
-            | Self::Parent(slot, _) => *slot,
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use tokio::sync::mpsc::Sender;
+
+    use super::*;
+    use crate::consensus::{BlockstoreImpl, PoolImpl};
+    use crate::crypto::signature::SecretKey;
+    use crate::network::simulated::SimulatedNetworkCore;
+    use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
+    use crate::test_utils::{create_random_shredded_block, generate_validators};
+    use crate::types::Slot;
+    use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
+
+    /// Creates a small network of 2 validators.
+    ///
+    /// Validator 0: Is the leader of the genesis window and does not have repair set up.
+    /// Validator 1: Has repair set up and is not the leader.
+    ///
+    /// Returns:
+    /// - sender side of the repair channel for validator 1
+    /// - blockstore of validator 1
+    /// - network interface where validator 0 should accept [`RepairRequest`] messages
+    /// - network interface where validator 0 should accept [`RepairResponse`] messages
+    /// - leader secret key of validator 0
+    async fn create_repair_instance() -> (
+        Sender<BlockId>,
+        Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        SimulatedNetwork<RepairResponse, RepairRequest>,
+        SimulatedNetwork<RepairRequest, RepairResponse>,
+        SecretKey,
+    ) {
+        // create EpochInfo for 2 validators and the corresponding network
+        let (_, epoch_info) = generate_validators(2);
+        let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
+        let leader_key = SecretKey::new(&mut rand::rng());
+        let v0 = epoch_info.validators.get_mut(0).unwrap();
+        v0.pubkey = leader_key.to_pk();
+        v0.repair_request_address = localhost_ip_sockaddr(0);
+        v0.repair_response_address = localhost_ip_sockaddr(1);
+
+        let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
+        let v0_repair_request_network = core
+            .join_unlimited(v0.repair_request_address.port() as u64)
+            .await;
+        let v0_repair_network = core
+            .join_unlimited(v0.repair_response_address.port() as u64)
+            .await;
+
+        let v1 = epoch_info.validators.get_mut(1).unwrap();
+        v1.repair_request_address = localhost_ip_sockaddr(2);
+        v1.repair_response_address = localhost_ip_sockaddr(3);
+        epoch_info.own_id = 1;
+
+        let v1_repair_request_network = core
+            .join_unlimited(v1.repair_request_address.port() as u64)
+            .await;
+        let v1_repair_network = core
+            .join_unlimited(v1.repair_response_address.port() as u64)
+            .await;
+
+        let epoch_info = Arc::new(epoch_info);
+
+        // set up blockstore
+        let (votor_tx, votor_rx) = tokio::sync::mpsc::channel(100);
+        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
+            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone())),
+        ));
+
+        // set up pool
+        let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
+        let pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>> = Arc::new(RwLock::new(Box::new(
+            PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx.clone()),
+        )));
+
+        // create and start Repair instance
+        let mut repair = Repair::new(
+            Arc::clone(&blockstore),
+            pool,
+            v1_repair_network,
+            epoch_info.clone(),
+        );
+        tokio::spawn(async move {
+            repair.repair_loop(repair_rx).await;
+            // keep votor_rx alive
+            drop(votor_rx);
+        });
+        let repair_request_handler =
+            RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_request_network);
+        tokio::spawn(async move {
+            repair_request_handler.run().await;
+        });
+        (
+            repair_tx,
+            blockstore,
+            v0_repair_request_network,
+            v0_repair_network,
+            leader_key,
+        )
+    }
+
+    #[tokio::test]
+    async fn repair_tiny_block() {
+        repair_block(1).await;
+    }
+
+    #[tokio::test]
+    async fn repair_regular_block() {
+        repair_block(10).await;
+    }
+
+    // test takes a long time to run in debug mode.
+    // so ignored for normal runs and ran as part of sequential tests
+    #[tokio::test]
+    #[ignore]
+    async fn repair_large_block() {
+        repair_block(MAX_SLICES_PER_BLOCK).await;
+    }
+
+    async fn repair_block(num_slices: usize) {
+        let (repair_channel, blockstore, other_network_request, _other_network_reply, sk) =
+            create_repair_instance().await;
+
+        // create a block to repair
+        let slot = Slot::genesis().next();
+        let (block_hash, merkle_tree, shreds) = create_random_shredded_block(slot, num_slices, &sk);
+        let block_to_repair = (slot, block_hash);
+
+        // ask repair instance to repair this block
+        repair_channel.send(block_to_repair).await.unwrap();
+
+        // expect LastSliceRoot request first
+        let msg = other_network_request.receive().await.unwrap();
+        let req_type = RepairRequestType::LastSliceRoot(block_to_repair);
+        assert_eq!(msg.req_type, req_type);
+
+        // answer LastSliceRoot request
+        let response = RepairResponse::LastSliceRoot(
+            req_type,
+            SliceIndex::new_unchecked(num_slices - 1),
+            shreds.last().unwrap()[0].merkle_root,
+            merkle_tree.create_proof(num_slices - 1),
+        );
+        let port1 = localhost_ip_sockaddr(3);
+        other_network_request.send(&response, port1).await.unwrap();
+
+        // expect SliceRoot requests next
+        let mut slice_roots_requested = BTreeSet::new();
+        for _ in 0..num_slices {
+            let msg = other_network_request.receive().await.unwrap();
+
+            for slice in SliceIndex::all().take(num_slices) {
+                let req_type = RepairRequestType::SliceRoot(block_to_repair, slice);
+                if msg.req_type == req_type {
+                    slice_roots_requested.insert(slice);
+                    break;
+                }
+            }
         }
-    }
 
-    /// Returns the block hash this response refers to.
-    #[must_use]
-    pub const fn block_hash(&self) -> Hash {
-        match self {
-            Self::SliceCount(_, hash)
-            | Self::SliceRoot(_, hash, _)
-            | Self::Shred(_, hash, _, _)
-            | Self::Parent(_, hash) => *hash,
+        // assert all other slice roots requested + answer the requests
+        for slice in SliceIndex::all().take(num_slices) {
+            assert!(slice_roots_requested.contains(&slice));
+            let req_type = RepairRequestType::SliceRoot(block_to_repair, slice);
+            let root = shreds[slice.inner()][0].merkle_root;
+            let proof = merkle_tree.create_proof(slice.inner());
+            let response = RepairResponse::SliceRoot(req_type, root, proof);
+            other_network_request.send(&response, port1).await.unwrap();
+
+            // expect Shred requests for this slice next
+            let mut shreds_requested = BTreeSet::new();
+            for _ in 0..TOTAL_SHREDS {
+                let msg = other_network_request.receive().await.unwrap();
+                for shred_index in 0..TOTAL_SHREDS {
+                    let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
+                    if msg.req_type == req_type {
+                        shreds_requested.insert(shred_index);
+                        break;
+                    }
+                }
+            }
+
+            // assert all shreds requested + answer the requests
+            let slice_shreds = shreds[slice.inner()].clone();
+            for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
+                assert!(shreds_requested.contains(&shred_index));
+                let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
+                let response = RepairResponse::Shred(req_type, shred);
+                other_network_request.send(&response, port1).await.unwrap();
+            }
         }
-    }
-}
 
-impl RepairResponse {
-    /// Returns a reference to the [`RepairRequest`] that this response corresponds to.
-    #[must_use]
-    pub const fn request(&self) -> &RepairRequest {
-        match self {
-            Self::SliceCount(req, _)
-            | Self::SliceRoot(req, _, _)
-            | Self::Shred(req, _)
-            | Self::Parent(req, _, _) => req,
+        // after some time block should be repaired
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(blockstore.read().await.get_block(block_to_repair).is_some());
+    }
+
+    #[tokio::test]
+    async fn answer_requests() {
+        const SLICES: usize = 2;
+        let (_sender, blockstore, _other_network_request, other_network, sk) =
+            create_repair_instance().await;
+
+        // create a block to repair
+        let slot = Slot::genesis().next();
+        let (block_hash, _, shreds) = create_random_shredded_block(slot, SLICES, &sk);
+        let block_to_repair = (slot, block_hash);
+
+        // ingest the block into blockstore
+        for slice_shreds in shreds.clone() {
+            let mut b = blockstore.write().await;
+            for shred in slice_shreds {
+                let _ = b.add_shred_from_disseminator(shred).await;
+            }
         }
-    }
+        assert_eq!(
+            blockstore.read().await.disseminated_block_hash(slot),
+            Some(block_hash)
+        );
+        assert!(blockstore.read().await.get_block(block_to_repair).is_some());
 
-    /// Returns the slot number this response refers to.
-    #[must_use]
-    pub const fn slot(&self) -> Slot {
-        self.request().slot()
-    }
+        // request last slice root to learn how many slices there are
+        let request = RepairRequest {
+            req_type: RepairRequestType::LastSliceRoot(block_to_repair),
+            sender: 0,
+        };
+        let port1 = localhost_ip_sockaddr(2);
+        other_network.send(&request, port1).await.unwrap();
 
-    /// Returns the block hash this response refers to.
-    #[must_use]
-    pub const fn block_hash(&self) -> Hash {
-        self.request().block_hash()
+        // verify reponse
+        let msg = other_network.receive().await.unwrap();
+        let RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) = msg else {
+            panic!("not LastSliceRoot response");
+        };
+        assert_eq!(req_type, request.req_type);
+        assert_eq!(last_slice.inner(), SLICES - 1);
+        assert_eq!(root, shreds[last_slice.inner()][0].merkle_root);
+        let correct_proof = blockstore
+            .read()
+            .await
+            .create_double_merkle_proof(block_to_repair, last_slice)
+            .unwrap();
+        assert_eq!(proof, correct_proof);
+
+        // request slice roots
+        for slice in SliceIndex::all().take(SLICES) {
+            let request = RepairRequest {
+                req_type: RepairRequestType::SliceRoot(block_to_repair, slice),
+                sender: 0,
+            };
+            other_network.send(&request, port1).await.unwrap();
+
+            // verify response
+            let msg = other_network.receive().await.unwrap();
+            let RepairResponse::SliceRoot(req_type, root, proof) = msg else {
+                panic!("not SliceRoot response");
+            };
+            assert_eq!(req_type, request.req_type);
+            assert_eq!(root, shreds[slice.inner()][0].merkle_root);
+            let correct_proof = blockstore
+                .read()
+                .await
+                .create_double_merkle_proof(block_to_repair, slice)
+                .unwrap();
+            assert_eq!(proof, correct_proof);
+
+            // request slice shreds
+            for shred_index in 0..TOTAL_SHREDS {
+                let request = RepairRequest {
+                    req_type: RepairRequestType::Shred(block_to_repair, slice, shred_index),
+                    sender: 0,
+                };
+                other_network.send(&request, port1).await.unwrap();
+
+                // verify response
+                let msg = other_network.receive().await.unwrap();
+                let RepairResponse::Shred(req_type, shred) = msg else {
+                    panic!("not Shred response");
+                };
+                assert_eq!(req_type, request.req_type);
+                assert_eq!(
+                    shred.payload().data,
+                    shreds[slice.inner()][shred_index].payload().data
+                );
+            }
+        }
     }
 }

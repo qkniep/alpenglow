@@ -6,28 +6,34 @@
 //! This module provides an implementation of the [`Network`] trait for TCP.
 //! It uses [`tokio::net::TcpListener`] and [`tokio::net::TcpStream`] under the hood.
 
+use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use async_trait::async_trait;
 use futures::SinkExt;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use super::{Network, NetworkError, NetworkMessage};
+use super::{Network, NetworkMessage};
+use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
 
 /// Implementation of network abstraction over TCP connections.
 // WARN: this is incomplete!
-pub struct TcpNetwork {
+pub struct TcpNetwork<S, R> {
     listener: TcpListener,
     readers: RwLock<Vec<Mutex<StreamReader>>>,
     writers: RwLock<Vec<Mutex<StreamWriter>>>,
+    _msg_types: PhantomData<(S, R)>,
 }
 
-impl TcpNetwork {
+impl<S, R> TcpNetwork<S, R> {
     /// Creates a new `TcpNetwork` instance bound to the given `port`.
     ///
     /// # Panics
@@ -42,6 +48,7 @@ impl TcpNetwork {
             listener,
             readers: RwLock::new(Vec::new()),
             writers: RwLock::new(Vec::new()),
+            _msg_types: PhantomData,
         }
     }
 
@@ -61,30 +68,29 @@ impl TcpNetwork {
     }
 }
 
-impl Network for TcpNetwork {
-    type Address = SocketAddr;
+#[async_trait]
+impl<S, R> Network for TcpNetwork<S, R>
+where
+    S: Serialize + Send + Sync,
+    R: DeserializeOwned + Send + Sync,
+{
+    type Recv = R;
+    type Send = S;
 
-    async fn send(
-        &self,
-        message: &NetworkMessage,
-        to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
-        let bytes = message.to_bytes();
+    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
+        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(
-        &self,
-        bytes: &[u8],
-        _to: impl AsRef<str> + Send,
-    ) -> Result<(), NetworkError> {
+    async fn send_serialized(&self, bytes: &[u8], _to: SocketAddr) -> std::io::Result<()> {
         // TODO: use correct socket
         let writer = &self.writers.read().await[0];
         writer.lock().await.send(bytes.to_vec().into()).await?;
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkError> {
+    async fn receive(&self) -> std::io::Result<R> {
         loop {
             tokio::select! {
                 // accept new incoming connections
@@ -112,7 +118,7 @@ impl Network for TcpNetwork {
                 // Some(Ok(msg)) = readers[0].lock().await.next() => {
                 //     match NetworkMessage::from_bytes(&msg) {
                 //         Ok(msg) => return Ok(msg),
-                //         Err(NetworkError::Deserialization(_)) => warn!("failed deserializing message"),
+                //         Err(NetworkReceiveError:Deserialization(_)) => warn!("failed deserializing message"),
                 //         Err(err) => return Err(err),
                 //     }
                 // },

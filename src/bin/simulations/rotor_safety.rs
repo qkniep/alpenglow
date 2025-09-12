@@ -1,10 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//!
-//!
-//!
-
 use std::fs::File;
 use std::sync::RwLock;
 
@@ -18,8 +14,7 @@ const SLICES: usize = 1;
 
 const MAX_FAILURES: usize = 10_000;
 
-///
-pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {
+pub struct RotorSafetyTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
     sampler: RwLock<S>,
@@ -31,7 +26,6 @@ pub struct RotorSafetyTest<S: SamplingStrategy + Sync + Send> {
 }
 
 impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
-    ///
     pub fn new(
         validators: Vec<ValidatorInfo>,
         sampler: S,
@@ -54,7 +48,6 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
         }
     }
 
-    ///
     pub fn run(&self, test_name: &str, attack_frac: f64, csv_file: &mut csv::Writer<File>) {
         let mut attack_prob = 0.0;
 
@@ -120,10 +113,9 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             for _ in 0..100_000 {
                 let (tests, done) = self.run_with_corrupted(1000, attack_frac == 0.2, &corrupted);
                 *self.tests.write().unwrap() += tests;
-                if done {
-                    break;
-                } else if *self.tests.read().unwrap() as f64
-                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
+                if done
+                    || *self.tests.read().unwrap() as f64
+                        > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }
@@ -150,10 +142,9 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             for _ in 0..100_000 {
                 let (tests, done) = self.run_with_corrupted(1000, attack_frac == 0.2, &corrupted);
                 *self.tests.write().unwrap() += tests;
-                if done {
-                    break;
-                } else if *self.tests.read().unwrap() as f64
-                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
+                if done
+                    || *self.tests.read().unwrap() as f64
+                        > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }
@@ -182,10 +173,9 @@ impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
             for _ in 0..100_000 {
                 let (tests, done) = self.run_with_corrupted(1000, attack_frac == 0.2, &corrupted);
                 *self.tests.write().unwrap() += tests;
-                if done {
-                    break;
-                } else if *self.tests.read().unwrap() as f64
-                    > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
+                if done
+                    || *self.tests.read().unwrap() as f64
+                        > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
                 {
                     break;
                 }

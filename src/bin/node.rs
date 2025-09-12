@@ -4,17 +4,17 @@
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
-use std::net::SocketAddrV4;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use alpenglow::ValidatorInfo;
 use alpenglow::all2all::TrivialAll2All;
 use alpenglow::consensus::{Alpenglow, EpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
-use alpenglow::network::UdpNetwork;
+use alpenglow::network::{NetworkMessage, UdpNetwork};
+use alpenglow::{Transaction, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
@@ -22,33 +22,12 @@ use fastrace::collector::Config;
 use fastrace::prelude::*;
 use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-use logforth::color::LevelColor;
-use logforth::filter::EnvFilter;
-use logforth::{Layout, append};
-use opentelemetry::trace::SpanKind;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
-// TODO: remove this duplicate definition
-#[derive(Debug, Clone, Copy)]
-struct MinimalLogforthLayout;
-
-impl Layout for MinimalLogforthLayout {
-    fn format(
-        &self,
-        record: &log::Record,
-        _: &[Box<dyn logforth::Diagnostic>],
-    ) -> anyhow::Result<Vec<u8>> {
-        let colors = LevelColor::default();
-        let level = colors.colorize_record_level(false, record.level());
-        let message = record.args();
-        Ok(format!("{level:>5} {message}").into_bytes())
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConfigFile {
@@ -97,7 +76,6 @@ async fn main() -> Result<()> {
             .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
             .build()
             .expect("initialize oltp exporter"),
-        SpanKind::Server,
         Cow::Owned(
             Resource::builder()
                 .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
@@ -109,13 +87,7 @@ async fn main() -> Result<()> {
     );
     fastrace::set_reporter(reporter, Config::default());
 
-    // enable `logforth` logging
-    logforth::builder()
-        .dispatch(|d| {
-            d.filter(EnvFilter::from_default_env())
-                .append(append::Stderr::default().with_layout(MinimalLogforthLayout))
-        })
-        .apply();
+    logging::enable_logforth();
 
     let span_context = SpanContext::random();
     let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
@@ -136,8 +108,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-type Node =
-    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+type Node = Alpenglow<
+    TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
+    Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    UdpNetwork<Transaction, Transaction>,
+>;
 
 fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     // turn ConfigFile into an actual node
@@ -148,13 +123,17 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
     let repair_network = UdpNetwork::new(start_port + 2);
+    let repair_request_network = UdpNetwork::new(start_port + 3);
+    let txs_receiver = UdpNetwork::new(start_port + 4);
     Ok(Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
         disseminator,
         repair_network,
+        repair_request_network,
         epoch_info,
+        txs_receiver,
     ))
 }
 
@@ -174,19 +153,21 @@ async fn create_node_configs(
         let Some(line) = socket_list.next_line().await? else {
             break;
         };
-        let sockaddr: SocketAddrV4 = line.parse().context("Can not parse socket list")?;
+        let sockaddr = line
+            .parse::<SocketAddr>()
+            .context("Can not parse socket list")?;
         sks.push(SecretKey::new(&mut rng));
-        let port = sockaddr.port();
-        ports.push(port);
+        ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
             id,
             stake: 1,
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address: format!("{}:{}", sockaddr.ip(), port),
-            disseminator_address: format!("{}:{}", sockaddr.ip(), port + 1),
-            repair_address: format!("{}:{}", sockaddr.ip(), port + 2),
+            all2all_address: sockaddr,
+            disseminator_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 1),
+            repair_request_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
+            repair_response_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 3),
         });
     }
 
