@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{BINCODE_CONFIG, MTU_BYTES, Network, NetworkReceiveError, NetworkSendError};
+use crate::network::{BINCODE_CONFIG, Network, NetworkReceiveError, NetworkSendError};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -46,13 +46,12 @@ pub enum RepairRequestType {
 
 impl RepairRequestType {
     /// Digests the [`RepairRequestType`] into a [`Hash`].
-    pub fn hash(&self) -> Hash {
+    fn hash(&self) -> Hash {
         let repair = RepairRequest {
             req_type: self.clone(),
             sender: 0,
         };
         let msg_bytes = bincode::serde::encode_to_vec(repair, BINCODE_CONFIG).unwrap();
-        assert!(msg_bytes.len() <= MTU_BYTES);
         hash(&msg_bytes)
     }
 }
@@ -82,9 +81,9 @@ pub enum RepairResponse {
 }
 
 impl RepairResponse {
-    /// Returns a reference to the [`RepairRequest`] that this response corresponds to.
+    /// Returns a reference to the [`RepairRequestType`] that this response corresponds to.
     #[must_use]
-    pub const fn request(&self) -> &RepairRequestType {
+    const fn request_type(&self) -> &RepairRequestType {
         match self {
             Self::LastSliceRoot(req_type, _, _, _)
             | Self::SliceRoot(req_type, _, _)
@@ -282,7 +281,7 @@ where
     /// Does nothing if the provided `response` is not well-formed.
     async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
-        let request_hash = response.request().hash();
+        let request_hash = response.request_type().hash();
 
         // check whether we are (still) waiting on response to this request
         let Some(_) = self.outstanding_requests.remove(&request_hash) else {
