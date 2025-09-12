@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::f64;
-use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
@@ -128,7 +127,7 @@ impl Machine {
         Self { id }
     }
 
-    async fn run(&self) -> io::Result<()> {
+    async fn run(&self) -> std::io::Result<()> {
         let packets_received = Arc::new(AtomicUsize::new(0));
         let wc_vote_delay = Arc::new(Mutex::new(0.0));
         let sum_vote_delay = Arc::new(Mutex::new(0.0));

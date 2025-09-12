@@ -45,7 +45,7 @@ pub use self::vote::Vote;
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{Network, NetworkMessage, NetworkSendError};
+use crate::network::{Network, NetworkMessage};
 use crate::repair::{Repair, RepairMessage, RepairRequestHandler};
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
@@ -293,7 +293,7 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkSendError> {
+    async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // potentially forward shred
         self.disseminator.forward(&shred).await?;
 

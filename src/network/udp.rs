@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use tokio::net::UdpSocket;
 
 use super::MTU_BYTES;
-use crate::network::{BINCODE_CONFIG, Network, NetworkReceiveError, NetworkSendError};
+use crate::network::{BINCODE_CONFIG, Network};
 
 /// Number of bytes used as buffer for any incoming packet.
 ///
@@ -68,18 +68,18 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> Result<(), NetworkSendError> {
+    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         self.send_serialized(&bytes, to).await
     }
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError> {
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
         self.socket.send_to(bytes, to).await?;
         Ok(())
     }
 
-    async fn receive(&self) -> Result<R, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<R> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
             let bytes_recved = self.socket.recv(&mut buf).await?;
