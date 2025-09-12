@@ -7,6 +7,8 @@
 //! After that, the message is forgotten. The protocol is completely stateless.
 //! If the underlying [`Network`] is not reliable, the message might thus be lost.
 
+use async_trait::async_trait;
+
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
@@ -30,6 +32,7 @@ impl<N: Network> TrivialAll2All<N> {
     }
 }
 
+#[async_trait]
 impl<N: Network> All2All for TrivialAll2All<N> {
     async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkSendError> {
         for v in &self.validators {
