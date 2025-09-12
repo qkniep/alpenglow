@@ -38,38 +38,38 @@ type TestNode = Alpenglow<
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
+    let mut tx_receivers = (0..count)
+        .map(|_| UdpNetwork::new_with_any_port())
+        .collect::<VecDeque<_>>();
+    let mut repair_networks = (0..count)
+        .map(|_| UdpNetwork::new_with_any_port())
+        .collect::<VecDeque<_>>();
+    let mut repair_request_networks = (0..count)
+        .map(|_| UdpNetwork::new_with_any_port())
+        .collect::<VecDeque<_>>();
+
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
-    let mut tx_receivers = VecDeque::new();
-    let mut repair_request_networks = VecDeque::new();
-    let mut repair_networks = VecDeque::new();
-    for i in 0..5 * count {
-        if i % 5 == 2 {
-            repair_networks.push_back(UdpNetwork::new_with_any_port());
-        } else if i % 5 == 3 {
-            repair_request_networks.push_back(UdpNetwork::new_with_any_port());
-        } else if i % 5 == 4 {
-            tx_receivers.push_back(UdpNetwork::new_with_any_port());
-        } else {
-            networks.push_back(core.join_unlimited(i).await);
-        }
+    for i in 0..count * 2 {
+        networks.push_back(core.join_unlimited(i).await);
     }
+
     for a in 0..count {
         for b in 0..count {
             if a < 6 && b < 6 {
-                core.set_latency(5 * a, 5 * b, Duration::from_millis(20))
+                core.set_latency(2 * a, 2 * b, Duration::from_millis(20))
                     .await;
-                core.set_latency(5 * a + 1, 5 * b + 1, Duration::from_millis(20))
+                core.set_latency(2 * a + 1, 2 * b + 1, Duration::from_millis(20))
                     .await;
             } else if (6..10).contains(&a) && (6..10).contains(&b) {
-                core.set_latency(5 * a, 5 * b, Duration::from_millis(60))
+                core.set_latency(2 * a, 2 * b, Duration::from_millis(60))
                     .await;
-                core.set_latency(5 * a + 1, 5 * b + 1, Duration::from_millis(60))
+                core.set_latency(2 * a + 1, 2 * b + 1, Duration::from_millis(60))
                     .await;
             } else {
-                core.set_latency(5 * a, 5 * b, Duration::from_millis(100))
+                core.set_latency(2 * a, 2 * b, Duration::from_millis(100))
                     .await;
-                core.set_latency(5 * a + 1, 5 * b + 1, Duration::from_millis(100))
+                core.set_latency(2 * a + 1, 2 * b + 1, Duration::from_millis(100))
                     .await;
             }
         }
@@ -83,10 +83,9 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let all2all_address = localhost_ip_sockaddr((5 * id).try_into().unwrap());
-        let disseminator_address = localhost_ip_sockaddr((5 * id + 1).try_into().unwrap());
-        let repair_request_address =
-            localhost_ip_sockaddr(repair_request_networks[id as usize].port());
+        let all2all_address = localhost_ip_sockaddr((2 * id).try_into().unwrap());
+        let disseminator_address = localhost_ip_sockaddr((2 * id + 1).try_into().unwrap());
+        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id,
