@@ -33,7 +33,7 @@ use crate::{BlockId, ValidatorId};
 // TODO: make this tighter (can probably be close to `2 * DELTA`)
 const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Request messages for the repair sub-protocol.
+/// Different types of [`RepairRequest`] messages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepairRequestType {
     /// Request for the total number of slices in block with a given hash.
@@ -45,7 +45,7 @@ pub enum RepairRequestType {
 }
 
 impl RepairRequestType {
-    /// Digests the [`RepairRequest`] into a [`Hash`].
+    /// Digests the [`RepairRequestType`] into a [`Hash`].
     pub fn hash(&self) -> Hash {
         let repair = RepairRequest {
             req_type: self.clone(),
@@ -57,9 +57,12 @@ impl RepairRequestType {
     }
 }
 
+/// Request messages for the repair sub-protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RepairRequest {
+    /// The validator that sent the message.
     sender: ValidatorId,
+    /// The type of repair message sent.
     req_type: RepairRequestType,
 }
 
