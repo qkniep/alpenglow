@@ -10,7 +10,6 @@
 //! individually verified.
 
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -120,7 +119,11 @@ where
     ///
     /// If we do not have the necessary information in blockstore, the request is ignored.
     /// Otherwise, the correct response is sent back to the sender of the request.
-    async fn answer_request(&self, request: RepairRequest, sender: ValidatorId) -> io::Result<()> {
+    async fn answer_request(
+        &self,
+        request: RepairRequest,
+        sender: ValidatorId,
+    ) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
         let response = match request {
             RepairRequest::LastSliceRoot(block_id) => {
@@ -162,7 +165,7 @@ where
         &self,
         response: RepairResponse,
         validator: ValidatorId,
-    ) -> io::Result<()> {
+    ) -> std::io::Result<()> {
         let msg = RepairMessage::Response(response);
         let to = self.epoch_info.validator(validator).repair_response_address;
         self.network.send(&msg, to).await
@@ -376,7 +379,7 @@ where
     /// # Errors
     ///
     /// Returns [`std::io::Error`] if the underlying network fails.
-    async fn receive(&self) -> io::Result<RepairResponse> {
+    async fn receive(&self) -> std::io::Result<RepairResponse> {
         loop {
             let msg = self.network.receive().await?;
             match msg {
