@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use alpenglow::logging;
+use alpenglow::network::BINCODE_CONFIG;
 use bincode::{Decode, Encode};
 use clap::Parser;
 use color_eyre::Result;
@@ -160,8 +161,7 @@ impl Machine {
                             machine: self.id,
                             timestamp_nanos,
                         });
-                        let bytes =
-                            bincode::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+                        let bytes = bincode::encode_to_vec(&msg, BINCODE_CONFIG).unwrap();
                         let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
                     }
                 }
@@ -180,8 +180,7 @@ impl Machine {
                 loop {
                     let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
                     let (msg, _): (Message, usize) =
-                        bincode::decode_from_slice(&buf[..len], bincode::config::standard())
-                            .unwrap();
+                        bincode::decode_from_slice(&buf[..len], BINCODE_CONFIG).unwrap();
 
                     match msg {
                         Message::Vote(vote) => {
@@ -264,11 +263,8 @@ impl Machine {
                                                 208, 210, 214, 217, 230, 234, 238, 241, 250,
                                             ],
                                         });
-                                        let bytes = bincode::encode_to_vec(
-                                            &msg,
-                                            bincode::config::standard(),
-                                        )
-                                        .unwrap();
+                                        let bytes =
+                                            bincode::encode_to_vec(&msg, BINCODE_CONFIG).unwrap();
                                         let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
                                         debug!("vote of {len} bytes sent");
                                     }
@@ -302,8 +298,7 @@ impl Machine {
                             timestamp_nanos,
                             round,
                         });
-                        let bytes =
-                            bincode::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+                        let bytes = bincode::encode_to_vec(&msg, BINCODE_CONFIG).unwrap();
 
                         for id in 0..MACHINES {
                             for d_port in 0..NODES_PER_MACHINE {
@@ -340,8 +335,7 @@ impl Machine {
                 let mut buf = [0; MSG_BUFFER_BYTES];
                 while let Ok((len, addr)) = socket.recv_from(&mut buf).await {
                     let (msg, _): (Message, usize) =
-                        bincode::decode_from_slice(&buf[..len], bincode::config::standard())
-                            .unwrap();
+                        bincode::decode_from_slice(&buf[..len], BINCODE_CONFIG).unwrap();
                     match msg {
                         Message::Ping(ping) => {
                             let ip = MACHINE_IPS[ping.machine];
@@ -353,9 +347,7 @@ impl Machine {
                                 timestamp_nanos,
                                 timestamp_ping_nanos: ping.timestamp_nanos,
                             });
-                            let bytes =
-                                bincode::encode_to_vec(&response, bincode::config::standard())
-                                    .unwrap();
+                            let bytes = bincode::encode_to_vec(&response, BINCODE_CONFIG).unwrap();
                             let _ = socket.send_to(&bytes, ping_addr).await.unwrap();
                         }
                         Message::Pong(pong) => {
@@ -400,8 +392,7 @@ impl Machine {
                                 machine: self_id,
                                 timestamp_nanos,
                             });
-                            let bytes =
-                                bincode::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+                            let bytes = bincode::encode_to_vec(&msg, BINCODE_CONFIG).unwrap();
                             let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
                         }
                     }

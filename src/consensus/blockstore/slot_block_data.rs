@@ -15,6 +15,7 @@ use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
+use crate::network::BINCODE_CONFIG;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, ValidatedShred,
 };
@@ -336,7 +337,7 @@ impl BlockData {
             }
 
             let (mut txs, bytes_read) =
-                match bincode::serde::decode_from_slice(&slice.data, bincode::config::standard()) {
+                match bincode::serde::decode_from_slice(&slice.data, BINCODE_CONFIG) {
                     Ok(r) => r,
                     Err(err) => {
                         warn!("decoding slice {ind} failed with {err:?}");

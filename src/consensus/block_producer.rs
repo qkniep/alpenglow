@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
-use crate::network::Network;
+use crate::network::{BINCODE_CONFIG, Network};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{
@@ -395,7 +395,7 @@ where
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = bincode::serde::encode_to_vec(parent, bincode::config::standard())
+    let parent_encoded_len = bincode::serde::encode_to_vec(parent, BINCODE_CONFIG)
         .unwrap()
         .len();
 
@@ -420,7 +420,7 @@ where
             }
         };
         let tx = res.expect("receiving tx");
-        let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+        let tx = bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG)
             .expect("serialization should not panic");
         slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
         txs.push(tx);
@@ -430,7 +430,7 @@ where
     };
 
     // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
-    let txs = bincode::serde::encode_to_vec(&txs, bincode::config::standard())
+    let txs = bincode::serde::encode_to_vec(&txs, BINCODE_CONFIG)
         .expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     (payload, ret)

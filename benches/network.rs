@@ -3,7 +3,7 @@
 
 use alpenglow::consensus::Vote;
 use alpenglow::crypto::{Hash, aggsig, signature};
-use alpenglow::network::NetworkMessage;
+use alpenglow::network::{BINCODE_CONFIG, NetworkMessage};
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
@@ -79,9 +79,8 @@ fn serialize_slice_into(bencher: divan::Bencher) {
         })
         .bench_values(|(mut buf, msgs): (Vec<u8>, Vec<NetworkMessage>)| {
             for msg in msgs {
-                let _ =
-                    bincode::serde::encode_into_slice(msg, &mut buf, bincode::config::standard())
-                        .expect("serialization should not panic");
+                let _ = bincode::serde::encode_into_slice(msg, &mut buf, BINCODE_CONFIG)
+                    .expect("serialization should not panic");
             }
         });
 }
