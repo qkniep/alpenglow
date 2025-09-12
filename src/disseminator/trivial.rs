@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use log::warn;
 
 use super::Disseminator;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkMessage};
+use crate::network::{BINCODE_CONFIG, Network};
 use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
@@ -28,12 +27,14 @@ impl<N: Network> TrivialDisseminator<N> {
 #[async_trait]
 impl<N> Disseminator for TrivialDisseminator<N>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: Network<Recv = Shred, Send = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
-        let msg = NetworkMessage::Shred(shred.clone());
+        let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
         for v in &self.validators {
-            self.network.send(&msg, v.disseminator_address).await?;
+            self.network
+                .send_serialized(&bytes, v.disseminator_address)
+                .await?;
         }
         Ok(())
     }
@@ -44,12 +45,7 @@ where
     }
 
     async fn receive(&self) -> std::io::Result<Shred> {
-        loop {
-            match self.network.receive().await? {
-                NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for disseminator: {m:?}"),
-            }
-        }
+        self.network.receive().await
     }
 }
 
@@ -73,7 +69,7 @@ mod tests {
         base_port: u16,
     ) -> (
         Vec<SecretKey>,
-        Vec<TrivialDisseminator<UdpNetwork<NetworkMessage, NetworkMessage>>>,
+        Vec<TrivialDisseminator<UdpNetwork<Shred, Shred>>>,
     ) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();

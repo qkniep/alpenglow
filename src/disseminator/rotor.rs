@@ -6,14 +6,13 @@ pub mod sampling_strategy;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::warn;
 use rand::prelude::*;
 
 use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::{Network, NetworkMessage};
+use crate::network::{BINCODE_CONFIG, Network};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -59,7 +58,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
 
 impl<N, S: SamplingStrategy> Rotor<N, S>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: Network<Recv = Shred, Send = Shred>,
 {
     /// Turns this instance into a new instance with a different sampling strategy.
     #[must_use]
@@ -70,9 +69,8 @@ where
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
-        let msg: NetworkMessage = shred.clone().into();
         let v = self.epoch_info.validator(relay);
-        self.network.send(&msg, v.disseminator_address).await
+        self.network.send(shred, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -87,8 +85,7 @@ where
         }
 
         // otherwise, broadcast
-        let msg: NetworkMessage = shred.clone().into();
-        let bytes = msg.to_bytes();
+        let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
         for v in &self.epoch_info.validators {
             if v.id == leader || v.id == relay {
                 continue;
@@ -116,7 +113,7 @@ where
 #[async_trait]
 impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: Network<Recv = Shred, Send = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         Self::send_as_leader(self, shred).await
@@ -127,12 +124,7 @@ where
     }
 
     async fn receive(&self) -> std::io::Result<Shred> {
-        loop {
-            match self.network.receive().await? {
-                NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for Rotor: {m:?}"),
-            }
-        }
+        self.network.receive().await
     }
 }
 
@@ -153,7 +145,7 @@ mod tests {
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
-    type MyRotor = Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>;
+    type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
 
     fn create_rotor_instances(count: u64, base_port: u16) -> (Vec<SecretKey>, Vec<MyRotor>) {
         let mut sks = Vec::new();
