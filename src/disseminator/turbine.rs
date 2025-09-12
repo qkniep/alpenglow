@@ -11,13 +11,12 @@
 mod weighted_shuffle;
 
 use async_trait::async_trait;
-use log::warn;
 use moka::future::Cache;
 use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::{Network, NetworkMessage};
+use crate::network::Network;
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -53,7 +52,7 @@ pub(crate) struct TurbineTree {
 
 impl<N> Turbine<N>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: Network<Recv = Shred, Send = Shred>,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
@@ -90,9 +89,8 @@ where
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let msg: NetworkMessage = shred.clone().into();
         let addr = self.validators[root as usize].disseminator_address;
-        self.network.send(&msg, addr).await
+        self.network.send(shred, addr).await
     }
 
     /// Forwards the shred to all our children in the correct Turbine tree.
@@ -105,10 +103,9 @@ where
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
-        let msg: NetworkMessage = shred.clone().into();
         for child in tree.get_children() {
             let addr = self.validators[*child as usize].disseminator_address;
-            self.network.send(&msg, addr).await?;
+            self.network.send(shred, addr).await?;
         }
         Ok(())
     }
@@ -134,7 +131,7 @@ where
 #[async_trait]
 impl<N> Disseminator for Turbine<N>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: Network<Recv = Shred, Send = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.send_shred_to_root(shred).await
@@ -145,12 +142,7 @@ where
     }
 
     async fn receive(&self) -> std::io::Result<Shred> {
-        loop {
-            match self.network.receive().await? {
-                NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for Turbine: {m:?}"),
-            }
-        }
+        self.network.receive().await
     }
 }
 
@@ -266,7 +258,7 @@ mod tests {
 
     async fn create_turbine_instances(
         validators: &mut [ValidatorInfo],
-    ) -> Vec<Turbine<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
+    ) -> Vec<Turbine<SimulatedNetwork<Shred, Shred>>> {
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)

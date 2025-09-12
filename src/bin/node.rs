@@ -14,6 +14,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::{NetworkMessage, UdpNetwork};
+use alpenglow::shredder::Shred;
 use alpenglow::{Transaction, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
@@ -110,7 +111,7 @@ async fn main() -> Result<()> {
 
 type Node = Alpenglow<
     TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
-    Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;
 

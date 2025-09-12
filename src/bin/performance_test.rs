@@ -13,6 +13,7 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{NetworkMessage, SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, Transaction, ValidatorInfo, logging};
 use color_eyre::Result;
@@ -32,7 +33,7 @@ async fn main() -> Result<()> {
 
 type TestNode = Alpenglow<
     TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>,
-    Rotor<SimulatedNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    Rotor<SimulatedNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;
 
@@ -49,27 +50,26 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .collect::<VecDeque<_>>();
 
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-    let mut networks = VecDeque::new();
-    for i in 0..count * 2 {
-        networks.push_back(core.join_unlimited(i).await);
+    let mut all2all_networks = VecDeque::new();
+    let mut disseminator_networks = VecDeque::new();
+    for i in 0..count {
+        all2all_networks.push_back(core.join_unlimited(i).await);
+        disseminator_networks.push_back(core.join_unlimited(i + count).await);
     }
 
     for a in 0..count {
         for b in 0..count {
             if a < 6 && b < 6 {
-                core.set_latency(2 * a, 2 * b, Duration::from_millis(20))
-                    .await;
-                core.set_latency(2 * a + 1, 2 * b + 1, Duration::from_millis(20))
+                core.set_latency(a, b, Duration::from_millis(20)).await;
+                core.set_latency(a + count, b + count, Duration::from_millis(20))
                     .await;
             } else if (6..10).contains(&a) && (6..10).contains(&b) {
-                core.set_latency(2 * a, 2 * b, Duration::from_millis(60))
-                    .await;
-                core.set_latency(2 * a + 1, 2 * b + 1, Duration::from_millis(60))
+                core.set_latency(a, b, Duration::from_millis(60)).await;
+                core.set_latency(a + count, b + count, Duration::from_millis(60))
                     .await;
             } else {
-                core.set_latency(2 * a, 2 * b, Duration::from_millis(100))
-                    .await;
-                core.set_latency(2 * a + 1, 2 * b + 1, Duration::from_millis(100))
+                core.set_latency(a, b, Duration::from_millis(100)).await;
+                core.set_latency(a + count, b + count, Duration::from_millis(100))
                     .await;
             }
         }
@@ -83,8 +83,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let all2all_address = localhost_ip_sockaddr((2 * id).try_into().unwrap());
-        let disseminator_address = localhost_ip_sockaddr((2 * id + 1).try_into().unwrap());
+        let all2all_address = localhost_ip_sockaddr((id).try_into().unwrap());
+        let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
         let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
@@ -104,8 +104,12 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .iter()
         .map(|v| {
             let epoch_info = Arc::new(EpochInfo::new(v.id, validators.clone()));
-            let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
-            let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
+            let all2all =
+                TrivialAll2All::new(validators.clone(), all2all_networks.pop_front().unwrap());
+            let disseminator = Rotor::new(
+                disseminator_networks.pop_front().unwrap(),
+                epoch_info.clone(),
+            );
             let repair_network = repair_networks.pop_front().unwrap();
             let repair_request_network = repair_request_networks.pop_front().unwrap();
             let txs_receiver = tx_receivers.pop_front().unwrap();

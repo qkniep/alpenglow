@@ -38,7 +38,6 @@ pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
 use crate::Transaction;
 use crate::consensus::{Cert, Vote};
-use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
@@ -53,7 +52,6 @@ pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::stan
 pub enum NetworkMessage {
     Ping,
     Pong,
-    Shred(Shred),
     Vote(Vote),
     Cert(Cert),
     // FIXME: txs should not be seen on the same connection as other network msgs.
@@ -110,12 +108,6 @@ impl NetworkMessage {
             }
             Err(err) => panic!("serialization failed with {err:?}"),
         }
-    }
-}
-
-impl From<Shred> for NetworkMessage {
-    fn from(shred: Shred) -> Self {
-        Self::Shred(shred)
     }
 }
 
