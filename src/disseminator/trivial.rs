@@ -26,7 +26,10 @@ impl<N: Network> TrivialDisseminator<N> {
 }
 
 #[async_trait]
-impl<N: Network> Disseminator for TrivialDisseminator<N> {
+impl<N> Disseminator for TrivialDisseminator<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         let msg = NetworkMessage::Shred(shred.clone());
         for v in &self.validators {
@@ -68,7 +71,10 @@ mod tests {
     fn create_disseminator_instances(
         count: u64,
         base_port: u16,
-    ) -> (Vec<SecretKey>, Vec<TrivialDisseminator<UdpNetwork>>) {
+    ) -> (
+        Vec<SecretKey>,
+        Vec<TrivialDisseminator<UdpNetwork<NetworkMessage, NetworkMessage>>>,
+    ) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();

@@ -51,7 +51,10 @@ pub(crate) struct TurbineTree {
     children: Vec<ValidatorId>,
 }
 
-impl<N: Network> Turbine<N> {
+impl<N> Turbine<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     /// Creates a new Turbine instance, configured with the default fanout.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
         Self {
@@ -129,7 +132,10 @@ impl<N: Network> Turbine<N> {
 }
 
 #[async_trait]
-impl<N: Network> Disseminator for Turbine<N> {
+impl<N> Disseminator for Turbine<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
         self.send_shred_to_root(shred).await
     }
@@ -260,7 +266,7 @@ mod tests {
 
     async fn create_turbine_instances(
         validators: &mut [ValidatorInfo],
-    ) -> Vec<Turbine<SimulatedNetwork>> {
+    ) -> Vec<Turbine<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)

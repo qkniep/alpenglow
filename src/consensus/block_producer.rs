@@ -18,11 +18,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
-use crate::network::{Network, NetworkMessage};
+use crate::network::Network;
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{
-    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
+    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, Transaction,
+    highest_non_zero_byte,
 };
 
 /// Produces blocks from transactions and dissminates them.
@@ -62,7 +63,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 impl<D, T> BlockProducer<D, T>
 where
     D: Disseminator,
-    T: Network + Sync + Send + 'static,
+    T: Network<Recv = Transaction>,
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -389,7 +390,7 @@ async fn produce_slice_payload<T>(
     duration_left: Duration,
 ) -> (SlicePayload, Duration)
 where
-    T: Network + Sync + Send + 'static,
+    T: Network<Recv = Transaction>,
 {
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
@@ -418,17 +419,11 @@ where
                 res
             }
         };
-        match res.expect("unexpected error") {
-            NetworkMessage::Transaction(tx) => {
-                let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-                    .expect("serialization should not panic");
-                slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
-                txs.push(tx);
-            }
-            msg => {
-                panic!("unexpected msg: {msg:?}");
-            }
-        }
+        let tx = res.expect("unexpected error");
+        let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
+            .expect("serialization should not panic");
+        slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
+        txs.push(tx);
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
             break duration_left.saturating_sub(start_time.elapsed());
         }
@@ -535,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
-        let txs_receiver = UdpNetwork::new_with_any_port();
+        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
         let duration_left = Duration::from_micros(0);
 
         let parent = None;
@@ -557,16 +552,16 @@ mod tests {
 
     #[tokio::test]
     async fn produce_slice_full_slices() {
-        let txs_receiver = UdpNetwork::new_with_any_port();
+        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
         let addr = localhost_ip_sockaddr(txs_receiver.port());
-        let txs_sender = UdpNetwork::new_with_any_port();
+        let txs_sender: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
         // long enough duration so hopefully doesn't fire while collecting txs
         let duration_left = Duration::from_secs(100);
 
         tokio::spawn(async move {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
-                let msg = NetworkMessage::Transaction(Transaction(data));
+                let msg = Transaction(data);
                 txs_sender.send(&msg, addr).await.unwrap();
             }
         });
@@ -644,7 +639,7 @@ mod tests {
         disseminator: MockDisseminator,
         delta_block: Duration,
         delta_first_slice: Duration,
-    ) -> BlockProducer<MockDisseminator, UdpNetwork> {
+    ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
