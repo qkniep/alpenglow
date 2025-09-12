@@ -240,7 +240,7 @@ where
             };
             tokio::select! {
                 // handle repair response from network
-                res = self.receive() => self.handle_response(res.unwrap()).await,
+                res = self.network.receive() => self.handle_response(res.unwrap()).await,
                 // handle request for repairing new block
                 Some(block_id) = repair_receiver.recv() => {
                     self.repair_block(block_id).await;
@@ -378,18 +378,6 @@ where
                 }
             }
         }
-    }
-
-    /// Tries to receive a [`RepairResponse`] message from the underlying [`Network`].
-    ///
-    /// Resolves to the next successfully deserialized [`RepairResponse`].
-    /// All other types of messages are ignored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`std::io::Error`] if the underlying network fails.
-    async fn receive(&self) -> std::io::Result<RepairResponse> {
-        self.network.receive().await
     }
 
     async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
