@@ -45,10 +45,10 @@ pub use self::vote::Vote;
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{Network, NetworkMessage, NetworkSendError};
-use crate::repair::{Repair, RepairRequestHandler};
+use crate::network::{Network, NetworkMessage};
+use crate::repair::{Repair, RepairRequest, RepairRequestHandler, RepairResponse};
 use crate::shredder::Shred;
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(250);
@@ -63,7 +63,10 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, T: Network> {
+pub struct Alpenglow<A: All2All, D: Disseminator, T>
+where
+    T: Network<Recv = Transaction> + Send + Sync + 'static,
+{
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -90,7 +93,7 @@ impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    T: Network + Sync + Send + 'static,
+    T: Network<Recv = Transaction> + Send + Sync + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     ///
@@ -98,16 +101,20 @@ where
     /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new<R: Network + Sync + Send + 'static>(
+    pub fn new<RN, RR>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
-        repair_network: R,
-        repair_request_network: R,
+        repair_network: RN,
+        repair_request_network: RR,
         epoch_info: Arc<EpochInfo>,
         txs_receiver: T,
-    ) -> Self {
+    ) -> Self
+    where
+        RR: Network<Recv = RepairRequest, Send = RepairResponse> + Send + Sync + 'static,
+        RN: Network<Recv = RepairResponse, Send = RepairRequest> + Send + Sync + 'static,
+    {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
@@ -287,7 +294,7 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkSendError> {
+    async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // potentially forward shred
         self.disseminator.forward(&shred).await?;
 

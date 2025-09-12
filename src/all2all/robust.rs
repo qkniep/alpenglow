@@ -6,9 +6,11 @@
 //! Broadcasts each message over the underlying instance of [`Network`].
 //! The message may be retransmitted multiple times.
 
+use async_trait::async_trait;
+
 use super::All2All;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::{Network, NetworkMessage};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -32,8 +34,12 @@ impl<N: Network> RobustAll2All<N> {
     pub fn handle_retransmits(&self) {}
 }
 
-impl<N: Network> All2All for RobustAll2All<N> {
-    async fn broadcast(&self, msg: &NetworkMessage) -> Result<(), NetworkSendError> {
+#[async_trait]
+impl<N: Network> All2All for RobustAll2All<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
+    async fn broadcast(&self, msg: &NetworkMessage) -> std::io::Result<()> {
         for v in &self.validators {
             // HACK: stupidly expensive retransmits
             for _ in 0..1000 {
@@ -43,7 +49,7 @@ impl<N: Network> All2All for RobustAll2All<N> {
         Ok(())
     }
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<NetworkMessage> {
         self.network.receive().await
         // loop {
         //     let msg = self.network.receive().await;

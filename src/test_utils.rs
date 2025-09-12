@@ -10,7 +10,7 @@ use crate::consensus::EpochInfo;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
+use crate::network::{BINCODE_CONFIG, NetworkMessage, SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
@@ -42,7 +42,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
 
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
-) -> Vec<TrivialAll2All<SimulatedNetwork>> {
+) -> Vec<TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
     let core = Arc::new(
         SimulatedNetworkCore::default()
             .with_jitter(0.0)
@@ -159,11 +159,11 @@ fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayloa
     let mut data = vec![0; MAX_TRANSACTION_SIZE];
     rand::rng().fill_bytes(&mut data);
     let tx = Transaction(data);
-    let tx = bincode::serde::encode_to_vec(&tx, bincode::config::standard())
-        .expect("serialization should not panic");
+    let tx =
+        bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG).expect("serialization should not panic");
     let txs = vec![tx; 63];
-    let txs = bincode::serde::encode_to_vec(txs, bincode::config::standard())
-        .expect("serialization should not panic");
+    let txs =
+        bincode::serde::encode_to_vec(txs, BINCODE_CONFIG).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);
