@@ -39,13 +39,12 @@ pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
 use crate::Transaction;
 use crate::consensus::{Cert, Vote};
-use crate::repair::RepairMessage;
 use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
 
-const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// Network message type.
 ///
@@ -58,7 +57,6 @@ pub enum NetworkMessage {
     Shred(Shred),
     Vote(Vote),
     Cert(Cert),
-    Repair(RepairMessage),
     // FIXME: txs should not be seen on the same connection as other network msgs.
     // This should not be part of this enum.
     Transaction(Transaction),
@@ -131,12 +129,6 @@ impl From<Vote> for NetworkMessage {
 impl From<Cert> for NetworkMessage {
     fn from(cert: Cert) -> Self {
         Self::Cert(cert)
-    }
-}
-
-impl From<RepairMessage> for NetworkMessage {
-    fn from(repair: RepairMessage) -> Self {
-        Self::Repair(repair)
     }
 }
 

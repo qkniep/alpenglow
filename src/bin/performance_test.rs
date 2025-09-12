@@ -41,10 +41,13 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut networks = VecDeque::new();
     let mut tx_receivers = VecDeque::new();
+    let mut repair_request_networks = VecDeque::new();
     let mut repair_networks = VecDeque::new();
     for i in 0..5 * count {
-        if i % 5 == 2 || i % 5 == 3 {
+        if i % 5 == 2 {
             repair_networks.push_back(UdpNetwork::new_with_any_port());
+        } else if i % 5 == 3 {
+            repair_request_networks.push_back(UdpNetwork::new_with_any_port());
         } else if i % 5 == 4 {
             tx_receivers.push_back(UdpNetwork::new_with_any_port());
         } else {
@@ -82,7 +85,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr((5 * id).try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((5 * id + 1).try_into().unwrap());
-        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let repair_request_address =
+            localhost_ip_sockaddr(repair_request_networks[id as usize].port());
         let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id,
@@ -104,7 +108,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let all2all = TrivialAll2All::new(validators.clone(), networks.pop_front().unwrap());
             let disseminator = Rotor::new(networks.pop_front().unwrap(), epoch_info.clone());
             let repair_network = repair_networks.pop_front().unwrap();
-            let repair_request_network = repair_networks.pop_front().unwrap();
+            let repair_request_network = repair_request_networks.pop_front().unwrap();
             let txs_receiver = tx_receivers.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id as usize].clone(),
