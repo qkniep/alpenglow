@@ -392,8 +392,7 @@ where
             sender: self.epoch_info.own_id,
             req_type,
         };
-        let msg_bytes =
-            bincode::serde::encode_to_vec(request, bincode::config::standard()).unwrap();
+        let msg_bytes = bincode::serde::encode_to_vec(request, BINCODE_CONFIG).unwrap();
         // HACK: magic number to fix high-failure scenarios
         let mut to_all = HashSet::new();
         for _ in 0..10 {
