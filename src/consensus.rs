@@ -46,7 +46,7 @@ use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkMessage};
-use crate::repair::{Repair, RepairMessage, RepairRequestHandler};
+use crate::repair::{Repair, RepairRequest, RepairRequestHandler, RepairResponse};
 use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
 
@@ -101,18 +101,19 @@ where
     /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new<R>(
+    pub fn new<RN, RR>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
-        repair_network: R,
-        repair_request_network: R,
+        repair_network: RN,
+        repair_request_network: RR,
         epoch_info: Arc<EpochInfo>,
         txs_receiver: T,
     ) -> Self
     where
-        R: Network<Recv = RepairMessage, Send = RepairMessage> + Send + Sync + 'static,
+        RR: Network<Recv = RepairRequest, Send = RepairResponse> + Send + Sync + 'static,
+        RN: Network<Recv = RepairResponse, Send = RepairRequest> + Send + Sync + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);

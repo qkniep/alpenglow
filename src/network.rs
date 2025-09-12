@@ -37,7 +37,6 @@ pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
 use crate::consensus::{Cert, Vote};
-use crate::repair::RepairMessage;
 use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
@@ -56,7 +55,6 @@ pub enum NetworkMessage {
     Shred(Shred),
     Vote(Vote),
     Cert(Cert),
-    Repair(RepairMessage),
 }
 
 impl NetworkMessage {
@@ -126,12 +124,6 @@ impl From<Vote> for NetworkMessage {
 impl From<Cert> for NetworkMessage {
     fn from(cert: Cert) -> Self {
         Self::Cert(cert)
-    }
-}
-
-impl From<RepairMessage> for NetworkMessage {
-    fn from(repair: RepairMessage) -> Self {
-        Self::Repair(repair)
     }
 }
 
