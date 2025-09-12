@@ -36,7 +36,6 @@ use serde::{Deserialize, Serialize};
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
-use crate::Transaction;
 use crate::consensus::{Cert, Vote};
 
 /// Maximum payload size of a UDP packet.
@@ -54,9 +53,6 @@ pub enum NetworkMessage {
     Pong,
     Vote(Vote),
     Cert(Cert),
-    // FIXME: txs should not be seen on the same connection as other network msgs.
-    // This should not be part of this enum.
-    Transaction(Transaction),
 }
 
 impl NetworkMessage {
@@ -158,7 +154,6 @@ pub fn dontcare_sockaddr() -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MAX_TRANSACTION_SIZE;
 
     #[tokio::test]
     async fn basic() {
@@ -191,14 +186,5 @@ mod tests {
 
         let bytes = vec![0u8; 10 * MTU_BYTES];
         assert!(NetworkMessage::from_bytes(&bytes).is_err());
-    }
-
-    #[tokio::test]
-    #[should_panic]
-    async fn serialize_buffer_too_small() {
-        let mut buf = [0u8; 1];
-        let msg = NetworkMessage::Transaction(Transaction(vec![1; MAX_TRANSACTION_SIZE]));
-        // this should panic
-        msg.to_slice(&mut buf);
     }
 }
