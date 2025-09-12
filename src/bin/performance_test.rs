@@ -51,11 +51,9 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // first `count` networks are for all2all and the next `count` networks are for disseminator
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
     let mut all2all_networks = VecDeque::new();
-    for i in 0..count {
-        all2all_networks.push_back(core.join_unlimited(i).await);
-    }
     let mut disseminator_networks = VecDeque::new();
     for i in 0..count {
+        all2all_networks.push_back(core.join_unlimited(i).await);
         disseminator_networks.push_back(core.join_unlimited(count + i).await);
     }
 
