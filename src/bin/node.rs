@@ -13,8 +13,8 @@ use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
-use alpenglow::network::UdpNetwork;
-use alpenglow::{ValidatorInfo, logging};
+use alpenglow::network::{NetworkMessage, UdpNetwork};
+use alpenglow::{Transaction, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
@@ -108,8 +108,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-type Node =
-    Alpenglow<TrivialAll2All<UdpNetwork>, Rotor<UdpNetwork, StakeWeightedSampler>, UdpNetwork>;
+type Node = Alpenglow<
+    TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
+    Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    UdpNetwork<Transaction, Transaction>,
+>;
 
 fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     // turn ConfigFile into an actual node

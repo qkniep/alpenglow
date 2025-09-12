@@ -6,7 +6,7 @@ use log::warn;
 
 use super::Disseminator;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::{Network, NetworkMessage};
 use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
@@ -26,8 +26,11 @@ impl<N: Network> TrivialDisseminator<N> {
 }
 
 #[async_trait]
-impl<N: Network> Disseminator for TrivialDisseminator<N> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+impl<N> Disseminator for TrivialDisseminator<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
+    async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         let msg = NetworkMessage::Shred(shred.clone());
         for v in &self.validators {
             self.network.send(&msg, v.disseminator_address).await?;
@@ -35,12 +38,12 @@ impl<N: Network> Disseminator for TrivialDisseminator<N> {
         Ok(())
     }
 
-    async fn forward(&self, _shred: &Shred) -> Result<(), NetworkSendError> {
+    async fn forward(&self, _shred: &Shred) -> std::io::Result<()> {
         // nothing to do
         Ok(())
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<Shred> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
@@ -68,7 +71,10 @@ mod tests {
     fn create_disseminator_instances(
         count: u64,
         base_port: u16,
-    ) -> (Vec<SecretKey>, Vec<TrivialDisseminator<UdpNetwork>>) {
+    ) -> (
+        Vec<SecretKey>,
+        Vec<TrivialDisseminator<UdpNetwork<NetworkMessage, NetworkMessage>>>,
+    ) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();

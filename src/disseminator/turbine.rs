@@ -17,7 +17,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::{Network, NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::network::{Network, NetworkMessage};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -51,7 +51,10 @@ pub(crate) struct TurbineTree {
     children: Vec<ValidatorId>,
 }
 
-impl<N: Network> Turbine<N> {
+impl<N> Turbine<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
     /// Creates a new Turbine instance, configured with the default fanout.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
         Self {
@@ -82,7 +85,7 @@ impl<N: Network> Turbine<N> {
     /// # Errors
     ///
     /// Returns an error if the send operation on the underlying network fails.
-    pub async fn send_shred_to_root(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    pub async fn send_shred_to_root(&self, shred: &Shred) -> std::io::Result<()> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
@@ -98,7 +101,7 @@ impl<N: Network> Turbine<N> {
     /// # Errors
     ///
     /// Returns an error if the send operation on the underlying network fails.
-    pub async fn forward_shred(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    pub async fn forward_shred(&self, shred: &Shred) -> std::io::Result<()> {
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
@@ -129,16 +132,19 @@ impl<N: Network> Turbine<N> {
 }
 
 #[async_trait]
-impl<N: Network> Disseminator for Turbine<N> {
-    async fn send(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+impl<N> Disseminator for Turbine<N>
+where
+    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+{
+    async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.send_shred_to_root(shred).await
     }
 
-    async fn forward(&self, shred: &Shred) -> Result<(), NetworkSendError> {
+    async fn forward(&self, shred: &Shred) -> std::io::Result<()> {
         self.forward_shred(shred).await
     }
 
-    async fn receive(&self) -> Result<Shred, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<Shred> {
         loop {
             match self.network.receive().await? {
                 NetworkMessage::Shred(s) => return Ok(s),
@@ -260,7 +266,7 @@ mod tests {
 
     async fn create_turbine_instances(
         validators: &mut [ValidatorInfo],
-    ) -> Vec<Turbine<SimulatedNetwork>> {
+    ) -> Vec<Turbine<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)

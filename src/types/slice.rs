@@ -7,6 +7,7 @@ use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
+use crate::network::BINCODE_CONFIG;
 use crate::shredder::{MAX_DATA_PER_SLICE, Shred};
 use crate::types::SliceIndex;
 use crate::{Slot, highest_non_zero_byte};
@@ -125,7 +126,7 @@ impl SlicePayload {
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        bincode::serde::encode_to_vec(payload, bincode::config::standard()).unwrap()
+        bincode::serde::encode_to_vec(payload, BINCODE_CONFIG).unwrap()
     }
 }
 
@@ -137,7 +138,7 @@ impl From<Vec<u8>> for SlicePayload {
             payload.len()
         );
         let (ret, bytes): (SlicePayload, usize) =
-            bincode::serde::decode_from_slice(&payload, bincode::config::standard()).unwrap();
+            bincode::serde::decode_from_slice(&payload, BINCODE_CONFIG).unwrap();
         assert_eq!(payload.len(), bytes);
         ret
     }
@@ -155,8 +156,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 ) -> SlicePayload {
     let mut payload = vec![0; desired_size];
 
-    let used = bincode::serde::encode_into_slice(parent, &mut payload, bincode::config::standard())
-        .unwrap();
+    let used = bincode::serde::encode_into_slice(parent, &mut payload, BINCODE_CONFIG).unwrap();
     let left = desired_size.checked_sub(used).unwrap();
 
     // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`.  If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.  Otherwise, it takes number of non-zero bytes minus 1.
@@ -172,8 +172,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
-    bincode::serde::encode_into_slice(data, &mut payload[used..], bincode::config::standard())
-        .unwrap();
+    bincode::serde::encode_into_slice(data, &mut payload[used..], BINCODE_CONFIG).unwrap();
 
     payload.into()
 }
