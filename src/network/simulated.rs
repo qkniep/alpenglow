@@ -35,7 +35,7 @@ pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
 use super::Network;
 use crate::ValidatorId;
-use crate::network::{BINCODE_CONFIG, MTU_BYTES, NetworkReceiveError, NetworkSendError};
+use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 /// A simulated network interface for local testing and simulations.
 // TODO: add examples
@@ -52,7 +52,7 @@ pub struct SimulatedNetwork<S, R> {
 }
 
 impl<S, R> SimulatedNetwork<S, R> {
-    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> Result<(), NetworkSendError> {
+    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> std::io::Result<()> {
         if let Some(limiter) = &self.limiter {
             limiter.write().await.wait_for(bytes.len()).await;
         }
@@ -70,23 +70,22 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> Result<(), NetworkSendError> {
+    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         let validator_id = to.port() as ValidatorId;
         self.send_byte_vec(bytes, validator_id).await
     }
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError> {
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
         let validator_id = to.port() as ValidatorId;
         self.send_byte_vec(bytes.to_vec(), validator_id).await
     }
 
-    async fn receive(&self) -> Result<R, NetworkReceiveError> {
+    async fn receive(&self) -> std::io::Result<R> {
         loop {
             let Some(buf) = self.receiver.lock().await.recv().await else {
-                let io_error = std::io::Error::other("channel closed");
-                return Err(NetworkReceiveError::BadSocket(io_error));
+                return Err(std::io::Error::other("channel closed"));
             };
             let (msg, bytes_used) = match bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG) {
                 Ok(r) => r,
