@@ -46,9 +46,9 @@ use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{Network, NetworkMessage, NetworkSendError};
-use crate::repair::{Repair, RepairRequestHandler};
+use crate::repair::{Repair, RepairMessage, RepairRequestHandler};
 use crate::shredder::Shred;
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(250);
@@ -63,7 +63,10 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, T: Network> {
+pub struct Alpenglow<A: All2All, D: Disseminator, T>
+where
+    T: Network<Recv = Transaction> + Send + Sync + 'static,
+{
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -90,7 +93,7 @@ impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    T: Network + Sync + Send + 'static,
+    T: Network<Recv = Transaction> + Send + Sync + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     ///
@@ -98,7 +101,7 @@ where
     /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new<R: Network + Sync + Send + 'static>(
+    pub fn new<R>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
@@ -107,7 +110,10 @@ where
         repair_request_network: R,
         epoch_info: Arc<EpochInfo>,
         txs_receiver: T,
-    ) -> Self {
+    ) -> Self
+    where
+        R: Network<Recv = RepairMessage, Send = RepairMessage> + Send + Sync + 'static,
+    {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);

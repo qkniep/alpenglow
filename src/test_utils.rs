@@ -10,7 +10,7 @@ use crate::consensus::EpochInfo;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
+use crate::network::{NetworkMessage, SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
@@ -42,7 +42,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
 
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
-) -> Vec<TrivialAll2All<SimulatedNetwork>> {
+) -> Vec<TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
     let core = Arc::new(
         SimulatedNetworkCore::default()
             .with_jitter(0.0)
