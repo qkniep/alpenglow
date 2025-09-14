@@ -3,7 +3,7 @@
 
 use alpenglow::consensus::{ConsensusMessage, Vote};
 use alpenglow::crypto::{Hash, aggsig, signature};
-use alpenglow::network::{BINCODE_CONFIG, NetworkMessage};
+use alpenglow::network::BINCODE_CONFIG;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
