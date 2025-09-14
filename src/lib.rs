@@ -35,7 +35,7 @@ use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
 use crate::disseminator::rotor::StakeWeightedSampler;
-use crate::network::{NetworkMessage, UdpNetwork, localhost_ip_sockaddr};
+use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
 
