@@ -36,7 +36,6 @@ use serde::{Deserialize, Serialize};
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
-use crate::consensus::{Cert, Vote};
 use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
@@ -53,8 +52,6 @@ pub enum NetworkMessage {
     Ping,
     Pong,
     Shred(Shred),
-    Vote(Vote),
-    Cert(Cert),
 }
 
 impl NetworkMessage {
@@ -112,18 +109,6 @@ impl NetworkMessage {
 impl From<Shred> for NetworkMessage {
     fn from(shred: Shred) -> Self {
         Self::Shred(shred)
-    }
-}
-
-impl From<Vote> for NetworkMessage {
-    fn from(vote: Vote) -> Self {
-        Self::Vote(vote)
-    }
-}
-
-impl From<Cert> for NetworkMessage {
-    fn from(cert: Cert) -> Self {
-        Self::Cert(cert)
     }
 }
 
