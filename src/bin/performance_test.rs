@@ -12,7 +12,8 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
-use alpenglow::network::{NetworkMessage, SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, Transaction, ValidatorInfo, logging};
 use color_eyre::Result;
@@ -32,7 +33,7 @@ async fn main() -> Result<()> {
 
 type TestNode = Alpenglow<
     TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<SimulatedNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    Rotor<SimulatedNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;
 
@@ -54,7 +55,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let mut disseminator_networks = VecDeque::new();
     for i in 0..count {
         all2all_networks.push_back(core.join_unlimited(i).await);
-        disseminator_networks.push_back(core.join_unlimited(count + i).await);
+        disseminator_networks.push_back(core.join_unlimited(i + count).await);
     }
 
     for a in 0..count {

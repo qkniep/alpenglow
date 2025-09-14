@@ -115,7 +115,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::{NetworkMessage, localhost_ip_sockaddr};
     use crate::shredder::{
-        DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS,
+        DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, TOTAL_SHREDS,
     };
     use crate::types::slice::create_slice_payload_with_invalid_txs;
     use crate::types::{Slice, SliceHeader, SliceIndex};
@@ -149,10 +149,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> =
-            core.join(0, 32_768, 32_768).await; // 32 KiB/s
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> =
-            core.join(1, 32_768, 32_768).await; // 32 KiB/s
+        let net1: SimulatedNetwork<Shred, Shred> = core.join(0, 32_768, 32_768).await; // 32 KiB/s
+        let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
         let mut rng = rand::rng();
@@ -181,20 +179,17 @@ mod tests {
         let receiver = tokio::spawn(async move {
             let mut shreds_received = 0;
             let now = Instant::now();
-            while let Ok(msg) = net2.receive().await {
-                if matches!(msg, NetworkMessage::Shred(_)) {
-                    shreds_received += 1;
-                    if shreds_received == 2 * TOTAL_SHREDS {
-                        return now.elapsed().as_secs_f64();
-                    }
+            while let Ok(_shred) = net2.receive().await {
+                shreds_received += 1;
+                if shreds_received == 2 * TOTAL_SHREDS {
+                    return now.elapsed().as_secs_f64();
                 }
             }
             panic!("not all shreds received");
         });
 
         for shred in shreds {
-            let msg: NetworkMessage = shred.into();
-            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -211,10 +206,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> =
-            core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> =
-            core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
+        let net1: SimulatedNetwork<Shred, Shred> = core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
+        let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
         // create a full block (1024 slices)
         let mut rng = rand::rng();
@@ -243,20 +236,17 @@ mod tests {
         let receiver = tokio::spawn(async move {
             let mut shreds_received = 0;
             let now = Instant::now();
-            while let Ok(msg) = net2.receive().await {
-                if matches!(msg, NetworkMessage::Shred(_)) {
-                    shreds_received += 1;
-                    if shreds_received == 1024 * TOTAL_SHREDS {
-                        return now.elapsed().as_secs_f64();
-                    }
+            while let Ok(_shred) = net2.receive().await {
+                shreds_received += 1;
+                if shreds_received == 1024 * TOTAL_SHREDS {
+                    return now.elapsed().as_secs_f64();
                 }
             }
             panic!("not all shreds received");
         });
 
         for shred in shreds {
-            let msg: NetworkMessage = shred.into();
-            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -273,8 +263,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(1).await;
 
         // create a full block (1024 slices)
         let mut rng = rand::rng();
@@ -303,20 +293,17 @@ mod tests {
         let receiver = tokio::spawn(async move {
             let mut shreds_received = 0;
             let now = Instant::now();
-            while let Ok(msg) = net2.receive().await {
-                if matches!(msg, NetworkMessage::Shred(_)) {
-                    shreds_received += 1;
-                    if shreds_received == 1024 * TOTAL_SHREDS {
-                        return now.elapsed().as_secs_f64();
-                    }
+            while let Ok(_shred) = net2.receive().await {
+                shreds_received += 1;
+                if shreds_received == 1024 * TOTAL_SHREDS {
+                    return now.elapsed().as_secs_f64();
                 }
             }
             panic!("not all shreds received");
         });
 
         for shred in shreds {
-            let msg: NetworkMessage = shred.into();
-            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
