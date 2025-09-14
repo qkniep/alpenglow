@@ -6,11 +6,11 @@ use std::sync::Arc;
 use rand::RngCore;
 
 use crate::all2all::TrivialAll2All;
-use crate::consensus::EpochInfo;
+use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{BINCODE_CONFIG, NetworkMessage, SimulatedNetwork, localhost_ip_sockaddr};
+use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
@@ -42,7 +42,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
 
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
-) -> Vec<TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
+) -> Vec<TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>> {
     let core = Arc::new(
         SimulatedNetworkCore::default()
             .with_jitter(0.0)

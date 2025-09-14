@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::{Alpenglow, EpochInfo};
+use alpenglow::consensus::{Alpenglow, ConsensusMessage, EpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
 }
 
 type Node = Alpenglow<
-    TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
+    TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
     Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;

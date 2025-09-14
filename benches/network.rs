@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::consensus::Vote;
+use alpenglow::consensus::{ConsensusMessage, Vote};
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::{BINCODE_CONFIG, NetworkMessage};
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
@@ -24,9 +24,10 @@ fn serialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            NetworkMessage::Vote(Vote::new_notar(Slot::new(0), hash, &sk, 0))
+            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            ConsensusMessage::Vote(vote)
         })
-        .bench_values(|msg: NetworkMessage| msg.to_bytes());
+        .bench_values(|msg: ConsensusMessage| bincode::serde::encode_to_vec(msg, BINCODE_CONFIG));
 }
 
 #[divan::bench]
@@ -38,10 +39,14 @@ fn deserialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            let msg = NetworkMessage::Vote(Vote::new_notar(Slot::new(0), hash, &sk, 0));
-            msg.to_bytes()
+            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            let msg = ConsensusMessage::Vote(vote);
+            bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap()
         })
-        .bench_values(|bytes: Vec<u8>| NetworkMessage::from_bytes(&bytes));
+        .bench_values(|bytes: Vec<u8>| {
+            let (_msg, _bytes_read): (ConsensusMessage, usize) =
+                bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
+        });
 }
 
 #[divan::bench]

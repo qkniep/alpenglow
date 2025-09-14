@@ -31,7 +31,7 @@ pub use self::disseminator::Disseminator;
 use self::types::Slot;
 pub use self::validator::Validator;
 use crate::all2all::TrivialAll2All;
-use crate::consensus::EpochInfo;
+use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
 use crate::disseminator::rotor::StakeWeightedSampler;
@@ -93,13 +93,13 @@ pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
 }
 
 type TestNode = Alpenglow<
-    TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
+    TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
     Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;
 
 struct Networks {
-    all2all: UdpNetwork<NetworkMessage, NetworkMessage>,
+    all2all: UdpNetwork<ConsensusMessage, ConsensusMessage>,
     disseminator: UdpNetwork<Shred, Shred>,
     repair: UdpNetwork<RepairRequest, RepairResponse>,
     repair_request: UdpNetwork<RepairResponse, RepairRequest>,

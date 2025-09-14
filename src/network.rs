@@ -36,7 +36,6 @@ use serde::{Deserialize, Serialize};
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
-use crate::consensus::{Cert, Vote};
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
@@ -51,8 +50,6 @@ pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::stan
 pub enum NetworkMessage {
     Ping,
     Pong,
-    Vote(Vote),
-    Cert(Cert),
 }
 
 impl NetworkMessage {
@@ -104,18 +101,6 @@ impl NetworkMessage {
             }
             Err(err) => panic!("serialization failed with {err:?}"),
         }
-    }
-}
-
-impl From<Vote> for NetworkMessage {
-    fn from(vote: Vote) -> Self {
-        Self::Vote(vote)
-    }
-}
-
-impl From<Cert> for NetworkMessage {
-    fn from(cert: Cert) -> Self {
-        Self::Cert(cert)
     }
 }
 

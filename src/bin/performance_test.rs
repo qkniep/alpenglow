@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::EpochInfo;
+use alpenglow::consensus::{ConsensusMessage, EpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
 }
 
 type TestNode = Alpenglow<
-    TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>,
+    TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>,
     Rotor<SimulatedNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;
