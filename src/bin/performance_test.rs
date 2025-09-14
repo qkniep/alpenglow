@@ -12,7 +12,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::SimulatedNetworkCore;
-use alpenglow::network::{NetworkMessage, SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, Transaction, ValidatorInfo, logging};
