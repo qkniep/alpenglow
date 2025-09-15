@@ -18,7 +18,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use super::{Network, NetworkMessage};
+use super::Network;
 use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
@@ -33,6 +33,12 @@ pub struct TcpNetwork<S, R> {
     _msg_types: PhantomData<(S, R)>,
 }
 
+#[allow(dead_code)]
+enum TcpMessage<S, R> {
+    Sender(S),
+    Receiver(R),
+}
+
 impl<S, R> TcpNetwork<S, R> {
     /// Creates a new `TcpNetwork` instance bound to the given `port`.
     ///
@@ -43,7 +49,7 @@ impl<S, R> TcpNetwork<S, R> {
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
         let listener = futures::executor::block_on(TcpListener::bind(addr)).unwrap();
-        let (_tx, _rx) = mpsc::channel::<NetworkMessage>(1024);
+        let (_tx, _rx) = mpsc::channel::<TcpMessage<S, R>>(1024);
         Self {
             listener,
             readers: RwLock::new(Vec::new()),

@@ -105,24 +105,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{NetworkMessage, localhost_ip_sockaddr};
+    use crate::network::localhost_ip_sockaddr;
+    use crate::test_utils::{Ping, Pong};
 
     #[tokio::test]
     async fn ping() {
-        let socket1: UdpNetwork<NetworkMessage, NetworkMessage> = UdpNetwork::new_with_any_port();
-        let socket2: UdpNetwork<NetworkMessage, NetworkMessage> = UdpNetwork::new_with_any_port();
+        let socket1: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+        let socket2: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
         let addr1 = localhost_ip_sockaddr(socket1.port());
 
         // regular send()
-        socket2.send(&NetworkMessage::Ping, addr1).await.unwrap();
+        socket2.send(&Ping, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
-        assert!(matches!(msg, NetworkMessage::Ping));
+        assert!(matches!(msg, Ping));
 
         // send_serialized()
-        let bytes = NetworkMessage::Ping.to_bytes();
+        let bytes = bincode::serde::encode_to_vec(Ping, BINCODE_CONFIG).unwrap();
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         socket2.send_serialized(&bytes, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
-        assert!(matches!(msg, NetworkMessage::Ping));
+        assert!(matches!(msg, Ping));
     }
 
     #[tokio::test]
@@ -132,11 +134,11 @@ mod tests {
         let addr1 = localhost_ip_sockaddr(socket1.port());
         let addr2 = localhost_ip_sockaddr(socket2.port());
 
-        socket1.send(&NetworkMessage::Ping, addr2).await.unwrap();
+        socket1.send(&Ping, addr2).await.unwrap();
         let msg = socket2.receive().await.unwrap();
-        assert!(matches!(msg, NetworkMessage::Ping));
-        socket2.send(&NetworkMessage::Pong, addr1).await.unwrap();
+        assert!(matches!(msg, Ping));
+        socket2.send(&Pong, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
-        assert!(matches!(msg, NetworkMessage::Pong));
+        assert!(matches!(msg, Pong));
     }
 }
