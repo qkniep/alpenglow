@@ -1,10 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::consensus::Vote;
+use alpenglow::consensus::{ConsensusMessage, Vote};
 use alpenglow::crypto::{Hash, aggsig, signature};
-use alpenglow::network::NetworkMessage;
-use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use alpenglow::network::BINCODE_CONFIG;
+use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::{BytesCount, ItemsCount};
@@ -24,9 +24,10 @@ fn serialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            NetworkMessage::Vote(Vote::new_notar(Slot::new(0), hash, &sk, 0))
+            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            ConsensusMessage::Vote(vote)
         })
-        .bench_values(|msg: NetworkMessage| msg.to_bytes());
+        .bench_values(|msg: ConsensusMessage| bincode::serde::encode_to_vec(msg, BINCODE_CONFIG));
 }
 
 #[divan::bench]
@@ -38,10 +39,14 @@ fn deserialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            let msg = NetworkMessage::Vote(Vote::new_notar(Slot::new(0), hash, &sk, 0));
-            msg.to_bytes()
+            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            let msg = ConsensusMessage::Vote(vote);
+            bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap()
         })
-        .bench_values(|bytes: Vec<u8>| NetworkMessage::from_bytes(&bytes));
+        .bench_values(|bytes: Vec<u8>| {
+            let (_msg, _bytes_read): (ConsensusMessage, usize) =
+                bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
+        });
 }
 
 #[divan::bench]
@@ -53,12 +58,11 @@ fn serialize_slice(bencher: divan::Bencher) {
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
             let sk = signature::SecretKey::new(&mut rng);
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
-            shreds.into_iter().map(NetworkMessage::Shred).collect()
+            RegularShredder::shred(slice, &sk).unwrap()
         })
-        .bench_values(|msgs: Vec<NetworkMessage>| {
-            for msg in msgs {
-                let _ = msg.to_bytes();
+        .bench_values(|shreds: Vec<Shred>| {
+            for shred in shreds {
+                let _bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
             }
         });
 }
@@ -74,14 +78,12 @@ fn serialize_slice_into(bencher: divan::Bencher) {
             let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
             let buf = vec![0; 1500];
-            let msgs = shreds.into_iter().map(NetworkMessage::Shred).collect();
-            (buf, msgs)
+            (buf, shreds)
         })
-        .bench_values(|(mut buf, msgs): (Vec<u8>, Vec<NetworkMessage>)| {
-            for msg in msgs {
-                let _ =
-                    bincode::serde::encode_into_slice(msg, &mut buf, bincode::config::standard())
-                        .expect("serialization should not panic");
+        .bench_values(|(mut buf, shreds): (Vec<u8>, Vec<Shred>)| {
+            for shred in shreds {
+                let _ = bincode::serde::encode_into_slice(shred, &mut buf, BINCODE_CONFIG)
+                    .expect("serialization should not panic");
             }
         });
 }
@@ -96,16 +98,17 @@ fn deserialize_slice(bencher: divan::Bencher) {
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let sk = signature::SecretKey::new(&mut rng);
             let shreds = RegularShredder::shred(slice, &sk).unwrap();
-            let msgs: Vec<_> = shreds.into_iter().map(NetworkMessage::Shred).collect();
             let mut serialized = Vec::new();
-            for msg in msgs {
-                serialized.push(msg.to_bytes());
+            for shred in shreds {
+                let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
+                serialized.push(bytes);
             }
             serialized
         })
         .bench_values(|serialized: Vec<Vec<u8>>| {
             for bytes in serialized {
-                let _ = NetworkMessage::from_bytes(&bytes);
+                let (_shred, _bytes_read): (Shred, usize) =
+                    bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
             }
         });
 }

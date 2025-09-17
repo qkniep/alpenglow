@@ -18,8 +18,7 @@
 //! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
 
 mod reed_solomon;
-
-use std::collections::btree_map::Entry;
+mod validated_shred;
 
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
@@ -31,9 +30,10 @@ use thiserror::Error;
 use self::reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
 };
-use crate::crypto::signature::{PublicKey, SecretKey, Signature};
+pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
+use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
-use crate::types::{Slice, SliceHeader, SliceIndex};
+use crate::types::{Slice, SliceHeader};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -114,18 +114,6 @@ impl ShredPayloadType {
     }
 }
 
-/// Different errors returned from [`Shred::verify()`].
-#[derive(Debug)]
-pub enum ShredVerifyError {
-    /// The shred contained an invalid Merkle proof.
-    InvalidProof,
-    /// The signature verification failed.
-    InvalidSignature,
-    /// Leader showed equivocation.
-    /// The Merkle root does not match the root from a previous shred.
-    Equivocation,
-}
-
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -137,48 +125,9 @@ pub struct Shred {
 }
 
 impl Shred {
-    /// Verifies the proof and signature of this shred.
-    ///
-    /// Uses a cached entry to potentially skip signature verification and to detect equivocation.
-    pub fn verify(
-        &self,
-        pk: &PublicKey,
-        cached_merkle_root: Entry<SliceIndex, Hash>,
-    ) -> Result<(), ShredVerifyError> {
-        if !MerkleTree::check_proof(
-            &self.payload().data,
-            self.payload().index_in_slice,
-            self.merkle_root,
-            &self.merkle_path,
-        ) {
-            return Err(ShredVerifyError::InvalidProof);
-        }
-
-        match cached_merkle_root {
-            Entry::Occupied(entry) => {
-                if entry.get() == &self.merkle_root {
-                    return Ok(());
-                }
-                if self.merkle_root_sig.verify(&self.merkle_root, pk) {
-                    Err(ShredVerifyError::Equivocation)
-                } else {
-                    Err(ShredVerifyError::InvalidSignature)
-                }
-            }
-            Entry::Vacant(entry) => {
-                if self.merkle_root_sig.verify(&self.merkle_root, pk) {
-                    entry.insert(self.merkle_root);
-                    Ok(())
-                } else {
-                    Err(ShredVerifyError::InvalidSignature)
-                }
-            }
-        }
-    }
-
     /// Verifies only the Merkle proof of this shred.
     ///
-    /// For full verification, see [`Shred::verify`].
+    /// For full verification, see [`ValidatedShred::new`].
     ///
     /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
     #[must_use]
@@ -596,19 +545,10 @@ fn build_merkle_tree(data_shreds: &[DataShred], coding_shreds: &[CodingShred]) -
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use color_eyre::Result;
 
     use super::*;
     use crate::types::slice::create_slice_with_invalid_txs;
-
-    fn create_random_shred() -> (Shred, SecretKey) {
-        let sk = SecretKey::new(&mut rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let mut shreds = RegularShredder::shred(slice, &sk).unwrap();
-        (shreds.pop().unwrap(), sk)
-    }
 
     #[test]
     fn regular_shredding() -> Result<()> {
@@ -774,36 +714,5 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
-    }
-
-    #[test]
-    fn shred_verification() {
-        let mut map = BTreeMap::new();
-        let slice_index = SliceIndex::first();
-        let random_pk = SecretKey::new(&mut rng()).to_pk();
-
-        let (shred, sk) = create_random_shred();
-
-        // checking against other public key should fail
-        let res = shred.verify(&random_pk, map.entry(slice_index));
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
-        assert!(!map.contains_key(&slice_index));
-
-        // checking against correct public key should succeed
-        let res = shred.verify(&sk.to_pk(), map.entry(slice_index));
-        assert!(matches!(res, Ok(())));
-        assert!(map.contains_key(&slice_index));
-
-        let (invalid_shred, invalid_shred_sk) = create_random_shred();
-
-        // checking against other public key should fail
-        // and should not be considered as equivocation
-        let res = invalid_shred.verify(&random_pk, map.entry(slice_index));
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
-
-        // checking different shred (with different Merkle root and valid sig)
-        // against existing map entry should fail and detect equivocation
-        let res = invalid_shred.verify(&invalid_shred_sk.to_pk(), map.entry(slice_index));
-        assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
 }

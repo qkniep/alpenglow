@@ -32,20 +32,15 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
-use crate::Transaction;
-use crate::consensus::{Cert, Vote};
-use crate::repair::RepairMessage;
-use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
 
-const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// Network message type.
 ///
@@ -55,13 +50,6 @@ const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard
 pub enum NetworkMessage {
     Ping,
     Pong,
-    Shred(Shred),
-    Vote(Vote),
-    Cert(Cert),
-    Repair(RepairMessage),
-    // FIXME: txs should not be seen on the same connection as other network msgs.
-    // This should not be part of this enum.
-    Transaction(Transaction),
 }
 
 impl NetworkMessage {
@@ -116,56 +104,19 @@ impl NetworkMessage {
     }
 }
 
-impl From<Shred> for NetworkMessage {
-    fn from(shred: Shred) -> Self {
-        Self::Shred(shred)
-    }
-}
-
-impl From<Vote> for NetworkMessage {
-    fn from(vote: Vote) -> Self {
-        Self::Vote(vote)
-    }
-}
-
-impl From<Cert> for NetworkMessage {
-    fn from(cert: Cert) -> Self {
-        Self::Cert(cert)
-    }
-}
-
-impl From<RepairMessage> for NetworkMessage {
-    fn from(repair: RepairMessage) -> Self {
-        Self::Repair(repair)
-    }
-}
-
-/// Error type for network operations.
-#[derive(Debug, Error)]
-pub enum NetworkSendError {
-    #[error("bad socket state")]
-    BadSocket(#[from] std::io::Error),
-}
-
-/// Error type for network operations.
-#[derive(Debug, Error)]
-pub enum NetworkReceiveError {
-    #[error("deserialization error")]
-    Deserialization(#[from] bincode::error::DecodeError),
-    #[error("bad socket state")]
-    BadSocket(#[from] std::io::Error),
-}
-
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
-    async fn send(&self, message: &NetworkMessage, to: SocketAddr) -> Result<(), NetworkSendError>;
+    type Send;
+    type Recv;
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> Result<(), NetworkSendError>;
+    async fn send(&self, message: &Self::Send, to: SocketAddr) -> std::io::Result<()>;
+
+    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 
-    async fn receive(&self) -> Result<NetworkMessage, NetworkReceiveError>;
+    async fn receive(&self) -> std::io::Result<Self::Recv>;
 }
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
@@ -188,7 +139,6 @@ pub fn dontcare_sockaddr() -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MAX_TRANSACTION_SIZE;
 
     #[tokio::test]
     async fn basic() {
@@ -221,14 +171,5 @@ mod tests {
 
         let bytes = vec![0u8; 10 * MTU_BYTES];
         assert!(NetworkMessage::from_bytes(&bytes).is_err());
-    }
-
-    #[tokio::test]
-    #[should_panic]
-    async fn serialize_buffer_too_small() {
-        let mut buf = [0u8; 1];
-        let msg = NetworkMessage::Transaction(Transaction(vec![1; MAX_TRANSACTION_SIZE]));
-        // this should panic
-        msg.to_slice(&mut buf);
     }
 }

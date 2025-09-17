@@ -33,6 +33,7 @@ use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
+use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -45,10 +46,10 @@ pub use self::vote::Vote;
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{Network, NetworkMessage, NetworkSendError};
-use crate::repair::{Repair, RepairRequestHandler};
+use crate::network::Network;
+use crate::repair::{Repair, RepairRequest, RepairRequestHandler, RepairResponse};
 use crate::shredder::Shred;
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(250);
@@ -62,8 +63,29 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ConsensusMessage {
+    Vote(Vote),
+    Cert(Cert),
+}
+
+impl From<Vote> for ConsensusMessage {
+    fn from(vote: Vote) -> Self {
+        Self::Vote(vote)
+    }
+}
+
+impl From<Cert> for ConsensusMessage {
+    fn from(cert: Cert) -> Self {
+        Self::Cert(cert)
+    }
+}
+
 /// Alpenglow consensus protocol implementation.
-pub struct Alpenglow<A: All2All, D: Disseminator, T: Network> {
+pub struct Alpenglow<A: All2All, D: Disseminator, T>
+where
+    T: Network<Recv = Transaction> + Send + Sync + 'static,
+{
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
 
@@ -90,7 +112,7 @@ impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    T: Network + Sync + Send + 'static,
+    T: Network<Recv = Transaction> + Send + Sync + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     ///
@@ -98,16 +120,20 @@ where
     /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new<R: Network + Sync + Send + 'static>(
+    pub fn new<RN, RR>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
-        repair_network: R,
-        repair_request_network: R,
+        repair_network: RN,
+        repair_request_network: RR,
         epoch_info: Arc<EpochInfo>,
         txs_receiver: T,
-    ) -> Self {
+    ) -> Self
+    where
+        RR: Network<Recv = RepairRequest, Send = RepairResponse> + Send + Sync + 'static,
+        RN: Network<Recv = RepairResponse, Send = RepairRequest> + Send + Sync + 'static,
+    {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
@@ -268,26 +294,25 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_all2all_message(&self, msg: NetworkMessage) {
+    async fn handle_all2all_message(&self, msg: ConsensusMessage) {
         trace!("received all2all msg: {msg:?}");
         match msg {
-            NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
+            ConsensusMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
                 Ok(()) => {}
                 Err(AddVoteError::Slashable(offence)) => {
                     warn!("slashable offence detected: {offence}");
                 }
                 Err(err) => trace!("ignoring invalid vote: {err}"),
             },
-            NetworkMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
+            ConsensusMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
                 Ok(()) => {}
                 Err(err) => trace!("ignoring invalid cert: {err}"),
             },
-            msg => warn!("unexpected message on all2all port: {msg:?}"),
         }
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_disseminator_shred(&self, shred: Shred) -> Result<(), NetworkSendError> {
+    async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // potentially forward shred
         self.disseminator.forward(&shred).await?;
 

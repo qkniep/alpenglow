@@ -12,9 +12,9 @@ A local cluster example can be run with the following command:
 ./run.sh
 ```
 
-This spawns a local cluster with 6 nodes.
+This spawns a local cluster with 2 nodes.
 These nodes communicate via UDP on localhost.
-Console output from the [`fastrace`](https://docs.rs/fastrace) crate shows the progress of all nodes.
+Console output from the [`logforth`](https://docs.rs/logforth) crate shows the progress of all nodes.
 
 Further, we provide the `simulations` binary target.
 It provides various simulations of parts of the Alpenglow protocol,
@@ -63,11 +63,11 @@ There is a rudimentary implementation of a standalone node in the `node` binary.
 Since there is no gossip and stake manipulation in this prototype, you need to define all peers manually in advance. To do that, prepare a text file defining the socket addresses of the nodes that will be used in the test, e.g.
 ```csv
 127.0.0.1:3000
-127.0.0.1:3003
-127.0.0.1:3006
-127.0.0.1:3009
+127.0.0.1:3005
+127.0.0.1:3010
+127.0.0.1:3015
 ```
-Obviously, you can use any IP addresses here, as long as they are reachable. Only first out of 3 needed ports is specified, the others are port+1 and port+2.
+Obviously, you can use any IP addresses here, as long as they are reachable. Only first out of 5 needed ports is specified, the others are port+1, ..., port+4.
 
 ### Generate config files for the nodes
 

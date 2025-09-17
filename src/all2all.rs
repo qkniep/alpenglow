@@ -35,11 +35,14 @@
 mod robust;
 mod trivial;
 
+use async_trait::async_trait;
+
 pub use self::robust::RobustAll2All;
 pub use self::trivial::TrivialAll2All;
-use crate::network::{NetworkMessage, NetworkReceiveError, NetworkSendError};
+use crate::consensus::ConsensusMessage;
 
 /// Abstraction for a direct all-to-all network communication protocol.
+#[async_trait]
 pub trait All2All {
     /// Broadcasts the given message to all known nodes.
     ///
@@ -50,18 +53,15 @@ pub trait All2All {
     /// # Errors
     ///
     /// Implementors should return [`NetworkSendError`] iff the underlying network fails.
-    fn broadcast(
-        &self,
-        msg: &NetworkMessage,
-    ) -> impl Future<Output = Result<(), NetworkSendError>> + Send;
+    async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()>;
 
     /// Receives a message from any of the other nodes.
     ///
-    /// Resolves to the next successfully deserialized [`NetworkMessage`].
+    /// Resolves to the next successfully deserialized [`ConsensusMessage`].
     /// Does not provide information on which node sent the message.
     ///
     /// # Errors
     ///
     /// Implementors should return [`NetworkReceiveError`] iff the underlying network fails.
-    fn receive(&self) -> impl Future<Output = Result<NetworkMessage, NetworkReceiveError>> + Send;
+    async fn receive(&self) -> std::io::Result<ConsensusMessage>;
 }

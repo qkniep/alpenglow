@@ -70,7 +70,7 @@ pub enum VotorEvent {
 /// [`super::Blockstore`] and itself.
 /// Informed by these events Votor updates its state and generates votes.
 /// Votes are signed with [`Votor::voting_key`] and broadcast using [`Votor::all2all`].
-pub struct Votor<A: All2All + Sync + Send + 'static> {
+pub struct Votor<A: All2All> {
     // TODO: merge all of these into `SlotState` struct?
     /// Indicates for which slots we already voted notar or skip.
     voted: BTreeSet<Slot>,
@@ -101,7 +101,7 @@ pub struct Votor<A: All2All + Sync + Send + 'static> {
     all2all: Arc<A>,
 }
 
-impl<A: All2All + Sync + Send + 'static> Votor<A> {
+impl<A: All2All> Votor<A> {
     /// Creates a new Votor instance with empty state.
     pub fn new(
         validator_id: ValidatorId,
@@ -364,12 +364,12 @@ mod tests {
 
     use super::*;
     use crate::all2all::TrivialAll2All;
-    use crate::consensus::EpochInfo;
     use crate::consensus::cert::NotarCert;
-    use crate::network::{NetworkMessage, SimulatedNetwork};
+    use crate::consensus::{ConsensusMessage, EpochInfo};
+    use crate::network::SimulatedNetwork;
     use crate::test_utils::{generate_all2all_instances, generate_validators};
 
-    type A2A = TrivialAll2All<SimulatedNetwork>;
+    type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
     async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, Arc<EpochInfo>) {
         let (sks, epoch_info) = generate_validators(2);
@@ -395,11 +395,11 @@ mod tests {
         for _ in slots.clone() {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
-                    NetworkMessage::Vote(v) => {
+                    ConsensusMessage::Vote(v) => {
                         assert!(v.is_skip());
                         skipped_slots.push(v.slot());
                     }
-                    _ => unreachable!(),
+                    m => panic!("other msg: {m:?}"),
                 }
             }
         }
@@ -421,7 +421,7 @@ mod tests {
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
         let vote = match other_a2a.receive().await.unwrap() {
-            NetworkMessage::Vote(v) => v,
+            ConsensusMessage::Vote(v) => v,
             m => panic!("other msg: {m:?}"),
         };
         assert!(vote.is_notar());
@@ -432,7 +432,7 @@ mod tests {
         let event = VotorEvent::CertCreated(Box::new(cert));
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
-            NetworkMessage::Vote(v) => {
+            ConsensusMessage::Vote(v) => {
                 assert!(v.is_final());
                 assert_eq!(v.slot(), slot);
             }
@@ -482,7 +482,7 @@ mod tests {
         // should now see notar votes
         for _ in 0..2 {
             match other_a2a.receive().await.unwrap() {
-                NetworkMessage::Vote(vote) => {
+                ConsensusMessage::Vote(vote) => {
                     assert!(vote.is_notar());
                     assert!(vote.slot() == slot1 || vote.slot() == slot2);
                 }
@@ -503,8 +503,8 @@ mod tests {
             }
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
-                    NetworkMessage::Vote(v) => assert!(v.is_skip()),
-                    _ => unreachable!(),
+                    ConsensusMessage::Vote(v) => assert!(v.is_skip()),
+                    m => panic!("other msg: {m:?}"),
                 }
             }
         }
@@ -513,7 +513,7 @@ mod tests {
         let event = VotorEvent::SafeToNotar(slot, [1; 32]);
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
-            NetworkMessage::Vote(v) => {
+            ConsensusMessage::Vote(v) => {
                 assert!(v.is_notar_fallback());
                 assert_eq!(v.slot(), slot);
                 assert_eq!(v.block_hash(), Some([1; 32]));
@@ -537,7 +537,7 @@ mod tests {
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
         let vote = match other_a2a.receive().await.unwrap() {
-            NetworkMessage::Vote(v) => v,
+            ConsensusMessage::Vote(v) => v,
             m => panic!("other msg: {m:?}"),
         };
         assert!(vote.is_notar());
@@ -547,7 +547,7 @@ mod tests {
         let event = VotorEvent::SafeToSkip(slot);
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
-            NetworkMessage::Vote(v) => {
+            ConsensusMessage::Vote(v) => {
                 assert!(v.is_skip_fallback());
                 assert_eq!(v.slot(), slot);
             }
