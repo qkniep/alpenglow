@@ -55,7 +55,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
 
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
-) -> Vec<TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>> {
+) -> Vec<TrivialAll2All<SimulatedNetwork<ConsensusMessage>>> {
     let core = Arc::new(
         SimulatedNetworkCore::default()
             .with_jitter(0.0)

@@ -31,6 +31,7 @@ mod udp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
@@ -41,15 +42,18 @@ pub const MTU_BYTES: usize = 1500;
 
 pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
+pub fn into_bytes<M: Serialize>(msg: &M) -> Vec<u8> {
+    let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+    assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+    bytes
+}
+
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
-    type Send;
     type Recv;
 
-    async fn send(&self, message: &Self::Send, to: SocketAddr) -> std::io::Result<()>;
-
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
+    async fn send(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 

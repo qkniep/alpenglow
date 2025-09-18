@@ -124,7 +124,7 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For limited bandwidth, use [`Self::join`] instead.
-    pub async fn join_unlimited<S, R>(self: &Arc<Self>, id: ValidatorId) -> SimulatedNetwork<S, R> {
+    pub async fn join_unlimited<R>(self: &Arc<Self>, id: ValidatorId) -> SimulatedNetwork<R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(65536);
         // background -> receiver
@@ -158,12 +158,12 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For unlimited bandwidth, use [`Self::join_unlimited`] instead.
-    pub async fn join<S, R>(
+    pub async fn join<R>(
         self: &Arc<Self>,
         id: ValidatorId,
         up_bandwidth: usize,
         down_bandwidth: usize,
-    ) -> SimulatedNetwork<S, R> {
+    ) -> SimulatedNetwork<R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(1000);
         // background -> receiver
@@ -257,7 +257,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::network::{Network, localhost_ip_sockaddr};
+    use crate::network::{Network, into_bytes, localhost_ip_sockaddr};
     use crate::test_utils::{Ping, PingOrPong};
 
     // test simulated latency accuracy to within +/-5%
@@ -269,7 +269,7 @@ mod tests {
     #[ignore]
     async fn symmetric() {
         // set up network with two nodes
-        let msg = Ping;
+        let msg = into_bytes(&Ping);
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)
@@ -306,7 +306,7 @@ mod tests {
     #[ignore]
     async fn asymmetric() {
         // set up network with two nodes
-        let msg = Ping;
+        let msg = into_bytes(&Ping);
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)
@@ -350,18 +350,18 @@ mod tests {
     async fn latency_order() {
         // set up network with three nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-        let net1: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(1).await;
-        let net3: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(2).await;
+        let net1: SimulatedNetwork<PingOrPong> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<PingOrPong> = core.join_unlimited(1).await;
+        let net3: SimulatedNetwork<PingOrPong> = core.join_unlimited(2).await;
         let sock0 = localhost_ip_sockaddr(0);
         core.set_latency(0, 1, Duration::from_millis(10)).await;
         core.set_latency(0, 2, Duration::from_millis(20)).await;
 
         // send ping on faster link
-        let msg = PingOrPong::Ping;
+        let msg = into_bytes(&PingOrPong::Ping);
         net2.send(&msg, sock0).await.unwrap();
         // send pong on slower link
-        let msg = PingOrPong::Pong;
+        let msg = into_bytes(&PingOrPong::Pong);
         net3.send(&msg, sock0).await.unwrap();
 
         // ping should arrive before pong
@@ -371,9 +371,9 @@ mod tests {
         assert!(matches!(received, PingOrPong::Pong));
 
         // queue messages in the other order
-        let msg = PingOrPong::Pong;
+        let msg = into_bytes(&PingOrPong::Pong);
         net3.send(&msg, sock0).await.unwrap();
-        let msg = PingOrPong::Ping;
+        let msg = into_bytes(&PingOrPong::Ping);
         net2.send(&msg, sock0).await.unwrap();
 
         // ping should still arrive before pong
@@ -387,11 +387,11 @@ mod tests {
     async fn packet_loss() {
         // set up network with two nodes and 50% packet loss
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.5));
-        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<Ping> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<Ping> = core.join_unlimited(1).await;
 
         // send 1000 pings
-        let msg = Ping;
+        let msg = into_bytes(&Ping);
         for _ in 0..1000 {
             net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }

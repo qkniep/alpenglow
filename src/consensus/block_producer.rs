@@ -524,13 +524,13 @@ mod tests {
     use crate::consensus::pool::MockPool;
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
-    use crate::network::{UdpNetwork, localhost_ip_sockaddr};
+    use crate::network::{UdpNetwork, into_bytes, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
-        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let txs_receiver: UdpNetwork<Transaction> = UdpNetwork::new_with_any_port();
         let duration_left = Duration::from_micros(0);
 
         let parent = None;
@@ -552,9 +552,9 @@ mod tests {
 
     #[tokio::test]
     async fn produce_slice_full_slices() {
-        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let txs_receiver: UdpNetwork<Transaction> = UdpNetwork::new_with_any_port();
         let addr = localhost_ip_sockaddr(txs_receiver.port());
-        let txs_sender: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let txs_sender: UdpNetwork<Transaction> = UdpNetwork::new_with_any_port();
         // long enough duration so hopefully doesn't fire while collecting txs
         let duration_left = Duration::from_secs(100);
 
@@ -562,7 +562,8 @@ mod tests {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
                 let msg = Transaction(data);
-                txs_sender.send(&msg, addr).await.unwrap();
+                let bytes = into_bytes(&msg);
+                txs_sender.send(&bytes, addr).await.unwrap();
             }
         });
 
@@ -639,7 +640,7 @@ mod tests {
         disseminator: MockDisseminator,
         delta_block: Duration,
         delta_first_slice: Duration,
-    ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
+    ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);

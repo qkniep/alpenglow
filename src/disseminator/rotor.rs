@@ -12,7 +12,7 @@ use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::{BINCODE_CONFIG, Network, into_bytes};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -58,7 +58,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
 
 impl<N, S: SamplingStrategy> Rotor<N, S>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: Network<Recv = Shred>,
 {
     /// Turns this instance into a new instance with a different sampling strategy.
     #[must_use]
@@ -70,7 +70,10 @@ where
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let v = self.epoch_info.validator(relay);
-        self.network.send(shred, v.disseminator_address).await
+        let bytes = into_bytes(shred);
+        self.network
+            .send(&bytes, v.disseminator_address)
+            .await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -91,7 +94,7 @@ where
                 continue;
             }
             self.network
-                .send_serialized(&bytes, v.disseminator_address)
+                .send(&bytes, v.disseminator_address)
                 .await?;
         }
         Ok(())
@@ -113,7 +116,7 @@ where
 #[async_trait]
 impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: Network<Recv = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         Self::send_as_leader(self, shred).await
@@ -145,7 +148,7 @@ mod tests {
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
-    type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
+    type MyRotor = Rotor<UdpNetwork<Shred>, StakeWeightedSampler>;
 
     fn create_rotor_instances(count: u64, base_port: u16) -> (Vec<SecretKey>, Vec<MyRotor>) {
         let mut sks = Vec::new();

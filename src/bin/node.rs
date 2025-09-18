@@ -110,9 +110,9 @@ async fn main() -> Result<()> {
 }
 
 type Node = Alpenglow<
-    TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
-    UdpNetwork<Transaction, Transaction>,
+    TrivialAll2All<UdpNetwork<ConsensusMessage>>,
+    Rotor<UdpNetwork<Shred>, StakeWeightedSampler>,
+    UdpNetwork<Transaction>,
 >;
 
 fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {

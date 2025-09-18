@@ -27,7 +27,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::warn;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -35,11 +34,11 @@ pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
 use super::Network;
 use crate::ValidatorId;
-use crate::network::{BINCODE_CONFIG, MTU_BYTES};
+use crate::network::BINCODE_CONFIG;
 
 /// A simulated network interface for local testing and simulations.
 // TODO: add examples
-pub struct SimulatedNetwork<S, R> {
+pub struct SimulatedNetwork<R> {
     /// ID of the validator this network interface belongs to.
     id: ValidatorId,
     /// Reference to the simulated network core this interface is attached to.
@@ -48,10 +47,10 @@ pub struct SimulatedNetwork<S, R> {
     receiver: Mutex<mpsc::Receiver<Vec<u8>>>,
     /// Optional rate limiter.
     limiter: Option<RwLock<TokenBucket>>,
-    _msg_types: PhantomData<(S, R)>,
+    _msg_types: PhantomData<R>,
 }
 
-impl<S, R> SimulatedNetwork<S, R> {
+impl<R> SimulatedNetwork<R> {
     async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> std::io::Result<()> {
         if let Some(limiter) = &self.limiter {
             limiter.write().await.wait_for(bytes.len()).await;
@@ -62,22 +61,13 @@ impl<S, R> SimulatedNetwork<S, R> {
 }
 
 #[async_trait]
-impl<S, R> Network for SimulatedNetwork<S, R>
+impl<R> Network for SimulatedNetwork<R>
 where
-    S: Serialize + Send + Sync,
     R: DeserializeOwned + Send + Sync,
 {
     type Recv = R;
-    type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let validator_id = to.port() as ValidatorId;
-        self.send_byte_vec(bytes, validator_id).await
-    }
-
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
+    async fn send(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
         let validator_id = to.port() as ValidatorId;
         self.send_byte_vec(bytes.to_vec(), validator_id).await
     }
@@ -113,7 +103,7 @@ mod tests {
     use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
-    use crate::network::localhost_ip_sockaddr;
+    use crate::network::{into_bytes, localhost_ip_sockaddr};
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, TOTAL_SHREDS,
     };
@@ -127,16 +117,20 @@ mod tests {
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1 = core.join(0, 8192, 8192).await;
         let net2 = core.join(1, 8192, 8192).await;
-        let msg = Ping;
+        let msg = into_bytes(&Ping);
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+        net1.send(&msg, localhost_ip_sockaddr(1))
+            .await
+            .unwrap();
         if !matches!(net2.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
+        net2.send(&msg, localhost_ip_sockaddr(0))
+            .await
+            .unwrap();
         if !matches!(net1.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
@@ -150,8 +144,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join(0, 32_768, 32_768).await; // 32 KiB/s
-        let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
+        let net1: SimulatedNetwork<Shred> = core.join(0, 32_768, 32_768).await; // 32 KiB/s
+        let net2: SimulatedNetwork<Shred> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
         let mut rng = rand::rng();
@@ -190,7 +184,10 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            let bytes = into_bytes(&shred);
+            net1.send(&bytes, localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -207,8 +204,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
-        let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
+        let net1: SimulatedNetwork<Shred> = core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
+        let net2: SimulatedNetwork<Shred> = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
         // create a full block (1024 slices)
         let mut rng = rand::rng();
@@ -247,7 +244,10 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            let bytes = into_bytes(&shred);
+            net1.send(&bytes, localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -264,8 +264,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<Shred> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<Shred> = core.join_unlimited(1).await;
 
         // create a full block (1024 slices)
         let mut rng = rand::rng();
@@ -304,7 +304,10 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            let bytes = into_bytes(&shred);
+            net1.send(&bytes, localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();

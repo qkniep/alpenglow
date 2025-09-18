@@ -16,7 +16,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::Network;
+use crate::network::{Network, into_bytes};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -52,7 +52,7 @@ pub(crate) struct TurbineTree {
 
 impl<N> Turbine<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: Network<Recv = Shred>,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
@@ -90,7 +90,8 @@ where
             .await;
         let root = tree.get_root();
         let addr = self.validators[root as usize].disseminator_address;
-        self.network.send(shred, addr).await
+        let bytes = into_bytes(shred);
+        self.network.send(&bytes, addr).await
     }
 
     /// Forwards the shred to all our children in the correct Turbine tree.
@@ -103,9 +104,10 @@ where
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
+        let bytes = into_bytes(shred);
         for child in tree.get_children() {
             let addr = self.validators[*child as usize].disseminator_address;
-            self.network.send(shred, addr).await?;
+            self.network.send(&bytes, addr).await?;
         }
         Ok(())
     }
@@ -131,7 +133,7 @@ where
 #[async_trait]
 impl<N> Disseminator for Turbine<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: Network<Recv = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.send_shred_to_root(shred).await
@@ -258,7 +260,7 @@ mod tests {
 
     async fn create_turbine_instances(
         validators: &mut [ValidatorInfo],
-    ) -> Vec<Turbine<SimulatedNetwork<Shred, Shred>>> {
+    ) -> Vec<Turbine<SimulatedNetwork<Shred>>> {
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)

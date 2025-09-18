@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::{BINCODE_CONFIG, Network, into_bytes};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -103,7 +103,7 @@ pub struct RepairRequestHandler<N: Network> {
 
 impl<N> RepairRequestHandler<N>
 where
-    N: Network<Recv = RepairRequest, Send = RepairResponse>,
+    N: Network<Recv = RepairRequest>,
 {
     /// Creates a new repair request handler instance.
     ///
@@ -180,7 +180,8 @@ where
         validator: ValidatorId,
     ) -> std::io::Result<()> {
         let to = self.epoch_info.validator(validator).repair_response_address;
-        self.network.send(&response, to).await
+        let bytes = into_bytes(&response);
+        self.network.send(&bytes, to).await
     }
 }
 
@@ -201,7 +202,7 @@ pub struct Repair<N: Network> {
 
 impl<N> Repair<N>
 where
-    N: Network<Recv = RepairResponse, Send = RepairRequest>,
+    N: Network<Recv = RepairResponse>,
 {
     /// Creates a new repair instance.
     ///
@@ -402,7 +403,7 @@ where
             }
         }
         for to in to_all {
-            self.network.send_serialized(&msg_bytes, to).await?;
+            self.network.send(&msg_bytes, to).await?;
         }
         Ok(())
     }
@@ -446,8 +447,8 @@ mod tests {
     async fn create_repair_instance() -> (
         Sender<BlockId>,
         Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
-        SimulatedNetwork<RepairResponse, RepairRequest>,
-        SimulatedNetwork<RepairRequest, RepairResponse>,
+        SimulatedNetwork<RepairRequest>,
+        SimulatedNetwork<RepairResponse>,
         SecretKey,
     ) {
         // create EpochInfo for 2 validators and the corresponding network
@@ -561,8 +562,12 @@ mod tests {
             shreds.last().unwrap()[0].merkle_root,
             merkle_tree.create_proof(num_slices - 1),
         );
+        let bytes = into_bytes(&response);
         let port1 = localhost_ip_sockaddr(3);
-        other_network_request.send(&response, port1).await.unwrap();
+        other_network_request
+            .send(&bytes, port1)
+            .await
+            .unwrap();
 
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
@@ -585,7 +590,11 @@ mod tests {
             let root = shreds[slice.inner()][0].merkle_root;
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
-            other_network_request.send(&response, port1).await.unwrap();
+            let bytes = into_bytes(&response);
+            other_network_request
+                .send(&bytes, port1)
+                .await
+                .unwrap();
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
@@ -606,7 +615,11 @@ mod tests {
                 assert!(shreds_requested.contains(&shred_index));
                 let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req_type, shred);
-                other_network_request.send(&response, port1).await.unwrap();
+                let bytes = into_bytes(&response);
+                other_network_request
+                    .send(&bytes, port1)
+                    .await
+                    .unwrap();
             }
         }
 
@@ -644,8 +657,9 @@ mod tests {
             req_type: RepairRequestType::LastSliceRoot(block_to_repair),
             sender: 0,
         };
+        let bytes = into_bytes(&request);
         let port1 = localhost_ip_sockaddr(2);
-        other_network.send(&request, port1).await.unwrap();
+        other_network.send(&bytes, port1).await.unwrap();
 
         // verify reponse
         let msg = other_network.receive().await.unwrap();
@@ -668,7 +682,8 @@ mod tests {
                 req_type: RepairRequestType::SliceRoot(block_to_repair, slice),
                 sender: 0,
             };
-            other_network.send(&request, port1).await.unwrap();
+            let bytes = into_bytes(&request);
+            other_network.send(&bytes, port1).await.unwrap();
 
             // verify response
             let msg = other_network.receive().await.unwrap();
@@ -690,7 +705,8 @@ mod tests {
                     req_type: RepairRequestType::Shred(block_to_repair, slice, shred_index),
                     sender: 0,
                 };
-                other_network.send(&request, port1).await.unwrap();
+                let bytes = into_bytes(&request);
+                other_network.send(&bytes, port1).await.unwrap();
 
                 // verify response
                 let msg = other_network.receive().await.unwrap();

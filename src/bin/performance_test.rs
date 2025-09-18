@@ -32,9 +32,9 @@ async fn main() -> Result<()> {
 }
 
 type TestNode = Alpenglow<
-    TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<SimulatedNetwork<Shred, Shred>, StakeWeightedSampler>,
-    UdpNetwork<Transaction, Transaction>,
+    TrivialAll2All<SimulatedNetwork<ConsensusMessage>>,
+    Rotor<SimulatedNetwork<Shred>, StakeWeightedSampler>,
+    UdpNetwork<Transaction>,
 >;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {

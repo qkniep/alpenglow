@@ -93,17 +93,17 @@ pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
 }
 
 type TestNode = Alpenglow<
-    TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
-    UdpNetwork<Transaction, Transaction>,
+    TrivialAll2All<UdpNetwork<ConsensusMessage>>,
+    Rotor<UdpNetwork<Shred>, StakeWeightedSampler>,
+    UdpNetwork<Transaction>,
 >;
 
 struct Networks {
-    all2all: UdpNetwork<ConsensusMessage, ConsensusMessage>,
-    disseminator: UdpNetwork<Shred, Shred>,
-    repair: UdpNetwork<RepairRequest, RepairResponse>,
-    repair_request: UdpNetwork<RepairResponse, RepairRequest>,
-    txs: UdpNetwork<Transaction, Transaction>,
+    all2all: UdpNetwork<ConsensusMessage>,
+    disseminator: UdpNetwork<Shred>,
+    repair: UdpNetwork<RepairResponse>,
+    repair_request: UdpNetwork<RepairRequest>,
+    txs: UdpNetwork<Transaction>,
 }
 
 impl Networks {

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::Network;
+use crate::network::{Network, into_bytes};
 
 /// Instance of the trivial all-to-all broadcast protocol.
 pub struct TrivialAll2All<N: Network> {
@@ -36,11 +36,14 @@ impl<N: Network> TrivialAll2All<N> {
 #[async_trait]
 impl<N: Network> All2All for TrivialAll2All<N>
 where
-    N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
+    N: Network<Recv = ConsensusMessage>,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
+        let bytes = into_bytes(msg);
         for v in &self.validators {
-            self.network.send(msg, v.all2all_address).await?;
+            self.network
+                .send(&bytes, v.all2all_address)
+                .await?;
         }
         Ok(())
     }
@@ -73,14 +76,12 @@ mod tests {
                 .with_default_latency(Duration::from_millis(10))
                 .with_packet_loss(0.0),
         );
-        let net_sender: SimulatedNetwork<ConsensusMessage, ConsensusMessage> =
-            core.join_unlimited(0).await;
+        let net_sender: SimulatedNetwork<ConsensusMessage> = core.join_unlimited(0).await;
         let mut net_others = Vec::new();
         let mut validators = Vec::new();
         for i in 0..20 {
             if i > 0 {
-                let net: SimulatedNetwork<ConsensusMessage, ConsensusMessage> =
-                    core.join_unlimited(i).await;
+                let net: SimulatedNetwork<ConsensusMessage> = core.join_unlimited(i).await;
                 net_others.push(net);
             }
             let sk = SecretKey::new(&mut rand::rng());

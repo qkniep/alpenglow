@@ -11,7 +11,6 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
 use futures::SinkExt;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -19,27 +18,25 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use super::Network;
-use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
 
 /// Implementation of network abstraction over TCP connections.
 // WARN: this is incomplete!
-pub struct TcpNetwork<S, R> {
+pub struct TcpNetwork<R> {
     listener: TcpListener,
     readers: RwLock<Vec<Mutex<StreamReader>>>,
     writers: RwLock<Vec<Mutex<StreamWriter>>>,
-    _msg_types: PhantomData<(S, R)>,
+    _msg_types: PhantomData<R>,
 }
 
 #[allow(dead_code)]
-enum TcpMessage<S, R> {
-    Sender(S),
+enum TcpMessage<R> {
     Receiver(R),
 }
 
-impl<S, R> TcpNetwork<S, R> {
+impl<R> TcpNetwork<R> {
     /// Creates a new `TcpNetwork` instance bound to the given `port`.
     ///
     /// # Panics
@@ -49,7 +46,7 @@ impl<S, R> TcpNetwork<S, R> {
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
         let listener = futures::executor::block_on(TcpListener::bind(addr)).unwrap();
-        let (_tx, _rx) = mpsc::channel::<TcpMessage<S, R>>(1024);
+        let (_tx, _rx) = mpsc::channel::<TcpMessage<R>>(1024);
         Self {
             listener,
             readers: RwLock::new(Vec::new()),
@@ -75,21 +72,13 @@ impl<S, R> TcpNetwork<S, R> {
 }
 
 #[async_trait]
-impl<S, R> Network for TcpNetwork<S, R>
+impl<R> Network for TcpNetwork<R>
 where
-    S: Serialize + Send + Sync,
     R: DeserializeOwned + Send + Sync,
 {
     type Recv = R;
-    type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        self.send_serialized(&bytes, to).await
-    }
-
-    async fn send_serialized(&self, bytes: &[u8], _to: SocketAddr) -> std::io::Result<()> {
+    async fn send(&self, bytes: &[u8], _to: SocketAddr) -> std::io::Result<()> {
         // TODO: use correct socket
         let writer = &self.writers.read().await[0];
         writer.lock().await.send(bytes.to_vec().into()).await?;

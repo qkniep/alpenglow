@@ -131,8 +131,8 @@ where
         txs_receiver: T,
     ) -> Self
     where
-        RR: Network<Recv = RepairRequest, Send = RepairResponse> + Send + Sync + 'static,
-        RN: Network<Recv = RepairResponse, Send = RepairRequest> + Send + Sync + 'static,
+        RR: Network<Recv = RepairRequest> + Send + Sync + 'static,
+        RN: Network<Recv = RepairResponse> + Send + Sync + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);

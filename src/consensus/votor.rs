@@ -369,7 +369,7 @@ mod tests {
     use crate::network::SimulatedNetwork;
     use crate::test_utils::{generate_all2all_instances, generate_validators};
 
-    type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
+    type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage>>;
 
     async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, Arc<EpochInfo>) {
         let (sks, epoch_info) = generate_validators(2);

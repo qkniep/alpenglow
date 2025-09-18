@@ -27,13 +27,13 @@ impl<N: Network> TrivialDisseminator<N> {
 #[async_trait]
 impl<N> Disseminator for TrivialDisseminator<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: Network<Recv = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
         for v in &self.validators {
             self.network
-                .send_serialized(&bytes, v.disseminator_address)
+                .send(&bytes, v.disseminator_address)
                 .await?;
         }
         Ok(())
@@ -67,10 +67,7 @@ mod tests {
     fn create_disseminator_instances(
         count: u64,
         base_port: u16,
-    ) -> (
-        Vec<SecretKey>,
-        Vec<TrivialDisseminator<UdpNetwork<Shred, Shred>>>,
-    ) {
+    ) -> (Vec<SecretKey>, Vec<TrivialDisseminator<UdpNetwork<Shred>>>) {
         let mut sks = Vec::new();
         let mut voting_sks = Vec::new();
         let mut validators = Vec::new();

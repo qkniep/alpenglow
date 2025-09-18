@@ -11,7 +11,6 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
 use log::warn;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::UdpSocket;
 
@@ -25,12 +24,12 @@ use crate::network::{BINCODE_CONFIG, Network};
 const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 
 /// Implementation of network abstraction over a simple UDP socket.
-pub struct UdpNetwork<S, R> {
+pub struct UdpNetwork<R> {
     socket: UdpSocket,
-    _msg_types: PhantomData<(S, R)>,
+    _msg_types: PhantomData<R>,
 }
 
-impl<S, R> UdpNetwork<S, R> {
+impl<R> UdpNetwork<R> {
     /// Creates a new `UdpNetwork` instance bound to the given `port`.
     ///
     /// # Panics
@@ -60,21 +59,13 @@ impl<S, R> UdpNetwork<S, R> {
 }
 
 #[async_trait]
-impl<S, R> Network for UdpNetwork<S, R>
+impl<R> Network for UdpNetwork<R>
 where
-    S: Serialize + Send + Sync,
     R: DeserializeOwned + Send + Sync,
 {
     type Recv = R;
-    type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        self.send_serialized(&bytes, to).await
-    }
-
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
+    async fn send(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
         self.socket.send_to(bytes, to).await?;
         Ok(())
     }
@@ -105,24 +96,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::localhost_ip_sockaddr;
+    use crate::network::{into_bytes, localhost_ip_sockaddr};
     use crate::test_utils::{Ping, Pong};
 
     #[tokio::test]
     async fn ping() {
-        let socket1: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
-        let socket2: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+        let socket1: UdpNetwork<Ping> = UdpNetwork::new_with_any_port();
+        let socket2: UdpNetwork<Ping> = UdpNetwork::new_with_any_port();
         let addr1 = localhost_ip_sockaddr(socket1.port());
 
         // regular send()
-        socket2.send(&Ping, addr1).await.unwrap();
+        socket2.send(&into_bytes(&Ping), addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, Ping));
 
         // send_serialized()
         let bytes = bincode::serde::encode_to_vec(Ping, BINCODE_CONFIG).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        socket2.send_serialized(&bytes, addr1).await.unwrap();
+        socket2.send(&bytes, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, Ping));
     }
@@ -134,10 +125,12 @@ mod tests {
         let addr1 = localhost_ip_sockaddr(socket1.port());
         let addr2 = localhost_ip_sockaddr(socket2.port());
 
-        socket1.send(&Ping, addr2).await.unwrap();
+        let ping = into_bytes(&Ping);
+        socket1.send(&ping, addr2).await.unwrap();
         let msg = socket2.receive().await.unwrap();
         assert!(matches!(msg, Ping));
-        socket2.send(&Pong, addr1).await.unwrap();
+        let pong = into_bytes(&Pong);
+        socket2.send(&pong, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, Pong));
     }
