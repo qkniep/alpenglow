@@ -31,7 +31,6 @@ mod udp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
@@ -41,68 +40,6 @@ pub use self::udp::UdpNetwork;
 pub const MTU_BYTES: usize = 1500;
 
 pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
-
-/// Network message type.
-///
-/// Everything that the Alpenglow validator will send over the network is a `NetworkMessage`.
-// TODO: zero-copy deserialization
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum NetworkMessage {
-    Ping,
-    Pong,
-}
-
-impl NetworkMessage {
-    /// Tries to deserialize a `NetworkMessage` from bytes using [`bincode`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`bincode::error::DecodeError`] if bincode decoding fails.
-    /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        if bytes.len() > MTU_BYTES {
-            return Err(bincode::error::DecodeError::LimitExceeded);
-        }
-        // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, bytes_read) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
-        if bytes_read != bytes.len() {
-            return Err(bincode::error::DecodeError::UnexpectedEnd {
-                additional: bytes.len() - bytes_read,
-            });
-        }
-        Ok(msg)
-    }
-
-    /// Serializes this message into owned bytes using [`bincode`].
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let bytes = bincode::serde::encode_to_vec(self, BINCODE_CONFIG)
-            .expect("serialization should not panic");
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        bytes
-    }
-
-    /// Serializes this message into an existing buffer using [`bincode`].
-    ///
-    /// # Returns
-    ///
-    /// Number of bytes used in `buf`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if encoding returns an error, including if `buf` was not big enough.
-    /// Panics if encoding used more than [`MTU_BYTES`].
-    pub fn to_slice(&self, buf: &mut [u8]) -> usize {
-        let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
-        match res {
-            Ok(written) => {
-                assert!(written <= MTU_BYTES, "each message should fit in MTU");
-                written
-            }
-            Err(err) => panic!("serialization failed with {err:?}"),
-        }
-    }
-}
 
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
@@ -134,42 +71,4 @@ pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
 /// This should not be used in production.
 pub fn dontcare_sockaddr() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn basic() {
-        let msg = NetworkMessage::Ping;
-        let bytes = msg.to_bytes();
-        let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
-        assert!(matches!(deserialized, NetworkMessage::Ping));
-
-        let msg = NetworkMessage::Pong;
-        let bytes = msg.to_bytes();
-        let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
-        assert!(matches!(deserialized, NetworkMessage::Pong));
-    }
-
-    #[tokio::test]
-    async fn serialize_reuse_buffer() {
-        let mut buf = [0u8; MTU_BYTES];
-        for _ in 0..10 {
-            let msg = NetworkMessage::Ping;
-            let num_bytes = msg.to_slice(&mut buf);
-            let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
-            assert!(matches!(deserialized, NetworkMessage::Ping));
-        }
-    }
-
-    #[tokio::test]
-    async fn deserialize_too_large() {
-        let bytes = vec![0u8; MTU_BYTES + 1];
-        assert!(NetworkMessage::from_bytes(&bytes).is_err());
-
-        let bytes = vec![0u8; 10 * MTU_BYTES];
-        assert!(NetworkMessage::from_bytes(&bytes).is_err());
-    }
 }

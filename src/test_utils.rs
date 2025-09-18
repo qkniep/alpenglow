@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
@@ -16,6 +17,18 @@ use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
 };
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Ping;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Pong;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PingOrPong {
+    Ping,
+    Pong,
+}
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
     let mut rng = rand::rng();

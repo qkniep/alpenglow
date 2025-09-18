@@ -113,10 +113,11 @@ mod tests {
     use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
-    use crate::network::{NetworkMessage, localhost_ip_sockaddr};
+    use crate::network::localhost_ip_sockaddr;
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, TOTAL_SHREDS,
     };
+    use crate::test_utils::Ping;
     use crate::types::slice::create_slice_payload_with_invalid_txs;
     use crate::types::{Slice, SliceHeader, SliceIndex};
 
@@ -126,17 +127,17 @@ mod tests {
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1 = core.join(0, 8192, 8192).await;
         let net2 = core.join(1, 8192, 8192).await;
-        let msg = NetworkMessage::Ping;
+        let msg = Ping;
 
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
-        if !matches!(net2.receive().await, Ok(NetworkMessage::Ping)) {
+        if !matches!(net2.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
-        if !matches!(net1.receive().await, Ok(NetworkMessage::Ping)) {
+        if !matches!(net1.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
     }
