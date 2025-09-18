@@ -18,6 +18,7 @@
 //! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
 
 mod reed_solomon;
+mod shred_index;
 mod validated_shred;
 
 use aes::Aes128;
@@ -30,6 +31,7 @@ use thiserror::Error;
 use self::reed_solomon::{
     ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred, reed_solomon_shred,
 };
+pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
@@ -137,7 +139,7 @@ impl Shred {
         }
         MerkleTree::check_proof(
             &self.payload().data,
-            self.payload().index_in_slice,
+            self.payload().shred_index.inner(),
             self.merkle_root,
             &self.merkle_path,
         )
@@ -163,7 +165,7 @@ pub struct ShredPayload {
     /// Slice header replicated in each shred.
     pub(crate) header: SliceHeader,
     /// Index of this shred within the slice.
-    pub(crate) index_in_slice: usize,
+    pub(crate) shred_index: ShredIndex,
     /// Raw payload bytes of this shred, part of the erasure-coded slice payload.
     pub(crate) data: bytes::Bytes,
 }
@@ -172,7 +174,7 @@ impl ShredPayload {
     /// Returns the index of this shred within the entire slot.
     #[must_use]
     pub fn index_in_slot(&self) -> usize {
-        self.header.slice_index.inner() * TOTAL_SHREDS + self.index_in_slice
+        self.header.slice_index.inner() * TOTAL_SHREDS + self.shred_index.inner()
     }
 }
 
@@ -471,7 +473,7 @@ pub fn data_and_coding_to_output_shreds(
     let sig = sk.sign(&merkle_root);
 
     for d in data {
-        let merkle_path = tree.create_proof(d.0.index_in_slice);
+        let merkle_path = tree.create_proof(d.0.shred_index.inner());
         shreds.push(Shred {
             payload_type: ShredPayloadType::Data(d.0),
             merkle_root,
@@ -480,8 +482,8 @@ pub fn data_and_coding_to_output_shreds(
         });
     }
     for mut c in coding {
-        c.0.index_in_slice += num_data_shreds;
-        let merkle_path = tree.create_proof(c.0.index_in_slice);
+        c.0.shred_index = ShredIndex::new(c.0.shred_index.inner() + num_data_shreds).unwrap();
+        let merkle_path = tree.create_proof(c.0.shred_index.inner());
         shreds.push(Shred {
             payload_type: ShredPayloadType::Coding(c.0),
             merkle_root,
@@ -511,7 +513,7 @@ pub fn create_output_shreds_for_other_leader(
     let merkle_root = tree.get_root();
 
     for d in data {
-        let merkle_path = tree.create_proof(d.0.index_in_slice);
+        let merkle_path = tree.create_proof(d.0.shred_index.inner());
         shreds.push(Shred {
             payload_type: ShredPayloadType::Data(d.0),
             merkle_root,
@@ -520,8 +522,8 @@ pub fn create_output_shreds_for_other_leader(
         });
     }
     for mut c in coding {
-        c.0.index_in_slice += num_data_shreds;
-        let merkle_path = tree.create_proof(c.0.index_in_slice);
+        c.0.shred_index = ShredIndex::new(c.0.shred_index.inner() + num_data_shreds).unwrap();
+        let merkle_path = tree.create_proof(c.0.shred_index.inner());
         shreds.push(Shred {
             payload_type: ShredPayloadType::Coding(c.0),
             merkle_root,

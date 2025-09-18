@@ -194,8 +194,8 @@ mod tests {
                         Ok(shred) => {
                             rotor_non_leader.forward(&shred).await.unwrap();
                             let mut guard = shreds_received.lock().await;
-                            assert!(!guard.contains(&shred.payload().index_in_slice));
-                            guard.insert(shred.payload().index_in_slice);
+                            assert!(!guard.contains(&shred.payload().shred_index.inner()));
+                            guard.insert(shred.payload().shred_index.inner());
                         }
                         _ => continue,
                     }

@@ -10,7 +10,7 @@ use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
     ShredPayload, ShredPayloadType, SliceHeader, TOTAL_SHREDS,
 };
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ShredIndex};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
@@ -51,20 +51,25 @@ pub(super) fn reed_solomon_shred(
     let coding_parts = rs::encode(num_data, num_coding, payload.chunks(shred_bytes)).unwrap();
 
     // map raw data/coding parts to `DataShred` and `CodingShred`
-    let payload_from_index_and_data = |index_in_slice: usize, data: Vec<u8>| ShredPayload {
+    let payload_from_index_and_data = |shred_index: ShredIndex, data: Vec<u8>| ShredPayload {
         header: header.clone(),
-        index_in_slice,
+        shred_index,
         data: data.into(),
     };
     let data_shreds = payload
         .chunks(shred_bytes)
         .enumerate()
-        .map(|(i, p)| DataShred(payload_from_index_and_data(i, p.to_vec())))
+        .map(|(i, p)| {
+            DataShred(payload_from_index_and_data(
+                ShredIndex::new(i).unwrap(),
+                p.to_vec(),
+            ))
+        })
         .collect();
     let coding_shreds = coding_parts
         .into_iter()
         .enumerate()
-        .map(|(i, p)| CodingShred(payload_from_index_and_data(i, p)))
+        .map(|(i, p)| CodingShred(payload_from_index_and_data(ShredIndex::new(i).unwrap(), p)))
         .collect();
 
     Ok((data_shreds, coding_shreds))
@@ -87,11 +92,11 @@ pub(super) fn reed_solomon_deshred(
 
     // filter to split data and coding shreds
     let data = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
+        ShredPayloadType::Data(d) => Some((d.shred_index.inner(), &d.data)),
         ShredPayloadType::Coding(_) => None,
     });
     let coding = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
+        ShredPayloadType::Coding(c) => Some((c.shred_index.inner() - coding_offset, &c.data)),
         ShredPayloadType::Data(_) => None,
     });
 

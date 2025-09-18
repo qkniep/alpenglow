@@ -18,7 +18,7 @@ use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::Hash;
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ShredIndex};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
 
@@ -63,7 +63,7 @@ pub trait Blockstore {
         &'a self,
         block_id: BlockId,
         slice_index: SliceIndex,
-        shred_index: usize,
+        shred_index: ShredIndex,
     ) -> Option<&'a Shred>;
     fn create_double_merkle_proof(
         &self,
@@ -163,10 +163,10 @@ impl BlockstoreImpl {
         &self,
         slot: Slot,
         slice: SliceIndex,
-        shred_index: usize,
+        shred_index: ShredIndex,
     ) -> Option<&Shred> {
         self.slot_data(slot)
-            .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index))
+            .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index.inner()))
     }
 
     /// Gives the number of stored shreds for a given `slot` (across all slices).
@@ -300,13 +300,13 @@ impl Blockstore for BlockstoreImpl {
         &self,
         block_id: BlockId,
         slice_index: SliceIndex,
-        shred_index: usize,
+        shred_index: ShredIndex,
     ) -> Option<&Shred> {
         let block_data = self.get_block_data(block_id)?;
         let slice_shreds = block_data.shreds.get(&slice_index)?;
         slice_shreds
             .iter()
-            .find(|s| s.payload().index_in_slice == shred_index)
+            .find(|s| s.payload().shred_index == shred_index)
     }
 
     /// Generates a Merkle proof for the given `slice_index` of the given `block_id`.
@@ -386,7 +386,7 @@ mod tests {
             let Some(stored_shred) = blockstore.get_disseminated_shred(
                 slot,
                 SliceIndex::first(),
-                shred.payload().index_in_slice,
+                shred.payload().shred_index,
             ) else {
                 panic!("shred not stored");
             };
