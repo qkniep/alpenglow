@@ -45,9 +45,7 @@ where
         for v in &self.validators {
             // HACK: stupidly expensive retransmits
             for _ in 0..1000 {
-                self.network
-                    .send(&bytes, v.all2all_address)
-                    .await?;
+                self.network.send(&bytes, v.all2all_address).await?;
             }
         }
         Ok(())

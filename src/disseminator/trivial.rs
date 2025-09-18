@@ -32,9 +32,7 @@ where
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
         for v in &self.validators {
-            self.network
-                .send(&bytes, v.disseminator_address)
-                .await?;
+            self.network.send(&bytes, v.disseminator_address).await?;
         }
         Ok(())
     }

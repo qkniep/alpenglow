@@ -564,10 +564,7 @@ mod tests {
         );
         let bytes = into_bytes(&response);
         let port1 = localhost_ip_sockaddr(3);
-        other_network_request
-            .send(&bytes, port1)
-            .await
-            .unwrap();
+        other_network_request.send(&bytes, port1).await.unwrap();
 
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
@@ -591,10 +588,7 @@ mod tests {
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
             let bytes = into_bytes(&response);
-            other_network_request
-                .send(&bytes, port1)
-                .await
-                .unwrap();
+            other_network_request.send(&bytes, port1).await.unwrap();
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
@@ -616,10 +610,7 @@ mod tests {
                 let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req_type, shred);
                 let bytes = into_bytes(&response);
-                other_network_request
-                    .send(&bytes, port1)
-                    .await
-                    .unwrap();
+                other_network_request.send(&bytes, port1).await.unwrap();
             }
         }
 

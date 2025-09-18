@@ -41,9 +41,7 @@ where
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         let bytes = into_bytes(msg);
         for v in &self.validators {
-            self.network
-                .send(&bytes, v.all2all_address)
-                .await?;
+            self.network.send(&bytes, v.all2all_address).await?;
         }
         Ok(())
     }

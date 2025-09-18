@@ -71,9 +71,7 @@ where
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let v = self.epoch_info.validator(relay);
         let bytes = into_bytes(shred);
-        self.network
-            .send(&bytes, v.disseminator_address)
-            .await
+        self.network.send(&bytes, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -93,9 +91,7 @@ where
             if v.id == leader || v.id == relay {
                 continue;
             }
-            self.network
-                .send(&bytes, v.disseminator_address)
-                .await?;
+            self.network.send(&bytes, v.disseminator_address).await?;
         }
         Ok(())
     }

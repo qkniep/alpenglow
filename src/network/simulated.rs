@@ -120,17 +120,13 @@ mod tests {
         let msg = into_bytes(&Ping);
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1))
-            .await
-            .unwrap();
+        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         if !matches!(net2.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0))
-            .await
-            .unwrap();
+        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
         if !matches!(net1.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
@@ -185,9 +181,7 @@ mod tests {
 
         for shred in shreds {
             let bytes = into_bytes(&shred);
-            net1.send(&bytes, localhost_ip_sockaddr(1))
-                .await
-                .unwrap();
+            net1.send(&bytes, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -245,9 +239,7 @@ mod tests {
 
         for shred in shreds {
             let bytes = into_bytes(&shred);
-            net1.send(&bytes, localhost_ip_sockaddr(1))
-                .await
-                .unwrap();
+            net1.send(&bytes, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -305,9 +297,7 @@ mod tests {
 
         for shred in shreds {
             let bytes = into_bytes(&shred);
-            net1.send(&bytes, localhost_ip_sockaddr(1))
-                .await
-                .unwrap();
+            net1.send(&bytes, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
