@@ -254,6 +254,8 @@ impl Default for SimulatedNetworkCore {
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
+
     use tokio::time::timeout;
 
     use super::*;
@@ -280,7 +282,9 @@ mod tests {
         core.set_latency(0, 1, Duration::from_millis(10)).await;
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+        net1.send(&msg, once(localhost_ip_sockaddr(1)))
+            .await
+            .unwrap();
         let now = Instant::now();
         let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
@@ -290,7 +294,9 @@ mod tests {
         assert!(latency < max);
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
+        net2.send(&msg, once(localhost_ip_sockaddr(0)))
+            .await
+            .unwrap();
         let now = Instant::now();
         let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
@@ -320,7 +326,9 @@ mod tests {
             .await;
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+        net1.send(&msg, once(localhost_ip_sockaddr(1)))
+            .await
+            .unwrap();
         let now = Instant::now();
         let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
@@ -336,7 +344,9 @@ mod tests {
         );
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
+        net2.send(&msg, once(localhost_ip_sockaddr(0)))
+            .await
+            .unwrap();
         let now = Instant::now();
         let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
@@ -353,16 +363,16 @@ mod tests {
         let net1: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(0).await;
         let net2: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(1).await;
         let net3: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(2).await;
-        let sock0 = localhost_ip_sockaddr(0);
+        let sock0 = once(localhost_ip_sockaddr(0));
         core.set_latency(0, 1, Duration::from_millis(10)).await;
         core.set_latency(0, 2, Duration::from_millis(20)).await;
 
         // send ping on faster link
         let msg = PingOrPong::Ping;
-        net2.send(&msg, sock0).await.unwrap();
+        net2.send(&msg, sock0.clone()).await.unwrap();
         // send pong on slower link
         let msg = PingOrPong::Pong;
-        net3.send(&msg, sock0).await.unwrap();
+        net3.send(&msg, sock0.clone()).await.unwrap();
 
         // ping should arrive before pong
         let received = net1.receive().await.unwrap();
@@ -372,7 +382,7 @@ mod tests {
 
         // queue messages in the other order
         let msg = PingOrPong::Pong;
-        net3.send(&msg, sock0).await.unwrap();
+        net3.send(&msg, sock0.clone()).await.unwrap();
         let msg = PingOrPong::Ping;
         net2.send(&msg, sock0).await.unwrap();
 
@@ -393,7 +403,9 @@ mod tests {
         // send 1000 pings
         let msg = Ping;
         for _ in 0..1000 {
-            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&msg, once(localhost_ip_sockaddr(1)))
+                .await
+                .unwrap();
         }
 
         let mut pings_received = 0;

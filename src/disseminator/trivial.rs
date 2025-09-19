@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use super::Disseminator;
 use crate::ValidatorInfo;
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::Network;
 use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
@@ -30,12 +30,12 @@ where
     N: Network<Recv = Shred, Send = Shred>,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
-        for v in &self.validators {
-            self.network
-                .send_serialized(&bytes, v.disseminator_address)
-                .await?;
-        }
+        self.network
+            .send(
+                shred,
+                self.validators.iter().map(|v| v.disseminator_address),
+            )
+            .await?;
         Ok(())
     }
 

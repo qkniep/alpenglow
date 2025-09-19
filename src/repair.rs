@@ -10,6 +10,7 @@
 //! individually verified.
 
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::iter::once;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -180,7 +181,7 @@ where
         validator: ValidatorId,
     ) -> std::io::Result<()> {
         let to = self.epoch_info.validator(validator).repair_response_address;
-        self.network.send(&response, to).await
+        self.network.send(&response, once(to)).await
     }
 }
 
@@ -392,7 +393,6 @@ where
             sender: self.epoch_info.own_id,
             req_type,
         };
-        let msg_bytes = bincode::serde::encode_to_vec(request, BINCODE_CONFIG).unwrap();
         // HACK: magic number to fix high-failure scenarios
         let mut to_all = HashSet::new();
         for _ in 0..10 {
@@ -401,9 +401,7 @@ where
                 break;
             }
         }
-        for to in to_all {
-            self.network.send_serialized(&msg_bytes, to).await?;
-        }
+        self.network.send(&request, to_all.into_iter()).await?;
         Ok(())
     }
 
@@ -561,8 +559,11 @@ mod tests {
             shreds.last().unwrap()[0].merkle_root,
             merkle_tree.create_proof(num_slices - 1),
         );
-        let port1 = localhost_ip_sockaddr(3);
-        other_network_request.send(&response, port1).await.unwrap();
+        let port1 = once(localhost_ip_sockaddr(3));
+        other_network_request
+            .send(&response, port1.clone())
+            .await
+            .unwrap();
 
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
@@ -585,7 +586,10 @@ mod tests {
             let root = shreds[slice.inner()][0].merkle_root;
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
-            other_network_request.send(&response, port1).await.unwrap();
+            other_network_request
+                .send(&response, port1.clone())
+                .await
+                .unwrap();
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
@@ -606,7 +610,10 @@ mod tests {
                 assert!(shreds_requested.contains(&shred_index));
                 let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req_type, shred);
-                other_network_request.send(&response, port1).await.unwrap();
+                other_network_request
+                    .send(&response, port1.clone())
+                    .await
+                    .unwrap();
             }
         }
 
@@ -644,8 +651,8 @@ mod tests {
             req_type: RepairRequestType::LastSliceRoot(block_to_repair),
             sender: 0,
         };
-        let port1 = localhost_ip_sockaddr(2);
-        other_network.send(&request, port1).await.unwrap();
+        let port1 = once(localhost_ip_sockaddr(2));
+        other_network.send(&request, port1.clone()).await.unwrap();
 
         // verify reponse
         let msg = other_network.receive().await.unwrap();
@@ -668,7 +675,7 @@ mod tests {
                 req_type: RepairRequestType::SliceRoot(block_to_repair, slice),
                 sender: 0,
             };
-            other_network.send(&request, port1).await.unwrap();
+            other_network.send(&request, port1.clone()).await.unwrap();
 
             // verify response
             let msg = other_network.receive().await.unwrap();
@@ -690,7 +697,7 @@ mod tests {
                     req_type: RepairRequestType::Shred(block_to_repair, slice, shred_index),
                     sender: 0,
                 };
-                other_network.send(&request, port1).await.unwrap();
+                other_network.send(&request, port1.clone()).await.unwrap();
 
                 // verify response
                 let msg = other_network.receive().await.unwrap();

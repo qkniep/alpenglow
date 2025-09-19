@@ -6,6 +6,8 @@
 //! Broadcasts each message over the underlying instance of [`Network`].
 //! The message may be retransmitted multiple times.
 
+use std::iter::repeat;
+
 use async_trait::async_trait;
 
 use super::All2All;
@@ -41,13 +43,12 @@ where
     N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
-        for v in &self.validators {
-            // HACK: stupidly expensive retransmits
-            for _ in 0..1000 {
-                self.network.send(msg, v.all2all_address).await?;
-            }
-        }
-        Ok(())
+        let addrs = self
+            .validators
+            .iter()
+            .map(|v| repeat(v.all2all_address).take(1000))
+            .flatten();
+        self.network.send(msg, addrs).await
     }
 
     async fn receive(&self) -> std::io::Result<ConsensusMessage> {
