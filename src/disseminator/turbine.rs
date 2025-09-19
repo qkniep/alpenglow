@@ -107,7 +107,7 @@ where
             .await;
         let addrs = tree
             .get_children()
-            .into_iter()
+            .iter()
             .map(|child| self.validators[*child as usize].disseminator_address);
         self.network.send(shred, addrs).await?;
         Ok(())

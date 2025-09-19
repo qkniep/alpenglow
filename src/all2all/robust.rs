@@ -6,7 +6,7 @@
 //! Broadcasts each message over the underlying instance of [`Network`].
 //! The message may be retransmitted multiple times.
 
-use std::iter::repeat;
+use std::iter::repeat_n;
 
 use async_trait::async_trait;
 
@@ -46,8 +46,7 @@ where
         let addrs = self
             .validators
             .iter()
-            .map(|v| repeat(v.all2all_address).take(1000))
-            .flatten();
+            .flat_map(|v| repeat_n(v.all2all_address, 1000));
         self.network.send(msg, addrs).await
     }
 
