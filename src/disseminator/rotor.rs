@@ -3,6 +3,7 @@
 
 pub mod sampling_strategy;
 
+use std::iter::once;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -12,7 +13,7 @@ use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::Network;
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -70,7 +71,7 @@ where
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let v = self.epoch_info.validator(relay);
-        self.network.send(shred, v.disseminator_address).await
+        self.network.send(shred, once(v.disseminator_address)).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -85,15 +86,13 @@ where
         }
 
         // otherwise, broadcast
-        let bytes = bincode::serde::encode_to_vec(shred, BINCODE_CONFIG).unwrap();
-        for v in &self.epoch_info.validators {
-            if v.id == leader || v.id == relay {
-                continue;
-            }
-            self.network
-                .send_serialized(&bytes, v.disseminator_address)
-                .await?;
-        }
+        let to = self
+            .epoch_info
+            .validators
+            .iter()
+            .filter(|v| v.id != leader && v.id != relay)
+            .map(|v| v.disseminator_address);
+        self.network.send(shred, to).await?;
         Ok(())
     }
 
