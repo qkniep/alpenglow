@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use log::warn;
 use rand::Rng;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -80,7 +81,10 @@ impl SimulatedNetworkCore {
                     let msg = guard.pop().unwrap();
                     let n_guard = n.read().await;
                     let channel = n_guard.get(&msg.to).unwrap();
-                    channel.send(msg).await.unwrap();
+                    if let Err(_e) = channel.send(msg).await {
+                        println!("sending failed. Ignoring");
+                        warn!("sending failed. Ignoring");
+                    }
                 }
             }
         });
