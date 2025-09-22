@@ -43,6 +43,7 @@ where
     N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
+        // HACK: stupidly expensive retransmits
         let addrs = self
             .validators
             .iter()
