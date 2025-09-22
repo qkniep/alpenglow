@@ -5,12 +5,14 @@
 //!
 //!
 
+use statrs::distribution::{Binomial, DiscreteCDF};
+
 struct McpParameters {
-    num_proposers: usize,
-    num_relays: usize,
-    can_decode_threshold: usize,
-    should_decode_threshold: usize,
-    attestations_threshold: usize,
+    num_proposers: u64,
+    num_relays: u64,
+    can_decode_threshold: u64,
+    should_decode_threshold: u64,
+    attestations_threshold: u64,
 }
 
 struct AdversaryStrength {
@@ -20,14 +22,14 @@ struct AdversaryStrength {
 
 struct SpecificAdversaryStrength {
     is_leader: bool,
-    crashed_proposers: usize,
-    byzantine_proposers: usize,
-    crashed_relays: usize,
-    byzantine_relays: usize,
+    crashed_proposers: u64,
+    byzantine_proposers: u64,
+    crashed_relays: u64,
+    byzantine_relays: u64,
 }
 
 impl McpParameters {
-    fn new(num_proposers: usize, num_relays: usize) -> Self {
+    fn new(num_proposers: u64, num_relays: u64) -> Self {
         McpParameters {
             num_proposers,
             num_relays,
@@ -39,30 +41,55 @@ impl McpParameters {
 
     // just as hard with `num_relays - attestations_threshold` crashed nodes
     fn selective_censorship_probability(&self, adv_strength: f64) -> f64 {
-        // let prob_all_proposers = binomial_cdf(self.num_proposers, self.num_proposers, adv_strength);
+        let proposers_dist = Binomial::new(adv_strength, self.num_proposers).unwrap();
+        let prob_all_proposers = proposers_dist.cdf(self.num_proposers);
 
+        let relays_dist = Binomial::new(adv_strength, self.num_relays).unwrap();
         let relays_needed = self.attestations_threshold - self.should_decode_threshold;
-        // let prob_censor_relays = binomial_cdf(relays_needed, self.num_relays, adv_strength);
+        let prob_censor_relays = relays_dist.cdf(relays_needed);
 
         // prob: prob_all_proposers OR prob_censor_relays
+        1.0 - (1.0 - prob_all_proposers) * (1.0 - prob_censor_relays)
     }
 
     fn break_hiding_probability(&self, adv_strength: f64) -> f64 {
+        let relays_dist = Binomial::new(adv_strength, self.num_relays).unwrap();
         let relays_needed = self.can_decode_threshold;
-        // binomial_cdf(relays_needed, self.num_relays, adv_strength)
+        relays_dist.cdf(relays_needed)
     }
 
     fn temporary_liveness_failure_probability(&self, adv_strength: f64) -> f64 {
-        // let prob_no_proposals = binomial_cdf(self.num_proposers, self.num_proposers, adv_strength);
+        let proposers_dist = Binomial::new(adv_strength, self.num_proposers).unwrap();
+        let prob_no_proposals = proposers_dist.cdf(self.num_proposers);
 
+        let relays_dist = Binomial::new(adv_strength, self.num_relays).unwrap();
         let relays_to_hold_protocol = self.should_decode_threshold - self.can_decode_threshold;
         let relays_to_censor_leader = self.attestations_threshold - self.should_decode_threshold;
         let relays_needed = relays_to_hold_protocol.min(relays_to_censor_leader);
-        // binomial_cdf(relays_needed, self.num_relays, adv_strength)
+        let prob_censor_relays = relays_dist.cdf(relays_needed);
+
+        // prob: prob_no_proposals OR prob_censor_relays
+        1.0 - (1.0 - prob_no_proposals) * (1.0 - prob_censor_relays)
     }
 
     fn permanent_liveness_failure_probability(&self, adv_stength: f64) -> f64 {
+        let relays_dist = Binomial::new(adv_stength, self.num_relays).unwrap();
         let relays_needed = self.should_decode_threshold - self.can_decode_threshold;
-        // binomial_cdf(relays_needed, self.num_relays, adv_strength)
+        relays_dist.cdf(relays_needed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_parameters() {
+        let params = McpParameters::new(2, 5);
+        assert_eq!(params.num_proposers, 2);
+        assert_eq!(params.num_relays, 5);
+        assert_eq!(params.can_decode_threshold, 2);
+        assert_eq!(params.should_decode_threshold, 3);
+        assert_eq!(params.attestations_threshold, 4);
     }
 }
