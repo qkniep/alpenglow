@@ -184,8 +184,7 @@ impl BlockData {
         &mut self,
         validated_shred: ValidatedShred,
     ) -> Result<Option<VotorEvent>, AddShredError> {
-        let shred = validated_shred.to_shred();
-        let header = &shred.payload().header;
+        let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
 
@@ -210,7 +209,7 @@ impl BlockData {
 
         let is_first_shred = self.shreds.is_empty();
         let slice_shreds = {
-            let shred_index = shred.payload().index_in_slice;
+            let shred_index = validated_shred.payload().index_in_slice;
             let slice_shreds = self.shreds.entry(slice_index).or_default();
             let exists = slice_shreds
                 .iter()
