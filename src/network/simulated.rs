@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::future::join_all;
 use log::warn;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -83,8 +84,12 @@ where
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
-        for addr in addrs {
-            self.send_serialized(bytes.clone(), addr).await?;
+        let tasks = addrs.map(|addr| {
+            let bytes = bytes.clone();
+            async move { self.send_serialized(bytes, addr).await }
+        });
+        for res in join_all(tasks).await {
+            let () = res?;
         }
         Ok(())
     }
