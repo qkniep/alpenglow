@@ -46,10 +46,10 @@ pub use self::vote::Vote;
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::Network;
-use crate::repair::{Repair, RepairRequest, RepairRequestHandler, RepairResponse};
+use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
+use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
-use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(250);
@@ -84,7 +84,7 @@ impl From<Cert> for ConsensusMessage {
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, T>
 where
-    T: Network<Recv = Transaction> + Send + Sync + 'static,
+    T: TransactionNetwork + 'static,
 {
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
@@ -112,7 +112,7 @@ impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Sync + Send + 'static,
     D: Disseminator + Sync + Send + 'static,
-    T: Network<Recv = Transaction> + Send + Sync + 'static,
+    T: TransactionNetwork + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     ///
@@ -131,8 +131,8 @@ where
         txs_receiver: T,
     ) -> Self
     where
-        RR: Network<Recv = RepairRequest, Send = RepairResponse> + Send + Sync + 'static,
-        RN: Network<Recv = RepairResponse, Send = RepairRequest> + Send + Sync + 'static,
+        RR: RepairRequestNetwork + 'static,
+        RN: RepairNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);

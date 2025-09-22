@@ -35,6 +35,10 @@ use async_trait::async_trait;
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
+use crate::Transaction;
+use crate::consensus::ConsensusMessage;
+use crate::repair::{RepairRequest, RepairResponse};
+use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
@@ -63,6 +67,26 @@ pub trait Network: Send + Sync {
 
     async fn receive(&self) -> std::io::Result<Self::Recv>;
 }
+
+pub trait ShredNetwork: Network<Recv = Shred, Send = Shred> {}
+impl ShredNetwork for UdpNetwork<Shred, Shred> {}
+impl ShredNetwork for SimulatedNetwork<Shred, Shred> {}
+
+pub trait TransactionNetwork: Network<Recv = Transaction> {}
+impl TransactionNetwork for UdpNetwork<Transaction, Transaction> {}
+impl TransactionNetwork for SimulatedNetwork<Transaction, Transaction> {}
+
+pub trait ConsensusNetwork: Network<Recv = ConsensusMessage, Send = ConsensusMessage> {}
+impl ConsensusNetwork for UdpNetwork<ConsensusMessage, ConsensusMessage> {}
+impl ConsensusNetwork for SimulatedNetwork<ConsensusMessage, ConsensusMessage> {}
+
+pub trait RepairRequestNetwork: Network<Recv = RepairRequest, Send = RepairResponse> {}
+impl RepairRequestNetwork for UdpNetwork<RepairResponse, RepairRequest> {}
+impl RepairRequestNetwork for SimulatedNetwork<RepairResponse, RepairRequest> {}
+
+pub trait RepairNetwork: Network<Recv = RepairResponse, Send = RepairRequest> {}
+impl RepairNetwork for UdpNetwork<RepairRequest, RepairResponse> {}
+impl RepairNetwork for SimulatedNetwork<RepairRequest, RepairResponse> {}
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
 ///

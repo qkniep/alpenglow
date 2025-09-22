@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::Network;
+use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -40,7 +40,7 @@ impl<N: Network> RobustAll2All<N> {
 #[async_trait]
 impl<N: Network> All2All for RobustAll2All<N>
 where
-    N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
+    N: ConsensusNetwork,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         // HACK: stupidly expensive retransmits

@@ -18,12 +18,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::{BINCODE_CONFIG, Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{
-    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, Transaction,
-    highest_non_zero_byte,
+    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
 };
 
 /// Produces blocks from transactions and dissminates them.
@@ -63,7 +62,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 impl<D, T> BlockProducer<D, T>
 where
     D: Disseminator,
-    T: Network<Recv = Transaction>,
+    T: TransactionNetwork,
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -390,7 +389,7 @@ async fn produce_slice_payload<T>(
     duration_left: Duration,
 ) -> (SlicePayload, Duration)
 where
-    T: Network<Recv = Transaction>,
+    T: TransactionNetwork,
 {
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);

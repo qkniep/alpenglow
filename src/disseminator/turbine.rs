@@ -18,7 +18,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::Network;
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -54,7 +54,7 @@ pub(crate) struct TurbineTree {
 
 impl<N> Turbine<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
@@ -134,7 +134,7 @@ where
 #[async_trait]
 impl<N> Disseminator for Turbine<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.send_shred_to_root(shred).await
