@@ -31,7 +31,7 @@ where
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.network
-            .send(
+            .send_to_many(
                 shred,
                 self.validators.iter().map(|v| v.disseminator_address),
             )

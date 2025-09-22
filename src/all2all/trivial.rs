@@ -40,7 +40,7 @@ where
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         self.network
-            .send(msg, self.validators.iter().map(|v| v.all2all_address))
+            .send_to_many(msg, self.validators.iter().map(|v| v.all2all_address))
             .await?;
         Ok(())
     }

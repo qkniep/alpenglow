@@ -55,13 +55,17 @@ pub trait Network: Send + Sync {
     ///
     /// Note that a possible strategy for the implementators is to send to one address after another.
     /// In this strategy, it is possible that if sending to one address fails, the implementator gives up sending to the remaining addresses.
+    /// This means that the function is not atomic, if it fails, some messages may still have been sent.
     //
     // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
-    async fn send(
+    async fn send_to_many(
         &self,
         message: &Self::Send,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()>;
+
+    /// Sends the `message` to `addr`.
+    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 
