@@ -82,6 +82,7 @@ impl SimulatedNetworkCore {
                     let n_guard = n.read().await;
                     let channel = n_guard.get(&msg.to).unwrap();
                     if let Err(_e) = channel.send(msg).await {
+                        #[cfg(test)]
                         println!("sending failed. Ignoring");
                         warn!("sending failed. Ignoring");
                     }
