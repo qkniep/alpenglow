@@ -70,28 +70,23 @@ pub trait Network: Send + Sync {
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]
 pub trait ShredNetwork: Network<Recv = Shred, Send = Shred> {}
-impl ShredNetwork for UdpNetwork<Shred, Shred> {}
-impl ShredNetwork for SimulatedNetwork<Shred, Shred> {}
+impl<N> ShredNetwork for N where N: Network<Recv = Shred, Send = Shred> {}
 
 /// A marker trait that constrains [`Network`] to receive [`Transaction`]
 pub trait TransactionNetwork: Network<Recv = Transaction> {}
-impl TransactionNetwork for UdpNetwork<Transaction, Transaction> {}
-impl TransactionNetwork for SimulatedNetwork<Transaction, Transaction> {}
+impl<N> TransactionNetwork for N where N: Network<Recv = Transaction> {}
 
 /// A marker trait that constrains [`Network`] to send and receive [`ConsensusMessage`]
 pub trait ConsensusNetwork: Network<Recv = ConsensusMessage, Send = ConsensusMessage> {}
-impl ConsensusNetwork for UdpNetwork<ConsensusMessage, ConsensusMessage> {}
-impl ConsensusNetwork for SimulatedNetwork<ConsensusMessage, ConsensusMessage> {}
+impl<N> ConsensusNetwork for N where N: Network<Recv = ConsensusMessage, Send = ConsensusMessage> {}
 
 /// A marker trait that constrains [`Network`] to send [`RepairResponse`] and receive [`RepairRequest`]
 pub trait RepairRequestNetwork: Network<Recv = RepairRequest, Send = RepairResponse> {}
-impl RepairRequestNetwork for UdpNetwork<RepairResponse, RepairRequest> {}
-impl RepairRequestNetwork for SimulatedNetwork<RepairResponse, RepairRequest> {}
+impl<N> RepairRequestNetwork for N where N: Network<Recv = RepairRequest, Send = RepairResponse> {}
 
 /// A marker trait that constrains [`Network`] to send [`RepairRequest`] and receive [`RepairResponse`]
 pub trait RepairNetwork: Network<Recv = RepairResponse, Send = RepairRequest> {}
-impl RepairNetwork for UdpNetwork<RepairRequest, RepairResponse> {}
-impl RepairNetwork for SimulatedNetwork<RepairRequest, RepairResponse> {}
+impl<N> RepairNetwork for N where N: Network<Recv = RepairResponse, Send = RepairRequest> {}
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
 ///
