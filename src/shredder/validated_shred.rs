@@ -1,4 +1,5 @@
 use std::collections::btree_map::Entry;
+use std::ops::Deref;
 
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
@@ -66,14 +67,17 @@ impl ValidatedShred {
         }
     }
 
-    /// Get a reference to the inner [`Shred`].
-    pub fn to_shred(&self) -> &Shred {
-        &self.0
-    }
-
     /// Get access to the inner [`Shred`] consuming self.
     pub fn into_shred(self) -> Shred {
         self.0
+    }
+}
+
+impl Deref for ValidatedShred {
+    type Target = Shred;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
