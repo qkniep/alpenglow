@@ -123,6 +123,11 @@ mod tests {
             let vote = Vote::new_skip(Slot::genesis(), &voting_sk, 0);
             let msg = ConsensusMessage::Vote(vote);
             all2all_sender.broadcast(&msg).await.unwrap();
+            while let Ok(Ok(_)) =
+                timeout(Duration::from_millis(1000), all2all_sender.receive()).await
+            {
+                // do nothing
+            }
         });
         for all2all in all2all_others {
             tasks.spawn(async move {
