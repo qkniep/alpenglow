@@ -48,7 +48,7 @@ where
             .validators
             .iter()
             .flat_map(|v| repeat_n(v.all2all_address, 1000));
-        self.network.send(msg, addrs).await
+        self.network.send_to_many(msg, addrs).await
     }
 
     async fn receive(&self) -> std::io::Result<ConsensusMessage> {

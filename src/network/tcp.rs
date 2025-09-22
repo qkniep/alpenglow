@@ -11,6 +11,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
 use futures::SinkExt;
+use futures::future::join_all;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
@@ -72,6 +73,14 @@ impl<S, R> TcpNetwork<S, R> {
     pub fn port(&self) -> u16 {
         self.listener.local_addr().unwrap().port()
     }
+
+    async fn send_serialized(&self, bytes: &[u8], _addr: SocketAddr) -> std::io::Result<()> {
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+        // TODO: use correct socket
+        let writer = &self.writers.read().await[0];
+        writer.lock().await.send(bytes.to_vec().into()).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -83,19 +92,22 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(
+    async fn send_to_many(
         &self,
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        for _addr in addrs {
-            // TODO: use correct socket
-            let writer = &self.writers.read().await[0];
-            writer.lock().await.send(bytes.to_vec().into()).await?;
+        let bytes = &bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
+        for res in join_all(tasks).await {
+            let () = res?;
         }
         Ok(())
+    }
+
+    async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
+        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        self.send_serialized(&bytes, addr).await
     }
 
     async fn receive(&self) -> std::io::Result<R> {

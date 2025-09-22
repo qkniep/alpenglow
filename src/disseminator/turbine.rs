@@ -10,8 +10,6 @@
 
 mod weighted_shuffle;
 
-use std::iter::once;
-
 use async_trait::async_trait;
 use moka::future::Cache;
 use rand::prelude::*;
@@ -92,7 +90,7 @@ where
             .await;
         let root = tree.get_root();
         let addr = self.validators[root as usize].disseminator_address;
-        self.network.send(shred, once(addr)).await
+        self.network.send(shred, addr).await
     }
 
     /// Forwards the shred to all our children in the correct Turbine tree.
@@ -109,7 +107,7 @@ where
             .get_children()
             .iter()
             .map(|child| self.validators[*child as usize].disseminator_address);
-        self.network.send(shred, addrs).await?;
+        self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
 
