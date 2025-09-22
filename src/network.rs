@@ -51,8 +51,8 @@ pub trait Network: Send + Sync {
     ///
     /// Note that a possible strategy for the implementators is to send to one address after another.
     /// In this strategy, it is possible that if sending to one address fails, the implementator gives up sending to the remaining addresses.
-    ///
-    /// NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
+    //
+    // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
     async fn send(
         &self,
         message: &Self::Send,
