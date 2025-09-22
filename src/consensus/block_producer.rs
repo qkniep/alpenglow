@@ -513,6 +513,7 @@ async fn wait_for_first_slot(
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
     use std::time::Duration;
 
     use mockall::{Sequence, predicate};
@@ -562,7 +563,7 @@ mod tests {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
                 let msg = Transaction(data);
-                txs_sender.send(&msg, addr).await.unwrap();
+                txs_sender.send(&msg, once(addr)).await.unwrap();
             }
         });
 

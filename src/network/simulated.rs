@@ -70,16 +70,18 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
+    async fn send(
+        &self,
+        msg: &S,
+        addrs: impl Iterator<Item = SocketAddr> + Send,
+    ) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let validator_id = to.port() as ValidatorId;
-        self.send_byte_vec(bytes, validator_id).await
-    }
-
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
-        let validator_id = to.port() as ValidatorId;
-        self.send_byte_vec(bytes.to_vec(), validator_id).await
+        for addr in addrs {
+            let validator_id = addr.port() as ValidatorId;
+            self.send_byte_vec(bytes.clone(), validator_id).await?;
+        }
+        Ok(())
     }
 
     async fn receive(&self) -> std::io::Result<R> {
@@ -108,15 +110,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
     use std::time::Instant;
 
     use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
-    use crate::network::{NetworkMessage, localhost_ip_sockaddr};
+    use crate::network::localhost_ip_sockaddr;
     use crate::shredder::{
         DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder, TOTAL_SHREDS,
     };
+    use crate::test_utils::Ping;
     use crate::types::slice::create_slice_payload_with_invalid_txs;
     use crate::types::{Slice, SliceHeader, SliceIndex};
 
@@ -126,17 +130,21 @@ mod tests {
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1 = core.join(0, 8192, 8192).await;
         let net2 = core.join(1, 8192, 8192).await;
-        let msg = NetworkMessage::Ping;
+        let msg = Ping;
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
-        if !matches!(net2.receive().await, Ok(NetworkMessage::Ping)) {
+        net1.send(&msg, once(localhost_ip_sockaddr(1)))
+            .await
+            .unwrap();
+        if !matches!(net2.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
-        if !matches!(net1.receive().await, Ok(NetworkMessage::Ping)) {
+        net2.send(&msg, once(localhost_ip_sockaddr(0)))
+            .await
+            .unwrap();
+        if !matches!(net1.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
     }
@@ -189,7 +197,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&shred, once(localhost_ip_sockaddr(1)))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -246,7 +256,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&shred, once(localhost_ip_sockaddr(1)))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -303,7 +315,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&shred, once(localhost_ip_sockaddr(1)))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();

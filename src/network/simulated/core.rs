@@ -254,10 +254,13 @@ impl Default for SimulatedNetworkCore {
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
+
     use tokio::time::timeout;
 
     use super::*;
-    use crate::network::{Network, NetworkMessage, localhost_ip_sockaddr};
+    use crate::network::{Network, localhost_ip_sockaddr};
+    use crate::test_utils::{Ping, PingOrPong};
 
     // test simulated latency accuracy to within +/-5%
     const ACCURACY: f64 = 0.05;
@@ -268,7 +271,7 @@ mod tests {
     #[ignore]
     async fn symmetric() {
         // set up network with two nodes
-        let msg = NetworkMessage::Ping;
+        let msg = Ping;
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)
@@ -279,9 +282,11 @@ mod tests {
         core.set_latency(0, 1, Duration::from_millis(10)).await;
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+        net1.send(&msg, once(localhost_ip_sockaddr(1)))
+            .await
+            .unwrap();
         let now = Instant::now();
-        let _: NetworkMessage = net2.receive().await.unwrap();
+        let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -289,9 +294,11 @@ mod tests {
         assert!(latency < max);
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
+        net2.send(&msg, once(localhost_ip_sockaddr(0)))
+            .await
+            .unwrap();
         let now = Instant::now();
-        let _: NetworkMessage = net1.receive().await.unwrap();
+        let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -305,23 +312,25 @@ mod tests {
     #[ignore]
     async fn asymmetric() {
         // set up network with two nodes
-        let msg = NetworkMessage::Ping;
+        let msg = Ping;
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
+        let net1 = core.join_unlimited(0).await;
+        let net2 = core.join_unlimited(1).await;
         core.set_asymmetric_latency(0, 1, Duration::from_millis(10))
             .await;
         core.set_asymmetric_latency(1, 0, Duration::from_millis(100))
             .await;
 
         // one direction
-        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+        net1.send(&msg, once(localhost_ip_sockaddr(1)))
+            .await
+            .unwrap();
         let now = Instant::now();
-        let _ = net2.receive().await.unwrap();
+        let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
@@ -335,9 +344,11 @@ mod tests {
         );
 
         // other direction
-        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
+        net2.send(&msg, once(localhost_ip_sockaddr(0)))
+            .await
+            .unwrap();
         let now = Instant::now();
-        let _ = net1.receive().await.unwrap();
+        let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
         let min = (100_000.0 * (1.0 - ACCURACY)) as u128;
         let max = (100_000.0 * (1.0 + ACCURACY)) as u128;
@@ -349,56 +360,56 @@ mod tests {
     async fn latency_order() {
         // set up network with three nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
-        let net3: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(2).await;
-        let sock0 = localhost_ip_sockaddr(0);
+        let net1: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(1).await;
+        let net3: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(2).await;
+        let sock0 = once(localhost_ip_sockaddr(0));
         core.set_latency(0, 1, Duration::from_millis(10)).await;
         core.set_latency(0, 2, Duration::from_millis(20)).await;
 
         // send ping on faster link
-        let msg = NetworkMessage::Ping;
-        net2.send(&msg, sock0).await.unwrap();
+        let msg = PingOrPong::Ping;
+        net2.send(&msg, sock0.clone()).await.unwrap();
         // send pong on slower link
-        let msg = NetworkMessage::Pong;
-        net3.send(&msg, sock0).await.unwrap();
+        let msg = PingOrPong::Pong;
+        net3.send(&msg, sock0.clone()).await.unwrap();
 
         // ping should arrive before pong
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, NetworkMessage::Ping));
+        assert!(matches!(received, PingOrPong::Ping));
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, NetworkMessage::Pong));
+        assert!(matches!(received, PingOrPong::Pong));
 
         // queue messages in the other order
-        let msg = NetworkMessage::Pong;
-        net3.send(&msg, sock0).await.unwrap();
-        let msg = NetworkMessage::Ping;
+        let msg = PingOrPong::Pong;
+        net3.send(&msg, sock0.clone()).await.unwrap();
+        let msg = PingOrPong::Ping;
         net2.send(&msg, sock0).await.unwrap();
 
         // ping should still arrive before pong
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, NetworkMessage::Ping));
+        assert!(matches!(received, PingOrPong::Ping));
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, NetworkMessage::Pong));
+        assert!(matches!(received, PingOrPong::Pong));
     }
 
     #[tokio::test]
     async fn packet_loss() {
         // set up network with two nodes and 50% packet loss
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.5));
-        let net1: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<NetworkMessage, NetworkMessage> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(0).await;
+        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(1).await;
 
         // send 1000 pings
-        let msg = NetworkMessage::Ping;
+        let msg = Ping;
         for _ in 0..1000 {
-            net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(&msg, once(localhost_ip_sockaddr(1)))
+                .await
+                .unwrap();
         }
 
         let mut pings_received = 0;
-        while let Ok(Ok(NetworkMessage::Ping)) =
-            timeout(Duration::from_millis(100), net2.receive()).await
-        {
+        while let Ok(Ok(Ping)) = timeout(Duration::from_millis(100), net2.receive()).await {
             pings_received += 1;
         }
 
