@@ -47,9 +47,17 @@ pub trait Network: Send + Sync {
     type Send;
     type Recv;
 
-    async fn send(&self, message: &Self::Send, to: SocketAddr) -> std::io::Result<()>;
-
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
+    /// Sends the `message` to all the addresses in `addrs`.
+    ///
+    /// Note that a possible strategy for the implementators is to send to one address after another.
+    /// In this strategy, it is possible that if sending to one address fails, the implementator gives up sending to the remaining addresses.
+    //
+    // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
+    async fn send(
+        &self,
+        message: &Self::Send,
+        addrs: impl Iterator<Item = SocketAddr> + Send,
+    ) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 

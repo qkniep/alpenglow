@@ -39,9 +39,9 @@ where
     N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
-        for v in &self.validators {
-            self.network.send(msg, v.all2all_address).await?;
-        }
+        self.network
+            .send(msg, self.validators.iter().map(|v| v.all2all_address))
+            .await?;
         Ok(())
     }
 

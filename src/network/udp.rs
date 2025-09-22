@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
+use futures::future::join_all;
 use log::warn;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -68,14 +69,18 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(&self, msg: &S, to: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+    async fn send(
+        &self,
+        msg: &S,
+        addrs: impl Iterator<Item = SocketAddr> + Send,
+    ) -> std::io::Result<()> {
+        let bytes = &bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        self.send_serialized(&bytes, to).await
-    }
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()> {
-        self.socket.send_to(bytes, to).await?;
+        let tasks = addrs.map(async move |addr| self.socket.send_to(bytes, addr).await);
+        for res in join_all(tasks).await {
+            assert_eq!(bytes.len(), res?);
+        }
         Ok(())
     }
 
@@ -104,6 +109,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
+
     use super::*;
     use crate::network::localhost_ip_sockaddr;
     use crate::test_utils::{Ping, Pong};
@@ -112,17 +119,10 @@ mod tests {
     async fn ping() {
         let socket1: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
         let socket2: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
-        let addr1 = localhost_ip_sockaddr(socket1.port());
+        let addr1 = once(localhost_ip_sockaddr(socket1.port()));
 
         // regular send()
         socket2.send(&Ping, addr1).await.unwrap();
-        let msg = socket1.receive().await.unwrap();
-        assert!(matches!(msg, Ping));
-
-        // send_serialized()
-        let bytes = bincode::serde::encode_to_vec(Ping, BINCODE_CONFIG).unwrap();
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        socket2.send_serialized(&bytes, addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert!(matches!(msg, Ping));
     }
@@ -131,8 +131,8 @@ mod tests {
     async fn ping_pong() {
         let socket1 = UdpNetwork::new_with_any_port();
         let socket2 = UdpNetwork::new_with_any_port();
-        let addr1 = localhost_ip_sockaddr(socket1.port());
-        let addr2 = localhost_ip_sockaddr(socket2.port());
+        let addr1 = once(localhost_ip_sockaddr(socket1.port()));
+        let addr2 = once(localhost_ip_sockaddr(socket2.port()));
 
         socket1.send(&Ping, addr2).await.unwrap();
         let msg = socket2.receive().await.unwrap();
