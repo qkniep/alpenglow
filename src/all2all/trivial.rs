@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::Network;
+use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the trivial all-to-all broadcast protocol.
 pub struct TrivialAll2All<N: Network> {
@@ -36,7 +36,7 @@ impl<N: Network> TrivialAll2All<N> {
 #[async_trait]
 impl<N: Network> All2All for TrivialAll2All<N>
 where
-    N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
+    N: ConsensusNetwork,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         self.network

@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -104,7 +104,7 @@ pub struct RepairRequestHandler<N: Network> {
 
 impl<N> RepairRequestHandler<N>
 where
-    N: Network<Recv = RepairRequest, Send = RepairResponse>,
+    N: RepairRequestNetwork,
 {
     /// Creates a new repair request handler instance.
     ///
@@ -202,7 +202,7 @@ pub struct Repair<N: Network> {
 
 impl<N> Repair<N>
 where
-    N: Network<Recv = RepairResponse, Send = RepairRequest>,
+    N: RepairNetwork,
 {
     /// Creates a new repair instance.
     ///

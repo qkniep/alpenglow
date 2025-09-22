@@ -13,7 +13,7 @@ use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::Network;
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -59,7 +59,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
 
 impl<N, S: SamplingStrategy> Rotor<N, S>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     /// Turns this instance into a new instance with a different sampling strategy.
     #[must_use]
@@ -112,7 +112,7 @@ where
 #[async_trait]
 impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         Self::send_as_leader(self, shred).await
