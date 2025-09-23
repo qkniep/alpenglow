@@ -21,8 +21,37 @@ use self::latency::{LatencyTest, LatencyTestStage};
 
 const NUM_PROPOSERS: u64 = 8;
 const NUM_RELAYS: u64 = 512;
+const ADVERSARY_STRENGTH: f64 = 0.09;
 
 fn main() -> Result<()> {
+    let params = parameters::McpParameters::new(NUM_PROPOSERS, NUM_RELAYS);
+    println!(
+        "successful attack probabilities (adv strength = {}):",
+        ADVERSARY_STRENGTH
+    );
+    println!(
+        "selective censorship: {}",
+        params
+            .selective_censorship_probability(ADVERSARY_STRENGTH)
+            .log10()
+    );
+    println!(
+        "break hiding: {}",
+        params.break_hiding_probability(ADVERSARY_STRENGTH).log10()
+    );
+    println!(
+        "temporary liveness failure: {}",
+        params
+            .temporary_liveness_failure_probability(ADVERSARY_STRENGTH)
+            .log10()
+    );
+    println!(
+        "permanent liveness failure: {}",
+        params
+            .permanent_liveness_failure_probability(ADVERSARY_STRENGTH)
+            .log10()
+    );
+
     // enable fancy `color_eyre` error messages + `logforth` logging
     color_eyre::install()?;
     logging::enable_logforth();
