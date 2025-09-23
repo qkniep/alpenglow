@@ -134,35 +134,43 @@ enum ReconstructBlockResult {
     Complete(BlockInfo),
 }
 
+pub(super) struct CompletedBlockData {
+    double_merkle_tree: MerkleTree,
+    shreds: BTreeMap<SliceIndex, Vec<ValidatedShred>>,
+    pub(super) hash: Hash,
+    block: Block,
+}
+
+struct InProgressBlockData {
+    shreds: BTreeMap<SliceIndex, Vec<ValidatedShred>>,
+    last_slice: Option<SliceIndex>,
+    merkle_root_cache: BTreeMap<SliceIndex, Hash>,
+}
+
+pub(super) enum BlockDataStatus {
+    Completed(CompletedBlockData),
+    InProgress(InProgressBlockData),
+}
+
 /// Holds all data corresponding to a single block.
-pub struct BlockData {
-    /// Slot number this block is in.
+pub(super) struct BlockData {
     slot: Slot,
-    /// Potentially completely restored block.
-    pub(super) completed: Option<(Hash, Block)>,
-    /// Any shreds of this block stored so far, indexed by slice index.
-    pub(super) shreds: BTreeMap<SliceIndex, Vec<ValidatedShred>>,
-    /// Any already reconstructed slices of this block.
-    pub(super) slices: BTreeMap<SliceIndex, Slice>,
-    /// Index of the slice marked as last, if any.
-    pub(super) last_slice: Option<SliceIndex>,
-    /// Double merkle tree of this block, only known if block has been reconstructed.
-    pub(super) double_merkle_tree: Option<MerkleTree>,
-    /// Cache of Merkle roots for which the leader signature has been verified.
-    pub(super) merkle_root_cache: BTreeMap<SliceIndex, Hash>,
+    slices: BTreeMap<SliceIndex, Slice>,
+    pub(super) status: BlockDataStatus,
 }
 
 impl BlockData {
     /// Create a new spot for storing data of a single block.
     pub fn new(slot: Slot) -> Self {
+        let in_progress = InProgressBlockData {
+            shreds: BTreeMap::new(),
+            last_slice: None,
+            merkle_root_cache: BTreeMap::new(),
+        };
         Self {
             slot,
-            completed: None,
-            shreds: BTreeMap::new(),
             slices: BTreeMap::new(),
-            last_slice: None,
-            double_merkle_tree: None,
-            merkle_root_cache: BTreeMap::new(),
+            status: BlockDataStatus::InProgress(in_progress),
         }
     }
 
@@ -172,25 +180,35 @@ impl BlockData {
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
-        let slice_index = shred.payload().header.slice_index;
-        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
-        let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
-        self.add_validated_shred(validated_shred)
+        match &mut self.status {
+            BlockDataStatus::Completed(_) => Err(AddShredError::Duplicate),
+            BlockDataStatus::InProgress(in_progress) => {
+                let slice_index = shred.payload().header.slice_index;
+                let cached_merkle_root = in_progress.merkle_root_cache.entry(slice_index);
+                let validated_shred =
+                    ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
+                self.add_validated_shred(validated_shred)
+            }
+        }
     }
 
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
     ) -> Result<Option<VotorEvent>, AddShredError> {
+        let in_progress = match &mut self.status {
+            BlockDataStatus::Completed(_) => return Err(AddShredError::Duplicate),
+            BlockDataStatus::InProgress(p) => p,
+        };
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
 
-        match (header.is_last, self.last_slice) {
+        match (header.is_last, in_progress.last_slice) {
             (true, None) => {
-                self.last_slice = Some(slice_index);
+                in_progress.last_slice = Some(slice_index);
                 self.slices.retain(|&ind, _| ind <= slice_index);
-                self.shreds.retain(|&ind, _| ind <= slice_index);
+                in_progress.shreds.retain(|&ind, _| ind <= slice_index);
             }
             (true, Some(l)) => {
                 if slice_index != l {
@@ -205,10 +223,10 @@ impl BlockData {
             }
         }
 
-        let is_first_shred = self.shreds.is_empty();
+        let is_first_shred = in_progress.shreds.is_empty();
         let slice_shreds = {
             let shred_index = validated_shred.payload().index_in_slice;
-            let slice_shreds = self.shreds.entry(slice_index).or_default();
+            let slice_shreds = in_progress.shreds.entry(slice_index).or_default();
             let exists = slice_shreds
                 .iter()
                 .any(|s| s.payload().index_in_slice == shred_index);
@@ -246,10 +264,10 @@ impl BlockData {
     ///
     /// See [`ReconstructSliceResult`] for more info on what the function returns.
     fn try_reconstruct_slice(&mut self, index: SliceIndex) -> ReconstructSliceResult {
-        if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
-            return ReconstructSliceResult::NoAction;
-        }
+        let in_progress = match &mut self.status {
+            BlockDataStatus::Completed(_) => return ReconstructSliceResult::NoAction,
+            BlockDataStatus::InProgress(p) => p,
+        };
 
         let entry = match self.slices.entry(index) {
             Entry::Occupied(_) => return ReconstructSliceResult::NoAction,
@@ -257,7 +275,7 @@ impl BlockData {
         };
 
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
-        let slice_shreds = self.shreds.get_mut(&index).unwrap();
+        let slice_shreds = in_progress.shreds.get_mut(&index).unwrap();
         let (reconstructed_slice, mut reconstructed_shreds) =
             match RegularShredder::deshred(slice_shreds) {
                 Ok(output) => output,
@@ -287,11 +305,11 @@ impl BlockData {
     ///
     /// See [`ReconstructBlockResult`] for more info on what the function returns.
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
-        if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
-            return ReconstructBlockResult::NoAction;
-        }
-        let Some(last_slice) = self.last_slice else {
+        let in_progress = match &mut self.status {
+            BlockDataStatus::Completed(_) => return ReconstructBlockResult::NoAction,
+            BlockDataStatus::InProgress(p) => p,
+        };
+        let Some(last_slice) = in_progress.last_slice else {
             return ReconstructBlockResult::NoAction;
         };
         if self.slices.len() != last_slice.inner() + 1 {
@@ -307,7 +325,6 @@ impl BlockData {
             .collect::<Vec<_>>();
         let tree = MerkleTree::new(&merkle_roots);
         let block_hash = tree.get_root();
-        self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
         let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
@@ -361,7 +378,13 @@ impl BlockData {
             transactions,
         };
         let block_info = BlockInfo::from(&block);
-        self.completed = Some((block_hash, block));
+        self.status = BlockDataStatus::Completed(CompletedBlockData {
+            double_merkle_tree: tree,
+            // XXX
+            shreds: in_progress.shreds.clone(),
+            hash: block_hash,
+            block,
+        });
 
         // clean up raw slices
         for slice_index in last_slice.until() {

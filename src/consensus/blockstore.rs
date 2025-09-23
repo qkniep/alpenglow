@@ -16,7 +16,7 @@ use tokio::sync::mpsc::Sender;
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
-use crate::consensus::blockstore::slot_block_data::BlockData;
+use crate::consensus::blockstore::slot_block_data::{BlockData, BlockDataStatus};
 use crate::crypto::Hash;
 use crate::shredder::{Shred, ValidatedShred};
 use crate::types::SliceIndex;
@@ -133,12 +133,12 @@ impl BlockstoreImpl {
     fn get_block_data(&self, block_id: BlockId) -> Option<&BlockData> {
         let (slot, hash) = block_id;
         let slot_data = self.slot_data(slot)?;
-        if let Some((h, _)) = slot_data.disseminated.completed
-            && h == hash
-        {
-            return Some(&slot_data.disseminated);
+        match &slot_data.disseminated.status {
+            BlockDataStatus::Completed(c) if c.hash == hash => {
+                return Some(&slot_data.disseminated);
+            }
+            _ => return slot_data.repaired.get(&hash),
         }
-        slot_data.repaired.get(&hash)
     }
 
     /// Reads slot data for the given `slot`.
@@ -165,8 +165,9 @@ impl BlockstoreImpl {
         slice: SliceIndex,
         shred_index: usize,
     ) -> Option<&ValidatedShred> {
-        self.slot_data(slot)
-            .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index))
+        unimplemented!()
+        // self.slot_data(slot)
+        //     .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index))
     }
 
     /// Gives the number of stored shreds for a given `slot` (across all slices).
@@ -174,8 +175,9 @@ impl BlockstoreImpl {
     /// Only used for testing.
     #[cfg(test)]
     fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot)
-            .map_or(0, |s| s.disseminated.shreds.values().map(Vec::len).sum())
+        unimplemented!()
+        // self.slot_data(slot)
+        //     .map_or(0, |s| s.disseminated.shreds.values().map(Vec::len).sum())
     }
 
     /// Gives the number of stored slices for a given `slot`.
@@ -183,8 +185,9 @@ impl BlockstoreImpl {
     /// Only used for testing.
     #[cfg(test)]
     pub(crate) fn stored_slices_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot)
-            .map_or(0, |s| s.disseminated.slices.len())
+        unimplemented!()
+        // self.slot_data(slot)
+        //     .map_or(0, |s| s.disseminated.slices.len())
     }
 }
 
