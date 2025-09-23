@@ -3,22 +3,21 @@
 
 use crate::execution::Execution;
 use crate::network::Network;
-use crate::{All2All, Alpenglow, Disseminator};
+use crate::{All2All, Alpenglow, Disseminator, Transaction};
 
 /// Full validator node.
 ///
 /// Consist of a consensus protocol instance and an execution engine.
-/// Participates in consensus and executes finaliztransactions.
-pub struct Validator<A, D, R, T, E>
+/// Participates in consensus and executes transactions.
+pub struct Validator<A, D, T, E>
 where
     A: All2All,
     D: Disseminator,
-    R: Network,
-    T: Network,
+    T: Network<Recv = Transaction> + 'static,
     E: Execution,
 {
     /// Consensus protocol instance.
-    consensus: Alpenglow<A, D, R, T>,
+    consensus: Alpenglow<A, D, T>,
 
     /// Execution engine.
     execution: E,
