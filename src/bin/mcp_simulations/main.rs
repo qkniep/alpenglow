@@ -19,12 +19,12 @@ use log::info;
 
 use self::latency::{LatencyTest, LatencyTestStage};
 
-const NUM_PROPOSERS: u64 = 8;
+const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
-const ADVERSARY_STRENGTH: f64 = 0.09;
+const ADVERSARY_STRENGTH: f64 = 0.14;
 
 fn main() -> Result<()> {
-    let params = parameters::McpParameters::new(NUM_PROPOSERS, NUM_RELAYS);
+    let params = parameters::McpParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS);
     println!(
         "successful attack probabilities (adv strength = {}):",
         ADVERSARY_STRENGTH

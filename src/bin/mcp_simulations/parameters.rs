@@ -29,13 +29,69 @@ struct SpecificAdversaryStrength {
 }
 
 impl McpParameters {
+    /// Generates a new balanced parameter set, equally resistant against all attacks.
     pub fn new(num_proposers: u64, num_relays: u64) -> Self {
         McpParameters {
             num_proposers,
             num_relays,
-            can_decode_threshold: (num_relays * 3).div_ceil(10),
-            should_decode_threshold: (num_relays * 6).div_ceil(10),
-            attestations_threshold: (num_relays * 8).div_ceil(10),
+            can_decode_threshold: (num_relays * 25).div_ceil(100),
+            should_decode_threshold: (num_relays * 50).div_ceil(100),
+            attestations_threshold: (num_relays * 75).div_ceil(100),
+        }
+    }
+
+    /// Generates a new parameter set based on the first ones proposed in the PJM paper.
+    pub fn new_paper1(num_proposers: u64, num_relays: u64) -> Self {
+        McpParameters {
+            num_proposers,
+            num_relays,
+            can_decode_threshold: (num_relays * 40).div_ceil(100),
+            should_decode_threshold: (num_relays * 60).div_ceil(100),
+            attestations_threshold: (num_relays * 80).div_ceil(100),
+        }
+    }
+
+    /// Generates a new parameter set based on the second ones proposed in the PJM paper.
+    pub fn new_paper2(num_proposers: u64, num_relays: u64) -> Self {
+        McpParameters {
+            num_proposers,
+            num_relays,
+            can_decode_threshold: (num_relays * 30).div_ceil(100),
+            should_decode_threshold: (num_relays * 60).div_ceil(100),
+            attestations_threshold: (num_relays * 80).div_ceil(100),
+        }
+    }
+
+    /// Generates a new parameter set prioritizing hiding over liveness.
+    pub fn new_hiding(num_proposers: u64, num_relays: u64) -> Self {
+        McpParameters {
+            num_proposers,
+            num_relays,
+            can_decode_threshold: (num_relays * 40).div_ceil(100),
+            should_decode_threshold: (num_relays * 60).div_ceil(100),
+            attestations_threshold: (num_relays * 80).div_ceil(100),
+        }
+    }
+
+    /// Generates a new parameter set prioritizing liveness over hiding.
+    pub fn new_liveness(num_proposers: u64, num_relays: u64) -> Self {
+        McpParameters {
+            num_proposers,
+            num_relays,
+            can_decode_threshold: (num_relays * 20).div_ceil(100),
+            should_decode_threshold: (num_relays * 50).div_ceil(100),
+            attestations_threshold: (num_relays * 80).div_ceil(100),
+        }
+    }
+
+    /// Generates a new parameter set prioritizing permanent liveness failures over all others.
+    pub fn new_permanent_liveness(num_proposers: u64, num_relays: u64) -> Self {
+        McpParameters {
+            num_proposers,
+            num_relays,
+            can_decode_threshold: (num_relays * 23).div_ceil(100),
+            should_decode_threshold: (num_relays * 53).div_ceil(100),
+            attestations_threshold: (num_relays * 76).div_ceil(100),
         }
     }
 
