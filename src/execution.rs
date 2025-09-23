@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use log::debug;
+
 use crate::Transaction;
 use crate::crypto::Hash;
 
@@ -19,7 +21,9 @@ pub trait Execution {
 pub struct DummyExecution;
 
 impl Execution for DummyExecution {
-    fn execute_bundle(&mut self, _bundle: ExecutionBundle) {}
+    fn execute_bundle(&mut self, bundle: ExecutionBundle) {
+        debug!("executed a bundle of {} transactions", bundle.0.len());
+    }
 }
 
 #[cfg(test)]
