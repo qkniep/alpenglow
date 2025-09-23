@@ -141,9 +141,7 @@ pub struct BlockData {
     /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
-    //
-    // TODO: Consider storing ValidatedShred here instead.
-    pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
+    pub(super) shreds: BTreeMap<SliceIndex, Vec<ValidatedShred>>,
     /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<SliceIndex, Slice>,
     /// Index of the slice marked as last, if any.
@@ -224,7 +222,7 @@ impl BlockData {
             slice_shreds
         };
 
-        slice_shreds.push(validated_shred.into_shred());
+        slice_shreds.push(validated_shred);
 
         if is_first_shred {
             return Ok(Some(VotorEvent::FirstShred(self.slot)));
@@ -390,7 +388,7 @@ mod tests {
         let shreds = RegularShredder::shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred, pk) {
+            match block_data.add_shred(shred.into_shred(), pk) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
@@ -423,7 +421,7 @@ mod tests {
         let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
+            if let Some(event) = block_data.add_shred(shred.into_shred(), pk).unwrap() {
                 events.push(event);
             }
         }

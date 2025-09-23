@@ -168,7 +168,7 @@ where
                 let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
-                RepairResponse::Shred(request.req_type, shred)
+                RepairResponse::Shred(request.req_type, shred.into_shred())
             }
         };
         self.send_response(response, request.sender).await
@@ -604,7 +604,7 @@ mod tests {
             for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
                 assert!(shreds_requested.contains(&shred_index));
                 let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
-                let response = RepairResponse::Shred(req_type, shred);
+                let response = RepairResponse::Shred(req_type, shred.into_shred());
                 other_network_request.send(&response, port1).await.unwrap();
             }
         }
@@ -629,7 +629,7 @@ mod tests {
         for slice_shreds in shreds.clone() {
             let mut b = blockstore.write().await;
             for shred in slice_shreds {
-                let _ = b.add_shred_from_disseminator(shred).await;
+                let _ = b.add_shred_from_disseminator(shred.into_shred()).await;
             }
         }
         assert_eq!(
