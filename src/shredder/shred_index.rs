@@ -25,7 +25,7 @@ impl ShredIndex {
         }
     }
 
-    /// Returns an iterator that iterates over all the valid SliceIndexes.
+    /// Returns an iterator that iterates over all the valid ShredIndexes.
     pub(crate) fn all() -> impl Iterator<Item = Self> {
         (0..TOTAL_SHREDS).map(Self)
     }
@@ -68,7 +68,7 @@ impl<'de> Visitor<'de> for ShredIndexVisitor {
         E: serde::de::Error,
     {
         ShredIndex::new(v as usize).ok_or(de::Error::custom(
-            "input {v} is not in the range [0:{MAX_SLICES_PER_BLOCK})",
+            "input {v} is not in the range [0:{TOTAL_SHREDS})",
         ))
     }
 }
@@ -90,7 +90,7 @@ mod tests {
     fn shred_index_invalid_deserialization() {
         let vs = [
             (-1).to_string(),
-            i64::MIN.to_string().to_string(),
+            i64::MIN.to_string(),
             TOTAL_SHREDS.to_string(),
             (TOTAL_SHREDS + 1).to_string(),
             (i64::MAX).to_string(),
