@@ -18,43 +18,31 @@ use color_eyre::Result;
 use log::info;
 
 use self::latency::{LatencyTest, LatencyTestStage};
+use self::parameters::{AdversaryStrength, McpParameters};
 
 const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
-const ADVERSARY_STRENGTH: f64 = 0.14;
+const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
+    crashed: 0.0,
+    byzantine: 0.18,
+};
 
 fn main() -> Result<()> {
-    let params = parameters::McpParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS);
-    println!(
-        "successful attack probabilities (adv strength = {}):",
-        ADVERSARY_STRENGTH
-    );
-    println!(
-        "selective censorship: {}",
-        params
-            .selective_censorship_probability(ADVERSARY_STRENGTH)
-            .log10()
-    );
-    println!(
-        "break hiding: {}",
-        params.break_hiding_probability(ADVERSARY_STRENGTH).log10()
-    );
-    println!(
-        "temporary liveness failure: {}",
-        params
-            .temporary_liveness_failure_probability(ADVERSARY_STRENGTH)
-            .log10()
-    );
-    println!(
-        "permanent liveness failure: {}",
-        params
-            .permanent_liveness_failure_probability(ADVERSARY_STRENGTH)
-            .log10()
-    );
-
     // enable fancy `color_eyre` error messages + `logforth` logging
     color_eyre::install()?;
     logging::enable_logforth();
+
+    McpParameters::new(NUM_PROPOSERS, NUM_RELAYS).print_failure_probabilities(ADVERSARY_STRENGTH);
+    McpParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
+        .print_failure_probabilities(ADVERSARY_STRENGTH);
+    McpParameters::new_paper2(NUM_PROPOSERS, NUM_RELAYS)
+        .print_failure_probabilities(ADVERSARY_STRENGTH);
+    McpParameters::new_hiding(NUM_PROPOSERS, NUM_RELAYS)
+        .print_failure_probabilities(ADVERSARY_STRENGTH);
+    McpParameters::new_liveness(NUM_PROPOSERS, NUM_RELAYS)
+        .print_failure_probabilities(ADVERSARY_STRENGTH);
+    McpParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS)
+        .print_failure_probabilities(ADVERSARY_STRENGTH);
 
     run_tests_for_stake_distribution("solana", &VALIDATOR_DATA);
 
