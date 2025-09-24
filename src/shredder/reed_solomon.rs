@@ -79,7 +79,7 @@ pub(super) fn reed_solomon_shred(
 ///
 /// Errors
 ///
-/// If fewer than DATA_SHREDS elements in `shreds` are Some() then returns Err(ReedSolomonDeshredError::NotEnoughShreds).
+/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns `Err(ReedSolomonDeshredError::NotEnoughShreds)`.
 /// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns Err(ReedSolomonDeshredError::TooMuchData).
 pub(super) fn reed_solomon_deshred(
     shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
