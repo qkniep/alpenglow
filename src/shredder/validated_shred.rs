@@ -1,4 +1,5 @@
 use std::collections::btree_map::Entry;
+use std::ops::Deref;
 
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
@@ -66,14 +67,24 @@ impl ValidatedShred {
         }
     }
 
-    /// Get a reference to the inner [`Shred`].
-    pub fn to_shred(&self) -> &Shred {
-        &self.0
+    /// Creates a new [`ValidatedShred`] when the inner [`Shred`] does not need to be verified.
+    ///
+    /// Used only by the parent module to create a validated shred when it is guaranteed that the inner shred comes from verified sources and does not need to be verified.
+    pub(super) fn new_validated(shred: Shred) -> Self {
+        Self(shred)
     }
 
     /// Get access to the inner [`Shred`] consuming self.
     pub fn into_shred(self) -> Shred {
         self.0
+    }
+}
+
+impl Deref for ValidatedShred {
+    type Target = Shred;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -92,7 +103,7 @@ mod tests {
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
         let mut shreds = RegularShredder::shred(slice, &sk).unwrap();
-        (shreds.pop().unwrap(), sk)
+        (shreds.pop().unwrap().into_shred(), sk)
     }
 
     #[test]

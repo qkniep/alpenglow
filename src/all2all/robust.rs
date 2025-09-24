@@ -6,11 +6,14 @@
 //! Broadcasts each message over the underlying instance of [`Network`].
 //! The message may be retransmitted multiple times.
 
+use std::iter::repeat_n;
+
 use async_trait::async_trait;
 
 use super::All2All;
 use crate::ValidatorInfo;
-use crate::network::{Network, NetworkMessage};
+use crate::consensus::ConsensusMessage;
+use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -37,19 +40,18 @@ impl<N: Network> RobustAll2All<N> {
 #[async_trait]
 impl<N: Network> All2All for RobustAll2All<N>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: ConsensusNetwork,
 {
-    async fn broadcast(&self, msg: &NetworkMessage) -> std::io::Result<()> {
-        for v in &self.validators {
-            // HACK: stupidly expensive retransmits
-            for _ in 0..1000 {
-                self.network.send(msg, v.all2all_address).await?;
-            }
-        }
-        Ok(())
+    async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
+        // HACK: stupidly expensive retransmits
+        let addrs = self
+            .validators
+            .iter()
+            .flat_map(|v| repeat_n(v.all2all_address, 1000));
+        self.network.send_to_many(msg, addrs).await
     }
 
-    async fn receive(&self) -> std::io::Result<NetworkMessage> {
+    async fn receive(&self) -> std::io::Result<ConsensusMessage> {
         self.network.receive().await
         // loop {
         //     let msg = self.network.receive().await;
@@ -72,10 +74,12 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+    use crate::consensus::Vote;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{dontcare_sockaddr, localhost_ip_sockaddr};
+    use crate::types::Slot;
 
     async fn broadcast_test(packet_loss: f64) {
         // set up network and nodes
@@ -115,13 +119,20 @@ mod tests {
         // run sender and receivers
         let mut tasks = JoinSet::new();
         tasks.spawn(async move {
-            let msg = NetworkMessage::Ping;
+            let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, 0);
+            let msg = ConsensusMessage::Vote(vote);
             all2all_sender.broadcast(&msg).await.unwrap();
+            while let Ok(Ok(_)) =
+                timeout(Duration::from_millis(1000), all2all_sender.receive()).await
+            {
+                // do nothing
+            }
         });
         for all2all in all2all_others {
             tasks.spawn(async move {
                 let received = all2all.receive().await.unwrap();
-                assert!(matches!(received, NetworkMessage::Ping));
+                assert!(matches!(received, ConsensusMessage::Vote(_)));
                 while let Ok(Ok(_)) = timeout(Duration::from_millis(1000), all2all.receive()).await
                 {
                     // do nothing

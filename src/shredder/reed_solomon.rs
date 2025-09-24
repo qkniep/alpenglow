@@ -10,7 +10,7 @@ use super::{
     CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
     ShredPayload, ShredPayloadType, SliceHeader, TOTAL_SHREDS,
 };
-use crate::shredder::Shred;
+use crate::shredder::ValidatedShred;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
@@ -72,7 +72,7 @@ pub(super) fn reed_solomon_shred(
 
 /// Reconstructs the raw data from the given shreds.
 pub(super) fn reed_solomon_deshred(
-    shreds: &[Shred],
+    shreds: &[ValidatedShred],
     num_data: usize,
     num_coding: usize,
     coding_offset: usize,
@@ -207,7 +207,10 @@ mod tests {
         assert_eq!(restored, payload);
     }
 
-    fn take_and_map_enough_shreds(data: Vec<DataShred>, coding: Vec<CodingShred>) -> Vec<Shred> {
+    fn take_and_map_enough_shreds(
+        data: Vec<DataShred>,
+        coding: Vec<CodingShred>,
+    ) -> Vec<ValidatedShred> {
         let sk = SecretKey::new(&mut rand::rng());
         let shreds = data_and_coding_to_output_shreds(data, coding, &sk);
         // reverse order to get coding shreds, not just data shreds

@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -103,7 +103,7 @@ pub struct RepairRequestHandler<N: Network> {
 
 impl<N> RepairRequestHandler<N>
 where
-    N: Network<Recv = RepairRequest, Send = RepairResponse>,
+    N: RepairRequestNetwork,
 {
     /// Creates a new repair request handler instance.
     ///
@@ -168,7 +168,7 @@ where
                 let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
-                RepairResponse::Shred(request.req_type, shred)
+                RepairResponse::Shred(request.req_type, shred.into_shred())
             }
         };
         self.send_response(response, request.sender).await
@@ -201,7 +201,7 @@ pub struct Repair<N: Network> {
 
 impl<N> Repair<N>
 where
-    N: Network<Recv = RepairResponse, Send = RepairRequest>,
+    N: RepairNetwork,
 {
     /// Creates a new repair instance.
     ///
@@ -392,7 +392,6 @@ where
             sender: self.epoch_info.own_id,
             req_type,
         };
-        let msg_bytes = bincode::serde::encode_to_vec(request, BINCODE_CONFIG).unwrap();
         // HACK: magic number to fix high-failure scenarios
         let mut to_all = HashSet::new();
         for _ in 0..10 {
@@ -401,9 +400,9 @@ where
                 break;
             }
         }
-        for to in to_all {
-            self.network.send_serialized(&msg_bytes, to).await?;
-        }
+        self.network
+            .send_to_many(&request, to_all.into_iter())
+            .await?;
         Ok(())
     }
 
@@ -605,7 +604,7 @@ mod tests {
             for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
                 assert!(shreds_requested.contains(&shred_index));
                 let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
-                let response = RepairResponse::Shred(req_type, shred);
+                let response = RepairResponse::Shred(req_type, shred.into_shred());
                 other_network_request.send(&response, port1).await.unwrap();
             }
         }
@@ -630,7 +629,7 @@ mod tests {
         for slice_shreds in shreds.clone() {
             let mut b = blockstore.write().await;
             for shred in slice_shreds {
-                let _ = b.add_shred_from_disseminator(shred).await;
+                let _ = b.add_shred_from_disseminator(shred.into_shred()).await;
             }
         }
         assert_eq!(
