@@ -9,10 +9,8 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use log::{debug, trace, warn};
-use thiserror::Error;
 
 use super::BlockInfo;
-use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
 use crate::network::BINCODE_CONFIG;
@@ -21,30 +19,6 @@ use crate::shredder::{
 };
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
-
-/// Errors that may be encountered when adding a shred.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-pub enum AddShredError {
-    #[error("shred has invalid signature")]
-    InvalidSignature,
-    #[error("shred is already stored")]
-    Duplicate,
-    #[error("shred shows leader equivocation")]
-    Equivocation,
-    #[error("shred was invalid and leader did not equivocate")]
-    InvalidShred,
-}
-
-impl From<ShredVerifyError> for AddShredError {
-    fn from(src: ShredVerifyError) -> Self {
-        match src {
-            ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
-                AddShredError::InvalidSignature
-            }
-            ShredVerifyError::Equivocation => AddShredError::Equivocation,
-        }
-    }
-}
 
 /// Holds all data corresponding to any blocks for a single slot.
 pub struct SlotBlockData {
@@ -56,6 +30,18 @@ pub struct SlotBlockData {
     pub(super) repaired: BTreeMap<Hash, BlockData>,
     /// Whether conflicting shreds have been seen for this slot.
     pub(super) equivocated: bool,
+}
+
+#[derive(Debug)]
+pub(super) enum AddShredResult {
+    FirstShred,
+    Block(BlockInfo),
+    Equivocation,
+    Ok,
+    InvalidProof,
+    InvalidSignature,
+    InvalidShred,
+    Duplicate,
 }
 
 impl SlotBlockData {
@@ -76,19 +62,17 @@ impl SlotBlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-    ) -> Result<Option<VotorEvent>, AddShredError> {
+    ) -> AddShredResult {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.equivocated {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
-            return Err(AddShredError::Equivocation);
+            return AddShredResult::Equivocation;
         }
-        self.disseminated
-            .add_shred(shred, leader_pk)
-            .inspect_err(|err| {
-                if matches!(err, AddShredError::Equivocation) {
-                    self.equivocated = true;
-                }
-            })
+        let res = self.disseminated.add_shred(shred, leader_pk);
+        if matches!(res, AddShredResult::Equivocation) {
+            self.equivocated = true;
+        }
+        res
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -99,17 +83,17 @@ impl SlotBlockData {
         hash: Hash,
         shred: Shred,
         leader_pk: PublicKey,
-    ) -> Result<Option<VotorEvent>, AddShredError> {
+    ) -> AddShredResult {
         assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        block_data.add_shred(shred, leader_pk).inspect_err(|err| {
-            if matches!(err, AddShredError::Equivocation) {
-                self.equivocated = true;
-            }
-        })
+        let res = block_data.add_shred(shred, leader_pk);
+        if matches!(res, AddShredResult::Equivocation) {
+            self.equivocated = true;
+        }
+        res
     }
 }
 
@@ -166,22 +150,21 @@ impl BlockData {
         }
     }
 
-    fn add_shred(
-        &mut self,
-        shred: Shred,
-        leader_pk: PublicKey,
-    ) -> Result<Option<VotorEvent>, AddShredError> {
+    fn add_shred(&mut self, shred: Shred, leader_pk: PublicKey) -> AddShredResult {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
         let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
-        let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
-        self.add_validated_shred(validated_shred)
+        match ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk) {
+            Ok(v) => self.add_validated_shred(v),
+            Err(e) => match e {
+                ShredVerifyError::InvalidProof => AddShredResult::InvalidProof,
+                ShredVerifyError::InvalidSignature => AddShredResult::InvalidSignature,
+                ShredVerifyError::Equivocation => AddShredResult::Equivocation,
+            },
+        }
     }
 
-    fn add_validated_shred(
-        &mut self,
-        validated_shred: ValidatedShred,
-    ) -> Result<Option<VotorEvent>, AddShredError> {
+    fn add_validated_shred(&mut self, validated_shred: ValidatedShred) -> AddShredResult {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
@@ -194,13 +177,13 @@ impl BlockData {
             }
             (true, Some(l)) => {
                 if slice_index != l {
-                    return Err(AddShredError::InvalidShred);
+                    return AddShredResult::InvalidShred;
                 }
             }
             (false, None) => (),
             (false, Some(l)) => {
                 if slice_index >= l {
-                    return Err(AddShredError::InvalidShred);
+                    return AddShredResult::InvalidShred;
                 }
             }
         }
@@ -216,24 +199,21 @@ impl BlockData {
                 "dropping duplicate shred {}-{} in slot {}",
                 slice_index, shred_index, self.slot
             );
-            return Err(AddShredError::Duplicate);
+            return AddShredResult::Duplicate;
         }
         slice_shreds[*shred_index] = Some(validated_shred);
 
         if is_first_shred {
-            return Ok(Some(VotorEvent::FirstShred(self.slot)));
+            return AddShredResult::FirstShred;
         }
 
         match self.try_reconstruct_slice(slice_index) {
-            ReconstructSliceResult::NoAction => Ok(None),
-            ReconstructSliceResult::Error => Err(AddShredError::InvalidShred),
+            ReconstructSliceResult::NoAction => AddShredResult::Ok,
+            ReconstructSliceResult::Error => AddShredResult::InvalidShred,
             ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
-                ReconstructBlockResult::NoAction => Ok(None),
-                ReconstructBlockResult::Error => Err(AddShredError::InvalidShred),
-                ReconstructBlockResult::Complete(block_info) => Ok(Some(VotorEvent::Block {
-                    slot: self.slot,
-                    block_info,
-                })),
+                ReconstructBlockResult::NoAction => AddShredResult::Ok,
+                ReconstructBlockResult::Error => AddShredResult::InvalidShred,
+                ReconstructBlockResult::Complete(block_info) => AddShredResult::Block(block_info),
             },
         }
     }
@@ -372,6 +352,7 @@ impl BlockData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::VotorEvent;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};

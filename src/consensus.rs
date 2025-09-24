@@ -329,7 +329,7 @@ where
             .await
             .add_shred_from_disseminator(shred)
             .await;
-        if let Ok(Some((slot, block_info))) = res {
+        if let Some((slot, block_info)) = res {
             let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
             guard.add_block(block_id, block_info.parent).await;

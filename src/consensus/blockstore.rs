@@ -9,14 +9,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, warn};
 use mockall::automock;
 use tokio::sync::mpsc::Sender;
 
-use self::slot_block_data::{AddShredError, SlotBlockData};
+use self::slot_block_data::{AddShredResult, BlockData, SlotBlockData};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
-use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::Hash;
 use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
@@ -44,15 +43,12 @@ impl From<&Block> for BlockInfo {
 #[async_trait]
 #[automock]
 pub trait Blockstore {
-    async fn add_shred_from_disseminator(
-        &mut self,
-        shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<(Slot, BlockInfo)>;
     async fn add_shred_from_repair(
         &mut self,
         hash: Hash,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    ) -> Option<(Slot, BlockInfo)>;
     fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
@@ -103,14 +99,31 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
-        match event {
-            VotorEvent::FirstShred(_) => {
-                self.votor_channel.send(event).await.unwrap();
+    async fn handle_add_shred_result(
+        &self,
+        slot: Slot,
+        res: AddShredResult,
+    ) -> Option<(Slot, BlockInfo)> {
+        match res {
+            AddShredResult::FirstShred => {
+                self.votor_channel
+                    .send(VotorEvent::FirstShred(slot))
+                    .await
+                    .unwrap();
                 None
             }
-            VotorEvent::Block { slot, block_info } => {
-                self.votor_channel.send(event).await.unwrap();
+            AddShredResult::Equivocation => {
+                self.votor_channel
+                    .send(VotorEvent::SafeToSkip(slot))
+                    .await
+                    .unwrap();
+                None
+            }
+            AddShredResult::Block(block_info) => {
+                self.votor_channel
+                    .send(VotorEvent::Block { slot, block_info })
+                    .await
+                    .unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     &hex::encode(block_info.hash)[..8],
@@ -118,10 +131,13 @@ impl BlockstoreImpl {
                     &hex::encode(block_info.parent.1)[..8],
                     block_info.parent.0,
                 );
-
                 Some((slot, block_info))
             }
-            ev => panic!("unexpected event {ev:?}"),
+            AddShredResult::Ok => None,
+            rest => {
+                warn!("Adding shred failed with {rest:?}");
+                None
+            }
         }
     }
 
@@ -212,19 +228,13 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    async fn add_shred_from_disseminator(
-        &mut self,
-        shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<(Slot, BlockInfo)> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
-        match self
+        let res = self
             .slot_data_mut(slot)
-            .add_shred_from_disseminator(shred, leader_pk)?
-        {
-            Some(event) => Ok(self.send_votor_event(event).await),
-            None => Ok(None),
-        }
+            .add_shred_from_disseminator(shred, leader_pk);
+        self.handle_add_shred_result(slot, res).await
     }
 
     /// Stores a new shred from repair in the blockstore.
@@ -244,16 +254,13 @@ impl Blockstore for BlockstoreImpl {
         &mut self,
         hash: Hash,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Option<(Slot, BlockInfo)> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
-        match self
+        let res = self
             .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, leader_pk)?
-        {
-            Some(event) => Ok(self.send_votor_event(event).await),
-            None => Ok(None),
-        }
+            .add_shred_from_repair(hash, shred, leader_pk);
+        self.handle_add_shred_result(slot, res).await
     }
 
     /// Gives the disseminated block hash for a given `slot`, if any.
