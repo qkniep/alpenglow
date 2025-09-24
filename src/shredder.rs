@@ -259,6 +259,7 @@ impl Shredder for RegularShredder {
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(data, coding, tree, leader_sig);
 
+        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
     }
 }
@@ -294,6 +295,7 @@ impl Shredder for CodingOnlyShredder {
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
 
+        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
     }
 }
@@ -370,8 +372,9 @@ impl Shredder for PetsShredder {
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = shreds[0].merkle_root_sig;
         let reconstructed_shreds =
-            create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
+            create_output_shreds_for_other_leader(data, coding, tree, leader_sig);
 
+        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
     }
 }
@@ -449,8 +452,9 @@ impl Shredder for AontShredder {
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = shreds[0].merkle_root_sig;
         let reconstructed_shreds =
-            create_output_shreds_for_other_leader(Vec::new(), coding, tree, leader_sig);
+            create_output_shreds_for_other_leader(data, coding, tree, leader_sig);
 
+        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
     }
 }
