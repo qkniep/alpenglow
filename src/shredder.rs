@@ -287,6 +287,7 @@ impl Shredder for CodingOnlyShredder {
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
+
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
         let slice = Slice::from_shreds(payload.into(), any_shred);
@@ -357,9 +358,10 @@ impl Shredder for PetsShredder {
             return Err(DeshredError::BadEncoding);
         }
 
-        // additional Merkle tree validity check
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
+
+        // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root;
         let header = any_shred.payload().header.clone();
         let (mut data, coding) = reed_solomon_shred(
@@ -437,8 +439,10 @@ impl Shredder for AontShredder {
             return Err(DeshredError::BadEncoding);
         }
 
-        // additional Merkle tree validity check
+        // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
+
+        // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root;
         let header = any_shred.payload().header.clone();
         let (data, coding) = reed_solomon_shred(
