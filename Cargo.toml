@@ -12,7 +12,7 @@ categories = ["algorithms", "network-programming", "data-structures"]
 publish = false
 
 [dependencies]
-aes = { version = "0.9.0-rc.0", features = ["hazmat", "zeroize"] }
+aes = { version = "0.9.0-rc.1", features = ["hazmat", "zeroize"] }
 anyhow = "1"
 async-trait = "0.1"
 bincode = { version = "2", features = ["serde"] }
@@ -22,7 +22,7 @@ bytes = { version = "1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 csv = "1"
-ctr = "0.10.0-rc.0"
+ctr = "0.10.0-rc.1"
 ed25519-consensus = "2"
 either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
