@@ -244,16 +244,16 @@ impl Shredder for RegularShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(&shreds)?;
-        for i in 0..DATA_SHREDS {
-            if let Some(shred) = &shreds[i]
+        let () = validate_shred_indexes(shreds)?;
+        for shred in shreds.iter().take(DATA_SHREDS) {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
             {
                 return Err(DeshredError::InvalidLayout);
             }
         }
-        for i in DATA_SHREDS..TOTAL_SHREDS {
-            if let Some(shred) = &shreds[i]
+        for shred in shreds.iter().skip(DATA_SHREDS) {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
             {
                 return Err(DeshredError::InvalidLayout);
@@ -302,9 +302,9 @@ impl Shredder for CodingOnlyShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(&shreds)?;
-        for i in 0..TOTAL_SHREDS {
-            if let Some(shred) = &shreds[i]
+        let () = validate_shred_indexes(shreds)?;
+        for shred in shreds.iter() {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
             {
                 return Err(DeshredError::InvalidLayout);
@@ -373,16 +373,16 @@ impl Shredder for PetsShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(&shreds)?;
-        for i in 0..DATA_SHREDS - 1 {
-            if let Some(shred) = &shreds[i]
+        let () = validate_shred_indexes(shreds)?;
+        for shred in shreds.iter().take(DATA_SHREDS - 1) {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
             {
                 return Err(DeshredError::InvalidLayout);
             }
         }
-        for i in DATA_SHREDS - 1..TOTAL_SHREDS {
-            if let Some(shred) = &shreds[i]
+        for shred in shreds.iter().skip(DATA_SHREDS - 1) {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
             {
                 return Err(DeshredError::InvalidLayout);
@@ -468,16 +468,16 @@ impl Shredder for AontShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(&shreds)?;
-        for i in 0..DATA_SHREDS {
-            if let Some(shred) = &shreds[i]
+        let () = validate_shred_indexes(shreds)?;
+        for shred in shreds.iter().take(DATA_SHREDS) {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
             {
                 return Err(DeshredError::InvalidLayout);
             }
         }
-        for i in DATA_SHREDS..TOTAL_SHREDS {
-            if let Some(shred) = &shreds[i]
+        for shred in shreds.iter().skip(DATA_SHREDS) {
+            if let Some(shred) = shred
                 && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
             {
                 return Err(DeshredError::InvalidLayout);
