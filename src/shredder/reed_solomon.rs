@@ -197,12 +197,10 @@ mod tests {
         shreds: RawShreds,
     ) -> [Option<ValidatedShred>; TOTAL_SHREDS] {
         let sk = SecretKey::new(&mut rand::rng());
-        let shreds = data_and_coding_to_output_shreds(header, shreds, &sk);
-        // reverse order to get coding shreds, not just data shreds
-        let mut shreds = shreds.into_iter().rev().map(Some).collect::<Vec<_>>();
-        for shred in shreds.iter_mut().skip(DATA_SHREDS) {
+        let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
+        for shred in shreds.iter_mut().skip(TOTAL_SHREDS - DATA_SHREDS) {
             *shred = None;
         }
-        shreds.try_into().unwrap()
+        shreds
     }
 }
