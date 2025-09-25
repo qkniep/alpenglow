@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use self::reed_solomon::{
-    ReedSolomonDeshredError, ReedSolomonShredError, Shreds as RsShreds, reed_solomon_deshred,
+    RawShreds, ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred,
     reed_solomon_shred,
 };
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
@@ -227,9 +227,9 @@ impl Shredder for RegularShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<ValidatedShred>, ShredError> {
         let (header, payload) = slice.deconstruct();
-        let rs_shreds =
+        let raw_shreds =
             reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        Ok(data_and_coding_to_output_shreds(header, rs_shreds, sk))
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
@@ -240,9 +240,9 @@ impl Shredder for RegularShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let (header, payload) = slice.clone().deconstruct();
-        let rs_shreds =
+        let raw_shreds =
             reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        let tree = build_merkle_tree(&rs_shreds);
+        let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
@@ -250,7 +250,7 @@ impl Shredder for RegularShredder {
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = shreds[0].merkle_root_sig;
         let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, rs_shreds, tree, leader_sig);
+            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
         assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
@@ -265,9 +265,9 @@ impl Shredder for CodingOnlyShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<Vec<ValidatedShred>, ShredError> {
         let (header, payload) = slice.deconstruct();
-        let mut rs_shreds = reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
-        rs_shreds.data = vec![];
-        Ok(data_and_coding_to_output_shreds(header, rs_shreds, sk))
+        let mut raw_shreds = reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
+        raw_shreds.data = vec![];
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
@@ -277,9 +277,9 @@ impl Shredder for CodingOnlyShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let (header, payload) = slice.clone().deconstruct();
-        let mut rs_shreds = reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
-        rs_shreds.data = vec![];
-        let tree = build_merkle_tree(&rs_shreds);
+        let mut raw_shreds = reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
+        raw_shreds.data = vec![];
+        let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
@@ -287,7 +287,7 @@ impl Shredder for CodingOnlyShredder {
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = shreds[0].merkle_root_sig;
         let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, rs_shreds, tree, leader_sig);
+            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
         assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
@@ -320,12 +320,12 @@ impl Shredder for PetsShredder {
         cipher.apply_keystream(&mut payload);
 
         payload.extend_from_slice(&key);
-        let mut rs_shreds =
+        let mut raw_shreds =
             reed_solomon_shred(payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         // delete data shred containing key
-        rs_shreds.data.pop();
+        raw_shreds.data.pop();
 
-        Ok(data_and_coding_to_output_shreds(header, rs_shreds, sk))
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
@@ -342,10 +342,10 @@ impl Shredder for PetsShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let header = shreds[0].payload().header.clone();
-        let mut rs_shreds =
+        let mut raw_shreds =
             reed_solomon_shred(buffer.clone(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
-        rs_shreds.data.pop();
-        let tree = build_merkle_tree(&rs_shreds);
+        raw_shreds.data.pop();
+        let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
@@ -362,7 +362,7 @@ impl Shredder for PetsShredder {
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = shreds[0].merkle_root_sig;
         let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, rs_shreds, tree, leader_sig);
+            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
         assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
@@ -399,8 +399,8 @@ impl Shredder for AontShredder {
             payload.push(hash[i] ^ key[i]);
         }
 
-        let rs_shreds = reed_solomon_shred(payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        Ok(data_and_coding_to_output_shreds(header, rs_shreds, sk))
+        let raw_shreds = reed_solomon_shred(payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred(shreds: &[ValidatedShred]) -> Result<(Slice, Vec<ValidatedShred>), DeshredError> {
@@ -413,9 +413,9 @@ impl Shredder for AontShredder {
         // additional Merkle tree validity check
         let merkle_root = shreds[0].merkle_root;
         let header = shreds[0].payload().header.clone();
-        let rs_shreds =
+        let raw_shreds =
             reed_solomon_shred(buffer.clone(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
-        let tree = build_merkle_tree(&rs_shreds);
+        let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
@@ -437,7 +437,7 @@ impl Shredder for AontShredder {
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = shreds[0].merkle_root_sig;
         let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, rs_shreds, tree, leader_sig);
+            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
         assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
         Ok((slice, reconstructed_shreds))
@@ -449,10 +449,10 @@ impl Shredder for AontShredder {
 /// Each returned shred contains the Merkle root, its own path and the signature.
 fn data_and_coding_to_output_shreds(
     header: SliceHeader,
-    rs_shreds: RsShreds,
+    raw_shreds: RawShreds,
     sk: &SecretKey,
 ) -> Vec<ValidatedShred> {
-    let tree = build_merkle_tree(&rs_shreds);
+    let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
     let merkle_root_sig = sk.sign(&merkle_root);
 
@@ -465,8 +465,8 @@ fn data_and_coding_to_output_shreds(
         };
         (merkle_path, payload)
     };
-    let num_data = rs_shreds.data.len();
-    let data = rs_shreds
+    let num_data = raw_shreds.data.len();
+    let data = raw_shreds
         .data
         .into_iter()
         .enumerate()
@@ -474,11 +474,15 @@ fn data_and_coding_to_output_shreds(
             let (merkle_path, payload) = convert(index_in_slice, d);
             (merkle_path, ShredPayloadType::Data(payload))
         });
-    let coding = rs_shreds.coding.into_iter().enumerate().map(|(offset, c)| {
-        let index_in_slice = num_data + offset;
-        let (merkle_path, payload) = convert(index_in_slice, c);
-        (merkle_path, ShredPayloadType::Coding(payload))
-    });
+    let coding = raw_shreds
+        .coding
+        .into_iter()
+        .enumerate()
+        .map(|(offset, c)| {
+            let index_in_slice = num_data + offset;
+            let (merkle_path, payload) = convert(index_in_slice, c);
+            (merkle_path, ShredPayloadType::Coding(payload))
+        });
     data.chain(coding)
         .map(|(merkle_path, payload)| {
             ValidatedShred::new_validated(Shred {
@@ -500,7 +504,7 @@ fn data_and_coding_to_output_shreds(
 /// Each returned shred contains the Merkle root, its own path and the signature.
 fn create_output_shreds_for_other_leader(
     header: SliceHeader,
-    rs_shreds: RsShreds,
+    raw_shreds: RawShreds,
     tree: MerkleTree,
     leader_signature: Signature,
 ) -> Vec<ValidatedShred> {
@@ -513,8 +517,8 @@ fn create_output_shreds_for_other_leader(
         };
         (merkle_path, payload)
     };
-    let num_data = rs_shreds.data.len();
-    let data = rs_shreds
+    let num_data = raw_shreds.data.len();
+    let data = raw_shreds
         .data
         .into_iter()
         .enumerate()
@@ -522,11 +526,15 @@ fn create_output_shreds_for_other_leader(
             let (merkle_path, payload) = convert(index_in_slice, d);
             (merkle_path, ShredPayloadType::Data(payload))
         });
-    let coding = rs_shreds.coding.into_iter().enumerate().map(|(offset, c)| {
-        let index_in_slice = num_data + offset;
-        let (merkle_path, payload) = convert(index_in_slice, c);
-        (merkle_path, ShredPayloadType::Coding(payload))
-    });
+    let coding = raw_shreds
+        .coding
+        .into_iter()
+        .enumerate()
+        .map(|(offset, c)| {
+            let index_in_slice = num_data + offset;
+            let (merkle_path, payload) = convert(index_in_slice, c);
+            (merkle_path, ShredPayloadType::Coding(payload))
+        });
     let merkle_root = tree.get_root();
     data.chain(coding)
         .map(|(merkle_path, payload)| {
@@ -541,13 +549,13 @@ fn create_output_shreds_for_other_leader(
 }
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
-fn build_merkle_tree(rs_shreds: &RsShreds) -> MerkleTree {
+fn build_merkle_tree(raw_shreds: &RawShreds) -> MerkleTree {
     // zero-allocation chaining of slices
-    let leaves = rs_shreds
+    let leaves = raw_shreds
         .data
         .iter()
         .map(|d| d.as_ref())
-        .chain(rs_shreds.coding.iter().map(|c| c.as_ref()));
+        .chain(raw_shreds.coding.iter().map(|c| c.as_ref()));
     MerkleTree::new_from_iter(leaves)
 }
 

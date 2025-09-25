@@ -29,7 +29,7 @@ pub(super) enum ReedSolomonDeshredError {
 }
 
 /// The data and coding shreds returned from [`reed_solomon_shred()`] on success.
-pub(super) struct Shreds {
+pub(super) struct RawShreds {
     /// A list of data shreds.
     pub(super) data: Vec<Vec<u8>>,
     /// A list of coding shreds.
@@ -42,7 +42,7 @@ pub(super) fn reed_solomon_shred(
     mut payload: Vec<u8>,
     num_data: usize,
     num_coding: usize,
-) -> Result<Shreds, ReedSolomonShredError> {
+) -> Result<RawShreds, ReedSolomonShredError> {
     if payload.len() > MAX_DATA_PER_SLICE {
         return Err(ReedSolomonShredError::TooMuchData);
     }
@@ -58,7 +58,7 @@ pub(super) fn reed_solomon_shred(
     let coding = rs::encode(num_data, num_coding, payload.chunks(shred_bytes)).unwrap();
 
     let data = payload.chunks(shred_bytes).map(|c| c.to_vec()).collect();
-    Ok(Shreds { data, coding })
+    Ok(RawShreds { data, coding })
 }
 
 /// Reconstructs the raw data from the given shreds.
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(restored, payload);
     }
 
-    fn take_and_map_enough_shreds(header: SliceHeader, shreds: Shreds) -> Vec<ValidatedShred> {
+    fn take_and_map_enough_shreds(header: SliceHeader, shreds: RawShreds) -> Vec<ValidatedShred> {
         let sk = SecretKey::new(&mut rand::rng());
         let shreds = data_and_coding_to_output_shreds(header, shreds, &sk);
         // reverse order to get coding shreds, not just data shreds
