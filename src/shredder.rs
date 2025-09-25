@@ -668,6 +668,7 @@ mod tests {
     use super::*;
     use crate::types::slice::create_slice_with_invalid_txs;
 
+    /// Constructs a valid layout of `Shred`s from the input.
     fn into_array(shreds: &[ValidatedShred]) -> [Option<ValidatedShred>; TOTAL_SHREDS] {
         assert!(shreds.len() <= TOTAL_SHREDS);
         let mut ret = [const { None }; TOTAL_SHREDS];
