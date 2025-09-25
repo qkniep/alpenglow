@@ -78,6 +78,8 @@ pub enum DeshredError {
     NotEnoughShreds,
     #[error("shreds are part of invalid Merkle tree")]
     InvalidMerkleTree,
+    #[error("shreds array contains invalid sequence")]
+    InvalidLayout,
 }
 
 impl From<ReedSolomonDeshredError> for DeshredError {
@@ -169,6 +171,19 @@ impl ShredPayload {
     }
 }
 
+fn validate_shred_indexes(
+    shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+) -> Result<(), DeshredError> {
+    for (i, shred) in shreds.iter().enumerate() {
+        if let Some(shred) = shred
+            && *shred.payload().shred_index != i
+        {
+            return Err(DeshredError::InvalidLayout);
+        }
+    }
+    Ok(())
+}
+
 /// A trait for shredding and deshredding.
 ///
 /// Abstracts the process of turning a raw payload of bytes for an entire slice
@@ -229,6 +244,21 @@ impl Shredder for RegularShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let () = validate_shred_indexes(&shreds)?;
+        for i in 0..DATA_SHREDS {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
+        for i in DATA_SHREDS..TOTAL_SHREDS {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
         let payload =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
 
@@ -272,6 +302,14 @@ impl Shredder for CodingOnlyShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let () = validate_shred_indexes(&shreds)?;
+        for i in 0..TOTAL_SHREDS {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
@@ -335,6 +373,21 @@ impl Shredder for PetsShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let () = validate_shred_indexes(&shreds)?;
+        for i in 0..DATA_SHREDS - 1 {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
+        for i in DATA_SHREDS - 1..TOTAL_SHREDS {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
         let mut buffer = reed_solomon_deshred(
             shreds,
             DATA_SHREDS,
@@ -415,6 +468,21 @@ impl Shredder for AontShredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let () = validate_shred_indexes(&shreds)?;
+        for i in 0..DATA_SHREDS {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
+        for i in DATA_SHREDS..TOTAL_SHREDS {
+            if let Some(shred) = &shreds[i]
+                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
         let mut buffer =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         if buffer.len() < 16 {
@@ -602,11 +670,11 @@ mod tests {
 
     fn into_array(shreds: &[ValidatedShred]) -> [Option<ValidatedShred>; TOTAL_SHREDS] {
         assert!(shreds.len() <= TOTAL_SHREDS);
-        let mut shreds = shreds.iter().cloned().map(Some).collect::<Vec<_>>();
-        while shreds.len() < TOTAL_SHREDS {
-            shreds.push(None);
+        let mut ret = [const { None }; TOTAL_SHREDS];
+        for shred in shreds {
+            ret[*shred.payload().shred_index] = Some(shred.clone());
         }
-        shreds.try_into().unwrap()
+        ret
     }
 
     #[test]
