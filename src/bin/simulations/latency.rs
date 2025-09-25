@@ -174,9 +174,11 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
         // sample leader and relays
         let leader = self.leader_sampler.sample(rng);
-        let relays = (0..self.num_slices)
-            .map(|_| self.rotor_sampler.sample_multiple(self.num_shreds, rng))
-            .collect::<Vec<_>>();
+        // let relays = (0..self.num_slices)
+        //     .map(|_| self.rotor_sampler.sample_multiple(self.num_shreds, rng))
+        //     .collect::<Vec<_>>();
+        let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
+        let relays = vec![relays; self.num_slices];
         self.run_one_deterministic(up_to_stage, leader, relays);
     }
 
@@ -247,7 +249,12 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
                 {
                     let relay_ping_server = self.ping_servers[*relay as usize].id;
                     let v_ping_server = self.ping_servers[v.id as usize].id;
-                    let latency = latency + get_ping(relay_ping_server, v_ping_server).unwrap();
+
+                    let start_time = tmp_transmission_latencies[*relay as usize].max(*latency);
+                    let propagation_delay = get_ping(relay_ping_server, v_ping_server).unwrap();
+                    let transmission_delay = self.time_to_send_message(MAX_DATA_PER_SHRED, *relay);
+                    tmp_transmission_latencies[*relay as usize] += transmission_delay;
+                    let latency = start_time + propagation_delay + transmission_delay;
                     tmp_rotor_latencies[i] = latency;
                 }
                 tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
