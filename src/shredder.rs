@@ -151,13 +151,6 @@ impl Shred {
     }
 }
 
-/// A data shred without the Merkle proof.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct DataShred(ShredPayload);
-/// A coding shred without the Merkle proof.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct CodingShred(ShredPayload);
-
 /// Base payload of a shred, regardless of its type.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShredPayload {
