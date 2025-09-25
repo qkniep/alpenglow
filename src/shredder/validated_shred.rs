@@ -102,8 +102,9 @@ mod tests {
     fn create_random_shred() -> (Shred, SecretKey) {
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let mut shreds = RegularShredder::shred(slice, &sk).unwrap().to_vec();
-        (shreds.pop().unwrap().into_shred(), sk)
+        let shreds = RegularShredder::shred(slice, &sk).unwrap();
+        let shred = shreds[shreds.len() - 1].clone().into_shred();
+        (shred, sk)
     }
 
     #[test]
