@@ -127,7 +127,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        self.write_to_csv(path);
+        self.stats.read().unwrap().write_to_csv(path).unwrap();
     }
 
     /// Runs the latency simulation `iterations` times.
@@ -161,7 +161,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        self.write_to_csv(path);
+        self.stats.read().unwrap().write_to_csv(path).unwrap();
     }
 
     /// Runs one iteration of the latency simulation with random leader and relays.
@@ -364,52 +364,6 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         let stats_map = &mut self.stats.write().unwrap();
         stats_map.record_latencies(&mut latencies, &self.validators, &self.ping_servers);
     }
-
-    /// Writes latency test results to a CSV file.
-    // TODO: return io::Result
-    pub fn write_to_csv(&self, filename: impl AsRef<Path>) {
-        let file = File::create(filename).unwrap();
-        let mut writer = BufWriter::new(file);
-
-        writeln!(
-            writer,
-            "percentile,direct,rotor,shreds95,notar,notar65,fast_final,slow_final,final"
-        )
-        .unwrap();
-        for percentile in 1..=100 {
-            let stats = self.stats.read().unwrap();
-
-            let direct_stats = stats.0.get(&LatencyEvent::Direct).unwrap();
-            let direct_latency = direct_stats.get_avg_percentile_latency(percentile);
-
-            let rotor_stats = stats.0.get(&LatencyEvent::Rotor).unwrap();
-            let rotor_latency = rotor_stats.get_avg_percentile_latency(percentile);
-
-            let shreds95_stats = stats.0.get(&LatencyEvent::Shreds95).unwrap();
-            let shreds95_latency = shreds95_stats.get_avg_percentile_latency(percentile);
-
-            let notar_stats = stats.0.get(&LatencyEvent::Notar).unwrap();
-            let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
-
-            let notar65_stats = stats.0.get(&LatencyEvent::Notar65).unwrap();
-            let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
-
-            let fast_final_stats = stats.0.get(&LatencyEvent::FastFinal).unwrap();
-            let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
-
-            let slow_final_stats = stats.0.get(&LatencyEvent::SlowFinal).unwrap();
-            let slow_final_latency = slow_final_stats.get_avg_percentile_latency(percentile);
-
-            let final_stats = stats.0.get(&LatencyEvent::Final).unwrap();
-            let final_latency = final_stats.get_avg_percentile_latency(percentile);
-
-            writeln!(
-                writer,
-                "{percentile},{direct_latency},{rotor_latency},{shreds95_latency},{notar_latency},{notar65_latency},{fast_final_latency},{slow_final_latency},{final_latency}",
-            )
-            .unwrap();
-        }
-    }
 }
 
 type LatencyVec = Vec<(f64, ValidatorId)>;
@@ -452,6 +406,49 @@ impl LatencyStats {
                 .or_default()
                 .record_latencies(latencies, validators, ping_servers);
         }
+    }
+
+    /// Writes percentiles to a CSV file.
+    fn write_to_csv(&self, filename: impl AsRef<Path>) -> std::io::Result<()> {
+        let file = File::create(filename)?;
+        let mut writer = BufWriter::new(file);
+
+        writeln!(
+            writer,
+            "percentile,direct,rotor,shreds95,notar,notar65,fast_final,slow_final,final"
+        )?;
+        for percentile in 1..=100 {
+            let direct_stats = self.0.get(&LatencyEvent::Direct).unwrap();
+            let direct_latency = direct_stats.get_avg_percentile_latency(percentile);
+
+            let rotor_stats = self.0.get(&LatencyEvent::Rotor).unwrap();
+            let rotor_latency = rotor_stats.get_avg_percentile_latency(percentile);
+
+            let shreds95_stats = self.0.get(&LatencyEvent::Shreds95).unwrap();
+            let shreds95_latency = shreds95_stats.get_avg_percentile_latency(percentile);
+
+            let notar_stats = self.0.get(&LatencyEvent::Notar).unwrap();
+            let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
+
+            let notar65_stats = self.0.get(&LatencyEvent::Notar65).unwrap();
+            let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
+
+            let fast_final_stats = self.0.get(&LatencyEvent::FastFinal).unwrap();
+            let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
+
+            let slow_final_stats = self.0.get(&LatencyEvent::SlowFinal).unwrap();
+            let slow_final_latency = slow_final_stats.get_avg_percentile_latency(percentile);
+
+            let final_stats = self.0.get(&LatencyEvent::Final).unwrap();
+            let final_latency = final_stats.get_avg_percentile_latency(percentile);
+
+            writeln!(
+                writer,
+                "{percentile},{direct_latency},{rotor_latency},{shreds95_latency},{notar_latency},{notar65_latency},{fast_final_latency},{slow_final_latency},{final_latency}",
+            )?;
+        }
+
+        Ok(())
     }
 }
 
