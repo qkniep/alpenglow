@@ -147,9 +147,12 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     ) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
-            let relays = self
-                .rotor_sampler
-                .sample_multiple(self.num_shreds, &mut rng);
+            let relays = (0..self.num_slices)
+                .map(|_| {
+                    self.rotor_sampler
+                        .sample_multiple(self.num_shreds, &mut rng)
+                })
+                .collect::<Vec<_>>();
             self.run_one_deterministic(up_to_stage, leader.id, relays);
         }
 
@@ -171,7 +174,9 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
         // sample leader and relays
         let leader = self.leader_sampler.sample(rng);
-        let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
+        let relays = (0..self.num_slices)
+            .map(|_| self.rotor_sampler.sample_multiple(self.num_shreds, rng))
+            .collect::<Vec<_>>();
         self.run_one_deterministic(up_to_stage, leader, relays);
     }
 
@@ -180,7 +185,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         &self,
         up_to_stage: LatencyTestStage,
         leader: ValidatorId,
-        relays: Vec<ValidatorId>,
+        relays: Vec<Vec<ValidatorId>>,
     ) {
         // setup & initialization
         let num_val = self.validators.len();
@@ -231,13 +236,15 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             let total_transmission_delay =
                 self.time_to_send_message(MAX_DATA_PER_SHRED * num_val, leader);
             tmp_transmission_latencies[leader as usize] += total_transmission_delay;
-            for (i, relay) in relays.iter().enumerate() {
+            for (i, relay) in relays[slice].iter().enumerate() {
                 relay_latencies[i] = latencies.get_one(LatencyEvent::Direct(slice), *relay);
             }
 
             // measure Rotor block dissemination latencies
             for v in &self.validators {
-                for (i, (relay, latency)) in relays.iter().zip(relay_latencies.iter()).enumerate() {
+                for (i, (relay, latency)) in
+                    relays[slice].iter().zip(relay_latencies.iter()).enumerate()
+                {
                     let relay_ping_server = self.ping_servers[*relay as usize].id;
                     let v_ping_server = self.ping_servers[v.id as usize].id;
                     let latency = latency + get_ping(relay_ping_server, v_ping_server).unwrap();
