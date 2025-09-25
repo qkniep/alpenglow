@@ -74,7 +74,6 @@ pub(super) fn reed_solomon_deshred(
     if shreds_cnt < DATA_SHREDS {
         return Err(ReedSolomonDeshredError::NotEnoughShreds);
     }
-    assert!(shreds.len() <= TOTAL_SHREDS);
 
     // filter to split data and coding shreds
     let data = shreds.iter().filter_map(|s| {
