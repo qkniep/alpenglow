@@ -43,6 +43,7 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
             let sk = SecretKey::new(&mut rng);
             let mut shreds = S::shred(slice, &sk).unwrap().map(Some);
             // need at least DATA_SHREDS to reconstruct and want to include as many coding shreds as possible which should be at the end of the array
+            // so mark the first TOTAL_SHREDS - DATA_SHREDS as None
             for shred in shreds.iter_mut().take(TOTAL_SHREDS - DATA_SHREDS) {
                 *shred = None;
             }

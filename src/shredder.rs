@@ -622,13 +622,13 @@ mod tests {
         slice.merkle_root = slice_restored.merkle_root;
         assert_eq!(slice_restored, slice);
 
-        // restore only from coding shreds
+        // restore only from data shreds
         let coding = into_array(&shreds[..DATA_SHREDS]);
         let (slice_restored, _) = RegularShredder::deshred(&coding)?;
         assert_eq!(slice_restored, slice);
 
-        // restore only from data shreds
-        let data = into_array(&shreds[DATA_SHREDS..]);
+        // restore using as many coding shreds as possible
+        let data = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
         let (slice_restored, _) = RegularShredder::deshred(&data)?;
         assert_eq!(slice_restored, slice);
 
