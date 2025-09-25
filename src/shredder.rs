@@ -554,8 +554,8 @@ fn build_merkle_tree(raw_shreds: &RawShreds) -> MerkleTree {
     let leaves = raw_shreds
         .data
         .iter()
-        .map(|d| d.as_ref())
-        .chain(raw_shreds.coding.iter().map(|c| c.as_ref()));
+        .chain(&raw_shreds.coding)
+        .map(Vec::as_slice);
     MerkleTree::new_from_iter(leaves)
 }
 

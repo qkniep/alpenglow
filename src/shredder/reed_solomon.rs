@@ -55,9 +55,8 @@ pub(super) fn reed_solomon_shred(
     assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
 
     let shred_bytes = payload.len().div_ceil(DATA_SHREDS);
-    let coding = rs::encode(num_data, num_coding, payload.chunks(shred_bytes)).unwrap();
-
     let data = payload.chunks(shred_bytes).map(|c| c.to_vec()).collect();
+    let coding = rs::encode(num_data, num_coding, &data).unwrap();
     Ok(RawShreds { data, coding })
 }
 
