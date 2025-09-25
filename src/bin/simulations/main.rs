@@ -96,7 +96,7 @@ fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    logging::enable_logforth_stderr();
+    logging::enable_logforth();
 
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
@@ -338,13 +338,16 @@ fn run_tests<
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
+            let leader_bandwidth = 1_000_000_000;
+            let bandwidths = vec![leader_bandwidth; validators.len()];
             let tester = LatencyTest::new(
                 validators_with_ping_data,
                 ping_leader_sampler.clone(),
                 ping_rotor_sampler.clone(),
                 n,
                 k,
-            );
+            )
+            .with_bandwidths(leader_bandwidth, bandwidths);
             let test_name = format!("{test_name}-{n}-{k}");
             tester.run_many(&test_name, 1000, LatencyTestStage::Final);
         }
