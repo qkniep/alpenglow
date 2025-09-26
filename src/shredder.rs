@@ -254,9 +254,9 @@ pub trait Shredder {
 pub struct RegularShredder;
 
 impl Shredder for RegularShredder {
-    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
-    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
+    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -299,9 +299,9 @@ impl Shredder for RegularShredder {
 pub struct CodingOnlyShredder;
 
 impl Shredder for CodingOnlyShredder {
-    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS;
-    const DATA_OUTPUT_SHREDS: usize = 0;
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
+    const DATA_OUTPUT_SHREDS: usize = 0;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -348,10 +348,10 @@ impl Shredder for CodingOnlyShredder {
 pub struct PetsShredder;
 
 impl Shredder for PetsShredder {
-    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
-    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
     // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -430,10 +430,10 @@ impl Shredder for PetsShredder {
 pub struct AontShredder;
 
 impl Shredder for AontShredder {
-    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
-    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
