@@ -171,19 +171,6 @@ impl ShredPayload {
     }
 }
 
-fn validate_shred_indexes(
-    shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
-) -> Result<(), DeshredError> {
-    for (i, shred) in shreds.iter().enumerate() {
-        if let Some(shred) = shred
-            && *shred.payload().shred_index != i
-        {
-            return Err(DeshredError::InvalidLayout);
-        }
-    }
-    Ok(())
-}
-
 /// A trait for shredding and deshredding.
 ///
 /// Abstracts the process of turning a raw payload of bytes for an entire slice
@@ -194,6 +181,12 @@ pub trait Shredder {
     /// For the regular shredder, this is [`MAX_DATA_PER_SLICE`].
     /// However, this can be less if the specfic shredder adds some overhead.
     const MAX_DATA_SIZE: usize;
+
+    /// When [`deshred()`] is called, how many data shreds will be produced.
+    const DATA_OUTPUT_SHREDS: usize;
+
+    /// When [`deshred()`] is called, how many coding shreds will be produced.
+    const CODING_OUTPUT_SHREDS: usize;
 
     /// Splits the given slice into [`TOTAL_SHREDS`] shreds, which depending on
     /// the specific implementation can be any combination of data and coding.
@@ -224,6 +217,35 @@ pub trait Shredder {
     ///     3. Return [`DeshredError::InvalidMerkleTree`] if this fails.
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+    ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        for (i, shred) in shreds.iter().enumerate() {
+            if let Some(shred) = shred
+                && *shred.payload().shred_index != i
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
+        for shred in shreds.iter().take(Self::DATA_OUTPUT_SHREDS) {
+            if let Some(shred) = shred
+                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
+        for shred in shreds.iter().skip(Self::CODING_OUTPUT_SHREDS) {
+            if let Some(shred) = shred
+                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
+            {
+                return Err(DeshredError::InvalidLayout);
+            }
+        }
+        Self::deshred_validated_shreds(shreds)
+    }
+
+    /// The core deshreding implementation that the actual shredders provide.
+    /// NOTE: this is not part of the public API, normally, [`deshred()`] should be used.
+    fn deshred_validated_shreds(
+        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;
 }
 
@@ -233,6 +255,8 @@ pub struct RegularShredder;
 
 impl Shredder for RegularShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
+    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -241,24 +265,9 @@ impl Shredder for RegularShredder {
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
-    fn deshred(
+    fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(shreds)?;
-        for shred in shreds.iter().take(DATA_SHREDS) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().skip(DATA_SHREDS) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
         let payload =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
 
@@ -291,6 +300,8 @@ pub struct CodingOnlyShredder;
 
 impl Shredder for CodingOnlyShredder {
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE;
+    const DATA_OUTPUT_SHREDS: usize = 0;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -299,17 +310,9 @@ impl Shredder for CodingOnlyShredder {
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
-    fn deshred(
+    fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(shreds)?;
-        for shred in shreds.iter() {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
@@ -347,6 +350,8 @@ pub struct PetsShredder;
 impl Shredder for PetsShredder {
     // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -370,24 +375,9 @@ impl Shredder for PetsShredder {
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
-    fn deshred(
+    fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(shreds)?;
-        for shred in shreds.iter().take(DATA_SHREDS - 1) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().skip(DATA_SHREDS - 1) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
         let mut buffer = reed_solomon_deshred(
             shreds,
             DATA_SHREDS,
@@ -442,6 +432,8 @@ pub struct AontShredder;
 impl Shredder for AontShredder {
     // needs 16 bytes for symmmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
+    const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
@@ -465,24 +457,9 @@ impl Shredder for AontShredder {
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
-    fn deshred(
+    fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let () = validate_shred_indexes(shreds)?;
-        for shred in shreds.iter().take(DATA_SHREDS) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().skip(DATA_SHREDS) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
         let mut buffer =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         if buffer.len() < 16 {
