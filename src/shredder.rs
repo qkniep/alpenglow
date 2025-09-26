@@ -182,10 +182,10 @@ pub trait Shredder {
     /// However, this can be less if the specfic shredder adds some overhead.
     const MAX_DATA_SIZE: usize;
 
-    /// When [`deshred()`] is called, how many data shreds will be produced.
+    /// When [`shred()`] is called, how many data shreds will be produced.
     const DATA_OUTPUT_SHREDS: usize;
 
-    /// When [`deshred()`] is called, how many coding shreds will be produced.
+    /// When [`shred()`] is called, how many coding shreds will be produced.
     const CODING_OUTPUT_SHREDS: usize;
 
     /// Splits the given slice into [`TOTAL_SHREDS`] shreds, which depending on
@@ -506,19 +506,11 @@ impl Shredder for AontShredder {
 /// Generates the Merkle tree, signs the root, and outputs shreds.
 ///
 /// Each returned shred contains the Merkle root, its own path and the signature.
-///
-/// # Panics
-///
-/// Panics if data.len() + coding.len() != TOTAL_SHREDS.
 fn data_and_coding_to_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
     sk: &SecretKey,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
-    assert_eq!(
-        raw_shreds.data.len() + raw_shreds.coding.len(),
-        TOTAL_SHREDS
-    );
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
     let merkle_root_sig = sk.sign(&merkle_root);
@@ -573,10 +565,6 @@ fn data_and_coding_to_output_shreds(
 /// Also, requires the Merkle tree to already be calculated from reconstructed shreds.
 ///
 /// Each returned shred contains the Merkle root, its own path and the signature.
-///
-/// # Panics
-///
-/// Panics if data.len() + coding.len() != TOTAL_SHREDS.
 fn create_output_shreds_for_other_leader(
     header: SliceHeader,
     raw_shreds: RawShreds,
