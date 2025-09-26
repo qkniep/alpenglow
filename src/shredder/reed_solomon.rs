@@ -76,17 +76,17 @@ pub(super) fn reed_solomon_deshred(
     }
 
     // filter to split data and coding shreds
-    let data = shreds.iter().filter_map(|s| {
+    let data = shreds.iter().take(coding_offset).filter_map(|s| {
         s.as_ref().and_then(|s| match &s.payload_type {
             ShredPayloadType::Data(d) => Some((*d.shred_index, &d.data)),
-            ShredPayloadType::Coding(_) => None,
+            ShredPayloadType::Coding(_) => panic!("should be a data shred"),
         })
     });
 
-    let coding = shreds.iter().filter_map(|s| {
+    let coding = shreds.iter().skip(coding_offset).filter_map(|s| {
         s.as_ref().and_then(|s| match &s.payload_type {
             ShredPayloadType::Coding(c) => Some((*c.shred_index - coding_offset, &c.data)),
-            ShredPayloadType::Data(_) => None,
+            ShredPayloadType::Data(_) => panic!("should be a coding shred"),
         })
     });
 
