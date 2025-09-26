@@ -360,7 +360,7 @@ where
                 .await
                 .add_shred_from_disseminator(s.into_shred())
                 .await;
-            if let Ok(Some((block_slot, block_info))) = block {
+            if let Some((block_slot, block_info)) = block {
                 assert_eq!(block_slot, slot);
                 assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash);
@@ -679,12 +679,12 @@ mod tests {
             .expect_add_shred_from_disseminator()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
+            .returning(move |_| Box::pin(async move { None }));
         blockstore
             .expect_add_shred_from_disseminator()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(Some((slot, block_info))) }));
+            .returning(move |_| Box::pin(async move { Some((slot, block_info)) }));
 
         let mut pool = MockPool::new();
         pool.expect_add_block()
@@ -740,7 +740,7 @@ mod tests {
             .expect_add_shred_from_disseminator()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
+            .returning(move |_| Box::pin(async move { None }));
         blockstore
             .expect_add_shred_from_disseminator()
             .times(1)
@@ -750,7 +750,7 @@ mod tests {
                     // last shred; wait for the parent ready event to be sent before continuing
                     first_slice_finished_tx.send(()).unwrap();
                     let () = start_second_slice_rx.await.unwrap();
-                    Ok(None)
+                    None
                 })
             });
 
@@ -759,7 +759,7 @@ mod tests {
             .expect_add_shred_from_disseminator()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
+            .returning(move |_| Box::pin(async move { None }));
         blockstore
             .expect_add_shred_from_disseminator()
             .times(1)
@@ -768,7 +768,7 @@ mod tests {
                 Box::pin(async move {
                     // final shred of second slice
                     // block is constructed with the new parent
-                    Ok(Some((slot, new_block_info)))
+                    Some((slot, new_block_info))
                 })
             });
 
