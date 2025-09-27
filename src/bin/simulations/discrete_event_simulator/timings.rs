@@ -6,14 +6,13 @@
 //! Most importantly the [`Timings`] struct, which is a map from events to timing vectors.
 //! This is what the discrete-event simulator uses to record timings of events.
 //! It can be thought of as a #events x #validators matrix of latencies.
-//! Although, it is actually backed by a [`HashMap`] of [`RwLock<TimingVec>`],
+//! Although, it is actually backed by a [`HashMap`] of [`Vec<SimTime>`],
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::sync::RwLock;
 
 use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
@@ -21,11 +20,24 @@ use log::info;
 
 use super::SimulationEnvironment;
 
-/// A vector of (latency, validator) pairs for a specific event.
-pub type TimingVec = Vec<(f64, ValidatorId)>;
+/// Simulated time.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct SimTime(f64);
+
+impl SimTime {
+    ///
+    pub fn never() -> Self {
+        Self(f64::INFINITY)
+    }
+
+    ///
+    pub fn new(time: f64) -> Self {
+        Self(time)
+    }
+}
 
 /// The timing matrix, implemented as a map from events to timing vectors.
-pub struct Timings<E: PartialEq + Eq + Hash>(HashMap<E, RwLock<TimingVec>>);
+pub struct Timings<E: PartialEq + Eq + Hash>(HashMap<E, Vec<SimTime>>);
 
 impl<E: PartialEq + Eq + Hash> Timings<E> {
     // fn initialize(&mut self, stage: LatencyTestStage, num_val: usize) {
@@ -37,8 +49,7 @@ impl<E: PartialEq + Eq + Hash> Timings<E> {
 
     /// Initializes the timing vector for the given event to infinity.
     pub fn initialize(&mut self, event: E, num_val: usize) {
-        self.0
-            .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
+        self.0.insert(event, vec![SimTime::never(); num_val]);
     }
 
     ///
@@ -47,28 +58,27 @@ impl<E: PartialEq + Eq + Hash> Timings<E> {
     }
 
     /// Records the latency for the given event and validator.
-    pub fn record(&self, event: E, latency: f64, validator: ValidatorId) {
-        let mut vec = self.0.get(&event).unwrap().write().unwrap();
+    pub fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
+        let vec = self.0.get_mut(&event).unwrap();
         let entry = vec.get_mut(validator as usize).unwrap();
-        if latency < entry.0 {
-            *entry = (latency, validator);
+        if timing < *entry {
+            *entry = timing;
         }
     }
 
     /// Returns the timing vector for the given event.
-    pub fn get(&self, event: E) -> Option<std::sync::RwLockReadGuard<'_, TimingVec>> {
-        self.0.get(&event).map(|v| v.read().unwrap())
+    pub fn get(&self, event: E) -> Option<&[SimTime]> {
+        self.0.get(&event).map(|v| v.as_slice())
     }
 
     /// Returns the timing entry for the given event and validator.
     pub fn get_one(&self, event: E, validator: ValidatorId) -> f64 {
-        let (latency, _val) = self.get(event).unwrap()[validator as usize];
-        latency
+        self.get(event).unwrap()[validator as usize].0
     }
 
     /// Iterates over timing vectors for all events.
-    pub fn iter(&self) -> impl Iterator<Item = (&E, &RwLock<TimingVec>)> {
-        self.0.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&E, &[SimTime])> {
+        self.0.iter().map(|(k, v)| (k, v.as_slice()))
     }
 }
 
@@ -143,26 +153,30 @@ pub struct EventTimingStats {
 impl EventTimingStats {
     pub fn record_latencies(
         &mut self,
-        latencies: &RwLock<TimingVec>,
+        latencies: &[SimTime],
         validators: &[ValidatorInfo],
         ping_servers: &[&'static PingServer],
     ) {
-        let mut latencies = latencies.write().unwrap();
+        let mut latencies = latencies
+            .iter()
+            .enumerate()
+            .map(|(v, l)| (*l, v))
+            .collect::<Vec<_>>();
         latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let percentile_stake = total_stake as f64 / 100.0;
         let mut percentile = 1;
         let mut stake_so_far = 0.0;
-        for (latency, v) in &*latencies {
-            let mut validator_stake = validators[*v as usize].stake as f64;
+        for (latency, v) in latencies {
+            let mut validator_stake = validators[v].stake as f64;
             for _ in 0..100 {
                 let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
                 let abs_stake_contrib = validator_stake.min(percentile_stake_left);
                 let rel_stake_contrib = abs_stake_contrib / percentile_stake;
-                let latency_contrib = rel_stake_contrib * *latency;
+                let latency_contrib = rel_stake_contrib * latency.0;
                 self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
                 let count = self.percentile_location[percentile as usize - 1]
-                    .entry(ping_servers[*v as usize].location.clone())
+                    .entry(ping_servers[v].location.clone())
                     .or_default();
                 *count += abs_stake_contrib;
                 stake_so_far += abs_stake_contrib;

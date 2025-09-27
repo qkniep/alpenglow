@@ -7,16 +7,17 @@
 
 mod timings;
 
+use std::hash::Hash;
 use std::sync::RwLock;
 
 use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use rayon::prelude::*;
 
-pub use self::timings::{EventTimingStats, TimingStats, Timings};
+pub use self::timings::{SimTime, TimingStats, Timings};
 
 ///
-pub trait Event: Sized + Clone + Copy + Eq + std::hash::Hash + Send + Sync {
+pub trait Event: Sized + Clone + Copy + Eq + Hash + Send + Sync {
     /// Return the name of the event.
     fn name(&self) -> &str;
 
@@ -24,11 +25,11 @@ pub trait Event: Sized + Clone + Copy + Eq + std::hash::Hash + Send + Sync {
     fn dependencies(&self) -> Vec<Self>;
 
     /// Calculate timing vector given dependencies.
-    fn calculate_timing(&self, dep_timings: &[&[f64]]) -> Vec<f64>;
+    fn calculate_timing(&self, dep_timings: &[&[SimTime]]) -> Vec<SimTime>;
 }
 
 ///
-pub trait Stage: Sized + Clone + Copy + Eq + std::hash::Hash + Send + Sync {
+pub trait Stage: Sized + Clone + Copy + Eq + Hash + Send + Sync {
     type Event: Event;
 
     ///
@@ -105,11 +106,19 @@ impl<S: Stage> SimulationEngine<S> {
             }
 
             for event in stage.events() {
-                //
+                let dep_timings = event
+                    .dependencies()
+                    .into_iter()
+                    .map(|dep| timings.get(dep).unwrap())
+                    .collect::<Vec<_>>();
+                let latencies = event.calculate_timing(&dep_timings);
+                for (validator, latency) in latencies.iter().enumerate() {
+                    timings.record(event, *latency, validator as ValidatorId);
+                }
             }
         }
 
-        // commit latencies to stats (update averages)
+        // commit timings to stats
         let mut stats_map = self.stats.write().unwrap();
         stats_map.record_latencies(timings, &self.environment);
     }

@@ -7,7 +7,7 @@
 
 use alpenglow::disseminator::rotor::SamplingStrategy;
 
-use crate::discrete_event_simulator::{Event, SimulationEnvironment, Stage};
+use crate::discrete_event_simulator::{Event, SimTime, SimulationEnvironment, Stage};
 use crate::rotor::{RotorInstanceBuilder, RotorParams};
 
 ///
@@ -76,7 +76,7 @@ impl Event for LatencyEvent {
     }
 
     ///
-    fn calculate_timing(&self, dep_timings: &[&[f64]]) -> Vec<f64> {
+    fn calculate_timing(&self, dep_timings: &[&[SimTime]]) -> Vec<SimTime> {
         todo!()
     }
 }

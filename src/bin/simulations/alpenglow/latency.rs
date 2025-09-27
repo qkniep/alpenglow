@@ -10,9 +10,8 @@ use std::path::Path;
 use std::sync::RwLock;
 
 use alpenglow::disseminator::rotor::SamplingStrategy;
-use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
-use alpenglow::shredder::MAX_DATA_PER_SHRED;
-use alpenglow::{Stake, ValidatorId, ValidatorInfo};
+use alpenglow::network::simulated::ping_data::PingServer;
+use alpenglow::{Stake, ValidatorInfo};
 use rand::prelude::*;
 use rayon::prelude::*;
 
