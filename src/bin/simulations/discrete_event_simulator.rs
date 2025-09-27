@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! General discrete-event simulator.
+//!
+//!
 
 // mod event;
 // mod resources;

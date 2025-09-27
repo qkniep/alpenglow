@@ -15,9 +15,8 @@ use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::rotor::RotorInstanceBuilder;
-
 use super::RotorParams;
+use crate::rotor::RotorInstanceBuilder;
 
 const MAX_FAILURES: usize = 10_000;
 

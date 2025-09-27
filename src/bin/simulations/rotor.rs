@@ -8,7 +8,8 @@
 mod latency;
 mod robustness;
 
-use alpenglow::{ValidatorId, disseminator::rotor::SamplingStrategy};
+use alpenglow::ValidatorId;
+use alpenglow::disseminator::rotor::SamplingStrategy;
 use rand::prelude::*;
 
 pub use self::robustness::RotorRobustnessTest;

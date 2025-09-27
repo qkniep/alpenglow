@@ -32,31 +32,29 @@
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
-mod bandwidth;
+mod alpenglow;
 mod discrete_event_simulator;
-mod latency;
 mod rotor;
 
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alpenglow::disseminator::rotor::sampling_strategy::{
+use ::alpenglow::disseminator::rotor::sampling_strategy::{
     DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
     UniformSampler,
 };
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use alpenglow::network::simulated::ping_data::PingServer;
-use alpenglow::network::simulated::stake_distribution::{
+use ::alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use ::alpenglow::network::simulated::ping_data::PingServer;
+use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use alpenglow::{ValidatorInfo, logging};
+use ::alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
-use self::bandwidth::BandwidthTest;
-use self::latency::{LatencyTest, LatencyTestStage};
+use self::alpenglow::{BandwidthTest, LatencyTest, LatencyTestStage};
 use self::rotor::RotorRobustnessTest;
 
 const RUN_BANDWIDTH_TESTS: bool = false;
