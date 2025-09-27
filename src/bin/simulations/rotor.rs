@@ -5,6 +5,7 @@
 //!
 //!
 
+mod latency;
 mod robustness;
 
 use alpenglow::{ValidatorId, disseminator::rotor::SamplingStrategy};
