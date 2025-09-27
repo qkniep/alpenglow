@@ -1,9 +1,11 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Simulations for the Rotor protocol.
 //!
-//!
-//!
+//! This implements the following simulations:
+//! - Latency simulation for block dissemination via Rotor.
+//! - Robustness simulation against liveness and safety failures.
 
 mod latency;
 mod robustness;

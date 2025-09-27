@@ -5,10 +5,7 @@
 //!
 //! So far, this test can only simulate the good case.
 
-use std::collections::HashMap;
-use std::fs::File;
 use std::hash::Hash;
-use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -19,9 +16,7 @@ use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::discrete_event_simulator::{
-    EventTimingStats, SimulationEnvironment, TimingStats, Timings,
-};
+use crate::discrete_event_simulator::{SimulationEnvironment, TimingStats, Timings};
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
 /// Size (in bytes) assumed per vote in the simulation.

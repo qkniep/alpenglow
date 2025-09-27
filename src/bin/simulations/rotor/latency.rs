@@ -7,8 +7,40 @@
 
 use alpenglow::disseminator::rotor::SamplingStrategy;
 
-use crate::discrete_event_simulator::SimulationEnvironment;
+use crate::discrete_event_simulator::{Event, SimulationEnvironment, Stage};
 use crate::rotor::{RotorInstanceBuilder, RotorParams};
+
+///
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LatencyTestStage {
+    Direct,
+    Rotor,
+    Block,
+}
+
+impl Stage for LatencyTestStage {
+    type Event = LatencyEvent;
+
+    fn first() -> Self {
+        LatencyTestStage::Direct
+    }
+
+    fn next(&self) -> Option<Self> {
+        match self {
+            LatencyTestStage::Direct => Some(LatencyTestStage::Rotor),
+            LatencyTestStage::Rotor => Some(LatencyTestStage::Block),
+            LatencyTestStage::Block => None,
+        }
+    }
+
+    fn events(&self) -> Vec<LatencyEvent> {
+        match self {
+            LatencyTestStage::Direct => vec![LatencyEvent::Direct(0)],
+            LatencyTestStage::Rotor => vec![LatencyEvent::Rotor(0)],
+            LatencyTestStage::Block => vec![LatencyEvent::Block],
+        }
+    }
+}
 
 /// Events that can occur at each validator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -18,9 +50,18 @@ pub enum LatencyEvent {
     Block,
 }
 
-impl LatencyEvent {
+impl Event for LatencyEvent {
     ///
-    pub fn dependencies(&self) -> Vec<LatencyEvent> {
+    fn name(&self) -> &str {
+        match self {
+            LatencyEvent::Direct(_) => "direct",
+            LatencyEvent::Rotor(_) => "rotor",
+            LatencyEvent::Block => "block",
+        }
+    }
+
+    ///
+    fn dependencies(&self) -> Vec<LatencyEvent> {
         match self {
             LatencyEvent::Direct(i) => {
                 if *i == 0 {
@@ -32,6 +73,11 @@ impl LatencyEvent {
             LatencyEvent::Rotor(i) => vec![LatencyEvent::Direct(*i)],
             LatencyEvent::Block => vec![],
         }
+    }
+
+    ///
+    fn calculate_timing(&self, dep_timings: &[&[f64]]) -> Vec<f64> {
+        todo!()
     }
 }
 
