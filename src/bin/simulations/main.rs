@@ -33,6 +33,7 @@
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
 mod bandwidth;
+mod discrete_event_simulator;
 mod latency;
 mod rotor_robustness;
 
@@ -349,7 +350,7 @@ fn run_tests<
             )
             .with_bandwidths(leader_bandwidth, bandwidths);
             let test_name = format!("{test_name}-{n}-{k}");
-            tester.run_many(&test_name, 1000, LatencyTestStage::Final);
+            tester.run_many(&test_name, 1000, LatencyTestStage::Final2);
         }
 
         // latency experiments with fixed leaders
@@ -412,7 +413,7 @@ fn run_tests<
                     *k,
                 );
                 let test_name = format!("{test_name}-{n}-{k}");
-                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final, leader);
+                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final2, leader);
             });
         }
     }

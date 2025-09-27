@@ -21,13 +21,36 @@ use rayon::prelude::*;
 
 /// Size (in bytes) assumed per vote in the simulation.
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
+/// Size (in bytes) assumed per certificate in the simulation.
+const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
 /// The sequential stages of the latency test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LatencyTestStage {
     Rotor,
     Notar,
-    Final,
+    Final1,
+    Final2,
+}
+
+impl LatencyTestStage {
+    fn next(self) -> Option<Self> {
+        match self {
+            LatencyTestStage::Rotor => Some(LatencyTestStage::Notar),
+            LatencyTestStage::Notar => Some(LatencyTestStage::Final1),
+            LatencyTestStage::Final1 => Some(LatencyTestStage::Final2),
+            LatencyTestStage::Final2 => None,
+        }
+    }
+
+    fn events(self) -> Vec<LatencyEvent> {
+        match self {
+            LatencyTestStage::Rotor => vec![LatencyEvent::Direct(0), LatencyEvent::Rotor(0)],
+            LatencyTestStage::Notar => vec![LatencyEvent::Notar, LatencyEvent::Shreds95],
+            LatencyTestStage::Final1 => vec![LatencyEvent::FastFinal, LatencyEvent::SlowFinal],
+            LatencyTestStage::Final2 => vec![LatencyEvent::Final],
+        }
+    }
 }
 
 /// Events that can occur at each validator.
@@ -43,6 +66,12 @@ pub enum LatencyEvent {
     Final,
 }
 
+pub struct LatencySimParams {
+    num_data_shreds: usize,
+    num_shreds: usize,
+    num_slices: usize,
+}
+
 /// Simulated latency test.
 pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     // core setup of the latency test
@@ -50,10 +79,8 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     ping_servers: Vec<&'static PingServer>,
     leader_sampler: L,
     rotor_sampler: R,
-    num_data_shreds: usize,
-    num_shreds: usize,
-    num_slices: usize,
     total_stake: Stake,
+    params: LatencySimParams,
 
     // optional bandwidth information
     // if provided, these will be used to simulate transmission delays
@@ -84,15 +111,20 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         let ping_servers: Vec<&'static PingServer> =
             validators_with_ping_data.iter().map(|(_, p)| *p).collect();
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+
+        let params = LatencySimParams {
+            num_data_shreds,
+            num_shreds,
+            num_slices: 1,
+        };
+
         Self {
             validators,
             ping_servers,
             leader_sampler,
             rotor_sampler,
-            num_data_shreds,
-            num_shreds,
-            num_slices: 1,
             total_stake,
+            params,
 
             leader_bandwidth: None,
             bandwidths: None,
@@ -144,10 +176,10 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     ) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
-            let relays = (0..self.num_slices)
+            let relays = (0..self.params.num_slices)
                 .map(|_| {
                     self.rotor_sampler
-                        .sample_multiple(self.num_shreds, &mut rng)
+                        .sample_multiple(self.params.num_shreds, &mut rng)
                 })
                 .collect::<Vec<_>>();
             self.run_one_deterministic(up_to_stage, leader.id, relays);
@@ -171,9 +203,14 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
         // sample leader and relays
         let leader = self.leader_sampler.sample(rng);
-        let relays = (0..self.num_slices)
-            .map(|_| self.rotor_sampler.sample_multiple(self.num_shreds, rng))
+        let relays = (0..self.params.num_slices)
+            .map(|_| {
+                self.rotor_sampler
+                    .sample_multiple(self.params.num_shreds, rng)
+            })
             .collect::<Vec<_>>();
+        // let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
+        // let relays = vec![relays; self.num_slices];
         self.run_one_deterministic(up_to_stage, leader, relays);
     }
 
@@ -186,36 +223,26 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     ) {
         // setup & initialization
         let num_val = self.validators.len();
-        let mut relay_latencies = vec![0.0; self.num_shreds];
+        let mut relay_latencies = vec![0.0; self.params.num_shreds];
         let mut latencies = Latencies::default();
-        // TODO: automatically initialize
-        for slice in 0..self.num_slices {
-            let event = LatencyEvent::Direct(slice);
-            latencies
-                .0
-                .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
-        }
-        for slice in 0..self.num_slices {
-            let event = LatencyEvent::Rotor(slice);
-            latencies
-                .0
-                .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
-        }
-        for event in [
-            LatencyEvent::Shreds95,
-            LatencyEvent::Notar,
-            LatencyEvent::Notar65,
-            LatencyEvent::FastFinal,
-            LatencyEvent::SlowFinal,
-            LatencyEvent::Final,
-        ] {
-            latencies
-                .0
-                .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
-        }
-        let mut tmp_rotor_latencies = vec![0.0; self.num_shreds];
+        let mut tmp_rotor_latencies = vec![0.0; self.params.num_shreds];
         let mut tmp_latencies = vec![(0.0, 0); num_val];
         let mut tmp_transmission_latencies = vec![0.0; num_val];
+
+        // simulation loop
+        let mut stage = LatencyTestStage::Rotor;
+        while stage <= up_to_stage {
+            latencies.initialize(stage, num_val);
+
+            for event in stage.events() {
+                //
+            }
+
+            match stage.next() {
+                Some(s) => stage = s,
+                None => break,
+            }
+        }
 
         for (slice, relays) in relays.iter().enumerate() {
             // measure direct latencies from leader to everyone
@@ -254,20 +281,16 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
                     tmp_rotor_latencies[i] = latency;
                 }
                 tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-                let threshold_latency = tmp_rotor_latencies[self.num_data_shreds - 1];
+                let threshold_latency = tmp_rotor_latencies[self.params.num_data_shreds - 1];
                 latencies.record(LatencyEvent::Rotor(slice), threshold_latency, v.id);
                 let threshold_latency = tmp_rotor_latencies[61 - 1];
                 latencies.record(LatencyEvent::Shreds95, threshold_latency, v.id);
             }
         }
 
-        if up_to_stage == LatencyTestStage::Rotor {
-            return;
-        }
-
         // simulate notar vote propagation
         // FIXME: need to use actual slowest slice (which may not generally be the last one)
-        let last_slice_event = LatencyEvent::Rotor(self.num_slices - 1);
+        let last_slice_event = LatencyEvent::Rotor(self.params.num_slices - 1);
         for (v1_rotor_latency, v1) in latencies.get(last_slice_event).unwrap().iter() {
             for (v2_rotor_latency, v2) in latencies.get(last_slice_event).unwrap().iter() {
                 let v1_ping_server = self.ping_servers[*v1 as usize].id;
@@ -313,10 +336,6 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
             latencies.record(LatencyEvent::FastFinal, fast_final_latency, *v1);
             latencies.record(LatencyEvent::Final, fast_final_latency, *v1);
-        }
-
-        if up_to_stage == LatencyTestStage::Notar {
-            return;
         }
 
         // measure latency until (slow) finalization
@@ -369,6 +388,13 @@ type LatencyVec = Vec<(f64, ValidatorId)>;
 struct Latencies(HashMap<LatencyEvent, RwLock<LatencyVec>>);
 
 impl Latencies {
+    fn initialize(&mut self, stage: LatencyTestStage, num_val: usize) {
+        for event in stage.events() {
+            self.0
+                .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
+        }
+    }
+
     fn record(&self, event: LatencyEvent, latency: f64, validator: ValidatorId) {
         let mut vec = self.0.get(&event).unwrap().write().unwrap();
         let entry = vec.get_mut(validator as usize).unwrap();
