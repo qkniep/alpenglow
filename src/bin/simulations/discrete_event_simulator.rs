@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -28,6 +28,56 @@ pub enum EventKind {
     Broadcast,
     Compute,
     SubProtocol,
+}
+
+///
+pub struct SimulationEnvironment {
+    // core setup of the latency test
+    pub validators: Vec<ValidatorInfo>,
+    pub ping_servers: Vec<&'static PingServer>,
+    pub total_stake: Stake,
+
+    // optional bandwidth information
+    // if provided, these will be used to simulate transmission delays
+    // otherwise, transmission delay is ignored
+    leader_bandwidth: Option<u64>,
+    bandwidths: Option<Vec<u64>>,
+}
+
+impl SimulationEnvironment {
+    pub fn new(
+        validators: Vec<ValidatorInfo>,
+        ping_servers: Vec<&'static PingServer>,
+        total_stake: Stake,
+    ) -> Self {
+        Self {
+            validators,
+            ping_servers,
+            total_stake,
+            leader_bandwidth: None,
+            bandwidths: None,
+        }
+    }
+
+    /// Sets the bandwidths for all validators for simulating transmission delays.
+    pub fn with_bandwidths(mut self, leader_bandwidth: u64, bandwidths: Vec<u64>) -> Self {
+        self.leader_bandwidth = Some(leader_bandwidth);
+        self.bandwidths = Some(bandwidths);
+        self
+    }
+
+    ///
+    pub fn num_validators(&self) -> usize {
+        self.validators.len()
+    }
+
+    ///
+    pub fn time_to_send_message(&self, bytes: usize, validator: ValidatorId) -> f64 {
+        let Some(bandwidths) = &self.bandwidths else {
+            return 0.0;
+        };
+        (bytes * 8) as f64 / bandwidths[validator as usize] as f64
+    }
 }
 
 pub type TimingVec = Vec<(f64, ValidatorId)>;
@@ -80,14 +130,13 @@ impl<E: Clone + Copy + Eq + Hash> TimingStats<E> {
     pub fn record_latencies(
         &mut self,
         timings: &mut Timings<E>,
-        validators: &[ValidatorInfo],
-        ping_servers: &[&'static PingServer],
+        environment: &SimulationEnvironment,
     ) {
         for (event, timing_vec) in timings.iter() {
             self.0.entry(*event).or_default().record_latencies(
                 timing_vec,
-                validators,
-                ping_servers,
+                &environment.validators,
+                &environment.ping_servers,
             );
         }
     }
