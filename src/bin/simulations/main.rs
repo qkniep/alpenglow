@@ -32,31 +32,30 @@
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
-mod bandwidth;
-mod latency;
-mod rotor_robustness;
+mod alpenglow;
+mod discrete_event_simulator;
+mod rotor;
 
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alpenglow::disseminator::rotor::sampling_strategy::{
+use ::alpenglow::disseminator::rotor::sampling_strategy::{
     DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
     UniformSampler,
 };
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use alpenglow::network::simulated::ping_data::PingServer;
-use alpenglow::network::simulated::stake_distribution::{
+use ::alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use ::alpenglow::network::simulated::ping_data::PingServer;
+use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use alpenglow::{ValidatorInfo, logging};
+use ::alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
-use self::bandwidth::BandwidthTest;
-use self::latency::{LatencyTest, LatencyTestStage};
-use self::rotor_robustness::RotorRobustnessTest;
+use self::alpenglow::{BandwidthTest, LatencyTest, LatencyTestStage};
+use self::rotor::RotorRobustnessTest;
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
@@ -349,7 +348,7 @@ fn run_tests<
             )
             .with_bandwidths(leader_bandwidth, bandwidths);
             let test_name = format!("{test_name}-{n}-{k}");
-            tester.run_many(&test_name, 1000, LatencyTestStage::Final);
+            tester.run_many(&test_name, 1000, LatencyTestStage::Final2);
         }
 
         // latency experiments with fixed leaders
@@ -412,7 +411,7 @@ fn run_tests<
                     *k,
                 );
                 let test_name = format!("{test_name}-{n}-{k}");
-                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final, leader);
+                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final2, leader);
             });
         }
     }
