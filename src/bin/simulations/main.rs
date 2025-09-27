@@ -35,7 +35,7 @@
 mod bandwidth;
 mod discrete_event_simulator;
 mod latency;
-mod rotor_robustness;
+mod rotor;
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -57,7 +57,7 @@ use rayon::prelude::*;
 
 use self::bandwidth::BandwidthTest;
 use self::latency::{LatencyTest, LatencyTestStage};
-use self::rotor_robustness::RotorRobustnessTest;
+use self::rotor::RotorRobustnessTest;
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;

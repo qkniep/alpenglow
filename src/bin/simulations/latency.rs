@@ -15,9 +15,11 @@ use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
-use log::info;
 use rand::prelude::*;
 use rayon::prelude::*;
+
+use crate::discrete_event_simulator::{EventTimingStats, Timings};
+use crate::rotor::RotorParams;
 
 /// Size (in bytes) assumed per vote in the simulation.
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
@@ -25,7 +27,7 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
 /// The sequential stages of the latency test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyTestStage {
     Rotor,
     Notar,
@@ -66,10 +68,58 @@ pub enum LatencyEvent {
     Final,
 }
 
-pub struct LatencySimParams {
-    num_data_shreds: usize,
-    num_shreds: usize,
-    num_slices: usize,
+///
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LatencySimParams<L: SamplingStrategy, R: SamplingStrategy> {
+    rotor_params: RotorParams<L, R>,
+    num_slots_per_window: usize,
+    num_slots: usize,
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimParams<L, R> {
+    pub fn new(
+        rotor_params: RotorParams<L, R>,
+        num_slots_per_window: usize,
+        num_slots: usize,
+    ) -> Self {
+        Self {
+            rotor_params,
+            num_slots_per_window,
+            num_slots,
+        }
+    }
+
+    pub fn sample_instance(&self, rng: &mut impl Rng) -> LatencySimInstance<L, R> {
+        LatencySimInstance::new(self, rng)
+    }
+}
+
+///
+pub struct LatencySimInstance<L: SamplingStrategy, R: SamplingStrategy> {
+    params: LatencySimParams<L, R>,
+    leader: ValidatorId,
+    relays: Vec<Vec<ValidatorId>>,
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstance<L, R> {
+    pub fn new(params: &LatencySimParams<L, R>, rng: &mut impl Rng) -> Self {
+        // sample leader and relays
+        let leader = params.rotor_params.leader_sampler.sample(rng);
+        let relays = (0..params.rotor_params.num_slices)
+            .map(|_| {
+                params
+                    .rotor_params
+                    .rotor_sampler
+                    .sample_multiple(params.rotor_params.num_shreds, rng)
+            })
+            .collect();
+
+        Self {
+            params: params.clone(),
+            leader,
+            relays,
+        }
+    }
 }
 
 /// Simulated latency test.
@@ -77,10 +127,8 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     // core setup of the latency test
     validators: Vec<ValidatorInfo>,
     ping_servers: Vec<&'static PingServer>,
-    leader_sampler: L,
-    rotor_sampler: R,
     total_stake: Stake,
-    params: LatencySimParams,
+    params: LatencySimParams<L, R>,
 
     // optional bandwidth information
     // if provided, these will be used to simulate transmission delays
@@ -112,17 +160,23 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             validators_with_ping_data.iter().map(|(_, p)| *p).collect();
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
 
-        let params = LatencySimParams {
+        let rotor_params = RotorParams {
+            leader_sampler,
+            rotor_sampler,
             num_data_shreds,
             num_shreds,
             num_slices: 1,
         };
 
+        let params = LatencySimParams {
+            rotor_params,
+            num_slots_per_window: 4,
+            num_slots: 1,
+        };
+
         Self {
             validators,
             ping_servers,
-            leader_sampler,
-            rotor_sampler,
             total_stake,
             params,
 
@@ -176,13 +230,9 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     ) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
-            let relays = (0..self.params.num_slices)
-                .map(|_| {
-                    self.rotor_sampler
-                        .sample_multiple(self.params.num_shreds, &mut rng)
-                })
-                .collect::<Vec<_>>();
-            self.run_one_deterministic(up_to_stage, leader.id, relays);
+            let mut instance = LatencySimInstance::new(&self.params, &mut rng);
+            instance.leader = leader.id;
+            self.run_one_deterministic(up_to_stage, instance);
         }
 
         let leader_ping_server = self.ping_servers[leader.id as usize];
@@ -201,38 +251,30 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
     /// Runs one iteration of the latency simulation with random leader and relays.
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
-        // sample leader and relays
-        let leader = self.leader_sampler.sample(rng);
-        let relays = (0..self.params.num_slices)
-            .map(|_| {
-                self.rotor_sampler
-                    .sample_multiple(self.params.num_shreds, rng)
-            })
-            .collect::<Vec<_>>();
-        // let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
-        // let relays = vec![relays; self.num_slices];
-        self.run_one_deterministic(up_to_stage, leader, relays);
+        let instance = LatencySimInstance::new(&self.params, rng);
+        self.run_one_deterministic(up_to_stage, instance);
     }
 
     /// Runs one iteration of the latency simulation with given leader and relays.
     pub fn run_one_deterministic(
         &self,
         up_to_stage: LatencyTestStage,
-        leader: ValidatorId,
-        relays: Vec<Vec<ValidatorId>>,
+        instance: LatencySimInstance<L, R>,
     ) {
         // setup & initialization
         let num_val = self.validators.len();
-        let mut relay_latencies = vec![0.0; self.params.num_shreds];
-        let mut latencies = Latencies::default();
-        let mut tmp_rotor_latencies = vec![0.0; self.params.num_shreds];
-        let mut tmp_latencies = vec![(0.0, 0); num_val];
-        let mut tmp_transmission_latencies = vec![0.0; num_val];
+        let mut timings = Timings::default();
+        // let mut relay_latencies = vec![0.0; self.params.num_shreds];
+        // let mut tmp_rotor_latencies = vec![0.0; self.params.num_shreds];
+        // let mut tmp_latencies = vec![(0.0, 0); num_val];
+        // let mut tmp_transmission_latencies = vec![0.0; num_val];
 
         // simulation loop
         let mut stage = LatencyTestStage::Rotor;
         while stage <= up_to_stage {
-            latencies.initialize(stage, num_val);
+            for event in stage.events() {
+                timings.initialize(event, num_val);
+            }
 
             for event in stage.events() {
                 //
@@ -244,134 +286,134 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             }
         }
 
-        for (slice, relays) in relays.iter().enumerate() {
-            // measure direct latencies from leader to everyone
-            for v in &self.validators {
-                let leader_ping_server = self.ping_servers[leader as usize].id;
-                let v_ping_server = self.ping_servers[v.id as usize].id;
-
-                let start_time = tmp_transmission_latencies[leader as usize];
-                let propagation_delay = get_ping(leader_ping_server, v_ping_server).unwrap();
-                let transmission_delay =
-                    self.time_to_send_message(MAX_DATA_PER_SHRED * v.id as usize, v.id);
-                let latency = start_time + propagation_delay + transmission_delay;
-                latencies.record(LatencyEvent::Direct(slice), latency, v.id);
-            }
-            let total_transmission_delay =
-                self.time_to_send_message(MAX_DATA_PER_SHRED * num_val, leader);
-            tmp_transmission_latencies[leader as usize] += total_transmission_delay;
-            for (i, relay) in relays.iter().enumerate() {
-                relay_latencies[i] = latencies.get_one(LatencyEvent::Direct(slice), *relay);
-            }
-
-            // measure Rotor block dissemination latencies
-            for v in &self.validators {
-                for (i, (relay, latency)) in relays.iter().zip(relay_latencies.iter()).enumerate() {
-                    let relay_ping_server = self.ping_servers[*relay as usize].id;
-                    let v_ping_server = self.ping_servers[v.id as usize].id;
-
-                    let start_time = tmp_transmission_latencies[*relay as usize].max(*latency);
-                    if slice == 0 {
-                        tmp_transmission_latencies[*relay as usize] = start_time;
-                    }
-                    let propagation_delay = get_ping(relay_ping_server, v_ping_server).unwrap();
-                    let transmission_delay = self.time_to_send_message(MAX_DATA_PER_SHRED, *relay);
-                    tmp_transmission_latencies[*relay as usize] += transmission_delay;
-                    let latency = start_time + propagation_delay + transmission_delay;
-                    tmp_rotor_latencies[i] = latency;
-                }
-                tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-                let threshold_latency = tmp_rotor_latencies[self.params.num_data_shreds - 1];
-                latencies.record(LatencyEvent::Rotor(slice), threshold_latency, v.id);
-                let threshold_latency = tmp_rotor_latencies[61 - 1];
-                latencies.record(LatencyEvent::Shreds95, threshold_latency, v.id);
-            }
-        }
-
-        // simulate notar vote propagation
-        // FIXME: need to use actual slowest slice (which may not generally be the last one)
-        let last_slice_event = LatencyEvent::Rotor(self.params.num_slices - 1);
-        for (v1_rotor_latency, v1) in latencies.get(last_slice_event).unwrap().iter() {
-            for (v2_rotor_latency, v2) in latencies.get(last_slice_event).unwrap().iter() {
-                let v1_ping_server = self.ping_servers[*v1 as usize].id;
-                let v2_ping_server = self.ping_servers[*v2 as usize].id;
-
-                let start_time = tmp_transmission_latencies[*v2 as usize].max(*v2_rotor_latency);
-                if *v1 == 0 {
-                    tmp_transmission_latencies[*v2 as usize] = start_time;
-                }
-                let propagation_delay = get_ping(v2_ping_server, v1_ping_server).unwrap();
-                let transmission_delay = self.time_to_send_message(VOTE_SIZE, *v2);
-                tmp_transmission_latencies[*v2 as usize] += transmission_delay;
-                let latency = start_time + propagation_delay + transmission_delay;
-                tmp_latencies[*v2 as usize] = (latency, *v2);
-            }
-            tmp_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-
-            // measure latency until notarization and fast-finalization
-            let mut notar_latency = None;
-            let mut notar65_latency = None;
-            let mut fast_final_latency = None;
-            let mut stake_so_far = 0;
-            for (latency, v) in &tmp_latencies {
-                stake_so_far += self.validators[*v as usize].stake;
-                if notar_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.6 {
-                    notar_latency = Some(*latency);
-                }
-                if notar65_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.65
-                {
-                    notar65_latency = Some(*latency);
-                }
-                if stake_so_far as f64 > self.total_stake as f64 * 0.8 {
-                    fast_final_latency = Some(*latency);
-                    break;
-                }
-            }
-            let mut notar_latency = notar_latency.unwrap();
-            let notar65_latency = notar65_latency.unwrap();
-            let mut fast_final_latency = fast_final_latency.unwrap();
-            notar_latency = notar_latency.max(*v1_rotor_latency);
-            latencies.record(LatencyEvent::Notar, notar_latency, *v1);
-            latencies.record(LatencyEvent::Notar65, notar65_latency, *v1);
-            fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
-            latencies.record(LatencyEvent::FastFinal, fast_final_latency, *v1);
-            latencies.record(LatencyEvent::Final, fast_final_latency, *v1);
-        }
-
-        // measure latency until (slow) finalization
-        for (v1_notar_latency, v1) in latencies.get(LatencyEvent::Notar).unwrap().iter() {
-            for (v2_notar_latency, v2) in latencies.get(LatencyEvent::Notar).unwrap().iter() {
-                let v1_ping_server = self.ping_servers[*v1 as usize].id;
-                let v2_ping_server = self.ping_servers[*v2 as usize].id;
-
-                let start_time = tmp_transmission_latencies[*v2 as usize].max(*v2_notar_latency);
-                if *v1 == 0 {
-                    tmp_transmission_latencies[*v2 as usize] = start_time;
-                }
-                let propagation_delay = get_ping(v2_ping_server, v1_ping_server).unwrap();
-                let transmission_delay = self.time_to_send_message(VOTE_SIZE, *v2);
-                tmp_transmission_latencies[*v2 as usize] += transmission_delay;
-                let latency = start_time + propagation_delay + transmission_delay;
-                tmp_latencies[*v2 as usize] = (latency, *v2);
-            }
-            tmp_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-            let mut slow_final_latency: f64 = 0.0;
-            let mut stake_so_far = 0;
-            for (latency, v) in &tmp_latencies {
-                stake_so_far += self.validators[*v as usize].stake;
-                if stake_so_far as f64 > self.total_stake as f64 * 0.6 {
-                    slow_final_latency = *latency;
-                    break;
-                }
-            }
-            slow_final_latency = slow_final_latency.max(*v1_notar_latency);
-            latencies.record(LatencyEvent::SlowFinal, slow_final_latency, *v1);
-            latencies.record(LatencyEvent::Final, slow_final_latency, *v1);
-        }
+        // for (slice, relays) in relays.iter().enumerate() {
+        //     // measure direct latencies from leader to everyone
+        //     for v in &self.validators {
+        //         let leader_ping_server = self.ping_servers[leader as usize].id;
+        //         let v_ping_server = self.ping_servers[v.id as usize].id;
+        //
+        //         let start_time = tmp_transmission_latencies[leader as usize];
+        //         let propagation_delay = get_ping(leader_ping_server, v_ping_server).unwrap();
+        //         let transmission_delay =
+        //             v.id as f64 * self.time_to_send_message(MAX_DATA_PER_SHRED, v.id);
+        //         let latency = start_time + propagation_delay + transmission_delay;
+        //         timings.record(LatencyEvent::Direct(slice), latency, v.id);
+        //     }
+        //     let total_transmission_delay =
+        //         self.time_to_send_message(MAX_DATA_PER_SHRED * num_val, leader);
+        //     tmp_transmission_latencies[leader as usize] += total_transmission_delay;
+        //     for (i, relay) in relays.iter().enumerate() {
+        //         relay_latencies[i] = timings.get_one(LatencyEvent::Direct(slice), *relay);
+        //     }
+        //
+        //     // measure Rotor block dissemination latencies
+        //     for v in &self.validators {
+        //         for (i, (relay, latency)) in relays.iter().zip(relay_latencies.iter()).enumerate() {
+        //             let relay_ping_server = self.ping_servers[*relay as usize].id;
+        //             let v_ping_server = self.ping_servers[v.id as usize].id;
+        //
+        //             let start_time = tmp_transmission_latencies[*relay as usize].max(*latency);
+        //             if slice == 0 {
+        //                 tmp_transmission_latencies[*relay as usize] = start_time;
+        //             }
+        //             let propagation_delay = get_ping(relay_ping_server, v_ping_server).unwrap();
+        //             let transmission_delay = self.time_to_send_message(MAX_DATA_PER_SHRED, *relay);
+        //             tmp_transmission_latencies[*relay as usize] += transmission_delay;
+        //             let latency = start_time + propagation_delay + transmission_delay;
+        //             tmp_rotor_latencies[i] = latency;
+        //         }
+        //         tmp_rotor_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        //         let threshold_latency = tmp_rotor_latencies[self.params.num_data_shreds - 1];
+        //         timings.record(LatencyEvent::Rotor(slice), threshold_latency, v.id);
+        //         let threshold_latency = tmp_rotor_latencies[61 - 1];
+        //         timings.record(LatencyEvent::Shreds95, threshold_latency, v.id);
+        //     }
+        // }
+        //
+        // // simulate notar vote propagation
+        // // FIXME: need to use actual slowest slice (which may not generally be the last one)
+        // let last_slice_event = LatencyEvent::Rotor(self.params.num_slices - 1);
+        // for (v1_rotor_latency, v1) in timings.get(last_slice_event).unwrap().iter() {
+        //     for (v2_rotor_latency, v2) in timings.get(last_slice_event).unwrap().iter() {
+        //         let v1_ping_server = self.ping_servers[*v1 as usize].id;
+        //         let v2_ping_server = self.ping_servers[*v2 as usize].id;
+        //
+        //         let start_time = tmp_transmission_latencies[*v2 as usize].max(*v2_rotor_latency);
+        //         if *v1 == 0 {
+        //             tmp_transmission_latencies[*v2 as usize] = start_time;
+        //         }
+        //         let propagation_delay = get_ping(v2_ping_server, v1_ping_server).unwrap();
+        //         let transmission_delay = self.time_to_send_message(VOTE_SIZE, *v2);
+        //         tmp_transmission_latencies[*v2 as usize] += transmission_delay;
+        //         let latency = start_time + propagation_delay + transmission_delay;
+        //         tmp_latencies[*v2 as usize] = (latency, *v2);
+        //     }
+        //     tmp_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        //
+        //     // measure latency until notarization and fast-finalization
+        //     let mut notar_latency = None;
+        //     let mut notar65_latency = None;
+        //     let mut fast_final_latency = None;
+        //     let mut stake_so_far = 0;
+        //     for (latency, v) in &tmp_latencies {
+        //         stake_so_far += self.validators[*v as usize].stake;
+        //         if notar_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.6 {
+        //             notar_latency = Some(*latency);
+        //         }
+        //         if notar65_latency.is_none() && stake_so_far as f64 > self.total_stake as f64 * 0.65
+        //         {
+        //             notar65_latency = Some(*latency);
+        //         }
+        //         if stake_so_far as f64 > self.total_stake as f64 * 0.8 {
+        //             fast_final_latency = Some(*latency);
+        //             break;
+        //         }
+        //     }
+        //     let mut notar_latency = notar_latency.unwrap();
+        //     let notar65_latency = notar65_latency.unwrap();
+        //     let mut fast_final_latency = fast_final_latency.unwrap();
+        //     notar_latency = notar_latency.max(*v1_rotor_latency);
+        //     timings.record(LatencyEvent::Notar, notar_latency, *v1);
+        //     timings.record(LatencyEvent::Notar65, notar65_latency, *v1);
+        //     fast_final_latency = fast_final_latency.max(*v1_rotor_latency);
+        //     timings.record(LatencyEvent::FastFinal, fast_final_latency, *v1);
+        //     timings.record(LatencyEvent::Final, fast_final_latency, *v1);
+        // }
+        //
+        // // measure latency until (slow) finalization
+        // for (v1_notar_latency, v1) in timings.get(LatencyEvent::Notar).unwrap().iter() {
+        //     for (v2_notar_latency, v2) in timings.get(LatencyEvent::Notar).unwrap().iter() {
+        //         let v1_ping_server = self.ping_servers[*v1 as usize].id;
+        //         let v2_ping_server = self.ping_servers[*v2 as usize].id;
+        //
+        //         let start_time = tmp_transmission_latencies[*v2 as usize].max(*v2_notar_latency);
+        //         if *v1 == 0 {
+        //             tmp_transmission_latencies[*v2 as usize] = start_time;
+        //         }
+        //         let propagation_delay = get_ping(v2_ping_server, v1_ping_server).unwrap();
+        //         let transmission_delay = self.time_to_send_message(VOTE_SIZE, *v2);
+        //         tmp_transmission_latencies[*v2 as usize] += transmission_delay;
+        //         let latency = start_time + propagation_delay + transmission_delay;
+        //         tmp_latencies[*v2 as usize] = (latency, *v2);
+        //     }
+        //     tmp_latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        //     let mut slow_final_latency: f64 = 0.0;
+        //     let mut stake_so_far = 0;
+        //     for (latency, v) in &tmp_latencies {
+        //         stake_so_far += self.validators[*v as usize].stake;
+        //         if stake_so_far as f64 > self.total_stake as f64 * 0.6 {
+        //             slow_final_latency = *latency;
+        //             break;
+        //         }
+        //     }
+        //     slow_final_latency = slow_final_latency.max(*v1_notar_latency);
+        //     timings.record(LatencyEvent::SlowFinal, slow_final_latency, *v1);
+        //     timings.record(LatencyEvent::Final, slow_final_latency, *v1);
+        // }
 
         // commit latencies to stats (update averages)
         let stats_map = &mut self.stats.write().unwrap();
-        stats_map.record_latencies(&mut latencies, &self.validators, &self.ping_servers);
+        stats_map.record_latencies(&mut timings, &self.validators, &self.ping_servers);
     }
 
     fn time_to_send_message(&self, bytes: usize, validator: ValidatorId) -> f64 {
@@ -382,52 +424,22 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     }
 }
 
-type LatencyVec = Vec<(f64, ValidatorId)>;
-
 #[derive(Default)]
-struct Latencies(HashMap<LatencyEvent, RwLock<LatencyVec>>);
-
-impl Latencies {
-    fn initialize(&mut self, stage: LatencyTestStage, num_val: usize) {
-        for event in stage.events() {
-            self.0
-                .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
-        }
-    }
-
-    fn record(&self, event: LatencyEvent, latency: f64, validator: ValidatorId) {
-        let mut vec = self.0.get(&event).unwrap().write().unwrap();
-        let entry = vec.get_mut(validator as usize).unwrap();
-        if latency < entry.0 {
-            *entry = (latency, validator);
-        }
-    }
-
-    fn get(&self, event: LatencyEvent) -> Option<std::sync::RwLockReadGuard<'_, LatencyVec>> {
-        self.0.get(&event).map(|v| v.read().unwrap())
-    }
-
-    fn get_one(&self, event: LatencyEvent, validator: ValidatorId) -> f64 {
-        let (latency, _val) = self.get(event).unwrap()[validator as usize];
-        latency
-    }
-}
-
-#[derive(Default)]
-struct LatencyStats(HashMap<LatencyEvent, EventStats>);
+struct LatencyStats(HashMap<LatencyEvent, EventTimingStats>);
 
 impl LatencyStats {
     fn record_latencies(
         &mut self,
-        latencies: &mut Latencies,
+        timings: &mut Timings<LatencyEvent>,
         validators: &[ValidatorInfo],
         ping_servers: &[&'static PingServer],
     ) {
-        for (event, latencies) in latencies.0.iter() {
-            self.0
-                .entry(*event)
-                .or_default()
-                .record_latencies(latencies, validators, ping_servers);
+        for (event, timing_vec) in timings.iter() {
+            self.0.entry(*event).or_default().record_latencies(
+                timing_vec,
+                validators,
+                ping_servers,
+            );
         }
     }
 
@@ -453,8 +465,9 @@ impl LatencyStats {
             let notar_stats = self.0.get(&LatencyEvent::Notar).unwrap();
             let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
 
-            let notar65_stats = self.0.get(&LatencyEvent::Notar65).unwrap();
-            let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
+            // let notar65_stats = self.0.get(&LatencyEvent::Notar65).unwrap();
+            // let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
+            let notar65_latency = 0.0;
 
             let fast_final_stats = self.0.get(&LatencyEvent::FastFinal).unwrap();
             let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
@@ -472,85 +485,5 @@ impl LatencyStats {
         }
 
         Ok(())
-    }
-}
-
-struct EventStats {
-    sum_percentile_latencies: [f64; 100],
-    percentile_location: Vec<HashMap<String, f64>>,
-    count: u64,
-}
-
-impl EventStats {
-    fn record_latencies(
-        &mut self,
-        latencies: &RwLock<LatencyVec>,
-        validators: &[ValidatorInfo],
-        ping_servers: &[&'static PingServer],
-    ) {
-        let mut latencies = latencies.write().unwrap();
-        latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let percentile_stake = total_stake as f64 / 100.0;
-        let mut percentile = 1;
-        let mut stake_so_far = 0.0;
-        for (latency, v) in &*latencies {
-            let mut validator_stake = validators[*v as usize].stake as f64;
-            for _ in 0..100 {
-                let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
-                let abs_stake_contrib = validator_stake.min(percentile_stake_left);
-                let rel_stake_contrib = abs_stake_contrib / percentile_stake;
-                let latency_contrib = rel_stake_contrib * *latency;
-                self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
-                let count = self.percentile_location[percentile as usize - 1]
-                    .entry(ping_servers[*v as usize].location.clone())
-                    .or_default();
-                *count += abs_stake_contrib;
-                stake_so_far += abs_stake_contrib;
-                validator_stake -= abs_stake_contrib;
-                if percentile < 100 && stake_so_far >= percentile as f64 * percentile_stake {
-                    percentile += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-        assert!((stake_so_far - total_stake as f64).abs() < 5000.0);
-        assert!(percentile >= 100);
-        self.count += 1;
-    }
-
-    fn get_avg_percentile_latency(&self, percentile: u8) -> f64 {
-        assert!(percentile > 0 && percentile <= 100);
-        let sum = self.sum_percentile_latencies[percentile as usize - 1];
-        sum / self.count as f64
-    }
-
-    fn _print(&self) {
-        let avg_p60_latency = self.get_avg_percentile_latency(60);
-        info!("avg p60 latency: {avg_p60_latency:.2}");
-        let avg_p80_latency = self.get_avg_percentile_latency(80);
-        info!("avg p80 latency: {avg_p80_latency:.2}");
-        let avg_max_latency = self.get_avg_percentile_latency(100);
-        info!("avg max latency: {avg_max_latency:.2}");
-
-        for percentile in 1..=100 {
-            println!("percentile: {percentile}");
-            let total_count: f64 = self.percentile_location[percentile - 1].values().sum();
-            for (location, count) in &self.percentile_location[percentile - 1] {
-                let frac = *count * 100.0 / total_count;
-                println!("    location: {location}, frac: {frac:.2}%");
-            }
-        }
-    }
-}
-
-impl Default for EventStats {
-    fn default() -> Self {
-        Self {
-            sum_percentile_latencies: [0.0; 100],
-            percentile_location: vec![HashMap::new(); 100],
-            count: 0,
-        }
     }
 }

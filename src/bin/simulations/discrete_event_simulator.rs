@@ -4,7 +4,149 @@
 //! General discrete-event simulator.
 
 // mod event;
+// mod resources;
 // mod simulator;
 //
 // pub use event::{Event, EventStats};
+// pub use resources::Resources;
 // pub use simulator::Simulator;
+
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::sync::RwLock;
+
+use alpenglow::network::simulated::ping_data::PingServer;
+use alpenglow::{Stake, ValidatorId, ValidatorInfo};
+use log::info;
+
+///
+pub enum EventKind {
+    Simple,
+    Broadcast,
+    Compute,
+    SubProtocol,
+}
+
+pub type TimingVec = Vec<(f64, ValidatorId)>;
+
+pub struct Timings<E: PartialEq + Eq + Hash>(HashMap<E, RwLock<TimingVec>>);
+
+impl<E: PartialEq + Eq + Hash> Timings<E> {
+    // fn initialize(&mut self, stage: LatencyTestStage, num_val: usize) {
+    //     for event in stage.events() {
+    //         self.0
+    //             .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
+    //     }
+    // }
+    pub fn initialize(&mut self, event: E, num_val: usize) {
+        self.0
+            .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
+    }
+
+    pub fn record(&self, event: E, latency: f64, validator: ValidatorId) {
+        let mut vec = self.0.get(&event).unwrap().write().unwrap();
+        let entry = vec.get_mut(validator as usize).unwrap();
+        if latency < entry.0 {
+            *entry = (latency, validator);
+        }
+    }
+
+    pub fn get(&self, event: E) -> Option<std::sync::RwLockReadGuard<'_, TimingVec>> {
+        self.0.get(&event).map(|v| v.read().unwrap())
+    }
+
+    pub fn get_one(&self, event: E, validator: ValidatorId) -> f64 {
+        let (latency, _val) = self.get(event).unwrap()[validator as usize];
+        latency
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&E, &RwLock<TimingVec>)> {
+        self.0.iter()
+    }
+}
+
+impl<E: PartialEq + Eq + Hash> Default for Timings<E> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+pub struct EventTimingStats {
+    sum_percentile_latencies: [f64; 100],
+    percentile_location: Vec<HashMap<String, f64>>,
+    count: u64,
+}
+
+impl EventTimingStats {
+    pub fn record_latencies(
+        &mut self,
+        latencies: &RwLock<TimingVec>,
+        validators: &[ValidatorInfo],
+        ping_servers: &[&'static PingServer],
+    ) {
+        let mut latencies = latencies.write().unwrap();
+        latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let percentile_stake = total_stake as f64 / 100.0;
+        let mut percentile = 1;
+        let mut stake_so_far = 0.0;
+        for (latency, v) in &*latencies {
+            let mut validator_stake = validators[*v as usize].stake as f64;
+            for _ in 0..100 {
+                let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
+                let abs_stake_contrib = validator_stake.min(percentile_stake_left);
+                let rel_stake_contrib = abs_stake_contrib / percentile_stake;
+                let latency_contrib = rel_stake_contrib * *latency;
+                self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
+                let count = self.percentile_location[percentile as usize - 1]
+                    .entry(ping_servers[*v as usize].location.clone())
+                    .or_default();
+                *count += abs_stake_contrib;
+                stake_so_far += abs_stake_contrib;
+                validator_stake -= abs_stake_contrib;
+                if percentile < 100 && stake_so_far >= percentile as f64 * percentile_stake {
+                    percentile += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        // assert!((stake_so_far - total_stake as f64).abs() < 5000.0);
+        // assert!(percentile >= 100);
+        self.count += 1;
+    }
+
+    pub fn get_avg_percentile_latency(&self, percentile: u8) -> f64 {
+        assert!(percentile > 0 && percentile <= 100);
+        let sum = self.sum_percentile_latencies[percentile as usize - 1];
+        sum / self.count as f64
+    }
+
+    fn _print(&self) {
+        let avg_p60_latency = self.get_avg_percentile_latency(60);
+        info!("avg p60 latency: {avg_p60_latency:.2}");
+        let avg_p80_latency = self.get_avg_percentile_latency(80);
+        info!("avg p80 latency: {avg_p80_latency:.2}");
+        let avg_max_latency = self.get_avg_percentile_latency(100);
+        info!("avg max latency: {avg_max_latency:.2}");
+
+        for percentile in 1..=100 {
+            println!("percentile: {percentile}");
+            let total_count: f64 = self.percentile_location[percentile - 1].values().sum();
+            for (location, count) in &self.percentile_location[percentile - 1] {
+                let frac = *count * 100.0 / total_count;
+                println!("    location: {location}, frac: {frac:.2}%");
+            }
+        }
+    }
+}
+
+impl Default for EventTimingStats {
+    fn default() -> Self {
+        Self {
+            sum_percentile_latencies: [0.0; 100],
+            percentile_location: vec![HashMap::new(); 100],
+            count: 0,
+        }
+    }
+}

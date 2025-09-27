@@ -32,7 +32,7 @@ use crate::{Stake, ValidatorId, ValidatorInfo};
 const MAX_TRIES_PER_SAMPLE: usize = 100_000;
 
 /// An abstraction for randomly sampling validators based on some distribution.
-pub trait SamplingStrategy {
+pub trait SamplingStrategy: Clone + Send + Sync {
     /// Samples a validator with this probability distribution.
     ///
     /// Depending on the implementor, this may or may not be stateless.
