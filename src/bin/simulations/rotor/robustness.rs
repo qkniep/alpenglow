@@ -11,6 +11,8 @@ use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
+use crate::rotor::RotorInstanceBuilder;
+
 use super::RotorParams;
 
 const MAX_FAILURES: usize = 10_000;
@@ -18,7 +20,7 @@ const MAX_FAILURES: usize = 10_000;
 pub struct RotorRobustnessTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
-    params: RotorParams<UniformSampler, S>,
+    builder: RotorInstanceBuilder<UniformSampler, S>,
 
     tests: RwLock<usize>,
     failures: RwLock<usize>,
@@ -37,17 +39,18 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
         // let sampler = RwLock::new(sampler);
 
         let params = RotorParams {
-            leader_sampler: UniformSampler::new(validators.clone()),
-            rotor_sampler: sampler,
             num_data_shreds,
             num_shreds,
             num_slices: 1,
         };
 
+        let builder =
+            RotorInstanceBuilder::new(UniformSampler::new(validators.clone()), sampler, params);
+
         Self {
             validators,
             total_stake,
-            params,
+            builder,
 
             tests,
             failures,
@@ -91,8 +94,8 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
                 stake_distribution.to_string(),
                 sampling_strategy.to_string(),
                 attack_frac.to_string(),
-                self.params.num_data_shreds.to_string(),
-                self.params.num_shreds.to_string(),
+                self.params().num_data_shreds.to_string(),
+                self.params().num_shreds.to_string(),
                 attack_prob.log2().to_string(),
             ])
             .unwrap();
@@ -194,13 +197,14 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
         debug!("running attack with bin-packing attack");
         let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
             self.validators.clone(),
-            self.params.num_shreds as u64,
+            self.params().num_shreds as u64,
         );
         let bin_sampler = fa1_sampler.fallback_sampler;
         let vals = &bin_sampler.bin_validators;
         let stakes = &bin_sampler.bin_stakes;
-        let attack_frac_in_bins = attack_frac / (vals.len() as f64 / self.params.num_shreds as f64);
-        let stake_per_bin = self.total_stake as f64 / self.params.num_shreds as f64;
+        let attack_frac_in_bins =
+            attack_frac / (vals.len() as f64 / self.params().num_shreds as f64);
+        let stake_per_bin = self.total_stake as f64 / self.params().num_shreds as f64;
 
         (0..1000).into_par_iter().for_each(|_| {
             // greedily corrupt less than `attack_frac` of validators
@@ -250,18 +254,18 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
     fn run_with_corrupted(&self, n: usize, byzantine: bool, corrupted: &[bool]) -> (usize, bool) {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         let mut tests = 0;
-        let sampler = &self.params.rotor_sampler;
+        let sampler = &self.builder.rotor_sampler;
         for _ in 0..n {
             tests += 1;
-            for _ in 0..self.params.num_slices {
-                let sampled = sampler.sample_multiple(self.params.num_shreds, &mut rng);
+            for _ in 0..self.params().num_slices {
+                let sampled = sampler.sample_multiple(self.params().num_shreds, &mut rng);
                 let corrupted_samples = sampled
                     .into_iter()
                     .filter(|v| corrupted[*v as usize])
                     .count();
                 if (!byzantine
-                    && corrupted_samples > self.params.num_shreds - self.params.num_data_shreds)
-                    || (byzantine && corrupted_samples >= self.params.num_data_shreds)
+                    && corrupted_samples > self.params().num_shreds - self.params().num_data_shreds)
+                    || (byzantine && corrupted_samples >= self.params().num_data_shreds)
                 {
                     *self.failures.write().unwrap() += 1;
                     break;
@@ -272,5 +276,9 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
             }
         }
         (tests, false)
+    }
+
+    fn params(&self) -> &RotorParams {
+        &self.builder.params
     }
 }

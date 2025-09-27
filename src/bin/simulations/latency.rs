@@ -19,7 +19,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::discrete_event_simulator::{EventTimingStats, Timings};
-use crate::rotor::RotorParams;
+use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
 /// Size (in bytes) assumed per vote in the simulation.
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
@@ -70,56 +70,51 @@ pub enum LatencyEvent {
 
 ///
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LatencySimParams<L: SamplingStrategy, R: SamplingStrategy> {
-    rotor_params: RotorParams<L, R>,
+pub struct LatencySimParams {
+    rotor_params: RotorParams,
     num_slots_per_window: usize,
     num_slots: usize,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimParams<L, R> {
-    pub fn new(
-        rotor_params: RotorParams<L, R>,
-        num_slots_per_window: usize,
-        num_slots: usize,
-    ) -> Self {
+impl LatencySimParams {
+    ///
+    pub fn new(rotor_params: RotorParams, num_slots_per_window: usize, num_slots: usize) -> Self {
         Self {
             rotor_params,
             num_slots_per_window,
             num_slots,
         }
     }
+}
 
-    pub fn sample_instance(&self, rng: &mut impl Rng) -> LatencySimInstance<L, R> {
-        LatencySimInstance::new(self, rng)
+pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
+    rotor_builder: RotorInstanceBuilder<L, R>,
+    params: LatencySimParams,
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
+    ///
+    pub fn new(rotor_builder: RotorInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
+        Self {
+            rotor_builder,
+            params,
+        }
+    }
+
+    ///
+    pub fn sample_instance(&self, rng: &mut impl Rng) -> LatencySimInstance {
+        let rotor_instance = self.rotor_builder.build(rng);
+        LatencySimInstance {
+            rotor_instance,
+            params: self.params.clone(),
+        }
     }
 }
 
 ///
-pub struct LatencySimInstance<L: SamplingStrategy, R: SamplingStrategy> {
-    params: LatencySimParams<L, R>,
-    leader: ValidatorId,
-    relays: Vec<Vec<ValidatorId>>,
-}
-
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstance<L, R> {
-    pub fn new(params: &LatencySimParams<L, R>, rng: &mut impl Rng) -> Self {
-        // sample leader and relays
-        let leader = params.rotor_params.leader_sampler.sample(rng);
-        let relays = (0..params.rotor_params.num_slices)
-            .map(|_| {
-                params
-                    .rotor_params
-                    .rotor_sampler
-                    .sample_multiple(params.rotor_params.num_shreds, rng)
-            })
-            .collect();
-
-        Self {
-            params: params.clone(),
-            leader,
-            relays,
-        }
-    }
+pub struct LatencySimInstance {
+    rotor_instance: RotorInstance,
+    params: LatencySimParams,
 }
 
 /// Simulated latency test.
@@ -128,7 +123,7 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     ping_servers: Vec<&'static PingServer>,
     total_stake: Stake,
-    params: LatencySimParams<L, R>,
+    builder: LatencySimInstanceBuilder<L, R>,
 
     // optional bandwidth information
     // if provided, these will be used to simulate transmission delays
@@ -161,24 +156,20 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
 
         let rotor_params = RotorParams {
-            leader_sampler,
-            rotor_sampler,
             num_data_shreds,
             num_shreds,
             num_slices: 1,
         };
+        let rotor_builder = RotorInstanceBuilder::new(leader_sampler, rotor_sampler, rotor_params);
 
-        let params = LatencySimParams {
-            rotor_params,
-            num_slots_per_window: 4,
-            num_slots: 1,
-        };
+        let params = LatencySimParams::new(rotor_params, 4, 1);
+        let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
 
         Self {
             validators,
             ping_servers,
             total_stake,
-            params,
+            builder,
 
             leader_bandwidth: None,
             bandwidths: None,
@@ -230,8 +221,8 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     ) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
-            let mut instance = LatencySimInstance::new(&self.params, &mut rng);
-            instance.leader = leader.id;
+            let mut instance = self.builder.sample_instance(&mut rng);
+            instance.rotor_instance.leader = leader.id;
             self.run_one_deterministic(up_to_stage, instance);
         }
 
@@ -251,7 +242,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
 
     /// Runs one iteration of the latency simulation with random leader and relays.
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
-        let instance = LatencySimInstance::new(&self.params, rng);
+        let instance = self.builder.sample_instance(rng);
         self.run_one_deterministic(up_to_stage, instance);
     }
 
@@ -259,7 +250,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
     pub fn run_one_deterministic(
         &self,
         up_to_stage: LatencyTestStage,
-        instance: LatencySimInstance<L, R>,
+        instance: LatencySimInstance,
     ) {
         // setup & initialization
         let num_val = self.validators.len();
