@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::hash::Hash;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::RwLock;
@@ -18,7 +19,7 @@ use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::discrete_event_simulator::{EventTimingStats, Timings};
+use crate::discrete_event_simulator::{EventTimingStats, TimingStats, Timings};
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
 /// Size (in bytes) assumed per vote in the simulation.
@@ -87,6 +88,7 @@ impl LatencySimParams {
     }
 }
 
+///
 pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
     rotor_builder: RotorInstanceBuilder<L, R>,
     params: LatencySimParams,
@@ -132,7 +134,7 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     bandwidths: Option<Vec<u64>>,
 
     // running aggregates (averages)
-    stats: RwLock<LatencyStats>,
+    stats: RwLock<TimingStats<LatencyEvent>>,
 }
 
 impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> LatencyTest<L, R> {
@@ -174,7 +176,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             leader_bandwidth: None,
             bandwidths: None,
 
-            stats: RwLock::new(LatencyStats::default()),
+            stats: RwLock::new(TimingStats::<LatencyEvent>::default()),
         }
     }
 
@@ -204,7 +206,22 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        self.stats.read().unwrap().write_to_csv(path).unwrap();
+        self.stats
+            .read()
+            .unwrap()
+            .write_to_csv(
+                path,
+                &[
+                    ("direct", LatencyEvent::Direct(0)),
+                    ("rotor", LatencyEvent::Rotor(0)),
+                    ("shreds95", LatencyEvent::Shreds95),
+                    ("notar", LatencyEvent::Notar),
+                    ("fast_final", LatencyEvent::FastFinal),
+                    ("slow_final", LatencyEvent::SlowFinal),
+                    ("final", LatencyEvent::Final),
+                ],
+            )
+            .unwrap();
     }
 
     /// Runs the latency simulation `iterations` times.
@@ -237,7 +254,22 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        self.stats.read().unwrap().write_to_csv(path).unwrap();
+        self.stats
+            .read()
+            .unwrap()
+            .write_to_csv(
+                path,
+                &[
+                    ("direct", LatencyEvent::Direct(0)),
+                    ("rotor", LatencyEvent::Rotor(0)),
+                    ("shreds95", LatencyEvent::Shreds95),
+                    ("notar", LatencyEvent::Notar),
+                    ("fast_final", LatencyEvent::FastFinal),
+                    ("slow_final", LatencyEvent::SlowFinal),
+                    ("final", LatencyEvent::Final),
+                ],
+            )
+            .unwrap();
     }
 
     /// Runs one iteration of the latency simulation with random leader and relays.
@@ -412,69 +444,5 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
             return 0.0;
         };
         (bytes * 8) as f64 / bandwidths[validator as usize] as f64
-    }
-}
-
-#[derive(Default)]
-struct LatencyStats(HashMap<LatencyEvent, EventTimingStats>);
-
-impl LatencyStats {
-    fn record_latencies(
-        &mut self,
-        timings: &mut Timings<LatencyEvent>,
-        validators: &[ValidatorInfo],
-        ping_servers: &[&'static PingServer],
-    ) {
-        for (event, timing_vec) in timings.iter() {
-            self.0.entry(*event).or_default().record_latencies(
-                timing_vec,
-                validators,
-                ping_servers,
-            );
-        }
-    }
-
-    /// Writes percentiles to a CSV file.
-    fn write_to_csv(&self, filename: impl AsRef<Path>) -> std::io::Result<()> {
-        let file = File::create(filename)?;
-        let mut writer = BufWriter::new(file);
-
-        writeln!(
-            writer,
-            "percentile,direct,rotor,shreds95,notar,notar65,fast_final,slow_final,final"
-        )?;
-        for percentile in 1..=100 {
-            let direct_stats = self.0.get(&LatencyEvent::Direct(0)).unwrap();
-            let direct_latency = direct_stats.get_avg_percentile_latency(percentile);
-
-            let rotor_stats = self.0.get(&LatencyEvent::Rotor(0)).unwrap();
-            let rotor_latency = rotor_stats.get_avg_percentile_latency(percentile);
-
-            let shreds95_stats = self.0.get(&LatencyEvent::Shreds95).unwrap();
-            let shreds95_latency = shreds95_stats.get_avg_percentile_latency(percentile);
-
-            let notar_stats = self.0.get(&LatencyEvent::Notar).unwrap();
-            let notar_latency = notar_stats.get_avg_percentile_latency(percentile);
-
-            // let notar65_stats = self.0.get(&LatencyEvent::Notar65).unwrap();
-            // let notar65_latency = notar65_stats.get_avg_percentile_latency(percentile);
-            let notar65_latency = 0.0;
-
-            let fast_final_stats = self.0.get(&LatencyEvent::FastFinal).unwrap();
-            let fast_final_latency = fast_final_stats.get_avg_percentile_latency(percentile);
-
-            let slow_final_stats = self.0.get(&LatencyEvent::SlowFinal).unwrap();
-            let slow_final_latency = slow_final_stats.get_avg_percentile_latency(percentile);
-
-            let final_stats = self.0.get(&LatencyEvent::Final).unwrap();
-            let final_latency = final_stats.get_avg_percentile_latency(percentile);
-
-            writeln!(
-                writer,
-                "{percentile},{direct_latency},{rotor_latency},{shreds95_latency},{notar_latency},{notar65_latency},{fast_final_latency},{slow_final_latency},{final_latency}",
-            )?;
-        }
-
-        Ok(())
     }
 }

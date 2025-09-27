@@ -12,7 +12,10 @@
 // pub use simulator::Simulator;
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::hash::Hash;
+use std::io::BufWriter;
+use std::path::Path;
 use std::sync::RwLock;
 
 use alpenglow::network::simulated::ping_data::PingServer;
@@ -66,6 +69,63 @@ impl<E: PartialEq + Eq + Hash> Timings<E> {
 }
 
 impl<E: PartialEq + Eq + Hash> Default for Timings<E> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+pub struct TimingStats<E: Clone + Copy + Eq + Hash>(HashMap<E, EventTimingStats>);
+
+impl<E: Clone + Copy + Eq + Hash> TimingStats<E> {
+    pub fn record_latencies(
+        &mut self,
+        timings: &mut Timings<E>,
+        validators: &[ValidatorInfo],
+        ping_servers: &[&'static PingServer],
+    ) {
+        for (event, timing_vec) in timings.iter() {
+            self.0.entry(*event).or_default().record_latencies(
+                timing_vec,
+                validators,
+                ping_servers,
+            );
+        }
+    }
+
+    /// Writes percentiles to a CSV file.
+    pub fn write_to_csv(
+        &self,
+        filename: impl AsRef<Path>,
+        events: &[(&str, E)],
+    ) -> std::io::Result<()> {
+        let file = File::create(filename)?;
+        let mut writer = BufWriter::new(file);
+
+        let columns = events
+            .iter()
+            .map(|(name, _event)| name.to_string())
+            .collect::<Vec<_>>();
+        let column_str = columns.join(",");
+        writeln!(writer, "percentile,{}", column_str)?;
+        for percentile in 1..=100 {
+            let event_timings = events
+                .iter()
+                .map(|(_name, event)| {
+                    let event_stats = self.0.get(event).unwrap();
+                    event_stats
+                        .get_avg_percentile_latency(percentile)
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            let event_timings_str = event_timings.join(",");
+            writeln!(writer, "{percentile},{event_timings_str}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<E: Clone + Copy + Eq + Hash> Default for TimingStats<E> {
     fn default() -> Self {
         Self(HashMap::new())
     }

@@ -1,6 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//!
+//!
+//!
+
 use std::fs::File;
 use std::sync::RwLock;
 
@@ -17,6 +21,7 @@ use super::RotorParams;
 
 const MAX_FAILURES: usize = 10_000;
 
+///
 pub struct RotorRobustnessTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
@@ -27,6 +32,7 @@ pub struct RotorRobustnessTest<S: SamplingStrategy> {
 }
 
 impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
+    ///
     pub fn new(
         validators: Vec<ValidatorInfo>,
         sampler: S,
@@ -57,6 +63,7 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
         }
     }
 
+    ///
     pub fn run(&self, test_name: &str, attack_frac: f64, csv_file: &mut csv::Writer<File>) {
         let mut attack_prob = 0.0;
 
