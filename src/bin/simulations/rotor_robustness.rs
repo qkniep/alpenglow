@@ -14,7 +14,7 @@ const SLICES: usize = 1;
 
 const MAX_FAILURES: usize = 10_000;
 
-pub struct RotorSafetyTest<S: SamplingStrategy> {
+pub struct RotorRobustnessTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
     sampler: RwLock<S>,
@@ -25,7 +25,7 @@ pub struct RotorSafetyTest<S: SamplingStrategy> {
     failures: RwLock<usize>,
 }
 
-impl<S: SamplingStrategy + Sync + Send> RotorSafetyTest<S> {
+impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
     pub fn new(
         validators: Vec<ValidatorInfo>,
         sampler: S,
