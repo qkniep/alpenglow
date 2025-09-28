@@ -14,6 +14,8 @@ use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use rand::prelude::*;
 
+use crate::discrete_event_simulator::Builder;
+
 pub use self::robustness::RotorRobustnessTest;
 
 ///
@@ -52,6 +54,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
             params: self.params,
         }
     }
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
+    type Params = RotorParams;
+    type Instance = RotorInstance;
 }
 
 ///

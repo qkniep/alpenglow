@@ -15,7 +15,9 @@ use alpenglow::{Stake, ValidatorInfo};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::discrete_event_simulator::{SimulationEnvironment, TimingStats, Timings};
+use crate::discrete_event_simulator::{
+    Event, SimTime, SimulationEnvironment, Stage, TimingStats, Timings,
+};
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
 /// Size (in bytes) assumed per vote in the simulation.
@@ -32,22 +34,33 @@ pub enum LatencyTestStage {
     Final2,
 }
 
-impl LatencyTestStage {
-    fn next(self) -> Option<Self> {
+impl Stage for LatencyTestStage {
+    type Event = LatencyEvent;
+    type Params = LatencySimParams;
+
+    fn first() -> Self {
+        Self::Rotor
+    }
+
+    fn next(&self) -> Option<Self> {
         match self {
-            LatencyTestStage::Rotor => Some(LatencyTestStage::Notar),
-            LatencyTestStage::Notar => Some(LatencyTestStage::Final1),
-            LatencyTestStage::Final1 => Some(LatencyTestStage::Final2),
-            LatencyTestStage::Final2 => None,
+            Self::Rotor => Some(Self::Notar),
+            Self::Notar => Some(Self::Final1),
+            Self::Final1 => Some(Self::Final2),
+            Self::Final2 => None,
         }
     }
 
-    fn events(self) -> Vec<LatencyEvent> {
+    fn events(&self, _params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
-            LatencyTestStage::Rotor => vec![LatencyEvent::Direct(0), LatencyEvent::Rotor(0)],
-            LatencyTestStage::Notar => vec![LatencyEvent::Notar, LatencyEvent::Shreds95],
-            LatencyTestStage::Final1 => vec![LatencyEvent::FastFinal, LatencyEvent::SlowFinal],
-            LatencyTestStage::Final2 => vec![LatencyEvent::Final],
+            Self::Rotor => vec![LatencyEvent::Direct(0), LatencyEvent::Rotor(0)],
+            Self::Notar => vec![LatencyEvent::Notar, LatencyEvent::Shreds95],
+            Self::Final1 => vec![
+                LatencyEvent::FastFinal,
+                LatencyEvent::SlowFinal,
+                LatencyEvent::Notar65,
+            ],
+            Self::Final2 => vec![LatencyEvent::Final],
         }
     }
 }
@@ -63,6 +76,51 @@ pub enum LatencyEvent {
     FastFinal,
     SlowFinal,
     Final,
+}
+
+impl Event for LatencyEvent {
+    fn name(&self) -> String {
+        match self {
+            Self::Direct(_) => "direct",
+            Self::Rotor(_) => "rotor",
+            Self::Shreds95 => "shreds95",
+            Self::Notar => "notar",
+            Self::Notar65 => "notar65",
+            Self::FastFinal => "fast_final",
+            Self::SlowFinal => "slow_final",
+            Self::Final => "final",
+        }
+        .to_owned()
+    }
+
+    fn should_track_stats(&self) -> bool {
+        match self {
+            Self::Direct(slice) => *slice == 0,
+            Self::Rotor(slice) => *slice == 0,
+            _ => true,
+        }
+    }
+
+    fn dependencies(&self) -> Vec<Self> {
+        match self {
+            Self::Direct(_) => vec![],
+            Self::Rotor(_) => vec![Self::Direct(0)],
+            Self::Shreds95 => vec![Self::Rotor(0)],
+            Self::Notar => vec![Self::Rotor(0)],
+            Self::Notar65 => vec![Self::Notar],
+            Self::FastFinal => vec![Self::Notar],
+            Self::SlowFinal => vec![Self::Notar],
+            Self::Final => vec![Self::SlowFinal, Self::FastFinal],
+        }
+    }
+
+    fn calculate_timing(
+        &self,
+        dep_timings: &[&[SimTime]],
+        environment: &SimulationEnvironment,
+    ) -> Vec<SimTime> {
+        vec![SimTime::ZERO; environment.num_validators()]
+    }
 }
 
 ///
@@ -120,7 +178,7 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     builder: LatencySimInstanceBuilder<L, R>,
     environment: SimulationEnvironment,
     /// Running aggregates for percentiles.
-    stats: RwLock<TimingStats<LatencyEvent>>,
+    stats: RwLock<TimingStats<LatencyTestStage>>,
 }
 
 impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> LatencyTest<L, R> {
@@ -156,7 +214,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         Self {
             builder,
             environment: SimulationEnvironment::new(validators, ping_servers, total_stake),
-            stats: RwLock::new(TimingStats::<LatencyEvent>::default()),
+            stats: RwLock::new(TimingStats::default()),
         }
     }
 
@@ -190,18 +248,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         self.stats
             .read()
             .unwrap()
-            .write_to_csv(
-                path,
-                &[
-                    ("direct", LatencyEvent::Direct(0)),
-                    ("rotor", LatencyEvent::Rotor(0)),
-                    ("shreds95", LatencyEvent::Shreds95),
-                    ("notar", LatencyEvent::Notar),
-                    ("fast_final", LatencyEvent::FastFinal),
-                    ("slow_final", LatencyEvent::SlowFinal),
-                    ("final", LatencyEvent::Final),
-                ],
-            )
+            .write_to_csv(path, &self.builder.params)
             .unwrap();
     }
 
@@ -238,18 +285,7 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         self.stats
             .read()
             .unwrap()
-            .write_to_csv(
-                path,
-                &[
-                    ("direct", LatencyEvent::Direct(0)),
-                    ("rotor", LatencyEvent::Rotor(0)),
-                    ("shreds95", LatencyEvent::Shreds95),
-                    ("notar", LatencyEvent::Notar),
-                    ("fast_final", LatencyEvent::FastFinal),
-                    ("slow_final", LatencyEvent::SlowFinal),
-                    ("final", LatencyEvent::Final),
-                ],
-            )
+            .write_to_csv(path, &self.builder.params)
             .unwrap();
     }
 
@@ -272,11 +308,11 @@ impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> Laten
         // simulation loop
         let mut stage = LatencyTestStage::Rotor;
         while stage <= up_to_stage {
-            for event in stage.events() {
+            for event in stage.events(&instance.params) {
                 timings.initialize(event, num_val);
             }
 
-            for event in stage.events() {
+            for event in stage.events(&instance.params) {
                 //
             }
 

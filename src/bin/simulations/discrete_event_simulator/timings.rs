@@ -12,44 +12,51 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufWriter, Write};
+use std::ops::{Add, AddAssign};
 use std::path::Path;
 
 use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use log::info;
 
+use crate::discrete_event_simulator::{Event, Stage};
+
 use super::SimulationEnvironment;
 
-/// Simulated time.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct SimTime(f64);
+/// Simulated time in nanoseconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SimTime(u64);
 
 impl SimTime {
-    ///
-    pub fn never() -> Self {
-        Self(f64::INFINITY)
-    }
+    pub const ZERO: Self = Self(0);
+    pub const NEVER: Self = Self(u64::MAX);
 
     ///
-    pub fn new(time: f64) -> Self {
+    pub fn new(time: u64) -> Self {
         Self(time)
     }
 }
 
+impl Add<SimTime> for SimTime {
+    type Output = Self;
+    fn add(self, other: SimTime) -> Self {
+        Self(self.0 + other.0)
+    }
+}
+
+impl AddAssign<SimTime> for SimTime {
+    fn add_assign(&mut self, other: SimTime) {
+        self.0 += other.0;
+    }
+}
+
 /// The timing matrix, implemented as a map from events to timing vectors.
-pub struct Timings<E: PartialEq + Eq + Hash>(HashMap<E, Vec<SimTime>>);
+pub struct Timings<E: Event + PartialEq + Eq + Hash>(HashMap<E, Vec<SimTime>>);
 
-impl<E: PartialEq + Eq + Hash> Timings<E> {
-    // fn initialize(&mut self, stage: LatencyTestStage, num_val: usize) {
-    //     for event in stage.events() {
-    //         self.0
-    //             .insert(event, RwLock::new(vec![(f64::INFINITY, 0); num_val]));
-    //     }
-    // }
-
+impl<E: Event + PartialEq + Eq + Hash> Timings<E> {
     /// Initializes the timing vector for the given event to infinity.
     pub fn initialize(&mut self, event: E, num_val: usize) {
-        self.0.insert(event, vec![SimTime::never(); num_val]);
+        self.0.insert(event, vec![SimTime::NEVER; num_val]);
     }
 
     ///
@@ -72,8 +79,8 @@ impl<E: PartialEq + Eq + Hash> Timings<E> {
     }
 
     /// Returns the timing entry for the given event and validator.
-    pub fn get_one(&self, event: E, validator: ValidatorId) -> f64 {
-        self.get(event).unwrap()[validator as usize].0
+    pub fn get_one(&self, event: E, validator: ValidatorId) -> SimTime {
+        self.get(event).unwrap()[validator as usize]
     }
 
     /// Iterates over timing vectors for all events.
@@ -82,18 +89,18 @@ impl<E: PartialEq + Eq + Hash> Timings<E> {
     }
 }
 
-impl<E: PartialEq + Eq + Hash> Default for Timings<E> {
+impl<E: Event + PartialEq + Eq + Hash> Default for Timings<E> {
     fn default() -> Self {
         Self(HashMap::new())
     }
 }
 
-pub struct TimingStats<E: Clone + Copy + Eq + Hash>(HashMap<E, EventTimingStats>);
+pub struct TimingStats<S: Stage>(HashMap<S::Event, EventTimingStats>);
 
-impl<E: Clone + Copy + Eq + Hash> TimingStats<E> {
+impl<S: Stage> TimingStats<S> {
     pub fn record_latencies(
         &mut self,
-        timings: &mut Timings<E>,
+        timings: &mut Timings<S::Event>,
         environment: &SimulationEnvironment,
     ) {
         for (event, timing_vec) in timings.iter() {
@@ -109,17 +116,31 @@ impl<E: Clone + Copy + Eq + Hash> TimingStats<E> {
     pub fn write_to_csv(
         &self,
         filename: impl AsRef<Path>,
-        events: &[(&str, E)],
+        params: &S::Params,
     ) -> std::io::Result<()> {
         let file = File::create(filename)?;
         let mut writer = BufWriter::new(file);
 
+        // collect all events
+        let events = S::all()
+            .iter()
+            .flat_map(|stage| {
+                stage
+                    .events(params)
+                    .into_iter()
+                    .map(|event| (event.name(), event))
+            })
+            .collect::<Vec<_>>();
+
+        // write header row
         let columns = events
             .iter()
             .map(|(name, _event)| name.to_string())
             .collect::<Vec<_>>();
         let column_str = columns.join(",");
         writeln!(writer, "percentile,{}", column_str)?;
+
+        // write data rows
         for percentile in 1..=100 {
             let event_timings = events
                 .iter()
@@ -138,7 +159,7 @@ impl<E: Clone + Copy + Eq + Hash> TimingStats<E> {
     }
 }
 
-impl<E: Clone + Copy + Eq + Hash> Default for TimingStats<E> {
+impl<S: Stage> Default for TimingStats<S> {
     fn default() -> Self {
         Self(HashMap::new())
     }
@@ -173,7 +194,7 @@ impl EventTimingStats {
                 let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
                 let abs_stake_contrib = validator_stake.min(percentile_stake_left);
                 let rel_stake_contrib = abs_stake_contrib / percentile_stake;
-                let latency_contrib = rel_stake_contrib * latency.0;
+                let latency_contrib = rel_stake_contrib * latency.0 as f64;
                 self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
                 let count = self.percentile_location[percentile as usize - 1]
                     .entry(ping_servers[v].location.clone())
