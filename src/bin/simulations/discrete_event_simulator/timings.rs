@@ -7,6 +7,7 @@
 //! This is what the discrete-event simulator uses to record timings of events.
 //! It can be thought of as a `#events x #validators` matrix of latencies.
 //! Although, it is actually backed by a [`HashMap`] of [`Vec<SimTime>`],
+//! so the rows are only initialized as needed.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -56,9 +57,9 @@ impl AddAssign<SimTime> for SimTime {
 }
 
 /// The timing matrix, implemented as a map from events to timing vectors.
-pub struct Timings<E: Event + PartialEq + Eq + Hash>(HashMap<E, Vec<SimTime>>);
+pub struct Timings<E: Event>(HashMap<E, Vec<SimTime>>);
 
-impl<E: Event + PartialEq + Eq + Hash> Timings<E> {
+impl<E: Event> Timings<E> {
     /// Initializes the timing vector for the given event to infinity.
     pub fn initialize(&mut self, event: E, num_val: usize) {
         self.0.insert(event, vec![SimTime::NEVER; num_val]);
@@ -94,7 +95,7 @@ impl<E: Event + PartialEq + Eq + Hash> Timings<E> {
     }
 }
 
-impl<E: Event + PartialEq + Eq + Hash> Default for Timings<E> {
+impl<E: Event> Default for Timings<E> {
     fn default() -> Self {
         Self(HashMap::new())
     }
@@ -227,24 +228,6 @@ impl EventTimingStats {
         assert!(percentile > 0 && percentile <= 100);
         let sum = self.sum_percentile_latencies[percentile as usize - 1];
         sum / self.count as f64
-    }
-
-    fn _print(&self) {
-        let avg_p60_latency = self.get_avg_percentile_latency(60);
-        info!("avg p60 latency: {avg_p60_latency:.2}");
-        let avg_p80_latency = self.get_avg_percentile_latency(80);
-        info!("avg p80 latency: {avg_p80_latency:.2}");
-        let avg_max_latency = self.get_avg_percentile_latency(100);
-        info!("avg max latency: {avg_max_latency:.2}");
-
-        for percentile in 1..=100 {
-            println!("percentile: {percentile}");
-            let total_count: f64 = self.percentile_location[percentile - 1].values().sum();
-            for (location, count) in &self.percentile_location[percentile - 1] {
-                let frac = *count * 100.0 / total_count;
-                println!("    location: {location}, frac: {frac:.2}%");
-            }
-        }
     }
 }
 

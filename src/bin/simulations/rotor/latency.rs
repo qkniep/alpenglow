@@ -14,7 +14,10 @@ use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use super::{RotorInstance, RotorInstanceBuilder, RotorParams};
 use crate::discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage};
 
+/// Wrapper type for the Rotor latency simulation.
 ///
+/// This type implements the `Protocol` trait and can be passed to the simulation engine.
+/// There is probably never a need to construct this type directly.
 pub struct RotorLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
@@ -198,6 +201,15 @@ impl Event for LatencyEvent {
     }
 }
 
+/// Returns the minimum of each column over the given rows.
+///
+/// Requires that all rows have the same length.
+/// Outputs a vector of the same length, containing the minimum in each column.
+///
+/// # Panics
+///
+/// - Panics if `rows` is empty.
+/// - Panics if any row does not have the same length as the first row.
 fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     assert!(!rows.is_empty());
     let mut result = rows[0].to_vec();
@@ -212,6 +224,15 @@ fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     result
 }
 
+/// Returns the maximum of each column over the given rows.
+///
+/// Requires that all rows have the same length.
+/// Outputs a vector of the same length, containing the maximum in each column.
+///
+/// # Panics
+///
+/// - Panics if `rows` is empty.
+/// - Panics if any row does not have the same length as the first row.
 fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     assert!(!rows.is_empty());
     let mut result = rows[0].to_vec();
