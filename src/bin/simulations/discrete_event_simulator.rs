@@ -3,7 +3,8 @@
 
 //! General discrete-event simulator.
 //!
-//!
+//! This module provides a generic discrete-event simulator.
+//! It can be used to simulate different protocols and configurations.
 
 mod timings;
 

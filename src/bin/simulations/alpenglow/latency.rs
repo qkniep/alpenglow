@@ -7,17 +7,13 @@
 
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::path::Path;
-use std::sync::RwLock;
 
+use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
-use alpenglow::network::simulated::ping_data::PingServer;
-use alpenglow::{Stake, ValidatorInfo};
 use rand::prelude::*;
-use rayon::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Builder, Event, Protocol, SimTime, SimulationEnvironment, Stage, TimingStats, Timings,
+    Builder, Event, Protocol, SimTime, SimulationEnvironment, Stage,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
@@ -67,13 +63,9 @@ impl Stage for LatencyTestStage {
 
     fn events(&self, _params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
-            Self::Rotor => vec![LatencyEvent::Direct(0), LatencyEvent::Rotor(0)],
-            Self::Notar => vec![LatencyEvent::Notar, LatencyEvent::Shreds95],
-            Self::Final1 => vec![
-                LatencyEvent::FastFinal,
-                LatencyEvent::SlowFinal,
-                LatencyEvent::Notar65,
-            ],
+            Self::Rotor => vec![LatencyEvent::Block],
+            Self::Notar => vec![LatencyEvent::Notar],
+            Self::Final1 => vec![LatencyEvent::FastFinal, LatencyEvent::SlowFinal],
             Self::Final2 => vec![LatencyEvent::Final],
         }
     }
@@ -82,11 +74,8 @@ impl Stage for LatencyTestStage {
 /// Events that can occur at each validator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
-    Direct(usize),
-    Rotor(usize),
-    Shreds95,
+    Block,
     Notar,
-    Notar65,
     FastFinal,
     SlowFinal,
     Final,
@@ -98,11 +87,8 @@ impl Event for LatencyEvent {
 
     fn name(&self) -> String {
         match self {
-            Self::Direct(_) => "direct",
-            Self::Rotor(_) => "rotor",
-            Self::Shreds95 => "shreds95",
+            Self::Block => "block",
             Self::Notar => "notar",
-            Self::Notar65 => "notar65",
             Self::FastFinal => "fast_final",
             Self::SlowFinal => "slow_final",
             Self::Final => "final",
@@ -111,20 +97,13 @@ impl Event for LatencyEvent {
     }
 
     fn should_track_stats(&self) -> bool {
-        match self {
-            Self::Direct(slice) => *slice == 0,
-            Self::Rotor(slice) => *slice == 0,
-            _ => true,
-        }
+        true
     }
 
     fn dependencies(&self, _params: &LatencySimParams) -> Vec<Self> {
         match self {
-            Self::Direct(_) => vec![],
-            Self::Rotor(_) => vec![Self::Direct(0)],
-            Self::Shreds95 => vec![Self::Rotor(0)],
-            Self::Notar => vec![Self::Rotor(0)],
-            Self::Notar65 => vec![Self::Notar],
+            Self::Block => vec![],
+            Self::Notar => vec![Self::Block],
             Self::FastFinal => vec![Self::Notar],
             Self::SlowFinal => vec![Self::Notar],
             Self::Final => vec![Self::SlowFinal, Self::FastFinal],
@@ -133,11 +112,47 @@ impl Event for LatencyEvent {
 
     fn calculate_timing(
         &self,
-        dep_timings: &[&[SimTime]],
+        dependency_timings: &[&[SimTime]],
         _instance: &LatencySimInstance,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
-        vec![SimTime::ZERO; environment.num_validators()]
+        let broadcast_vote_threshold = |threshold: f64| -> Vec<SimTime> {
+            let mut timings = dependency_timings[0].to_vec();
+            for recipient in 0..environment.num_validators() {
+                // calculate vote arrival timings
+                // TODO: reserve network resource
+                let mut vote_timings = (0..environment.num_validators())
+                    .map(|sender| (SimTime::NEVER, sender))
+                    .collect::<Vec<_>>();
+                for sender in 0..environment.num_validators() {
+                    vote_timings[sender].0 = timings[sender]
+                        + environment
+                            .propagation_delay(sender as ValidatorId, recipient as ValidatorId)
+                        + environment
+                            .transmission_delay((recipient + 1) * VOTE_SIZE, sender as ValidatorId);
+                }
+
+                // find time the stake threshold is first reached
+                vote_timings.sort_unstable();
+                let mut stake_so_far = 0;
+                for (vote_timing, sender) in vote_timings.into_iter() {
+                    timings[recipient] = vote_timing;
+                    stake_so_far += environment.validators[sender].stake;
+                    if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
+                        break;
+                    }
+                }
+            }
+            timings
+        };
+
+        match self {
+            Self::Block => dependency_timings[0].to_vec(),
+            Self::Notar => broadcast_vote_threshold(0.6),
+            Self::FastFinal => broadcast_vote_threshold(0.8),
+            Self::SlowFinal => broadcast_vote_threshold(0.6),
+            Self::Final => column_min(dependency_timings),
+        }
     }
 }
 
@@ -197,4 +212,27 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
 pub struct LatencySimInstance {
     rotor_instance: RotorInstance,
     params: LatencySimParams,
+}
+
+/// Returns the minimum of each column over the given rows.
+///
+/// Requires that all rows have the same length.
+/// Outputs a vector of the same length, containing the minimum in each column.
+///
+/// # Panics
+///
+/// - Panics if `rows` is empty.
+/// - Panics if any row does not have the same length as the first row.
+fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+    assert!(!rows.is_empty());
+    let mut result = rows[0].to_vec();
+    for row in &rows[1..] {
+        assert_eq!(row.len(), result.len(), "all rows must have same length");
+        for (res, &val) in result.iter_mut().zip(row.iter()) {
+            if val < *res {
+                *res = val;
+            }
+        }
+    }
+    result
 }

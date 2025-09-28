@@ -180,9 +180,10 @@ impl Event for LatencyEvent {
             }
             LatencyEvent::Rotor(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
+                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_shreds];
                 for recipient in 0..environment.num_validators() {
                     // TODO: reserve network resource
-                    let mut shred_timings = vec![SimTime::NEVER; instance.params.num_shreds];
+                    shred_timings.fill(SimTime::NEVER);
                     for (i, relay) in instance.relays[*slice].iter().enumerate() {
                         shred_timings[i] = timings[*relay as usize];
                         shred_timings[i] +=
