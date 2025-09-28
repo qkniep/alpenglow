@@ -41,23 +41,26 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use ::alpenglow::disseminator::rotor::sampling_strategy::{
-    DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
-    UniformSampler,
+    AllSameSampler, DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler,
+    TurbineSampler, UniformSampler,
 };
 use ::alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{Stake, ValidatorInfo, logging};
+use ::alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
-use self::alpenglow::{BandwidthTest, LatencyTest, LatencyTestStage};
-use self::rotor::RotorRobustnessTest;
+use crate::alpenglow::{
+    AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
+};
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
-use crate::rotor::{RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
+use crate::rotor::{
+    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
+};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
@@ -347,7 +350,8 @@ fn run_tests<
         let environment =
             SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
                 .with_bandwidths(leader_bandwidth, bandwidths);
-        let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment);
+        let engine =
+            SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
         info!("rotor latency sim (sequential)");
         engine.run_many_sequential(10);
         info!("rotor latency sim (parallel)");
@@ -356,18 +360,19 @@ fn run_tests<
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
-            let leader_bandwidth = 1_000_000_000;
-            let bandwidths = vec![leader_bandwidth; validators.len()];
-            let tester = LatencyTest::new(
-                validators_with_ping_data,
+            let rotor_params = RotorParams::new(n, k, 40);
+            let rotor_builder = RotorInstanceBuilder::new(
                 ping_leader_sampler.clone(),
                 ping_rotor_sampler.clone(),
-                n,
-                k,
-            )
-            .with_bandwidths(leader_bandwidth, bandwidths);
-            let test_name = format!("{test_name}-{n}-{k}");
-            tester.run_many(&test_name, 1000, LatencyTestStage::Final2);
+                params,
+            );
+            let params = LatencySimParams::new(rotor_params, n, k);
+            let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
+            let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                builder,
+                environment.clone(),
+            );
+            engine.run_many_parallel(1000);
         }
 
         // latency experiments with fixed leaders
@@ -418,19 +423,23 @@ fn run_tests<
             unimplemented!()
         };
 
-        for (n, k) in &SHRED_COMBINATIONS {
+        for (n, k) in SHRED_COMBINATIONS {
             cities.par_iter().for_each(|city| {
                 info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
                 let leader = find_leader_in_city(validators_with_ping_data, city);
-                let tester = LatencyTest::new(
-                    validators_with_ping_data,
-                    ping_leader_sampler.clone(),
+                let rotor_params = RotorParams::new(n, k, 40);
+                let rotor_builder = RotorInstanceBuilder::new(
+                    AllSameSampler(leader),
                     ping_rotor_sampler.clone(),
-                    *n,
-                    *k,
+                    params,
                 );
-                let test_name = format!("{test_name}-{n}-{k}");
-                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final2, leader);
+                let params = LatencySimParams::new(rotor_params, n, k);
+                let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
+                let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                    builder,
+                    environment.clone(),
+                );
+                engine.run_many_parallel(1000);
             });
         }
     }

@@ -180,7 +180,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
     type Params = LatencySimParams;
     type Instance = LatencySimInstance;
 
-    ///
     fn build(&self, rng: &mut impl Rng) -> LatencySimInstance {
         let rotor_instance = self.rotor_builder.build(rng);
         LatencySimInstance {
@@ -189,7 +188,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
         }
     }
 
-    ///
     fn params(&self) -> &Self::Params {
         &self.params
     }
@@ -199,163 +197,4 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
 pub struct LatencySimInstance {
     rotor_instance: RotorInstance,
     params: LatencySimParams,
-}
-
-/// Simulated latency test.
-pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
-    builder: LatencySimInstanceBuilder<L, R>,
-    environment: SimulationEnvironment,
-    /// Running aggregates for percentiles.
-    stats: RwLock<TimingStats<AlpenglowLatencySimulation<L, R>>>,
-}
-
-impl<L, R> LatencyTest<L, R>
-where
-    L: SamplingStrategy + Send + Sync,
-    R: SamplingStrategy + Send + Sync,
-{
-    /// Creates a new latency test instance.
-    ///
-    /// Caller needs to make sure that `leader_sampler` and `rotor_smapler`
-    /// operate on the correct set of validators.
-    pub fn new(
-        validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
-        leader_sampler: L,
-        rotor_sampler: R,
-        num_data_shreds: usize,
-        num_shreds: usize,
-    ) -> Self {
-        let validators: Vec<ValidatorInfo> = validators_with_ping_data
-            .iter()
-            .map(|(v, _)| v.clone())
-            .collect();
-        let ping_servers: Vec<&'static PingServer> =
-            validators_with_ping_data.iter().map(|(_, p)| *p).collect();
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-
-        let rotor_params = RotorParams {
-            num_data_shreds,
-            num_shreds,
-            num_slices: 1,
-        };
-        let rotor_builder = RotorInstanceBuilder::new(leader_sampler, rotor_sampler, rotor_params);
-
-        let params = LatencySimParams::new(rotor_params, 4, 1);
-        let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
-
-        Self {
-            builder,
-            environment: SimulationEnvironment::new(validators, ping_servers, total_stake),
-            stats: RwLock::new(TimingStats::default()),
-        }
-    }
-
-    /// Sets the bandwidths for all validators for simulating transmission delays.
-    pub fn with_bandwidths(mut self, leader_bandwidth: u64, bandwidths: Vec<u64>) -> Self {
-        self.environment = self
-            .environment
-            .with_bandwidths(leader_bandwidth, bandwidths);
-        self
-    }
-
-    /// Runs the latency simulation `iterations` times.
-    ///
-    /// In each iteration, a new leader and new relays are randomly selected.
-    /// Each iteration runs only until `up_to_stage`, e.g., if `up_to_stage` is
-    /// `LatencyTestStage::Direct`, only the direct latency will be measured.
-    pub fn run_many(&self, test_name: &str, iterations: usize, up_to_stage: LatencyTestStage) {
-        (0..iterations).into_par_iter().for_each(|_| {
-            let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
-            self.run_one(up_to_stage, &mut rng);
-        });
-        let path = Path::new("data")
-            .join("output")
-            .join("simulations")
-            .join("latency")
-            .join(test_name)
-            .with_extension("csv");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        self.stats
-            .read()
-            .unwrap()
-            .write_to_csv(path, &self.builder.params)
-            .unwrap();
-    }
-
-    /// Runs the latency simulation `iterations` times.
-    ///
-    /// In each iteration, a new leader and new relays are randomly selected.
-    /// Each iteration runs only until `up_to_stage`, e.g., if `up_to_stage` is
-    /// `LatencyTestStage::Direct`, only the direct latency will be measured.
-    pub fn run_many_with_leader(
-        &self,
-        test_name: &str,
-        iterations: usize,
-        up_to_stage: LatencyTestStage,
-        leader: ValidatorInfo,
-    ) {
-        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
-        for _ in 0..iterations {
-            let mut instance = self.builder.build(&mut rng);
-            instance.rotor_instance.leader = leader.id;
-            self.run_one_deterministic(up_to_stage, instance);
-        }
-
-        let leader_ping_server = self.environment.ping_servers[leader.id as usize];
-        let path = Path::new("data")
-            .join("output")
-            .join("simulations")
-            .join("latency")
-            .join(&leader_ping_server.location)
-            .join(test_name)
-            .with_extension("csv");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        self.stats
-            .read()
-            .unwrap()
-            .write_to_csv(path, &self.builder.params)
-            .unwrap();
-    }
-
-    /// Runs one iteration of the latency simulation with random leader and relays.
-    pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
-        let instance = self.builder.build(rng);
-        self.run_one_deterministic(up_to_stage, instance);
-    }
-
-    /// Runs one iteration of the latency simulation with given leader and relays.
-    pub fn run_one_deterministic(
-        &self,
-        up_to_stage: LatencyTestStage,
-        instance: LatencySimInstance,
-    ) {
-        // setup & initialization
-        let num_val = self.environment.num_validators();
-        let mut timings = Timings::default();
-
-        // simulation loop
-        let mut stage = LatencyTestStage::Rotor;
-        while stage <= up_to_stage {
-            for event in stage.events(&instance.params) {
-                timings.initialize(event, num_val);
-            }
-
-            for event in stage.events(&instance.params) {
-                //
-            }
-
-            match stage.next() {
-                Some(s) => stage = s,
-                None => break,
-            }
-        }
-
-        // commit latencies to stats (update averages)
-        let stats_map = &mut self.stats.write().unwrap();
-        stats_map.record_latencies(&mut timings, &self.environment);
-    }
 }

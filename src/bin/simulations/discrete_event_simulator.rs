@@ -202,6 +202,7 @@ where
 /// Information about the environment in which the simulation is running.
 ///
 /// This includes the validators, their stakes, bandwidths, ping data, etc.
+#[derive(Clone, Debug)]
 pub struct SimulationEnvironment {
     // core setup of the latency test
     pub validators: Vec<ValidatorInfo>,

@@ -17,7 +17,6 @@ use std::ops::{Add, AddAssign};
 use std::path::Path;
 
 use alpenglow::ValidatorId;
-use log::info;
 
 use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, Stage};
 
