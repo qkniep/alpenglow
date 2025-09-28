@@ -15,24 +15,26 @@ use std::io::{BufWriter, Write};
 use std::ops::{Add, AddAssign};
 use std::path::Path;
 
+use alpenglow::ValidatorId;
 use alpenglow::network::simulated::ping_data::PingServer;
-use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use log::info;
 
-use super::SimulationEnvironment;
-use crate::discrete_event_simulator::{Event, Protocol, Stage};
+use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, Stage};
 
 /// Simulated time in nanoseconds.
+// TODO: maybe split into a duration and an instant type?
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SimTime(u64);
 
 impl SimTime {
+    /// Start of the simulation.
     pub const ZERO: Self = Self(0);
+    /// Infinite time, used to represent a point in time that is never reached.
     pub const NEVER: Self = Self(u64::MAX);
 
-    ///
-    pub fn new(time: u64) -> Self {
-        Self(time)
+    /// Constructs a new [`SimTime`] from the given number of nanoseconds.
+    pub fn new(time_ns: u64) -> Self {
+        Self(time_ns)
     }
 }
 
@@ -58,7 +60,7 @@ impl<E: Event + PartialEq + Eq + Hash> Timings<E> {
         self.0.insert(event, vec![SimTime::NEVER; num_val]);
     }
 
-    ///
+    /// Deletes all the rows from the [`HashMap`].
     pub fn clear(&mut self) {
         self.0.clear();
     }
@@ -94,20 +96,26 @@ impl<E: Event + PartialEq + Eq + Hash> Default for Timings<E> {
     }
 }
 
+/// Stats tracker for timings across all events and multiple simulation runs.
 pub struct TimingStats<P: Protocol>(HashMap<P::Event, EventTimingStats>);
 
 impl<P: Protocol> TimingStats<P> {
+    /// Records the timing statistics for all events.
+    ///
+    /// Updates the [`EventTimingStats`] corresponding to each event.
     pub fn record_latencies(
         &mut self,
         timings: &mut Timings<P::Event>,
         environment: &SimulationEnvironment,
     ) {
         for (event, timing_vec) in timings.iter() {
-            self.0.entry(*event).or_default().record_latencies(
-                timing_vec,
-                &environment.validators,
-                &environment.ping_servers,
-            );
+            if !event.should_track_stats() {
+                continue;
+            }
+            self.0
+                .entry(*event)
+                .or_default()
+                .record_latencies(timing_vec, environment);
         }
     }
 
@@ -127,6 +135,7 @@ impl<P: Protocol> TimingStats<P> {
                 stage
                     .events(params)
                     .into_iter()
+                    .filter(|event| event.should_track_stats())
                     .map(|event| (event.name(), event))
             })
             .collect::<Vec<_>>();
@@ -164,6 +173,7 @@ impl<P: Protocol> Default for TimingStats<P> {
     }
 }
 
+/// Stats tracker for timings of a single event across multiple simulation runs.
 pub struct EventTimingStats {
     sum_percentile_latencies: [f64; 100],
     percentile_location: Vec<HashMap<String, f64>>,
@@ -171,24 +181,19 @@ pub struct EventTimingStats {
 }
 
 impl EventTimingStats {
-    pub fn record_latencies(
-        &mut self,
-        latencies: &[SimTime],
-        validators: &[ValidatorInfo],
-        ping_servers: &[&'static PingServer],
-    ) {
+    /// Updates the aggregate stats based on the timing vector from a single run.
+    pub fn record_latencies(&mut self, latencies: &[SimTime], environment: &SimulationEnvironment) {
         let mut latencies = latencies
             .iter()
             .enumerate()
             .map(|(v, l)| (*l, v))
             .collect::<Vec<_>>();
         latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let percentile_stake = total_stake as f64 / 100.0;
+        let percentile_stake = environment.total_stake as f64 / 100.0;
         let mut percentile = 1;
         let mut stake_so_far = 0.0;
         for (latency, v) in latencies {
-            let mut validator_stake = validators[v].stake as f64;
+            let mut validator_stake = environment.validators[v].stake as f64;
             for _ in 0..100 {
                 let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
                 let abs_stake_contrib = validator_stake.min(percentile_stake_left);
@@ -196,7 +201,7 @@ impl EventTimingStats {
                 let latency_contrib = rel_stake_contrib * latency.0 as f64;
                 self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
                 let count = self.percentile_location[percentile as usize - 1]
-                    .entry(ping_servers[v].location.clone())
+                    .entry(environment.ping_servers[v].location.clone())
                     .or_default();
                 *count += abs_stake_contrib;
                 stake_so_far += abs_stake_contrib;
@@ -208,11 +213,12 @@ impl EventTimingStats {
                 }
             }
         }
-        // assert!((stake_so_far - total_stake as f64).abs() < 5000.0);
-        // assert!(percentile >= 100);
+        assert!((stake_so_far - environment.total_stake as f64).abs() < 5000.0);
+        assert!(percentile >= 100);
         self.count += 1;
     }
 
+    /// Returns the average timing for a given percentile.
     pub fn get_avg_percentile_latency(&self, percentile: u8) -> f64 {
         assert!(percentile > 0 && percentile <= 100);
         let sum = self.sum_percentile_latencies[percentile as usize - 1];
