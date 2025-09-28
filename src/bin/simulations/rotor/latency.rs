@@ -119,16 +119,15 @@ impl Event for LatencyEvent {
         match self {
             LatencyEvent::Direct(slice) => {
                 let mut timings = match *slice {
-                    0 => (0..environment.num_validators())
-                        .map(|recipient| environment.propagation_delay(0, recipient as ValidatorId))
+                    0 => (0..environment.num_validators() as ValidatorId)
+                        .map(|recipient| environment.propagation_delay(instance.leader, recipient))
                         .collect(),
                     _ => dependency_timings[0].to_vec(),
                 };
                 // TODO: reserve network resource
-                let leader = 0;
                 for relay in &instance.relays[*slice] {
                     timings[*relay as usize] +=
-                        environment.transmission_delay(MAX_DATA_PER_SHRED, leader);
+                        environment.transmission_delay(MAX_DATA_PER_SHRED, instance.leader);
                 }
                 timings
             }

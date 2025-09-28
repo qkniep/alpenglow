@@ -336,7 +336,7 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
-        let params = RotorParams::new(32, 64, 10);
+        let params = RotorParams::new(32, 64, 40);
         let builder = RotorInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
@@ -349,9 +349,9 @@ fn run_tests<
                 .with_bandwidths(leader_bandwidth, bandwidths);
         let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment);
         info!("rotor latency sim (sequential)");
-        engine.run_many_sequential(1000);
-        // info!("rotor latency sim (parallel)");
-        // engine.run_many_parallel(1000);
+        engine.run_many_sequential(10);
+        info!("rotor latency sim (parallel)");
+        engine.run_many_parallel(1000);
 
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
