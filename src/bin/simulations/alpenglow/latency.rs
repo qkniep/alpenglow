@@ -16,7 +16,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Event, SimTime, SimulationEnvironment, Stage, TimingStats, Timings,
+    Builder, Event, SimTime, SimulationEnvironment, Stage, TimingStats, Timings,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
@@ -181,7 +181,11 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     stats: RwLock<TimingStats<LatencyTestStage>>,
 }
 
-impl<L: SamplingStrategy + Sync + Send, R: SamplingStrategy + Sync + Send> LatencyTest<L, R> {
+impl<L, R> LatencyTest<L, R>
+where
+    L: SamplingStrategy + Send + Sync,
+    R: SamplingStrategy + Send + Sync,
+{
     /// Creates a new latency test instance.
     ///
     /// Caller needs to make sure that `leader_sampler` and `rotor_smapler`

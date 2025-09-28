@@ -18,11 +18,7 @@ pub struct RotorLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L, R> Protocol for RotorLatencySimulation<L, R>
-where
-    L: SamplingStrategy,
-    R: SamplingStrategy,
-{
+impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RotorLatencySimulation<L, R> {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = RotorParams;

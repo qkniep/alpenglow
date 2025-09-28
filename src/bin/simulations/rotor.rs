@@ -43,9 +43,14 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
             params,
         }
     }
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
+    type Params = RotorParams;
+    type Instance = RotorInstance;
 
     ///
-    pub fn build(&self, rng: &mut impl Rng) -> RotorInstance {
+    fn build(&self, rng: &mut impl Rng) -> RotorInstance {
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
             relays: self
@@ -54,11 +59,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
             params: self.params,
         }
     }
-}
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
-    type Params = RotorParams;
-    type Instance = RotorInstance;
+    ///
+    fn params(&self) -> &Self::Params {
+        &self.params
+    }
 }
 
 ///

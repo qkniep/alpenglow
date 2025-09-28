@@ -12,6 +12,7 @@ use std::sync::RwLock;
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
+use rand::prelude::*;
 use rayon::prelude::*;
 
 pub use self::timings::{SimTime, TimingStats, Timings};
@@ -19,16 +20,22 @@ pub use self::timings::{SimTime, TimingStats, Timings};
 ///
 pub trait Protocol {
     type Event: Event;
-    type Stage: Stage<Event = Self::Event>;
-    type Params: Clone + Send + Sync;
-    type Instance: Clone + Send + Sync;
+    type Stage: Stage<Event = Self::Event, Params = Self::Params>;
+    type Params;
+    type Instance;
     type Builder: Builder<Params = Self::Params, Instance = Self::Instance>;
 }
 
 ///
 pub trait Builder {
-    type Params: Clone + Send + Sync;
-    type Instance: Clone + Send + Sync;
+    type Params;
+    type Instance;
+
+    ///
+    fn build(&self, rng: &mut impl Rng) -> Self::Instance;
+
+    ///
+    fn params(&self) -> &Self::Params;
 }
 
 ///
@@ -86,57 +93,48 @@ pub enum EventKind {
 
 /// Matrix-based discrete event simulation engine.
 // TODO: maybe generalize into a trait and then implement event queue-based engine as well
-pub struct SimulationEngine<S: Stage> {
-    params: S::Params,
+pub struct SimulationEngine<P: Protocol> {
+    builder: P::Builder,
     environment: SimulationEnvironment,
-    stats: RwLock<TimingStats<S>>,
+    stats: RwLock<TimingStats<P::Stage>>,
 }
 
-impl<S: Stage> SimulationEngine<S> {
+impl<P: Protocol> SimulationEngine<P> {
     ///
-    pub fn new(params: S::Params, environment: SimulationEnvironment) -> Self {
+    pub fn new(builder: P::Builder, environment: SimulationEnvironment) -> Self {
         Self {
-            params,
+            builder,
             environment,
             stats: RwLock::new(TimingStats::default()),
         }
     }
 
     ///
-    pub fn run_many_parallel(&self, iterations: u64) {
-        (0..iterations).into_par_iter().for_each(|_| {
-            let mut timings = Timings::default();
-            self.run(&mut timings);
-        });
-        let stats_map = self.stats.read().unwrap();
-        // TODO: determine correct filename
-        stats_map.write_to_csv("test.csv", &self.params);
-    }
-
-    ///
     pub fn run_many_sequential(&self, iterations: u64) {
+        let mut rng = rand::rng();
         let mut timings = Timings::default();
         for _ in 0..iterations {
-            self.run(&mut timings);
+            let instance = self.builder.build(&mut rng);
+            self.run(&instance, &mut timings);
         }
         let stats_map = self.stats.read().unwrap();
         // TODO: determine correct filename
-        stats_map.write_to_csv("test.csv", &self.params);
+        stats_map.write_to_csv("test.csv", &self.builder.params());
     }
 
     ///
-    pub fn run(&self, timings: &mut Timings<S::Event>) {
+    pub fn run(&self, instance: &P::Instance, timings: &mut Timings<P::Event>) {
         // setup & initialization
         let num_val = self.environment.num_validators();
         timings.clear();
 
         // simulation loop
-        for stage in S::all() {
-            for event in stage.events(&self.params) {
+        for stage in P::Stage::all() {
+            for event in stage.events(&self.builder.params()) {
                 timings.initialize(event, num_val);
             }
 
-            for event in stage.events(&self.params) {
+            for event in stage.events(&self.builder.params()) {
                 let dep_timings = event
                     .dependencies()
                     .into_iter()
@@ -152,6 +150,24 @@ impl<S: Stage> SimulationEngine<S> {
         // commit timings to stats
         let mut stats_map = self.stats.write().unwrap();
         stats_map.record_latencies(timings, &self.environment);
+    }
+}
+
+impl<P: Protocol> SimulationEngine<P>
+where
+    P::Builder: Send + Sync,
+{
+    ///
+    pub fn run_many_parallel(&self, iterations: u64) {
+        (0..iterations).into_par_iter().for_each(|_| {
+            let mut rng = rand::rng();
+            let mut timings = Timings::default();
+            let instance = self.builder.build(&mut rng);
+            self.run(&instance, &mut timings);
+        });
+        let stats_map = self.stats.read().unwrap();
+        // TODO: determine correct filename
+        stats_map.write_to_csv("test.csv", &self.builder.params());
     }
 }
 
