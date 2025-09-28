@@ -5,7 +5,7 @@
 //!
 //! Most importantly the [`Timings`] struct, which is a map from events to timing vectors.
 //! This is what the discrete-event simulator uses to record timings of events.
-//! It can be thought of as a #events x #validators matrix of latencies.
+//! It can be thought of as a `#events x #validators` matrix of latencies.
 //! Although, it is actually backed by a [`HashMap`] of [`Vec<SimTime>`],
 
 use std::collections::HashMap;
@@ -16,7 +16,6 @@ use std::ops::{Add, AddAssign};
 use std::path::Path;
 
 use alpenglow::ValidatorId;
-use alpenglow::network::simulated::ping_data::PingServer;
 use log::info;
 
 use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, Stage};
@@ -35,6 +34,11 @@ impl SimTime {
     /// Constructs a new [`SimTime`] from the given number of nanoseconds.
     pub fn new(time_ns: u64) -> Self {
         Self(time_ns)
+    }
+
+    /// Converts the [`SimTime`] to milliseconds.
+    pub fn as_millis(&self) -> f64 {
+        self.0 as f64 / 1e6
     }
 }
 
@@ -198,7 +202,7 @@ impl EventTimingStats {
                 let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
                 let abs_stake_contrib = validator_stake.min(percentile_stake_left);
                 let rel_stake_contrib = abs_stake_contrib / percentile_stake;
-                let latency_contrib = rel_stake_contrib * latency.0 as f64;
+                let latency_contrib = rel_stake_contrib * latency.as_millis();
                 self.sum_percentile_latencies[percentile as usize - 1] += latency_contrib;
                 let count = self.percentile_location[percentile as usize - 1]
                     .entry(environment.ping_servers[v].location.clone())
@@ -252,4 +256,12 @@ impl Default for EventTimingStats {
             count: 0,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {}
 }

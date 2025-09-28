@@ -26,6 +26,17 @@ pub struct RotorParams {
     pub num_slices: usize,
 }
 
+impl RotorParams {
+    ///
+    pub fn new(num_data_shreds: usize, num_shreds: usize, num_slices: usize) -> Self {
+        Self {
+            num_data_shreds,
+            num_shreds,
+            num_slices,
+        }
+    }
+}
+
 ///
 #[derive(Debug)]
 pub struct RotorInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
@@ -53,9 +64,12 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
     fn build(&self, rng: &mut impl Rng) -> RotorInstance {
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
-            relays: self
-                .rotor_sampler
-                .sample_multiple(self.params.num_slices, rng),
+            relays: (0..self.params.num_slices)
+                .map(|_| {
+                    self.rotor_sampler
+                        .sample_multiple(self.params.num_shreds, rng)
+                })
+                .collect(),
             params: self.params,
         }
     }
@@ -70,6 +84,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RotorInstance {
     pub leader: ValidatorId,
-    pub relays: Vec<ValidatorId>,
+    pub relays: Vec<Vec<ValidatorId>>,
     pub params: RotorParams,
 }

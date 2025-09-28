@@ -93,6 +93,9 @@ pub enum LatencyEvent {
 }
 
 impl Event for LatencyEvent {
+    type Params = LatencySimParams;
+    type Instance = LatencySimInstance;
+
     fn name(&self) -> String {
         match self {
             Self::Direct(_) => "direct",
@@ -115,7 +118,7 @@ impl Event for LatencyEvent {
         }
     }
 
-    fn dependencies(&self) -> Vec<Self> {
+    fn dependencies(&self, _params: &LatencySimParams) -> Vec<Self> {
         match self {
             Self::Direct(_) => vec![],
             Self::Rotor(_) => vec![Self::Direct(0)],
@@ -131,6 +134,7 @@ impl Event for LatencyEvent {
     fn calculate_timing(
         &self,
         dep_timings: &[&[SimTime]],
+        _instance: &LatencySimInstance,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         vec![SimTime::ZERO; environment.num_validators()]

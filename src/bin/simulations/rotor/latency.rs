@@ -7,6 +7,7 @@
 
 use std::marker::PhantomData;
 
+use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
@@ -27,7 +28,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RotorLatencySimulati
     type Builder = RotorInstanceBuilder<L, R>;
 }
 
-///
+/// Stages of the Rotor latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyTestStage {
     Direct,
@@ -60,7 +61,7 @@ impl Stage for LatencyTestStage {
     }
 }
 
-/// Events that can occur at each validator.
+/// Events that can occur at each validator during the Rotor latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
     Direct(usize),
@@ -69,7 +70,9 @@ pub enum LatencyEvent {
 }
 
 impl Event for LatencyEvent {
-    ///
+    type Params = RotorParams;
+    type Instance = RotorInstance;
+
     fn name(&self) -> String {
         match self {
             LatencyEvent::Direct(_) => "direct",
@@ -79,7 +82,6 @@ impl Event for LatencyEvent {
         .to_owned()
     }
 
-    ///
     fn should_track_stats(&self) -> bool {
         match self {
             LatencyEvent::Direct(slice) => *slice == 0,
@@ -88,61 +90,80 @@ impl Event for LatencyEvent {
         }
     }
 
-    ///
-    fn dependencies(&self) -> Vec<LatencyEvent> {
+    fn dependencies(&self, params: &RotorParams) -> Vec<LatencyEvent> {
         match self {
-            LatencyEvent::Direct(i) => {
-                if *i == 0 {
+            LatencyEvent::Direct(slice) => {
+                if *slice == 0 {
                     vec![]
                 } else {
-                    vec![LatencyEvent::Direct(*i - 1)]
+                    vec![LatencyEvent::Direct(*slice - 1)]
                 }
             }
-            LatencyEvent::Rotor(i) => vec![LatencyEvent::Direct(*i)],
-            LatencyEvent::Block => vec![LatencyEvent::Rotor(0)],
+            LatencyEvent::Rotor(slice) => vec![LatencyEvent::Direct(*slice)],
+            LatencyEvent::Block => {
+                let mut dependencies = Vec::new();
+                for slice in 0..params.num_slices {
+                    dependencies.push(LatencyEvent::Rotor(slice));
+                }
+                dependencies
+            }
         }
     }
 
-    ///
     fn calculate_timing(
         &self,
-        dep_timings: &[&[SimTime]],
+        dependency_timings: &[&[SimTime]],
+        instance: &RotorInstance,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::Direct(i) => {
-                let mut timings = match *i {
-                    0 => vec![SimTime::ZERO; environment.num_validators()],
-                    _ => dep_timings[0].to_vec(),
+            LatencyEvent::Direct(slice) => {
+                let mut timings = match *slice {
+                    0 => (0..environment.num_validators())
+                        .map(|recipient| environment.propagation_delay(0, recipient as ValidatorId))
+                        .collect(),
+                    _ => dependency_timings[0].to_vec(),
                 };
-                // TODO: use actual relays
                 // TODO: reserve network resource
                 let leader = 0;
-                for relay in 1..=64 {
-                    timings[relay as usize] += environment.propagation_delay(leader, relay);
-                    timings[relay as usize] +=
+                for relay in &instance.relays[*slice] {
+                    timings[*relay as usize] +=
                         environment.transmission_delay(MAX_DATA_PER_SHRED, leader);
                 }
                 timings
             }
-            LatencyEvent::Rotor(_) => dep_timings[0].to_vec(),
-            LatencyEvent::Block => dep_timings[0].to_vec(),
+            LatencyEvent::Rotor(slice) => {
+                let mut timings = dependency_timings[0].to_vec();
+                for recipient in 0..environment.num_validators() {
+                    // TODO: reserve network resource
+                    let mut shred_timings = vec![SimTime::NEVER; instance.params.num_shreds];
+                    for (i, relay) in instance.relays[*slice].iter().enumerate() {
+                        shred_timings[i] = timings[*relay as usize];
+                        shred_timings[i] +=
+                            environment.propagation_delay(*relay, recipient as ValidatorId);
+                        shred_timings[i] += environment
+                            .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
+                    }
+                    shred_timings.sort_unstable();
+                    timings[recipient] += shred_timings[31];
+                }
+                timings
+            }
+            LatencyEvent::Block => column_max(dependency_timings),
         }
     }
 }
 
-///
-pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
-    builder: RotorInstanceBuilder<L, R>,
-    environment: SimulationEnvironment,
-}
-
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencyTest<L, R> {
-    ///
-    pub fn new(builder: RotorInstanceBuilder<L, R>, environment: SimulationEnvironment) -> Self {
-        Self {
-            builder,
-            environment,
+fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+    assert!(!rows.is_empty());
+    let mut result = rows[0].to_vec();
+    for row in &rows[1..] {
+        assert_eq!(row.len(), result.len(), "all rows must have same length");
+        for (res, &val) in result.iter_mut().zip(row.iter()) {
+            if val > *res {
+                *res = val;
+            }
         }
     }
+    result
 }

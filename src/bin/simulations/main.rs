@@ -336,24 +336,22 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
-        let vals = validators_with_ping_data
-            .iter()
-            .map(|(v, _)| v.clone())
-            .collect();
-        let ping_servers = validators_with_ping_data.iter().map(|(_, p)| *p).collect();
-        let total_stake: Stake = validators_with_ping_data.iter().map(|(v, _)| v.stake).sum();
-        let environment = SimulationEnvironment::new(vals, ping_servers, total_stake);
-
-        let params = RotorParams {
-            num_data_shreds: 32,
-            num_shreds: 64,
-            num_slices: 1,
-        };
-        let builder =
-            RotorInstanceBuilder::new(leader_sampler.clone(), rotor_sampler.clone(), params);
-
+        let params = RotorParams::new(32, 64, 10);
+        let builder = RotorInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let leader_bandwidth = 1_000_000_000; // 1 Gbps
+        let bandwidths = vec![leader_bandwidth; validators.len()];
+        let environment =
+            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
+                .with_bandwidths(leader_bandwidth, bandwidths);
         let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment);
-        engine.run_many_sequential(10);
+        info!("rotor latency sim (sequential)");
+        engine.run_many_sequential(1000);
+        // info!("rotor latency sim (parallel)");
+        // engine.run_many_parallel(1000);
 
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
