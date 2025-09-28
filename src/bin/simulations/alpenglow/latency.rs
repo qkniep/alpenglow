@@ -6,6 +6,7 @@
 //! So far, this test can only simulate the good case.
 
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -16,7 +17,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Builder, Event, SimTime, SimulationEnvironment, Stage, TimingStats, Timings,
+    Builder, Event, Protocol, SimTime, SimulationEnvironment, Stage, TimingStats, Timings,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
@@ -24,6 +25,19 @@ use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 /// Size (in bytes) assumed per certificate in the simulation.
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
+
+pub struct AlpenglowLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
+    _leader_sampler: PhantomData<L>,
+    _rotor_sampler: PhantomData<R>,
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for AlpenglowLatencySimulation<L, R> {
+    type Event = LatencyEvent;
+    type Stage = LatencyTestStage;
+    type Params = LatencySimParams;
+    type Instance = LatencySimInstance;
+    type Builder = LatencySimInstanceBuilder<L, R>;
+}
 
 /// The sequential stages of the latency test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -156,14 +170,24 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
             params,
         }
     }
+}
+
+impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBuilder<L, R> {
+    type Params = LatencySimParams;
+    type Instance = LatencySimInstance;
 
     ///
-    pub fn sample_instance(&self, rng: &mut impl Rng) -> LatencySimInstance {
+    fn build(&self, rng: &mut impl Rng) -> LatencySimInstance {
         let rotor_instance = self.rotor_builder.build(rng);
         LatencySimInstance {
             rotor_instance,
             params: self.params.clone(),
         }
+    }
+
+    ///
+    fn params(&self) -> &Self::Params {
+        &self.params
     }
 }
 
@@ -178,7 +202,7 @@ pub struct LatencyTest<L: SamplingStrategy, R: SamplingStrategy> {
     builder: LatencySimInstanceBuilder<L, R>,
     environment: SimulationEnvironment,
     /// Running aggregates for percentiles.
-    stats: RwLock<TimingStats<LatencyTestStage>>,
+    stats: RwLock<TimingStats<AlpenglowLatencySimulation<L, R>>>,
 }
 
 impl<L, R> LatencyTest<L, R>
@@ -270,7 +294,7 @@ where
     ) {
         let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
         for _ in 0..iterations {
-            let mut instance = self.builder.sample_instance(&mut rng);
+            let mut instance = self.builder.build(&mut rng);
             instance.rotor_instance.leader = leader.id;
             self.run_one_deterministic(up_to_stage, instance);
         }
@@ -295,7 +319,7 @@ where
 
     /// Runs one iteration of the latency simulation with random leader and relays.
     pub fn run_one(&self, up_to_stage: LatencyTestStage, rng: &mut impl Rng) {
-        let instance = self.builder.sample_instance(rng);
+        let instance = self.builder.build(rng);
         self.run_one_deterministic(up_to_stage, instance);
     }
 

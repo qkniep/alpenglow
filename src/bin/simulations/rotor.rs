@@ -14,9 +14,9 @@ use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use rand::prelude::*;
 
-use crate::discrete_event_simulator::Builder;
-
+pub use self::latency::RotorLatencySimulation;
 pub use self::robustness::RotorRobustnessTest;
+use crate::discrete_event_simulator::Builder;
 
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

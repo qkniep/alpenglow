@@ -19,9 +19,8 @@ use alpenglow::network::simulated::ping_data::PingServer;
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use log::info;
 
-use crate::discrete_event_simulator::{Event, Stage};
-
 use super::SimulationEnvironment;
+use crate::discrete_event_simulator::{Event, Protocol, Stage};
 
 /// Simulated time in nanoseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -95,12 +94,12 @@ impl<E: Event + PartialEq + Eq + Hash> Default for Timings<E> {
     }
 }
 
-pub struct TimingStats<S: Stage>(HashMap<S::Event, EventTimingStats>);
+pub struct TimingStats<P: Protocol>(HashMap<P::Event, EventTimingStats>);
 
-impl<S: Stage> TimingStats<S> {
+impl<P: Protocol> TimingStats<P> {
     pub fn record_latencies(
         &mut self,
-        timings: &mut Timings<S::Event>,
+        timings: &mut Timings<P::Event>,
         environment: &SimulationEnvironment,
     ) {
         for (event, timing_vec) in timings.iter() {
@@ -116,13 +115,13 @@ impl<S: Stage> TimingStats<S> {
     pub fn write_to_csv(
         &self,
         filename: impl AsRef<Path>,
-        params: &S::Params,
+        params: &P::Params,
     ) -> std::io::Result<()> {
         let file = File::create(filename)?;
         let mut writer = BufWriter::new(file);
 
         // collect all events
-        let events = S::all()
+        let events = P::Stage::all()
             .iter()
             .flat_map(|stage| {
                 stage
@@ -159,7 +158,7 @@ impl<S: Stage> TimingStats<S> {
     }
 }
 
-impl<S: Stage> Default for TimingStats<S> {
+impl<P: Protocol> Default for TimingStats<P> {
     fn default() -> Self {
         Self(HashMap::new())
     }

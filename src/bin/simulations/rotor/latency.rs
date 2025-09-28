@@ -13,6 +13,7 @@ use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use crate::discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage};
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
+///
 pub struct RotorLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
@@ -52,20 +53,8 @@ impl Stage for LatencyTestStage {
 
     fn events(&self, params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
-            LatencyTestStage::Direct => {
-                let mut events = Vec::with_capacity(params.num_slices);
-                for _ in 0..params.num_slices {
-                    events.push(LatencyEvent::Direct(0));
-                }
-                events
-            }
-            LatencyTestStage::Rotor => {
-                let mut events = Vec::with_capacity(params.num_slices);
-                for _ in 0..params.num_slices {
-                    events.push(LatencyEvent::Rotor(0));
-                }
-                events
-            }
+            LatencyTestStage::Direct => (0..params.num_slices).map(LatencyEvent::Direct).collect(),
+            LatencyTestStage::Rotor => (0..params.num_slices).map(LatencyEvent::Rotor).collect(),
             LatencyTestStage::Block => vec![LatencyEvent::Block],
         }
     }
@@ -110,7 +99,7 @@ impl Event for LatencyEvent {
                 }
             }
             LatencyEvent::Rotor(i) => vec![LatencyEvent::Direct(*i)],
-            LatencyEvent::Block => vec![],
+            LatencyEvent::Block => vec![LatencyEvent::Rotor(0)],
         }
     }
 

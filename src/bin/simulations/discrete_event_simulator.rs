@@ -7,11 +7,13 @@
 
 mod timings;
 
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::RwLock;
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
+use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
@@ -39,17 +41,17 @@ pub trait Builder {
 }
 
 ///
-pub trait Event: Sized + Clone + Copy + Eq + Hash + Send + Sync {
-    /// Return the name of the event.
+pub trait Event: Clone + Copy + Debug + Eq + Hash {
+    /// Returns the name of the event.
     fn name(&self) -> String;
 
-    /// Return `true` iff the event should be tracked for timing stats.
+    /// Returns `true` iff the event should be tracked for timing stats.
     fn should_track_stats(&self) -> bool;
 
-    /// Return a list of dependency event IDs.
+    /// Returns a list of dependency event IDs.
     fn dependencies(&self) -> Vec<Self>;
 
-    /// Calculate timing vector given dependencies.
+    /// Calculates timing vector given dependencies.
     fn calculate_timing(
         &self,
         dep_timings: &[&[SimTime]],
@@ -58,28 +60,31 @@ pub trait Event: Sized + Clone + Copy + Eq + Hash + Send + Sync {
 }
 
 ///
-pub trait Stage: Sized + Clone + Copy + Eq + Hash + Send + Sync {
+pub trait Stage: Clone + Copy + Debug + Eq + Hash {
     type Event: Event;
     type Params: Clone + Send + Sync;
 
-    ///
+    /// Returns a list of all stages, in order.
     fn all() -> Vec<Self> {
         let mut stages = Vec::new();
         let mut stage = Self::first();
-        while let Some(s) = stage.next() {
-            stages.push(s);
-            stage = s;
+        loop {
+            stages.push(stage);
+            match stage.next() {
+                Some(s) => stage = s,
+                None => break,
+            }
         }
         stages
     }
 
-    ///
+    /// Returns the first stage.
     fn first() -> Self;
 
-    ///
+    /// Returns the next stage, if any.
     fn next(&self) -> Option<Self>;
 
-    ///
+    /// Returns a list of all events within the stage.
     fn events(&self, params: &Self::Params) -> Vec<Self::Event>;
 }
 
@@ -96,11 +101,13 @@ pub enum EventKind {
 pub struct SimulationEngine<P: Protocol> {
     builder: P::Builder,
     environment: SimulationEnvironment,
-    stats: RwLock<TimingStats<P::Stage>>,
+    stats: RwLock<TimingStats<P>>,
 }
 
 impl<P: Protocol> SimulationEngine<P> {
+    /// Creates a new simulation engine.
     ///
+    /// The `environment` holds the validators, network parameters, etc.
     pub fn new(builder: P::Builder, environment: SimulationEnvironment) -> Self {
         Self {
             builder,
@@ -109,7 +116,9 @@ impl<P: Protocol> SimulationEngine<P> {
         }
     }
 
+    /// Runs the simulation `iterations` times.
     ///
+    /// Samples a new `Instance` from the `Builder` for each iteration.
     pub fn run_many_sequential(&self, iterations: u64) {
         let mut rng = rand::rng();
         let mut timings = Timings::default();
@@ -119,10 +128,10 @@ impl<P: Protocol> SimulationEngine<P> {
         }
         let stats_map = self.stats.read().unwrap();
         // TODO: determine correct filename
-        stats_map.write_to_csv("test.csv", &self.builder.params());
+        stats_map.write_to_csv("test.csv", self.builder.params());
     }
 
-    ///
+    /// Runs one iteration of the simulation.
     pub fn run(&self, instance: &P::Instance, timings: &mut Timings<P::Event>) {
         // setup & initialization
         let num_val = self.environment.num_validators();
@@ -130,15 +139,19 @@ impl<P: Protocol> SimulationEngine<P> {
 
         // simulation loop
         for stage in P::Stage::all() {
-            for event in stage.events(&self.builder.params()) {
+            for event in stage.events(self.builder.params()) {
+                debug!("initializing timings for event {:?}", event);
                 timings.initialize(event, num_val);
             }
 
-            for event in stage.events(&self.builder.params()) {
+            for event in stage.events(self.builder.params()) {
                 let dep_timings = event
                     .dependencies()
                     .into_iter()
-                    .map(|dep| timings.get(dep).unwrap())
+                    .map(|dep| {
+                        debug!("requesting dep timings for event {:?}", dep);
+                        timings.get(dep).unwrap()
+                    })
                     .collect::<Vec<_>>();
                 let latencies = event.calculate_timing(&dep_timings, &self.environment);
                 for (validator, latency) in latencies.iter().enumerate() {
@@ -156,6 +169,7 @@ impl<P: Protocol> SimulationEngine<P> {
 impl<P: Protocol> SimulationEngine<P>
 where
     P::Builder: Send + Sync,
+    P::Event: Send + Sync,
 {
     ///
     pub fn run_many_parallel(&self, iterations: u64) {
@@ -167,7 +181,7 @@ where
         });
         let stats_map = self.stats.read().unwrap();
         // TODO: determine correct filename
-        stats_map.write_to_csv("test.csv", &self.builder.params());
+        stats_map.write_to_csv("test.csv", self.builder.params());
     }
 }
 
@@ -230,4 +244,12 @@ impl SimulationEnvironment {
         let latency_ns = (ping_ms * 1e6).round() as u64;
         SimTime::new(latency_ns)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {}
 }

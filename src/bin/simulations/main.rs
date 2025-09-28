@@ -49,13 +49,15 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{ValidatorInfo, logging};
+use ::alpenglow::{Stake, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
 use self::alpenglow::{BandwidthTest, LatencyTest, LatencyTestStage};
 use self::rotor::RotorRobustnessTest;
+use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
+use crate::rotor::{RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
@@ -334,6 +336,25 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
+        let vals = validators_with_ping_data
+            .iter()
+            .map(|(v, _)| v.clone())
+            .collect();
+        let ping_servers = validators_with_ping_data.iter().map(|(_, p)| *p).collect();
+        let total_stake: Stake = validators_with_ping_data.iter().map(|(v, _)| v.stake).sum();
+        let environment = SimulationEnvironment::new(vals, ping_servers, total_stake);
+
+        let params = RotorParams {
+            num_data_shreds: 32,
+            num_shreds: 64,
+            num_slices: 1,
+        };
+        let builder =
+            RotorInstanceBuilder::new(leader_sampler.clone(), rotor_sampler.clone(), params);
+
+        let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment);
+        engine.run_many_sequential(10);
+
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
