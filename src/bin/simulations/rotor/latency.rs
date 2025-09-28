@@ -11,8 +11,8 @@ use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
+use super::{RotorInstance, RotorInstanceBuilder, RotorParams};
 use crate::discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage};
-use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
 
 ///
 pub struct RotorLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
@@ -55,8 +55,16 @@ impl Stage for LatencyTestStage {
     fn events(&self, params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
             LatencyTestStage::Direct => (0..params.num_slices).map(LatencyEvent::Direct).collect(),
-            LatencyTestStage::Rotor => (0..params.num_slices).map(LatencyEvent::Rotor).collect(),
-            LatencyTestStage::Block => vec![LatencyEvent::Block],
+            LatencyTestStage::Rotor => {
+                let mut events = Vec::with_capacity(2 * params.num_slices + 1);
+                events.push(LatencyEvent::BlockSent);
+                for slice in 0..params.num_slices {
+                    events.push(LatencyEvent::FirstShredInSlice(slice));
+                    events.push(LatencyEvent::Rotor(slice));
+                }
+                events
+            }
+            LatencyTestStage::Block => vec![LatencyEvent::FirstShred, LatencyEvent::Block],
         }
     }
 }
@@ -65,7 +73,10 @@ impl Stage for LatencyTestStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
     Direct(usize),
+    BlockSent,
+    FirstShredInSlice(usize),
     Rotor(usize),
+    FirstShred,
     Block,
 }
 
@@ -76,7 +87,10 @@ impl Event for LatencyEvent {
     fn name(&self) -> String {
         match self {
             LatencyEvent::Direct(_) => "direct",
+            LatencyEvent::BlockSent => "block_sent",
+            LatencyEvent::FirstShredInSlice(_) => "first_shred_in_slice",
             LatencyEvent::Rotor(_) => "rotor",
+            LatencyEvent::FirstShred => "first_shred",
             LatencyEvent::Block => "block",
         }
         .to_owned()
@@ -85,7 +99,10 @@ impl Event for LatencyEvent {
     fn should_track_stats(&self) -> bool {
         match self {
             LatencyEvent::Direct(slice) => *slice == 0,
+            LatencyEvent::BlockSent => true,
+            LatencyEvent::FirstShredInSlice(_) => false,
             LatencyEvent::Rotor(slice) => *slice == 0,
+            LatencyEvent::FirstShred => true,
             LatencyEvent::Block => true,
         }
     }
@@ -99,14 +116,13 @@ impl Event for LatencyEvent {
                     vec![LatencyEvent::Direct(*slice - 1)]
                 }
             }
+            LatencyEvent::BlockSent => (0..params.num_slices).map(LatencyEvent::Direct).collect(),
+            LatencyEvent::FirstShredInSlice(slice) => vec![LatencyEvent::Direct(*slice)],
             LatencyEvent::Rotor(slice) => vec![LatencyEvent::Direct(*slice)],
-            LatencyEvent::Block => {
-                let mut dependencies = Vec::new();
-                for slice in 0..params.num_slices {
-                    dependencies.push(LatencyEvent::Rotor(slice));
-                }
-                dependencies
-            }
+            LatencyEvent::FirstShred => (0..params.num_slices)
+                .map(LatencyEvent::FirstShredInSlice)
+                .collect(),
+            LatencyEvent::Block => (0..params.num_slices).map(LatencyEvent::Rotor).collect(),
         }
     }
 
@@ -131,6 +147,34 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
+            LatencyEvent::BlockSent => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                timings[instance.leader as usize] = SimTime::ZERO;
+                let block_bytes =
+                    instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
+                timings[instance.leader as usize] +=
+                    environment.transmission_delay(block_bytes, instance.leader);
+                timings
+            }
+            LatencyEvent::FirstShredInSlice(slice) => {
+                let mut timings = dependency_timings[0].to_vec();
+                for recipient in 0..environment.num_validators() {
+                    // TODO: reserve network resource
+                    let first_shred_time = instance.relays[*slice]
+                        .iter()
+                        .map(|relay| {
+                            let prop_delay =
+                                environment.propagation_delay(*relay, recipient as ValidatorId);
+                            let tx_delay = environment
+                                .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
+                            timings[*relay as usize] + prop_delay + tx_delay
+                        })
+                        .min()
+                        .unwrap();
+                    timings[recipient] = first_shred_time;
+                }
+                timings
+            }
             LatencyEvent::Rotor(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 for recipient in 0..environment.num_validators() {
@@ -148,9 +192,24 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
+            LatencyEvent::FirstShred => column_min(dependency_timings),
             LatencyEvent::Block => column_max(dependency_timings),
         }
     }
+}
+
+fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+    assert!(!rows.is_empty());
+    let mut result = rows[0].to_vec();
+    for row in &rows[1..] {
+        assert_eq!(row.len(), result.len(), "all rows must have same length");
+        for (res, &val) in result.iter_mut().zip(row.iter()) {
+            if val < *res {
+                *res = val;
+            }
+        }
+    }
+    result
 }
 
 fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
