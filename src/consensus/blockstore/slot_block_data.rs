@@ -32,7 +32,8 @@ pub struct SlotBlockData {
     pub(super) equivocated: bool,
 }
 
-#[derive(Debug)]
+/// Enum to capture the different scenarios from [`add_shred_from_disseminator`] and [`add_shred_from_repair`].
+#[derive(PartialEq, Eq, Debug)]
 pub(super) enum AddShredResult {
     /// [`Shred`] was added successfully and no events were created as a result.
     Ok,
@@ -363,24 +364,41 @@ mod tests {
     use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
 
+    fn handle_shreds(
+        block_data: &mut BlockData,
+        pk: PublicKey,
+        slot: Slot,
+        shreds: impl Iterator<Item = ValidatedShred>,
+    ) -> (Vec<VotorEvent>, Result<(), AddShredResult>) {
+        let mut events = vec![];
+        for shred in shreds {
+            match block_data.add_shred(shred.into_shred(), pk) {
+                AddShredResult::Ok | AddShredResult::Duplicate => (),
+                AddShredResult::FirstShred => {
+                    let ev = VotorEvent::FirstShred(slot);
+                    events.push(ev);
+                }
+                AddShredResult::Block(block_info) => {
+                    let ev = VotorEvent::Block { slot, block_info };
+                    events.push(ev);
+                }
+                rest => return (events, Err(rest)),
+            }
+        }
+        (events, Ok(()))
+    }
+
+    /// Deshreds the slice and adds all the shreds to the blockstore.
+    ///
+    /// Any resulting [`VotorEvents`] are collected and returned; benign events are ignored; other error events terminate the function and the error is returned.
     fn handle_slice(
         block_data: &mut BlockData,
         slice: Slice,
         sk: &SecretKey,
-    ) -> (Vec<VotorEvent>, Result<(), AddShredError>) {
-        let pk = sk.to_pk();
+    ) -> (Vec<VotorEvent>, Result<(), AddShredResult>) {
+        let slot = slice.slot;
         let shreds = RegularShredder::shred(slice, sk).unwrap();
-        let mut events = vec![];
-        for shred in shreds {
-            match block_data.add_shred(shred.into_shred(), pk) {
-                Ok(Some(event)) => {
-                    events.push(event);
-                }
-                Ok(None) | Err(AddShredError::Duplicate) => (),
-                Err(err) => return (events, Err(err)),
-            }
-        }
-        (events, Ok(()))
+        handle_shreds(block_data, sk.to_pk(), slot, shreds.into_iter())
     }
 
     fn get_block_hash_from_votor_event(event: &VotorEvent) -> Hash {
@@ -403,12 +421,13 @@ mod tests {
         let slices = create_random_block(slot, 1);
         let mut block_data = BlockData::new(slot);
         let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
-        let mut events = vec![];
-        for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_shred(shred.into_shred(), pk).unwrap() {
-                events.push(event);
-            }
-        }
+        let (_events, res) = handle_shreds(
+            &mut block_data,
+            pk,
+            slot,
+            shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS),
+        );
+        let () = res.unwrap();
         assert!(block_data.completed.is_some());
 
         // all shreds should have been reconstructed
@@ -447,7 +466,7 @@ mod tests {
         slices[0].parent = None;
         let (events, res) =
             handle_slice(&mut BlockData::new(slices[0].slot), slices[0].clone(), &sk);
-        assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
+        assert_eq!(res.unwrap_err(), AddShredResult::InvalidShred);
         assert_eq!(events.len(), 1);
         let first_shred_event = VotorEvent::FirstShred(slot);
         assert_votor_events_match(events[0].clone(), first_shred_event);
@@ -469,7 +488,7 @@ mod tests {
             if ind == 0 || ind == 1 {
                 let () = res.unwrap();
             } else {
-                assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
+                assert_eq!(res.unwrap_err(), AddShredResult::InvalidShred);
             }
         }
         assert_eq!(events.len(), 1);
@@ -501,7 +520,7 @@ mod tests {
             if ind == 0 || ind == 1 {
                 let () = res.unwrap();
             } else {
-                assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
+                assert_eq!(res.unwrap_err(), AddShredResult::InvalidShred);
             }
         }
         assert_eq!(events.len(), 1);
