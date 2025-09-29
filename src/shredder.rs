@@ -259,7 +259,7 @@ impl Shredder for RegularShredder {
     fn deshred_validated_shreds(
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.into_shreds();
+        let shreds = shreds.to_shreds();
         let payload =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
 
@@ -305,7 +305,7 @@ impl Shredder for CodingOnlyShredder {
     fn deshred_validated_shreds(
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.into_shreds();
+        let shreds = shreds.to_shreds();
         let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
@@ -371,7 +371,7 @@ impl Shredder for PetsShredder {
     fn deshred_validated_shreds(
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.into_shreds();
+        let shreds = shreds.to_shreds();
         let mut buffer = reed_solomon_deshred(
             shreds,
             DATA_SHREDS,
@@ -454,7 +454,7 @@ impl Shredder for AontShredder {
     fn deshred_validated_shreds(
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.into_shreds();
+        let shreds = shreds.to_shreds();
         let mut buffer =
             reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
         if buffer.len() < 16 {

@@ -34,8 +34,8 @@ impl<'a> ValidatedShreds<'a> {
     }
 
     /// Returns the inner array of [`ValidatedShred`]s.
-    pub(super) fn into_shreds(&self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
-        &self.0
+    pub(super) fn to_shreds(&self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
+        self.0
     }
 }
 
