@@ -136,7 +136,7 @@ impl Shred {
         )
     }
 
-    /// Returns the [`ShredPayload`] contained in this shred.
+    /// References the payload contained in this shred.
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
