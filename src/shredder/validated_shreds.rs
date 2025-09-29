@@ -80,7 +80,7 @@ mod tests {
             .map(Some);
         assert!(ValidatedShreds::try_new(&shreds, 1, TOTAL_SHREDS - 1).is_none());
 
-        // there are fewer data shreds in the array
+        // there are coding shreds in data shred locations in the array
         let shreds = RegularShredder::shred(slice.clone(), &sk)
             .unwrap()
             .map(Some);
