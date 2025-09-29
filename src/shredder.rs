@@ -268,8 +268,7 @@ impl Shredder for RegularShredder {
     fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let payload =
-            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
+        let payload = reed_solomon_deshred(shreds, TOTAL_SHREDS - DATA_SHREDS)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
@@ -313,7 +312,7 @@ impl Shredder for CodingOnlyShredder {
     fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
+        let payload = reed_solomon_deshred(shreds, TOTAL_SHREDS)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
@@ -378,12 +377,7 @@ impl Shredder for PetsShredder {
     fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut buffer = reed_solomon_deshred(
-            shreds,
-            DATA_SHREDS,
-            TOTAL_SHREDS - DATA_SHREDS + 1,
-            DATA_SHREDS - 1,
-        )?;
+        let mut buffer = reed_solomon_deshred(shreds, TOTAL_SHREDS - DATA_SHREDS + 1)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -460,8 +454,7 @@ impl Shredder for AontShredder {
     fn deshred_validated_shreds(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut buffer =
-            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
+        let mut buffer = reed_solomon_deshred(shreds, TOTAL_SHREDS - DATA_SHREDS)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }

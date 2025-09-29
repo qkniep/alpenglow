@@ -65,15 +65,15 @@ pub(super) fn reed_solomon_shred(
 /// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns `Err(ReedSolomonDeshredError::TooMuchData)`.
 pub(super) fn reed_solomon_deshred(
     shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
-    num_data: usize,
     num_coding: usize,
-    coding_offset: usize,
 ) -> Result<Vec<u8>, ReedSolomonDeshredError> {
-    assert!(coding_offset <= DATA_SHREDS);
+    assert!(num_coding <= TOTAL_SHREDS);
     let shreds_cnt = shreds.iter().filter(|s| s.is_some()).count();
     if shreds_cnt < DATA_SHREDS {
         return Err(ReedSolomonDeshredError::NotEnoughShreds);
     }
+
+    let coding_offset = TOTAL_SHREDS - num_coding;
 
     // filter to split data and coding shreds
     let data = shreds.iter().take(coding_offset).filter_map(|s| {
@@ -90,7 +90,7 @@ pub(super) fn reed_solomon_deshred(
         })
     });
 
-    let restored = rs::decode(num_data, num_coding, data.clone(), coding).unwrap();
+    let restored = rs::decode(DATA_SHREDS, num_coding, data.clone(), coding).unwrap();
 
     let mut data_shreds = vec![None; DATA_SHREDS];
     for (i, d) in data {
@@ -179,7 +179,7 @@ mod tests {
         for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
             *shred = None;
         }
-        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS);
+        let res = reed_solomon_deshred(&shreds, TOTAL_SHREDS - DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
     }
@@ -187,8 +187,7 @@ mod tests {
     fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
         let shreds = reed_solomon_shred(payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
         let shreds = take_and_map_enough_shreds(header, shreds);
-        let restored =
-            reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS).unwrap();
+        let restored = reed_solomon_deshred(&shreds, TOTAL_SHREDS - DATA_SHREDS).unwrap();
         assert_eq!(restored, payload);
     }
 
