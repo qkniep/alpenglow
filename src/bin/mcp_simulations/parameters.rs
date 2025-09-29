@@ -8,6 +8,7 @@
 use log::info;
 use statrs::distribution::{Binomial, DiscreteCDF};
 
+/// Parameters for the MCP protocol.
 #[derive(Clone, Copy, Debug)]
 pub struct McpParameters {
     num_proposers: u64,
@@ -17,12 +18,14 @@ pub struct McpParameters {
     attestations_threshold: u64,
 }
 
+/// Adversary strength.
 #[derive(Clone, Copy, Debug)]
 pub struct AdversaryStrength {
     pub crashed: f64,
     pub byzantine: f64,
 }
 
+/// Specific instantiation of the adversary's strength for MPC.
 #[derive(Clone, Copy, Debug)]
 pub struct SpecificAdversaryStrength {
     is_leader: bool,
