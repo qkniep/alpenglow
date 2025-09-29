@@ -150,15 +150,14 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::BlockSent => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                timings[instance.leader as usize] = SimTime::ZERO;
-                let block_bytes =
-                    instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
-                timings[instance.leader as usize] +=
-                    environment.transmission_delay(block_bytes, instance.leader);
-                timings
-            }
+            LatencyEvent::BlockSent => (0..environment.num_validators())
+                .map(|leader| {
+                    let block_bytes = instance.params.num_slices
+                        * instance.params.num_shreds
+                        * MAX_DATA_PER_SHRED;
+                    environment.transmission_delay(block_bytes, instance.leader)
+                })
+                .collect(),
             LatencyEvent::FirstShredInSlice(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 for recipient in 0..environment.num_validators() {
