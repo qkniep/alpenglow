@@ -80,8 +80,8 @@ impl SlotBlockData {
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
-            debug!("recevied shred from equivocating leader, not adding to blockstore");
-            return Err(AddShredError::Equivocation);
+            debug!("recevied shred from misbehaving leader, not adding to blockstore");
+            return Err(AddShredError::InvalidShred);
         }
         self.disseminated
             .add_shred(shred, leader_pk)
