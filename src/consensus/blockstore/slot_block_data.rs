@@ -29,7 +29,7 @@ pub struct SlotBlockData {
     /// Spot for storing blocks that might later be received via repair.
     pub(super) repaired: BTreeMap<Hash, BlockData>,
     /// Whether conflicting shreds have been seen for this slot.
-    pub(super) equivocated: bool,
+    leader_misbehaved: bool,
 }
 
 /// Enum to capture the different scenarios from [`add_shred_from_disseminator`] and [`add_shred_from_repair`].
@@ -58,7 +58,7 @@ impl SlotBlockData {
             slot,
             disseminated: BlockData::new(slot),
             repaired: BTreeMap::new(),
-            equivocated: false,
+            leader_misbehaved: false,
         }
     }
 
@@ -71,13 +71,13 @@ impl SlotBlockData {
         leader_pk: PublicKey,
     ) -> AddShredResult {
         assert_eq!(shred.payload().header.slot, self.slot);
-        if self.equivocated {
+        if self.leader_misbehaved {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return AddShredResult::Equivocation;
         }
         let res = self.disseminated.add_shred(shred, leader_pk);
         if matches!(res, AddShredResult::Equivocation) {
-            self.equivocated = true;
+            self.leader_misbehaved = true;
         }
         res
     }
@@ -98,7 +98,7 @@ impl SlotBlockData {
             .or_insert_with(|| BlockData::new(self.slot));
         let res = block_data.add_shred(shred, leader_pk);
         if matches!(res, AddShredResult::Equivocation) {
-            self.equivocated = true;
+            self.leader_misbehaved = true;
         }
         res
     }
