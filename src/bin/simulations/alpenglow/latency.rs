@@ -159,7 +159,8 @@ impl Event for LatencyEvent {
                     environment.clone(),
                 );
                 let mut timings = Timings::default();
-                engine.run(&_instance.rotor_instance, &mut timings);
+                // TODO: actually simulate more than one slot
+                engine.run(&_instance.rotor_instances[0], &mut timings);
                 timings
                     .get(crate::rotor::LatencyEvent::Block)
                     .unwrap()
@@ -173,7 +174,7 @@ impl Event for LatencyEvent {
     }
 }
 
-///
+/// Parameters for the Alpenglow latency simulation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LatencySimParams {
     rotor_params: RotorParams,
@@ -182,7 +183,7 @@ pub struct LatencySimParams {
 }
 
 impl LatencySimParams {
-    ///
+    /// Creates a parameter set for the Alpenglow latency simulation.
     pub fn new(rotor_params: RotorParams, num_slots_per_window: usize, num_slots: usize) -> Self {
         Self {
             rotor_params,
@@ -192,14 +193,14 @@ impl LatencySimParams {
     }
 }
 
-///
+/// A builder for Alpenglow latency simulation instances.
 pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
     rotor_builder: RotorInstanceBuilder<L, R>,
     params: LatencySimParams,
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
-    ///
+    /// Creates a new builder instance from a builder for Rotor instances.
     pub fn new(rotor_builder: RotorInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
         Self {
             rotor_builder,
@@ -213,9 +214,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
     type Instance = LatencySimInstance;
 
     fn build(&self, rng: &mut impl Rng) -> LatencySimInstance {
-        let rotor_instance = self.rotor_builder.build(rng);
+        let rotor_instances = (0..self.params.num_slots)
+            .map(|_| self.rotor_builder.build(rng))
+            .collect();
         LatencySimInstance {
-            rotor_instance,
+            rotor_instances,
             params: self.params.clone(),
         }
     }
@@ -225,9 +228,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
     }
 }
 
+/// A specific instance of the Alpenglow latency simulation.
 ///
+/// Contains one instance of the Rotor latency simulation, [`RotorInstance`], per slot.
 pub struct LatencySimInstance {
-    rotor_instance: RotorInstance,
+    rotor_instances: Vec<RotorInstance>,
     params: LatencySimParams,
 }
 

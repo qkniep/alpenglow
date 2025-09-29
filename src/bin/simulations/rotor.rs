@@ -18,16 +18,19 @@ pub use self::latency::{LatencyEvent, RotorLatencySimulation};
 pub use self::robustness::RotorRobustnessTest;
 use crate::discrete_event_simulator::Builder;
 
-///
+/// Parameters for the Rotor protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RotorParams {
+    /// Number of shreds needed to recover the data.
     pub num_data_shreds: usize,
+    /// NUmber of shreds that make up a slice.
     pub num_shreds: usize,
+    /// Number of slices that make up a block.
     pub num_slices: usize,
 }
 
 impl RotorParams {
-    ///
+    /// Creates a new set of Rotor parameters.
     pub fn new(num_data_shreds: usize, num_shreds: usize, num_slices: usize) -> Self {
         Self {
             num_data_shreds,
@@ -37,7 +40,7 @@ impl RotorParams {
     }
 }
 
-///
+/// Builder for Rotor instances with a specific set of parameters.
 #[derive(Debug)]
 pub struct RotorInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
     pub leader_sampler: L,
@@ -46,7 +49,7 @@ pub struct RotorInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
-    ///
+    /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(leader_sampler: L, rotor_sampler: R, params: RotorParams) -> Self {
         Self {
             leader_sampler,
@@ -60,7 +63,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
     type Params = RotorParams;
     type Instance = RotorInstance;
 
-    ///
     fn build(&self, rng: &mut impl Rng) -> RotorInstance {
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
@@ -74,16 +76,18 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
         }
     }
 
-    ///
     fn params(&self) -> &Self::Params {
         &self.params
     }
 }
 
-///
+/// Specific instance of the Rotor protocol.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RotorInstance {
+    /// Leader validator.
     pub leader: ValidatorId,
+    /// Relays for each slice, and each shred within a slice.
     pub relays: Vec<Vec<ValidatorId>>,
+    /// Parameters this instance corresponds to.
     pub params: RotorParams,
 }

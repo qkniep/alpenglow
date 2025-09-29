@@ -1,7 +1,11 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Calculations about the robustness of the Rotor block dissemination protocol.
 //!
+//! This implements two main attack scenarios:
+//! - Equivocation attack: Less than 20% of stake is Byzantine.
+//! - Censorship attack: Up to 40% of stake is crashed.
 //!
 //!
 
@@ -18,9 +22,10 @@ use rayon::prelude::*;
 use super::RotorParams;
 use crate::rotor::RotorInstanceBuilder;
 
+/// Simulations stop early if the number of failures is greater than this.
 const MAX_FAILURES: usize = 10_000;
 
-///
+/// Test harness for Rotor robustness testing.
 pub struct RotorRobustnessTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
@@ -31,7 +36,7 @@ pub struct RotorRobustnessTest<S: SamplingStrategy> {
 }
 
 impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
-    ///
+    /// Creates a new instance of the test harness.
     pub fn new(
         validators: Vec<ValidatorInfo>,
         sampler: S,
@@ -62,7 +67,13 @@ impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
         }
     }
 
+    /// Runs robustness test with an `attack_frac` fraction of stake corrupted.
     ///
+    /// This runs the various strategies of choosing validators to corrupt.
+    /// Returns the failure probability for the strongest adversary strategy.
+    ///
+    /// The `test_name` should be of the form "<stake-distribution>-<sampling-strategy>".
+    /// Results are written as a single line into to `csv_file`.
     pub fn run(&self, test_name: &str, attack_frac: f64, csv_file: &mut csv::Writer<File>) {
         let mut attack_prob = 0.0;
 

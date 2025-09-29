@@ -30,7 +30,7 @@ pub trait Protocol {
     type Builder: Builder<Params = Self::Params, Instance = Self::Instance>;
 }
 
-///
+/// Builder for instances of a protocol with a specific set of parameters.
 pub trait Builder {
     type Params;
     type Instance;
@@ -42,7 +42,11 @@ pub trait Builder {
     fn params(&self) -> &Self::Params;
 }
 
+/// Events that can occur in a protocol simulation.
 ///
+/// Each event has a name, a list of dependencies, and a calculation function.
+/// The simulation engine will pass the timings of its dependencies to the calculation function.
+/// The calculation function returns the timings of this event at each validator.
 pub trait Event: Clone + Copy + Debug + Eq + Hash {
     type Params;
     type Instance;
@@ -67,7 +71,10 @@ pub trait Event: Clone + Copy + Debug + Eq + Hash {
     ) -> Vec<SimTime>;
 }
 
+/// Sequential stages of a protocol simulation.
 ///
+/// Each stage contains one or more events.
+/// Events in later stages can only depend on events from earlier stages.
 pub trait Stage: Clone + Copy + Debug + Eq + Hash {
     type Event: Event;
     type Params;
@@ -96,12 +103,18 @@ pub trait Stage: Clone + Copy + Debug + Eq + Hash {
     fn events(&self, params: &Self::Params) -> Vec<Self::Event>;
 }
 
-///
+/// Kinds of events that are directly supported by the simulation engine.
 pub enum EventKind {
+    /// This event fires as soon as its dependencies are ready.
     Simple,
+    /// This event uses the senders outgoing network bandwidth.
     Broadcast,
+    /// This event uses the CPU for a certain amount of time.
     Compute,
+    /// To determine when this event fires, the simulation engine runs a sub-protocol.
     SubProtocol,
+    /// This event fires based on a user-provided function.
+    Custom,
 }
 
 /// Matrix-based discrete event simulation engine.
