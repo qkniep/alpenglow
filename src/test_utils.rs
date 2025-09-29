@@ -12,7 +12,7 @@ use crate::crypto::aggsig::SecretKey;
 use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
@@ -76,10 +76,10 @@ pub fn create_random_shredded_block(
     slot: Slot,
     num_slices: usize,
     sk: &signature::SecretKey,
-) -> (Hash, MerkleTree, Vec<Vec<Shred>>) {
+) -> (Hash, MerkleTree, Vec<Vec<ValidatedShred>>) {
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap());
+        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap().to_vec());
     }
     let merkle_roots = shreds
         .iter()

@@ -3,7 +3,6 @@
 
 pub mod sampling_strategy;
 
-use std::iter::once;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,7 +12,7 @@ use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::Network;
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -59,7 +58,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
 
 impl<N, S: SamplingStrategy> Rotor<N, S>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     /// Turns this instance into a new instance with a different sampling strategy.
     #[must_use]
@@ -71,7 +70,7 @@ where
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
         let v = self.epoch_info.validator(relay);
-        self.network.send(shred, once(v.disseminator_address)).await
+        self.network.send(shred, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -92,7 +91,7 @@ where
             .iter()
             .filter(|v| v.id != leader && v.id != relay)
             .map(|v| v.disseminator_address);
-        self.network.send(shred, to).await?;
+        self.network.send_to_many(shred, to).await?;
         Ok(())
     }
 
@@ -112,7 +111,7 @@ where
 #[async_trait]
 impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         Self::send_as_leader(self, shred).await
@@ -193,8 +192,8 @@ mod tests {
                         Ok(shred) => {
                             rotor_non_leader.forward(&shred).await.unwrap();
                             let mut guard = shreds_received.lock().await;
-                            assert!(!guard.contains(&shred.payload().index_in_slice));
-                            guard.insert(shred.payload().index_in_slice);
+                            assert!(!guard.contains(&*shred.payload().shred_index));
+                            guard.insert(*shred.payload().shred_index);
                         }
                         _ => continue,
                     }

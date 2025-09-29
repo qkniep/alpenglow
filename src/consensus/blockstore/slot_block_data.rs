@@ -17,7 +17,7 @@ use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
 use crate::network::BINCODE_CONFIG;
 use crate::shredder::{
-    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, ValidatedShred,
+    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
@@ -141,9 +141,7 @@ pub struct BlockData {
     /// Potentially completely restored block.
     pub(super) completed: Option<(Hash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
-    //
-    // TODO: Consider storing ValidatedShred here instead.
-    pub(super) shreds: BTreeMap<SliceIndex, Vec<Shred>>,
+    pub(super) shreds: BTreeMap<SliceIndex, [Option<ValidatedShred>; TOTAL_SHREDS]>,
     /// Any already reconstructed slices of this block.
     pub(super) slices: BTreeMap<SliceIndex, Slice>,
     /// Index of the slice marked as last, if any.
@@ -184,8 +182,7 @@ impl BlockData {
         &mut self,
         validated_shred: ValidatedShred,
     ) -> Result<Option<VotorEvent>, AddShredError> {
-        let shred = validated_shred.to_shred();
-        let header = &shred.payload().header;
+        let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
 
@@ -209,23 +206,19 @@ impl BlockData {
         }
 
         let is_first_shred = self.shreds.is_empty();
-        let slice_shreds = {
-            let shred_index = shred.payload().index_in_slice;
-            let slice_shreds = self.shreds.entry(slice_index).or_default();
-            let exists = slice_shreds
-                .iter()
-                .any(|s| s.payload().index_in_slice == shred_index);
-            if exists {
-                debug!(
-                    "dropping duplicate shred {}-{} in slot {}",
-                    slice_index, shred_index, self.slot
-                );
-                return Err(AddShredError::Duplicate);
-            }
-            slice_shreds
-        };
-
-        slice_shreds.push(validated_shred.into_shred());
+        let shred_index = validated_shred.payload().shred_index;
+        let slice_shreds = self
+            .shreds
+            .entry(slice_index)
+            .or_insert([const { None }; TOTAL_SHREDS]);
+        if slice_shreds[*shred_index].is_some() {
+            debug!(
+                "dropping duplicate shred {}-{} in slot {}",
+                slice_index, shred_index, self.slot
+            );
+            return Err(AddShredError::Duplicate);
+        }
+        slice_shreds[*shred_index] = Some(validated_shred);
 
         if is_first_shred {
             return Ok(Some(VotorEvent::FirstShred(self.slot)));
@@ -261,7 +254,7 @@ impl BlockData {
 
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (reconstructed_slice, mut reconstructed_shreds) =
+        let (reconstructed_slice, reconstructed_shreds) =
             match RegularShredder::deshred(slice_shreds) {
                 Ok(output) => output,
                 Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
@@ -280,6 +273,7 @@ impl BlockData {
 
         // insert reconstructed slice and shreds
         entry.insert(reconstructed_slice);
+        let mut reconstructed_shreds = reconstructed_shreds.map(Some);
         std::mem::swap(slice_shreds, &mut reconstructed_shreds);
         trace!("reconstructed slice {} in slot {}", index, self.slot);
 
@@ -379,7 +373,7 @@ impl BlockData {
 mod tests {
     use super::*;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
+    use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
 
     fn handle_slice(
@@ -391,7 +385,7 @@ mod tests {
         let shreds = RegularShredder::shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred, pk) {
+            match block_data.add_shred(shred.into_shred(), pk) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
@@ -424,7 +418,7 @@ mod tests {
         let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_shred(shred, pk).unwrap() {
+            if let Some(event) = block_data.add_shred(shred.into_shred(), pk).unwrap() {
                 events.push(event);
             }
         }
@@ -433,12 +427,8 @@ mod tests {
         // all shreds should have been reconstructed
         let slice_shreds = block_data.shreds.get(&SliceIndex::first()).unwrap();
         assert_eq!(slice_shreds.len(), TOTAL_SHREDS);
-        for shred_index in 0..TOTAL_SHREDS {
-            assert!(
-                slice_shreds
-                    .iter()
-                    .any(|s| s.payload().index_in_slice == shred_index)
-            );
+        for shred_index in ShredIndex::all() {
+            assert!(slice_shreds[*shred_index].is_some());
         }
     }
 

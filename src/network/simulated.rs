@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use futures::future::join_all;
 use log::warn;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -59,6 +60,13 @@ impl<S, R> SimulatedNetwork<S, R> {
         self.network_core.send(bytes, self.id, to).await;
         Ok(())
     }
+
+    async fn send_serialized(&self, bytes: Vec<u8>, addr: SocketAddr) -> std::io::Result<()> {
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+        let validator_id = addr.port() as ValidatorId;
+        self.send_byte_vec(bytes, validator_id).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -70,18 +78,25 @@ where
     type Recv = R;
     type Send = S;
 
-    async fn send(
+    async fn send_to_many(
         &self,
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
         let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        for addr in addrs {
-            let validator_id = addr.port() as ValidatorId;
-            self.send_byte_vec(bytes.clone(), validator_id).await?;
+        let tasks = addrs.map(|addr| {
+            let bytes = bytes.clone();
+            async move { self.send_serialized(bytes, addr).await }
+        });
+        for res in join_all(tasks).await {
+            let () = res?;
         }
         Ok(())
+    }
+
+    async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
+        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        self.send_serialized(bytes, addr).await
     }
 
     async fn receive(&self) -> std::io::Result<R> {
@@ -110,7 +125,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::iter::once;
     use std::time::Instant;
 
     use super::*;
@@ -133,17 +147,13 @@ mod tests {
         let msg = Ping;
 
         // one direction
-        net1.send(&msg, once(localhost_ip_sockaddr(1)))
-            .await
-            .unwrap();
+        net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         if !matches!(net2.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
 
         // other direction
-        net2.send(&msg, once(localhost_ip_sockaddr(0)))
-            .await
-            .unwrap();
+        net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
         if !matches!(net1.receive().await, Ok(Ping)) {
             panic!("received wrong message");
         }
@@ -197,9 +207,7 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, once(localhost_ip_sockaddr(1)))
-                .await
-                .unwrap();
+            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -256,9 +264,7 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, once(localhost_ip_sockaddr(1)))
-                .await
-                .unwrap();
+            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -315,9 +321,7 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, once(localhost_ip_sockaddr(1)))
-                .await
-                .unwrap();
+            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();

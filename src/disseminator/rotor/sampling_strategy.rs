@@ -65,6 +65,20 @@ pub trait SamplingStrategy {
     }
 }
 
+/// A trivial sampler that picks the same validator all the time.
+#[derive(Clone)]
+pub struct AllSameSampler(pub ValidatorInfo);
+
+impl SamplingStrategy for AllSameSampler {
+    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
+        self.0.id
+    }
+
+    fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
+        &self.0
+    }
+}
+
 /// A basic sampler that picks all validators with equal probability.
 ///
 /// This sampler is stateless and chooses validators with replacement.

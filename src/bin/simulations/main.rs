@@ -8,7 +8,7 @@
 //! Currently three major simulations are implemented:
 //! 1. Bandwidth (Rotor, workload per node, maximum supported throughput)
 //! 2. Latency (all stages of Alpenglow)
-//! 3. Safety (Rotor, 40% crash, 20% byzantine)
+//! 3. Rotor robustness (Rotor, 40% crash, 20% byzantine)
 //!
 //! For parallelization of these simulations, [`rayon`] is used in most places.
 //!
@@ -27,41 +27,45 @@
 //! - Turbine
 //!
 //! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`],
-//! [`RUN_CRASH_SAFETY_TESTS`], and [`RUN_BYZANTINE_SAFETY_TESTS`]
+//! [`RUN_CRASH_ROTOR_TESTS`], and [`RUN_BYZANTINE_ROTOR_TESTS`]
 //! control which tests to run.
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
-mod bandwidth;
-mod latency;
-mod rotor_safety;
+mod alpenglow;
+mod discrete_event_simulator;
+mod rotor;
 
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alpenglow::disseminator::rotor::sampling_strategy::{
-    DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler, TurbineSampler,
-    UniformSampler,
+use ::alpenglow::disseminator::rotor::sampling_strategy::{
+    AllSameSampler, DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler,
+    TurbineSampler, UniformSampler,
 };
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use alpenglow::network::simulated::ping_data::PingServer;
-use alpenglow::network::simulated::stake_distribution::{
+use ::alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use ::alpenglow::network::simulated::ping_data::PingServer;
+use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use alpenglow::{ValidatorInfo, logging};
+use ::alpenglow::{ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
-use self::bandwidth::BandwidthTest;
-use self::latency::{LatencyTest, LatencyTestStage};
-use self::rotor_safety::RotorSafetyTest;
+use crate::alpenglow::{
+    AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
+};
+use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
+use crate::rotor::{
+    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
+};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
-const RUN_CRASH_SAFETY_TESTS: bool = false;
-const RUN_BYZANTINE_SAFETY_TESTS: bool = false;
+const RUN_CRASH_ROTOR_TESTS: bool = false;
+const RUN_BYZANTINE_ROTOR_TESTS: bool = false;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
@@ -96,7 +100,7 @@ fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    logging::enable_logforth_stderr();
+    logging::enable_logforth();
 
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
@@ -122,13 +126,13 @@ fn main() -> Result<()> {
         let _ = File::create(filename).unwrap();
     }
 
-    if RUN_CRASH_SAFETY_TESTS || RUN_BYZANTINE_SAFETY_TESTS {
+    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
         // create saftey evaluation file
         let filename = PathBuf::from("data")
             .join("output")
             .join("simulations")
-            .join("safety")
-            .join("safety")
+            .join("rotor_robustness")
+            .join("rotor_robustness")
             .with_extension("csv");
         if let Some(parent) = filename.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -335,18 +339,40 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
+        let params = RotorParams::new(32, 64, 40);
+        let builder = RotorInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let leader_bandwidth = 1_000_000_000; // 1 Gbps
+        let bandwidths = vec![leader_bandwidth; validators.len()];
+        let environment =
+            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
+                .with_bandwidths(leader_bandwidth, bandwidths);
+        let engine =
+            SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
+        info!("rotor latency sim (sequential)");
+        engine.run_many_sequential(10);
+        info!("rotor latency sim (parallel)");
+        engine.run_many_parallel(1000);
+
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
-            let tester = LatencyTest::new(
-                validators_with_ping_data,
+            let rotor_params = RotorParams::new(n, k, 40);
+            let rotor_builder = RotorInstanceBuilder::new(
                 ping_leader_sampler.clone(),
                 ping_rotor_sampler.clone(),
-                n,
-                k,
+                params,
             );
-            let test_name = format!("{test_name}-{n}-{k}");
-            tester.run_many(&test_name, 1000, LatencyTestStage::Final);
+            let params = LatencySimParams::new(rotor_params, n, k);
+            let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
+            let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                builder,
+                environment.clone(),
+            );
+            engine.run_many_parallel(1000);
         }
 
         // latency experiments with fixed leaders
@@ -397,50 +423,54 @@ fn run_tests<
             unimplemented!()
         };
 
-        for (n, k) in &SHRED_COMBINATIONS {
+        for (n, k) in SHRED_COMBINATIONS {
             cities.par_iter().for_each(|city| {
                 info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
                 let leader = find_leader_in_city(validators_with_ping_data, city);
-                let tester = LatencyTest::new(
-                    validators_with_ping_data,
-                    ping_leader_sampler.clone(),
+                let rotor_params = RotorParams::new(n, k, 40);
+                let rotor_builder = RotorInstanceBuilder::new(
+                    AllSameSampler(leader),
                     ping_rotor_sampler.clone(),
-                    *n,
-                    *k,
+                    params,
                 );
-                let test_name = format!("{test_name}-{n}-{k}");
-                tester.run_many_with_leader(&test_name, 1000, LatencyTestStage::Final, leader);
+                let params = LatencySimParams::new(rotor_params, n, k);
+                let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
+                let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                    builder,
+                    environment.clone(),
+                );
+                engine.run_many_parallel(1000);
             });
         }
     }
 
-    if RUN_CRASH_SAFETY_TESTS || RUN_BYZANTINE_SAFETY_TESTS {
+    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
         // TODO: clean up code
         let filename = PathBuf::from("data")
             .join("output")
             .join("simulations")
-            .join("safety")
-            .join("safety")
+            .join("rotor_robustness")
+            .join("rotor_robustness")
             .with_extension("csv");
         let file = File::options().append(true).open(filename).unwrap();
         let mut writer = csv::Writer::from_writer(file);
 
-        if RUN_CRASH_SAFETY_TESTS {
-            // safety experiments (Crash + Byz., 40%)
+        if RUN_CRASH_ROTOR_TESTS {
+            // Rotor robustness experiments (Crash + Byz., 40%)
             for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} safety test (crash=0.4, n={n}, k={k})");
+                info!("{test_name} robustness test (crash=0.4, n={n}, k={k})");
                 let tester =
-                    RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
                 tester.run(test_name, 0.4, &mut writer);
             }
         }
 
-        if RUN_BYZANTINE_SAFETY_TESTS {
-            // safety experiments (Byzantine only, 20%)
+        if RUN_BYZANTINE_ROTOR_TESTS {
+            // Rotor robustness experiments (Byzantine only, 20%)
             for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} safety test (byz=0.2, n={n}, k={k})");
+                info!("{test_name} robustness test (byz=0.2, n={n}, k={k})");
                 let tester =
-                    RotorSafetyTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
                 tester.run(test_name, 0.2, &mut writer);
             }
         }

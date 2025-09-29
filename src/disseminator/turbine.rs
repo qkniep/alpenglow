@@ -10,15 +10,13 @@
 
 mod weighted_shuffle;
 
-use std::iter::once;
-
 use async_trait::async_trait;
 use moka::future::Cache;
 use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::network::Network;
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
 
@@ -54,7 +52,7 @@ pub(crate) struct TurbineTree {
 
 impl<N> Turbine<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
     pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
@@ -92,7 +90,7 @@ where
             .await;
         let root = tree.get_root();
         let addr = self.validators[root as usize].disseminator_address;
-        self.network.send(shred, once(addr)).await
+        self.network.send(shred, addr).await
     }
 
     /// Forwards the shred to all our children in the correct Turbine tree.
@@ -109,7 +107,7 @@ where
             .get_children()
             .iter()
             .map(|child| self.validators[*child as usize].disseminator_address);
-        self.network.send(shred, addrs).await?;
+        self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
 
@@ -134,7 +132,7 @@ where
 #[async_trait]
 impl<N> Disseminator for Turbine<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.send_shred_to_root(shred).await

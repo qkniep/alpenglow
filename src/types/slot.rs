@@ -66,7 +66,7 @@ impl Slot {
 
     /// Returns true if `self` is the first slot in the window.
     pub fn is_start_of_window(&self) -> bool {
-        self.0 % SLOTS_PER_WINDOW == 0
+        self.0.is_multiple_of(SLOTS_PER_WINDOW)
     }
 
     /// Returns the next slot after `self`.

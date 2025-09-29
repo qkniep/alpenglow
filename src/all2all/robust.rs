@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::Network;
+use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: acutally make more robust (retransmits, ...)
@@ -40,7 +40,7 @@ impl<N: Network> RobustAll2All<N> {
 #[async_trait]
 impl<N: Network> All2All for RobustAll2All<N>
 where
-    N: Network<Recv = ConsensusMessage, Send = ConsensusMessage>,
+    N: ConsensusNetwork,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         // HACK: stupidly expensive retransmits
@@ -48,7 +48,7 @@ where
             .validators
             .iter()
             .flat_map(|v| repeat_n(v.all2all_address, 1000));
-        self.network.send(msg, addrs).await
+        self.network.send_to_many(msg, addrs).await
     }
 
     async fn receive(&self) -> std::io::Result<ConsensusMessage> {
@@ -123,6 +123,11 @@ mod tests {
             let vote = Vote::new_skip(Slot::genesis(), &voting_sk, 0);
             let msg = ConsensusMessage::Vote(vote);
             all2all_sender.broadcast(&msg).await.unwrap();
+            while let Ok(Ok(_)) =
+                timeout(Duration::from_millis(1000), all2all_sender.receive()).await
+            {
+                // do nothing
+            }
         });
         for all2all in all2all_others {
             tasks.spawn(async move {

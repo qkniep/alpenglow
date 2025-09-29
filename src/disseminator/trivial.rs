@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use super::Disseminator;
 use crate::ValidatorInfo;
-use crate::network::Network;
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 
 /// A trivial implementation for a block disseminator.
@@ -27,11 +27,11 @@ impl<N: Network> TrivialDisseminator<N> {
 #[async_trait]
 impl<N> Disseminator for TrivialDisseminator<N>
 where
-    N: Network<Recv = Shred, Send = Shred>,
+    N: ShredNetwork,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         self.network
-            .send(
+            .send_to_many(
                 shred,
                 self.validators.iter().map(|v| v.disseminator_address),
             )
