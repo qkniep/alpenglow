@@ -143,6 +143,7 @@ impl Shred {
         }
     }
 
+    /// Mutably references the payload contained in this shred.
     pub const fn payload_mut(&mut self) -> &mut ShredPayload {
         match &mut self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
