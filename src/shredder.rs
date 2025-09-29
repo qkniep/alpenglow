@@ -104,18 +104,6 @@ pub enum ShredPayloadType {
     Coding(ShredPayload),
 }
 
-impl ShredPayloadType {
-    /// Returns `true` if the payload is of data type.
-    pub const fn is_data(&self) -> bool {
-        matches!(self, ShredPayloadType::Data(_))
-    }
-
-    /// Returns `true` if the payload is of coding type.
-    pub const fn is_coding(&self) -> bool {
-        matches!(self, ShredPayloadType::Coding(_))
-    }
-}
-
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,10 +133,21 @@ impl Shred {
         )
     }
 
+    /// Returns the [`ShredPayload`] contained in this shred.
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
+    }
+
+    /// Returns `true` iff this is a data shred.
+    pub const fn is_data(&self) -> bool {
+        matches!(self.payload_type, ShredPayloadType::Data(_))
+    }
+
+    /// Returns `true` iff this is a coding shred.
+    pub const fn is_coding(&self) -> bool {
+        matches!(self.payload_type, ShredPayloadType::Coding(_))
     }
 }
 
@@ -227,14 +226,14 @@ pub trait Shredder {
         }
         for shred in shreds.iter().take(Self::DATA_OUTPUT_SHREDS) {
             if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
+                && !shred.is_data()
             {
                 return Err(DeshredError::InvalidLayout);
             }
         }
-        for shred in shreds.iter().skip(Self::CODING_OUTPUT_SHREDS) {
+        for shred in shreds.iter().skip(Self::DATA_OUTPUT_SHREDS) {
             if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
+                && !shred.is_coding()
             {
                 return Err(DeshredError::InvalidLayout);
             }
