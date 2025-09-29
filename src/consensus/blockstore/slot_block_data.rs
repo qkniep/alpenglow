@@ -72,12 +72,15 @@ impl SlotBlockData {
     ) -> AddShredResult {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
-            debug!("recevied shred from equivocating leader, not adding to blockstore");
+            debug!("recevied shred from misbehaving leader, not adding to blockstore");
             return AddShredResult::Equivocation;
         }
         let res = self.disseminated.add_shred(shred, leader_pk);
-        if matches!(res, AddShredResult::Equivocation) {
-            self.leader_misbehaved = true;
+        match &res {
+            AddShredResult::Equivocation | AddShredResult::InvalidShred => {
+                self.leader_misbehaved = true;
+            }
+            _rest => (),
         }
         res
     }
@@ -97,8 +100,11 @@ impl SlotBlockData {
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
         let res = block_data.add_shred(shred, leader_pk);
-        if matches!(res, AddShredResult::Equivocation) {
-            self.leader_misbehaved = true;
+        match &res {
+            AddShredResult::Equivocation | AddShredResult::InvalidShred => {
+                self.leader_misbehaved = true;
+            }
+            _rest => (),
         }
         res
     }
