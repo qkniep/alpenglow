@@ -37,14 +37,28 @@ impl From<&Block> for BlockInfo {
     }
 }
 
+#[derive(Debug)]
+pub enum AddShredError {
+    Duplicate,
+    SignatureMismatch,
+    LeaderMisbehavior,
+}
+
 /// Interface for the blockstore.
 ///
 /// This is only used for mocking of [`BlockstoreImpl`].
 #[async_trait]
 #[automock]
 pub trait Blockstore {
-    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<BlockInfo>;
-    async fn add_shred_from_repair(&mut self, hash: Hash, shred: Shred) -> Option<BlockInfo>;
+    async fn add_shred_from_disseminator(
+        &mut self,
+        shred: Shred,
+    ) -> Result<Option<BlockInfo>, AddShredError>;
+    async fn add_shred_from_repair(
+        &mut self,
+        hash: Hash,
+        shred: Shred,
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
@@ -98,14 +112,18 @@ impl BlockstoreImpl {
     /// Handles the result of attempt to insert a [`Shred`] into the [`SlotBlockData`].
     ///
     /// Generates appropriate [`VotorEvent`]s and returns [`Some(BlockInfo)`] if a block was reconstructed.
-    async fn handle_add_shred_result(&self, slot: Slot, res: AddShredResult) -> Option<BlockInfo> {
+    async fn handle_add_shred_result(
+        &self,
+        slot: Slot,
+        res: AddShredResult,
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         match res {
             AddShredResult::FirstShred => {
                 self.votor_channel
                     .send(VotorEvent::FirstShred(slot))
                     .await
                     .unwrap();
-                None
+                Ok(None)
             }
             AddShredResult::Block(block_info) => {
                 self.votor_channel
@@ -119,16 +137,17 @@ impl BlockstoreImpl {
                     &hex::encode(block_info.parent.1)[..8],
                     block_info.parent.0,
                 );
-                Some(block_info)
+                Ok(Some(block_info))
             }
-            AddShredResult::Ok | AddShredResult::Duplicate => None,
+            AddShredResult::Ok => Ok(None),
+            AddShredResult::Duplicate => Err(AddShredError::Duplicate),
             e @ (AddShredResult::Equivocation | AddShredResult::InvalidShred) => {
                 warn!("Adding shred saw leader misbehavior: {e:?}");
-                None
+                Err(AddShredError::LeaderMisbehavior)
             }
             e @ AddShredResult::SignatureMismatch => {
                 warn!("Adding shred failed with {e:?}");
-                None
+                Err(AddShredError::SignatureMismatch)
             }
         }
     }
@@ -220,7 +239,10 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<BlockInfo> {
+    async fn add_shred_from_disseminator(
+        &mut self,
+        shred: Shred,
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let res = self
@@ -242,7 +264,11 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    async fn add_shred_from_repair(&mut self, hash: Hash, shred: Shred) -> Option<BlockInfo> {
+    async fn add_shred_from_repair(
+        &mut self,
+        hash: Hash,
+        shred: Shred,
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let res = self
@@ -373,7 +399,8 @@ mod tests {
             // store shred
             blockstore
                 .add_shred_from_disseminator(shred.clone().into_shred())
-                .await;
+                .await
+                .unwrap();
 
             // check shred is stored
             let Some(stored_shred) = blockstore.get_disseminated_shred(
@@ -413,7 +440,8 @@ mod tests {
         for shred in shreds {
             blockstore
                 .add_shred_from_disseminator(shred.clone().into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(slot).is_none());
 
@@ -422,7 +450,8 @@ mod tests {
         for shred in shreds {
             blockstore
                 .add_shred_from_disseminator(shred.clone().into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -450,7 +479,8 @@ mod tests {
         for shred in slice0_shreds.into_iter().take(DATA_SHREDS) {
             blockstore
                 .add_shred_from_repair(block_hash, shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.get_block((slot, block_hash)).is_none());
 
@@ -458,7 +488,8 @@ mod tests {
         for shred in slice1_shreds.into_iter().take(DATA_SHREDS) {
             blockstore
                 .add_shred_from_repair(block_hash, shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.get_block((slot, block_hash)).is_some());
 
@@ -480,7 +511,8 @@ mod tests {
         for shred in shreds.into_iter().rev() {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -503,7 +535,8 @@ mod tests {
         for shred in shreds.into_iter().take(DATA_SHREDS) {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert_eq!(blockstore.stored_slices_for_slot(slot), 1);
 
@@ -512,7 +545,8 @@ mod tests {
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert_eq!(blockstore.stored_slices_for_slot(slot), 2);
 
@@ -525,7 +559,8 @@ mod tests {
         {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert_eq!(blockstore.stored_slices_for_slot(slot), 3);
 
@@ -538,7 +573,8 @@ mod tests {
         {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -563,7 +599,8 @@ mod tests {
         for shred in shreds {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(slot).is_none());
 
@@ -575,7 +612,8 @@ mod tests {
         for shred in shreds {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(slot).is_some());
 
@@ -606,7 +644,8 @@ mod tests {
         for shred in shreds {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
-                .await;
+                .await
+                .unwrap();
         }
         assert!(blockstore.disseminated_block_hash(block0_slot).is_some());
         assert!(blockstore.disseminated_block_hash(block1_slot).is_some());
