@@ -9,13 +9,13 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Builder, Event, Protocol, SimTime, SimulationEnvironment, Stage,
+    Builder, Event, Protocol, SimTime, SimulationEngine, SimulationEnvironment, Stage, Timings,
 };
-use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorParams};
+use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 
 /// Size (in bytes) assumed per vote in the simulation.
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
@@ -147,7 +147,24 @@ impl Event for LatencyEvent {
         };
 
         match self {
-            Self::Block => dependency_timings[0].to_vec(),
+            Self::Block => {
+                // TODO: find better way of integrating sub-protocol
+                let builder = RotorInstanceBuilder::new(
+                    StakeWeightedSampler::new(environment.validators.clone()),
+                    StakeWeightedSampler::new(environment.validators.clone()),
+                    _instance.params.rotor_params,
+                );
+                let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(
+                    builder,
+                    environment.clone(),
+                );
+                let mut timings = Timings::default();
+                engine.run(&_instance.rotor_instance, &mut timings);
+                timings
+                    .get(crate::rotor::LatencyEvent::Block)
+                    .unwrap()
+                    .to_vec()
+            }
             Self::Notar => broadcast_vote_threshold(0.6),
             Self::FastFinal => broadcast_vote_threshold(0.8),
             Self::SlowFinal => broadcast_vote_threshold(0.6),
