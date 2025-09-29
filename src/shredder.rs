@@ -107,18 +107,6 @@ pub enum ShredPayloadType {
     Coding(ShredPayload),
 }
 
-impl ShredPayloadType {
-    /// Returns `true` if the payload is of data type.
-    pub const fn is_data(&self) -> bool {
-        matches!(self, ShredPayloadType::Data(_))
-    }
-
-    /// Returns `true` if the payload is of coding type.
-    pub const fn is_coding(&self) -> bool {
-        matches!(self, ShredPayloadType::Coding(_))
-    }
-}
-
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -148,6 +136,7 @@ impl Shred {
         )
     }
 
+    /// Returns the [`ShredPayload`] contained in this shred.
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
@@ -158,6 +147,16 @@ impl Shred {
         match &mut self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
+    }
+
+    /// Returns `true` iff this is a data shred.
+    pub const fn is_data(&self) -> bool {
+        matches!(self.payload_type, ShredPayloadType::Data(_))
+    }
+
+    /// Returns `true` iff this is a coding shred.
+    pub const fn is_coding(&self) -> bool {
+        matches!(self.payload_type, ShredPayloadType::Coding(_))
     }
 }
 
