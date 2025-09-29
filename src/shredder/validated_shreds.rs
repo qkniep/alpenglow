@@ -74,7 +74,7 @@ mod tests {
             ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).is_none()
         );
 
-        // there are more data shreds in the array
+        // there are data shreds in coding shred positions in the array
         let shreds = RegularShredder::shred(slice.clone(), &sk)
             .unwrap()
             .map(Some);
