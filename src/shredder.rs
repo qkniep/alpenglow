@@ -20,6 +20,7 @@
 mod reed_solomon;
 mod shred_index;
 mod validated_shred;
+mod validated_shreds;
 
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
@@ -36,6 +37,7 @@ pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
+use crate::shredder::validated_shreds::ValidatedShreds;
 use crate::types::{Slice, SliceHeader};
 
 /// Number of data shreds the payload of a slice is split into.
@@ -98,22 +100,11 @@ impl From<ReedSolomonShredError> for DeshredError {
         }
     }
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
     Coding(ShredPayload),
-}
-
-impl ShredPayloadType {
-    /// Returns `true` if the payload is of data type.
-    pub const fn is_data(&self) -> bool {
-        matches!(self, ShredPayloadType::Data(_))
-    }
-
-    /// Returns `true` if the payload is of coding type.
-    pub const fn is_coding(&self) -> bool {
-        matches!(self, ShredPayloadType::Coding(_))
-    }
 }
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
@@ -145,10 +136,28 @@ impl Shred {
         )
     }
 
+    /// References the payload contained in this shred.
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
+    }
+
+    /// Mutably references the payload contained in this shred.
+    pub const fn payload_mut(&mut self) -> &mut ShredPayload {
+        match &mut self.payload_type {
+            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
+        }
+    }
+
+    /// Returns `true` iff this is a data shred.
+    pub const fn is_data(&self) -> bool {
+        matches!(self.payload_type, ShredPayloadType::Data(_))
+    }
+
+    /// Returns `true` iff this is a coding shred.
+    pub const fn is_coding(&self) -> bool {
+        matches!(self.payload_type, ShredPayloadType::Coding(_))
     }
 }
 
@@ -218,34 +227,16 @@ pub trait Shredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        for (i, shred) in shreds.iter().enumerate() {
-            if let Some(shred) = shred
-                && *shred.payload().shred_index != i
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().take(Self::DATA_OUTPUT_SHREDS) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().skip(Self::CODING_OUTPUT_SHREDS) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
+        let shreds =
+            ValidatedShreds::try_new(shreds, Self::DATA_OUTPUT_SHREDS, Self::CODING_OUTPUT_SHREDS)
+                .ok_or(DeshredError::InvalidLayout)?;
         Self::deshred_validated_shreds(shreds)
     }
 
     /// The core deshreding implementation that the actual shredders provide.
     /// NOTE: this is not part of the public API, normally, [`deshred()`] should be used.
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;
 }
 
@@ -260,16 +251,15 @@ impl Shredder for RegularShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
-        let raw_shreds =
-            reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let raw_shreds = reed_solomon_shred(payload.into(), Self::CODING_OUTPUT_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let payload =
-            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
+        let shreds = shreds.to_shreds();
+        let payload = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
@@ -278,8 +268,7 @@ impl Shredder for RegularShredder {
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root;
         let (header, payload) = slice.clone().deconstruct();
-        let raw_shreds =
-            reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let raw_shreds = reed_solomon_shred(payload.into(), Self::CODING_OUTPUT_SHREDS)?;
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
@@ -305,15 +294,16 @@ impl Shredder for CodingOnlyShredder {
 
     fn shred(slice: Slice, sk: &SecretKey) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
-        let mut raw_shreds = reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
+        let mut raw_shreds = reed_solomon_shred(payload.into(), Self::CODING_OUTPUT_SHREDS)?;
         raw_shreds.data = vec![];
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let payload = reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS, 0)?;
+        let shreds = shreds.to_shreds();
+        let payload = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
@@ -322,7 +312,7 @@ impl Shredder for CodingOnlyShredder {
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root;
         let (header, payload) = slice.clone().deconstruct();
-        let mut raw_shreds = reed_solomon_shred(payload.into(), DATA_SHREDS, TOTAL_SHREDS)?;
+        let mut raw_shreds = reed_solomon_shred(payload.into(), Self::CODING_OUTPUT_SHREDS)?;
         raw_shreds.data = vec![];
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
@@ -367,8 +357,7 @@ impl Shredder for PetsShredder {
         cipher.apply_keystream(&mut payload);
 
         payload.extend_from_slice(&key);
-        let mut raw_shreds =
-            reed_solomon_shred(payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
+        let mut raw_shreds = reed_solomon_shred(payload, Self::CODING_OUTPUT_SHREDS)?;
         // delete data shred containing key
         raw_shreds.data.pop();
 
@@ -376,14 +365,10 @@ impl Shredder for PetsShredder {
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut buffer = reed_solomon_deshred(
-            shreds,
-            DATA_SHREDS,
-            TOTAL_SHREDS - DATA_SHREDS + 1,
-            DATA_SHREDS - 1,
-        )?;
+        let shreds = shreds.to_shreds();
+        let mut buffer = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -394,8 +379,7 @@ impl Shredder for PetsShredder {
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root;
         let header = any_shred.payload().header.clone();
-        let mut raw_shreds =
-            reed_solomon_shred(buffer.clone(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS + 1)?;
+        let mut raw_shreds = reed_solomon_shred(buffer.clone(), Self::CODING_OUTPUT_SHREDS)?;
         raw_shreds.data.pop();
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
@@ -453,15 +437,15 @@ impl Shredder for AontShredder {
             payload.push(hash[i] ^ key[i]);
         }
 
-        let raw_shreds = reed_solomon_shred(payload, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let raw_shreds = reed_solomon_shred(payload, Self::CODING_OUTPUT_SHREDS)?;
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut buffer =
-            reed_solomon_deshred(shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS, DATA_SHREDS)?;
+        let shreds = shreds.to_shreds();
+        let mut buffer = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -472,8 +456,7 @@ impl Shredder for AontShredder {
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root;
         let header = any_shred.payload().header.clone();
-        let raw_shreds =
-            reed_solomon_shred(buffer.clone(), DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS)?;
+        let raw_shreds = reed_solomon_shred(buffer.clone(), Self::CODING_OUTPUT_SHREDS)?;
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);

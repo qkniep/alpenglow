@@ -360,11 +360,10 @@ where
                 .await
                 .add_shred_from_disseminator(s.into_shred())
                 .await;
-            if let Ok(Some((block_slot, block_info))) = block {
-                assert_eq!(block_slot, slot);
+            if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash);
-                let block_id = (block_slot, block_info.hash);
+                let block_id = (slot, block_info.hash);
                 self.pool
                     .write()
                     .await
@@ -684,7 +683,7 @@ mod tests {
             .expect_add_shred_from_disseminator()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(Some((slot, block_info))) }));
+            .returning(move |_| Box::pin(async move { Ok(Some(block_info)) }));
 
         let mut pool = MockPool::new();
         pool.expect_add_block()
@@ -768,7 +767,7 @@ mod tests {
                 Box::pin(async move {
                     // final shred of second slice
                     // block is constructed with the new parent
-                    Ok(Some((slot, new_block_info)))
+                    Ok(Some(new_block_info))
                 })
             });
 
