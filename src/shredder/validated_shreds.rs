@@ -1,8 +1,12 @@
 use crate::shredder::{ShredPayloadType, TOTAL_SHREDS, ValidatedShred};
 
+/// Validated shreds array type.
+///
+/// Using strong type to enforce certain constraints e.g. the shred indexes are valid.
 pub struct ValidatedShreds<'a>(&'a [Option<ValidatedShred>; TOTAL_SHREDS]);
 
 impl<'a> ValidatedShreds<'a> {
+    /// Creates a new [`ValidatedShreds`].
     pub(super) fn try_new(
         shreds: &'a [Option<ValidatedShred>; TOTAL_SHREDS],
         data_shreds: usize,
@@ -36,6 +40,7 @@ impl<'a> ValidatedShreds<'a> {
         Some(Self(shreds))
     }
 
+    /// Returns the inner array of [`ValidatedShred`]s.
     pub(super) fn into_shreds(self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
         self.0
     }
