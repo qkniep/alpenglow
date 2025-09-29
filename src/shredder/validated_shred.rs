@@ -1,5 +1,5 @@
 use std::collections::btree_map::Entry;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
@@ -85,6 +85,12 @@ impl Deref for ValidatedShred {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl DerefMut for ValidatedShred {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

@@ -20,6 +20,7 @@
 mod reed_solomon;
 mod shred_index;
 mod validated_shred;
+mod validated_shreds;
 
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
@@ -36,6 +37,7 @@ pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
+use crate::shredder::validated_shreds::ValidatedShreds;
 use crate::types::{Slice, SliceHeader};
 
 /// Number of data shreds the payload of a slice is split into.
@@ -98,6 +100,7 @@ impl From<ReedSolomonShredError> for DeshredError {
         }
     }
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
@@ -133,9 +136,16 @@ impl Shred {
         )
     }
 
-    /// Returns the [`ShredPayload`] contained in this shred.
+    /// References the payload contained in this shred.
     pub const fn payload(&self) -> &ShredPayload {
         match &self.payload_type {
+            ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
+        }
+    }
+
+    /// Mutably references the payload contained in this shred.
+    pub const fn payload_mut(&mut self) -> &mut ShredPayload {
+        match &mut self.payload_type {
             ShredPayloadType::Coding(p) | ShredPayloadType::Data(p) => p,
         }
     }
@@ -217,34 +227,16 @@ pub trait Shredder {
     fn deshred(
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        for (i, shred) in shreds.iter().enumerate() {
-            if let Some(shred) = shred
-                && *shred.payload().shred_index != i
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().take(Self::DATA_OUTPUT_SHREDS) {
-            if let Some(shred) = shred
-                && !shred.is_data()
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
-        for shred in shreds.iter().skip(Self::DATA_OUTPUT_SHREDS) {
-            if let Some(shred) = shred
-                && !shred.is_coding()
-            {
-                return Err(DeshredError::InvalidLayout);
-            }
-        }
+        let shreds =
+            ValidatedShreds::try_new(shreds, Self::DATA_OUTPUT_SHREDS, Self::CODING_OUTPUT_SHREDS)
+                .ok_or(DeshredError::InvalidLayout)?;
         Self::deshred_validated_shreds(shreds)
     }
 
     /// The core deshreding implementation that the actual shredders provide.
     /// NOTE: this is not part of the public API, normally, [`deshred()`] should be used.
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;
 }
 
@@ -264,8 +256,9 @@ impl Shredder for RegularShredder {
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let shreds = shreds.to_shreds();
         let payload = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
@@ -307,8 +300,9 @@ impl Shredder for CodingOnlyShredder {
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let shreds = shreds.to_shreds();
         let payload = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
@@ -371,8 +365,9 @@ impl Shredder for PetsShredder {
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let shreds = shreds.to_shreds();
         let mut buffer = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
@@ -447,8 +442,9 @@ impl Shredder for AontShredder {
     }
 
     fn deshred_validated_shreds(
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+        let shreds = shreds.to_shreds();
         let mut buffer = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
