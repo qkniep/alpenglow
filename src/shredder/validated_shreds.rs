@@ -1,4 +1,4 @@
-use crate::shredder::{ShredPayloadType, TOTAL_SHREDS, ValidatedShred};
+use crate::shredder::{TOTAL_SHREDS, ValidatedShred};
 
 /// Validated shreds array type.
 ///
@@ -12,37 +12,30 @@ impl<'a> ValidatedShreds<'a> {
         data_shreds: usize,
         coding_shreds: usize,
     ) -> Option<Self> {
-        if data_shreds + coding_shreds != TOTAL_SHREDS {
-            return None;
-        }
+        assert_eq!(data_shreds + coding_shreds, TOTAL_SHREDS);
 
-        for (i, shred) in shreds.iter().enumerate() {
-            if let Some(shred) = shred
-                && *shred.payload().shred_index != i
-            {
-                return None;
+        for (i, shred) in shreds.iter().take(data_shreds).enumerate() {
+            if let Some(shred) = shred {
+                assert_eq!(*shred.payload().shred_index, i);
+                if !shred.is_data() {
+                    return None;
+                }
             }
         }
-        for shred in shreds.iter().take(data_shreds) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Data(_p))
-            {
-                return None;
-            }
-        }
-        for shred in shreds.iter().skip(data_shreds) {
-            if let Some(shred) = shred
-                && !matches!(&shred.payload_type, ShredPayloadType::Coding(_p))
-            {
-                return None;
+        for (i, shred) in shreds.iter().skip(data_shreds).enumerate() {
+            if let Some(shred) = shred {
+                assert_eq!(*shred.payload().shred_index, i + data_shreds);
+                if !shred.is_coding() {
+                    return None;
+                }
             }
         }
         Some(Self(shreds))
     }
 
     /// Returns the inner array of [`ValidatedShred`]s.
-    pub(super) fn into_shreds(self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
-        self.0
+    pub(super) fn into_shreds(&self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
+        &self.0
     }
 }
 
@@ -52,27 +45,13 @@ mod tests {
 
     use super::*;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, ShredIndex, Shredder};
+    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
     use crate::types::slice::create_slice_with_invalid_txs;
 
     #[test]
     fn validity_tests() {
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-
-        // number of data and coding shreds do not match up
-        let shreds = RegularShredder::shred(slice.clone(), &sk)
-            .unwrap()
-            .map(Some);
-        assert!(ValidatedShreds::try_new(&shreds, 10, 10).is_none());
-
-        // the shred index is invalid
-        let mut shreds = RegularShredder::shred(slice.clone(), &sk).unwrap();
-        shreds[1].payload_mut().shred_index = ShredIndex::new(0).unwrap();
-        let shreds = shreds.map(Some);
-        assert!(
-            ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).is_none()
-        );
 
         // there are data shreds in coding shred positions in the array
         let shreds = RegularShredder::shred(slice.clone(), &sk)
