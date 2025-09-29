@@ -54,8 +54,9 @@ pub struct SlotBlockData {
     pub(super) disseminated: BlockData,
     /// Spot for storing blocks that might later be received via repair.
     pub(super) repaired: BTreeMap<Hash, BlockData>,
-    /// Whether conflicting shreds have been seen for this slot.
-    pub(super) equivocated: bool,
+    /// Tracks whether we observed the leader misbehaving.
+    /// Once misbehavior is observed, we stop accepting additional [`Shred`]s through dissemination.
+    leader_misbehaved: bool,
 }
 
 impl SlotBlockData {
@@ -65,7 +66,7 @@ impl SlotBlockData {
             slot,
             disseminated: BlockData::new(slot),
             repaired: BTreeMap::new(),
-            equivocated: false,
+            leader_misbehaved: false,
         }
     }
 
@@ -78,16 +79,17 @@ impl SlotBlockData {
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
-        if self.equivocated {
+        if self.leader_misbehaved {
             debug!("recevied shred from equivocating leader, not adding to blockstore");
             return Err(AddShredError::Equivocation);
         }
         self.disseminated
             .add_shred(shred, leader_pk)
-            .inspect_err(|err| {
-                if matches!(err, AddShredError::Equivocation) {
-                    self.equivocated = true;
+            .inspect_err(|err| match err {
+                AddShredError::Equivocation | AddShredError::InvalidShred => {
+                    self.leader_misbehaved = true;
                 }
+                _ => (),
             })
     }
 
@@ -105,11 +107,14 @@ impl SlotBlockData {
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        block_data.add_shred(shred, leader_pk).inspect_err(|err| {
-            if matches!(err, AddShredError::Equivocation) {
-                self.equivocated = true;
-            }
-        })
+        block_data
+            .add_shred(shred, leader_pk)
+            .inspect_err(|err| match err {
+                AddShredError::Equivocation | AddShredError::InvalidShred => {
+                    self.leader_misbehaved = true;
+                }
+                _ => (),
+            })
     }
 }
 
