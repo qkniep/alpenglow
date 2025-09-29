@@ -231,7 +231,7 @@ pub trait Shredder {
                 return Err(DeshredError::InvalidLayout);
             }
         }
-        for shred in shreds.iter().skip(Self::CODING_OUTPUT_SHREDS) {
+        for shred in shreds.iter().skip(Self::DATA_OUTPUT_SHREDS) {
             if let Some(shred) = shred
                 && shred.is_coding()
             {
