@@ -11,6 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use log::{debug, warn};
 use mockall::automock;
+use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 
 use self::slot_block_data::{AddShredResult, BlockData, SlotBlockData};
@@ -37,10 +38,13 @@ impl From<&Block> for BlockInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AddShredError {
+    #[error("shred is already stored")]
     Duplicate,
+    #[error("signature mismatch on shred")]
     SignatureMismatch,
+    #[error("shred shows leader misbehavior")]
     LeaderMisbehavior,
 }
 
@@ -383,6 +387,17 @@ mod tests {
         (sk, BlockstoreImpl::new(Arc::new(epoch_info), tx))
     }
 
+    async fn add_shred_ignore_duplicate(
+        blockstore: &mut BlockstoreImpl,
+        shred: Shred,
+    ) -> Result<Option<BlockInfo>, AddShredError> {
+        match blockstore.add_shred_from_disseminator(shred).await {
+            Ok(output) => Ok(output),
+            Err(AddShredError::Duplicate) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     #[tokio::test]
     async fn store_one_slice_block() -> Result<()> {
         let slot = Slot::genesis().next();
@@ -397,10 +412,7 @@ mod tests {
         let slice_hash = shreds[0][0].merkle_root;
         for shred in &shreds[0] {
             // store shred
-            blockstore
-                .add_shred_from_disseminator(shred.clone().into_shred())
-                .await
-                .unwrap();
+            add_shred_ignore_duplicate(&mut blockstore, shred.clone().into_shred()).await?;
 
             // check shred is stored
             let Some(stored_shred) = blockstore.get_disseminated_shred(
