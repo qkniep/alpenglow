@@ -50,13 +50,10 @@ impl<'a> ValidatedShreds<'a> {
 mod tests {
     use rand::rng;
 
-    use crate::{
-        crypto::signature::SecretKey,
-        shredder::{DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, ShredIndex, Shredder},
-        types::slice::create_slice_with_invalid_txs,
-    };
-
     use super::*;
+    use crate::crypto::signature::SecretKey;
+    use crate::shredder::{DATA_SHREDS, MAX_DATA_PER_SLICE, RegularShredder, ShredIndex, Shredder};
+    use crate::types::slice::create_slice_with_invalid_txs;
 
     #[test]
     fn validity_tests() {
