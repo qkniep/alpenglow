@@ -370,6 +370,9 @@ mod tests {
     use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
 
+    /// Attempts to add all the shreds to the blockstore.
+    ///
+    /// Any resulting [`VotorEvents`] are collected and returned; benign events are ignored; other error events terminate the function and the error is returned.
     fn handle_shreds(
         block_data: &mut BlockData,
         pk: PublicKey,
@@ -394,9 +397,7 @@ mod tests {
         (events, Ok(()))
     }
 
-    /// Deshreds the slice and adds all the shreds to the blockstore.
-    ///
-    /// Any resulting [`VotorEvents`] are collected and returned; benign events are ignored; other error events terminate the function and the error is returned.
+    /// Deshreds the slice and calls [`handle_shreds`].
     fn handle_slice(
         block_data: &mut BlockData,
         slice: Slice,
