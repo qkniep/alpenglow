@@ -34,14 +34,20 @@ pub struct SlotBlockData {
 
 #[derive(Debug)]
 pub(super) enum AddShredResult {
-    FirstShred,
-    Block(BlockInfo),
-    Equivocation,
+    /// [`Shred`] was added successfully and no events were created as a result.
     Ok,
-    InvalidProof,
-    InvalidSignature,
-    InvalidShred,
+    /// [`Shred`] was a duplicate.  This can be benign as the block might have been already reconstructed.
     Duplicate,
+    /// [`Shred`] was added successfully and was the first one received for this block.
+    FirstShred,
+    /// [`Shred`] was added sucessfully and it reconstructed a block, the resulting [`BlockInfo`] is returned.
+    Block(BlockInfo),
+    /// Leader showed equivocation.  The [`Shred`] was dropped.  No more disseminated [`Shred`]s for this block will be accepted.
+    Equivocation,
+    /// Leader showed misbehavior.  The [`Shred`] was dropped.  No more disseminated [`Shred`]s for this block will be accepted.
+    InvalidShred,
+    /// Signatures on the [`Shred`] were invalid.  Could be a misbehaving leader or relayer.  The [`Shred`] was dropped and future [`Shred`]s will be accepted.
+    SignatureMismatch,
 }
 
 impl SlotBlockData {
@@ -157,8 +163,8 @@ impl BlockData {
         match ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk) {
             Ok(v) => self.add_validated_shred(v),
             Err(e) => match e {
-                ShredVerifyError::InvalidProof => AddShredResult::InvalidProof,
-                ShredVerifyError::InvalidSignature => AddShredResult::InvalidSignature,
+                ShredVerifyError::InvalidProof => AddShredResult::SignatureMismatch,
+                ShredVerifyError::InvalidSignature => AddShredResult::SignatureMismatch,
                 ShredVerifyError::Equivocation => AddShredResult::Equivocation,
             },
         }
