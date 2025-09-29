@@ -43,12 +43,8 @@ impl From<&Block> for BlockInfo {
 #[async_trait]
 #[automock]
 pub trait Blockstore {
-    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<(Slot, BlockInfo)>;
-    async fn add_shred_from_repair(
-        &mut self,
-        hash: Hash,
-        shred: Shred,
-    ) -> Option<(Slot, BlockInfo)>;
+    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<BlockInfo>;
+    async fn add_shred_from_repair(&mut self, hash: Hash, shred: Shred) -> Option<BlockInfo>;
     fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
@@ -99,11 +95,10 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn handle_add_shred_result(
-        &self,
-        slot: Slot,
-        res: AddShredResult,
-    ) -> Option<(Slot, BlockInfo)> {
+    /// Handles the result of attempt to insert a [`Shred`] into the [`SlotBlockData`].
+    ///
+    /// Generates appropriate [`VotorEvent`]s and returns [`Some(BlockInfo)`] if a block was reconstructed.
+    async fn handle_add_shred_result(&self, slot: Slot, res: AddShredResult) -> Option<BlockInfo> {
         match res {
             AddShredResult::FirstShred => {
                 self.votor_channel
@@ -124,7 +119,7 @@ impl BlockstoreImpl {
                     &hex::encode(block_info.parent.1)[..8],
                     block_info.parent.0,
                 );
-                Some((slot, block_info))
+                Some(block_info)
             }
             AddShredResult::Ok | AddShredResult::Duplicate => None,
             e @ (AddShredResult::Equivocation | AddShredResult::InvalidShred) => {
@@ -225,7 +220,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<(Slot, BlockInfo)> {
+    async fn add_shred_from_disseminator(&mut self, shred: Shred) -> Option<BlockInfo> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let res = self
@@ -247,11 +242,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[fastrace::trace(short_name = true)]
-    async fn add_shred_from_repair(
-        &mut self,
-        hash: Hash,
-        shred: Shred,
-    ) -> Option<(Slot, BlockInfo)> {
+    async fn add_shred_from_repair(&mut self, hash: Hash, shred: Shred) -> Option<BlockInfo> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let res = self

@@ -363,7 +363,7 @@ where
                     .await
                     .add_shred_from_repair(block_hash, shred)
                     .await;
-                if let Some((slot, block_info)) = res {
+                if let Some(block_info) = res {
                     assert_eq!(block_info.hash, block_hash);
                     self.pool
                         .write()

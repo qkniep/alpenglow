@@ -35,19 +35,19 @@ pub struct SlotBlockData {
 /// Enum to capture the different scenarios from [`add_shred_from_disseminator`] and [`add_shred_from_repair`].
 #[derive(PartialEq, Eq, Debug)]
 pub(super) enum AddShredResult {
-    /// [`Shred`] was added successfully and no events were created as a result.
+    /// [`Shred`] added successfully and no events were created.
     Ok,
-    /// [`Shred`] was a duplicate.  This can be benign as the block might have been already reconstructed.
+    /// [`Shred`] was a duplicate and dropped.
     Duplicate,
-    /// [`Shred`] was added successfully and was the first one received for this block.
+    /// [`Shred`] added successfully and was the first one received for this block.
     FirstShred,
-    /// [`Shred`] was added sucessfully and it reconstructed a block, the resulting [`BlockInfo`] is returned.
+    /// [`Shred`] added sucessfully and it reconstructed a block, the resulting [`BlockInfo`] is returned.
     Block(BlockInfo),
     /// Leader showed equivocation.  The [`Shred`] was dropped.  No more disseminated [`Shred`]s for this block will be accepted.
     Equivocation,
     /// Leader showed misbehavior.  The [`Shred`] was dropped.  No more disseminated [`Shred`]s for this block will be accepted.
     InvalidShred,
-    /// Signatures on the [`Shred`] were invalid.  Could be a misbehaving leader or relayer.  The [`Shred`] was dropped and future [`Shred`]s will be accepted.
+    /// Signature on the [`Shred`] was invalid.  The [`Shred`] was dropped and future [`Shred`]s will be accepted.
     SignatureMismatch,
 }
 
@@ -170,8 +170,9 @@ impl BlockData {
         match ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk) {
             Ok(v) => self.add_validated_shred(v),
             Err(e) => match e {
-                ShredVerifyError::InvalidProof => AddShredResult::SignatureMismatch,
-                ShredVerifyError::InvalidSignature => AddShredResult::SignatureMismatch,
+                ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
+                    AddShredResult::SignatureMismatch
+                }
                 ShredVerifyError::Equivocation => AddShredResult::Equivocation,
             },
         }
