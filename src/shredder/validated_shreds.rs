@@ -14,22 +14,16 @@ impl<'a> ValidatedShreds<'a> {
     ) -> Option<Self> {
         assert_eq!(data_shreds + coding_shreds, TOTAL_SHREDS);
 
-        for (i, shred) in shreds.iter().take(data_shreds).enumerate() {
-            if let Some(shred) = shred {
-                assert_eq!(*shred.payload().shred_index, i);
-                if !shred.is_data() {
-                    return None;
-                }
+        for (i, shred) in shreds.iter().enumerate() {
+            let Some(shred) = shred else {
+                continue;
+            };
+            assert_eq!(*shred.payload().shred_index, i);
+            if i < data_shreds && !shred.is_data() || i >= data_shreds && !shred.is_coding() {
+                return None;
             }
         }
-        for (i, shred) in shreds.iter().skip(data_shreds).enumerate() {
-            if let Some(shred) = shred {
-                assert_eq!(*shred.payload().shred_index, i + data_shreds);
-                if !shred.is_coding() {
-                    return None;
-                }
-            }
-        }
+
         Some(Self(shreds))
     }
 
