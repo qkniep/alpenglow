@@ -6,6 +6,7 @@
 //! This module provides a generic discrete-event simulator.
 //! It can be used to simulate different protocols and configurations.
 
+mod resources;
 mod timings;
 
 use std::cmp::Reverse;
@@ -117,7 +118,7 @@ pub enum EventKind {
     Custom,
 }
 
-/// Matrix-based discrete event simulation engine.
+/// Matrix-based discrete-event simulation engine.
 // TODO: maybe generalize into a trait and then implement event queue-based engine as well
 pub struct SimulationEngine<P: Protocol> {
     builder: P::Builder,

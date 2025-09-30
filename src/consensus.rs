@@ -110,8 +110,8 @@ where
 
 impl<A, D, T> Alpenglow<A, D, T>
 where
-    A: All2All + Sync + Send + 'static,
-    D: Disseminator + Sync + Send + 'static,
+    A: All2All + Send + Sync + 'static,
+    D: Disseminator + Send + Sync + 'static,
     T: TransactionNetwork + 'static,
 {
     /// Creates a new Alpenglow consensus node.
