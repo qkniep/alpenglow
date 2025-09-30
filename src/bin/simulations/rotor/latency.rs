@@ -57,10 +57,16 @@ impl Stage for LatencyTestStage {
 
     fn events(&self, params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
-            LatencyTestStage::Direct => (0..params.num_slices).map(LatencyEvent::Direct).collect(),
-            LatencyTestStage::Rotor => {
-                let mut events = Vec::with_capacity(2 * params.num_slices + 1);
+            LatencyTestStage::Direct => {
+                let mut events = Vec::with_capacity(params.num_slices + 1);
                 events.push(LatencyEvent::BlockSent);
+                for slice in 0..params.num_slices {
+                    events.push(LatencyEvent::Direct(slice));
+                }
+                events
+            }
+            LatencyTestStage::Rotor => {
+                let mut events = Vec::with_capacity(2 * params.num_slices);
                 for slice in 0..params.num_slices {
                     events.push(LatencyEvent::FirstShredInSlice(slice));
                     events.push(LatencyEvent::Rotor(slice));
@@ -75,8 +81,8 @@ impl Stage for LatencyTestStage {
 /// Events that can occur at each validator during the Rotor latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
-    Direct(usize),
     BlockSent,
+    Direct(usize),
     FirstShredInSlice(usize),
     Rotor(usize),
     FirstShred,
@@ -89,8 +95,8 @@ impl Event for LatencyEvent {
 
     fn name(&self) -> String {
         match self {
-            LatencyEvent::Direct(_) => "direct",
             LatencyEvent::BlockSent => "block_sent",
+            LatencyEvent::Direct(_) => "direct",
             LatencyEvent::FirstShredInSlice(_) => "first_shred_in_slice",
             LatencyEvent::Rotor(_) => "rotor",
             LatencyEvent::FirstShred => "first_shred",
@@ -101,8 +107,8 @@ impl Event for LatencyEvent {
 
     fn should_track_stats(&self) -> bool {
         match self {
-            LatencyEvent::Direct(slice) => *slice == 0,
             LatencyEvent::BlockSent => true,
+            LatencyEvent::Direct(slice) => *slice == 0,
             LatencyEvent::FirstShredInSlice(_) => false,
             LatencyEvent::Rotor(slice) => *slice == 0,
             LatencyEvent::FirstShred => true,
@@ -112,6 +118,7 @@ impl Event for LatencyEvent {
 
     fn dependencies(&self, params: &RotorParams) -> Vec<LatencyEvent> {
         match self {
+            LatencyEvent::BlockSent => vec![],
             LatencyEvent::Direct(slice) => {
                 if *slice == 0 {
                     vec![]
@@ -119,7 +126,6 @@ impl Event for LatencyEvent {
                     vec![LatencyEvent::Direct(*slice - 1)]
                 }
             }
-            LatencyEvent::BlockSent => (0..params.num_slices).map(LatencyEvent::Direct).collect(),
             LatencyEvent::FirstShredInSlice(slice) => vec![LatencyEvent::Direct(*slice)],
             LatencyEvent::Rotor(slice) => vec![LatencyEvent::Direct(*slice)],
             LatencyEvent::FirstShred => (0..params.num_slices)
@@ -136,6 +142,14 @@ impl Event for LatencyEvent {
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
+            LatencyEvent::BlockSent => (0..environment.num_validators())
+                .map(|leader| {
+                    let block_bytes = instance.params.num_slices
+                        * instance.params.num_shreds
+                        * MAX_DATA_PER_SHRED;
+                    environment.transmission_delay(block_bytes, instance.leader)
+                })
+                .collect(),
             LatencyEvent::Direct(slice) => {
                 let mut timings = match *slice {
                     0 => (0..environment.num_validators() as ValidatorId)
@@ -150,14 +164,6 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::BlockSent => (0..environment.num_validators())
-                .map(|leader| {
-                    let block_bytes = instance.params.num_slices
-                        * instance.params.num_shreds
-                        * MAX_DATA_PER_SHRED;
-                    environment.transmission_delay(block_bytes, instance.leader)
-                })
-                .collect(),
             LatencyEvent::FirstShredInSlice(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 for recipient in 0..environment.num_validators() {

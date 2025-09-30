@@ -20,6 +20,7 @@ use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
+pub use self::resources::Resources;
 pub use self::timings::{SimTime, TimingStats, Timings};
 
 /// Wrapper trait for a specific protocol simulation.
@@ -220,9 +221,10 @@ where
 #[derive(Clone, Debug)]
 pub struct SimulationEnvironment {
     // core setup of the latency test
-    pub validators: Vec<ValidatorInfo>,
-    pub ping_servers: Vec<&'static PingServer>,
-    pub total_stake: Stake,
+    pub(crate) validators: Vec<ValidatorInfo>,
+    ping_servers: Vec<&'static PingServer>,
+    pub(crate) total_stake: Stake,
+    resources: Resources,
 
     // optional bandwidth information
     // if provided, these will be used to simulate transmission delays
@@ -238,10 +240,13 @@ impl SimulationEnvironment {
         ping_servers: Vec<&'static PingServer>,
         total_stake: Stake,
     ) -> Self {
+        let num_val = validators.len();
+
         Self {
             validators,
             ping_servers,
             total_stake,
+            resources: Resources::new(num_val),
             leader_bandwidth: None,
             bandwidths: None,
         }

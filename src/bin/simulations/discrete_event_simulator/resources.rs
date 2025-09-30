@@ -12,6 +12,7 @@ use alpenglow::ValidatorId;
 use crate::discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage};
 
 ///
+#[derive(Clone, Debug)]
 pub struct Resources {
     network: Resource,
     cpu: Resource,
@@ -28,6 +29,7 @@ impl Resources {
 }
 
 ///
+#[derive(Clone, Debug)]
 pub struct Resource {
     next_free: Vec<SimTime>,
 }
