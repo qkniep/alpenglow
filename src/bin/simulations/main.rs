@@ -34,7 +34,9 @@
 
 mod alpenglow;
 mod discrete_event_simulator;
+mod pyjama;
 mod rotor;
+mod ryse;
 
 use std::fs::File;
 use std::path::PathBuf;
