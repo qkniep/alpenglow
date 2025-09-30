@@ -35,7 +35,7 @@ pub struct RotorRobustnessTest<S: SamplingStrategy> {
     failures: RwLock<usize>,
 }
 
-impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
+impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
     /// Creates a new instance of the test harness.
     pub fn new(
         validators: Vec<ValidatorInfo>,

@@ -279,8 +279,8 @@ fn run_tests_for_stake_distribution(distribution_name: &str, validator_data: &[V
 }
 
 fn run_tests<
-    L: SamplingStrategy + Sync + Send + Clone,
-    R: SamplingStrategy + Sync + Send + Clone,
+    L: SamplingStrategy + Send + Sync + Clone,
+    R: SamplingStrategy + Send + Sync + Clone,
 >(
     test_name: &str,
     validators: &[ValidatorInfo],
@@ -366,7 +366,7 @@ fn run_tests<
                 ping_rotor_sampler.clone(),
                 params,
             );
-            let params = LatencySimParams::new(rotor_params, n, k);
+            let params = LatencySimParams::new(rotor_params, 4, 1);
             let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
             let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
                 builder,
@@ -433,13 +433,13 @@ fn run_tests<
                     ping_rotor_sampler.clone(),
                     params,
                 );
-                let params = LatencySimParams::new(rotor_params, n, k);
+                let params = LatencySimParams::new(rotor_params, 4, 1);
                 let builder = LatencySimInstanceBuilder::new(rotor_builder, params);
                 let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
                     builder,
                     environment.clone(),
                 );
-                engine.run_many_parallel(1000);
+                engine.run_many_sequential(1000);
             });
         }
     }
