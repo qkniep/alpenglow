@@ -150,15 +150,14 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::BlockSent => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                timings[instance.leader as usize] = SimTime::ZERO;
-                let block_bytes =
-                    instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
-                timings[instance.leader as usize] +=
-                    environment.transmission_delay(block_bytes, instance.leader);
-                timings
-            }
+            LatencyEvent::BlockSent => (0..environment.num_validators())
+                .map(|leader| {
+                    let block_bytes = instance.params.num_slices
+                        * instance.params.num_shreds
+                        * MAX_DATA_PER_SHRED;
+                    environment.transmission_delay(block_bytes, instance.leader)
+                })
+                .collect(),
             LatencyEvent::FirstShredInSlice(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 for recipient in 0..environment.num_validators() {
@@ -170,7 +169,7 @@ impl Event for LatencyEvent {
                                 environment.propagation_delay(*relay, recipient as ValidatorId);
                             let tx_delay = environment
                                 .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
-                            timings[*relay as usize] + prop_delay + tx_delay
+                            dependency_timings[0][*relay as usize] + prop_delay + tx_delay
                         })
                         .min()
                         .unwrap();
@@ -185,14 +184,14 @@ impl Event for LatencyEvent {
                     // TODO: reserve network resource
                     shred_timings.fill(SimTime::NEVER);
                     for (i, relay) in instance.relays[*slice].iter().enumerate() {
-                        shred_timings[i] = timings[*relay as usize];
+                        shred_timings[i] = dependency_timings[0][*relay as usize];
                         shred_timings[i] +=
                             environment.propagation_delay(*relay, recipient as ValidatorId);
                         shred_timings[i] += environment
                             .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
                     }
                     shred_timings.sort_unstable();
-                    timings[recipient] += shred_timings[31];
+                    timings[recipient] = shred_timings[instance.params.num_data_shreds - 1];
                 }
                 timings
             }

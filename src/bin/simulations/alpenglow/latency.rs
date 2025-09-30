@@ -118,25 +118,28 @@ impl Event for LatencyEvent {
     ) -> Vec<SimTime> {
         let broadcast_vote_threshold = |threshold: f64| -> Vec<SimTime> {
             let mut timings = dependency_timings[0].to_vec();
-            for recipient in 0..environment.num_validators() {
+            for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
                 // calculate vote arrival timings
                 // TODO: reserve network resource
-                let mut vote_timings = (0..environment.num_validators())
-                    .map(|sender| (SimTime::NEVER, sender))
+                let mut vote_timings = dependency_timings[0]
+                    .iter()
+                    .enumerate()
+                    .map(|(s, t)| (*t, s))
                     .collect::<Vec<_>>();
-                for sender in 0..environment.num_validators() {
-                    vote_timings[sender].0 = timings[sender]
-                        + environment
-                            .propagation_delay(sender as ValidatorId, recipient as ValidatorId)
-                        + environment
-                            .transmission_delay((recipient + 1) * VOTE_SIZE, sender as ValidatorId);
+                for (sender_timing, sender) in vote_timings.iter_mut() {
+                    *sender_timing += environment
+                        .propagation_delay(*sender as ValidatorId, recipient as ValidatorId)
+                        + environment.transmission_delay(
+                            (recipient + 1) * VOTE_SIZE,
+                            *sender as ValidatorId,
+                        );
                 }
 
                 // find time the stake threshold is first reached
                 vote_timings.sort_unstable();
                 let mut stake_so_far = 0;
                 for (vote_timing, sender) in vote_timings.into_iter() {
-                    timings[recipient] = vote_timing;
+                    *recipient_timing = vote_timing;
                     stake_so_far += environment.validators[sender].stake;
                     if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
                         break;
