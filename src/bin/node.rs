@@ -8,12 +8,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::{Alpenglow, EpochInfo};
+use alpenglow::consensus::{Alpenglow, ConsensusMessage, EpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
-use alpenglow::network::{NetworkMessage, UdpNetwork};
+use alpenglow::network::UdpNetwork;
+use alpenglow::shredder::Shred;
 use alpenglow::{Transaction, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
@@ -109,8 +110,8 @@ async fn main() -> Result<()> {
 }
 
 type Node = Alpenglow<
-    TrivialAll2All<UdpNetwork<NetworkMessage, NetworkMessage>>,
-    Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>,
+    TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
+    Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
     UdpNetwork<Transaction, Transaction>,
 >;
 

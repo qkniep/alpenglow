@@ -31,12 +31,13 @@ mod udp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
-use crate::consensus::{Cert, Vote};
+use crate::Transaction;
+use crate::consensus::ConsensusMessage;
+use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
@@ -44,103 +45,52 @@ pub const MTU_BYTES: usize = 1500;
 
 pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
-/// Network message type.
-///
-/// Everything that the Alpenglow validator will send over the network is a `NetworkMessage`.
-// TODO: zero-copy deserialization
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum NetworkMessage {
-    Ping,
-    Pong,
-    Shred(Shred),
-    Vote(Vote),
-    Cert(Cert),
-}
-
-impl NetworkMessage {
-    /// Tries to deserialize a `NetworkMessage` from bytes using [`bincode`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`bincode::error::DecodeError`] if bincode decoding fails.
-    /// This includes the case where `bytes` exceed the limit of [`MTU_BYTES`].
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        if bytes.len() > MTU_BYTES {
-            return Err(bincode::error::DecodeError::LimitExceeded);
-        }
-        // FIXME add limits similar to https://github.com/anza-xyz/agave/blob/8a77fc39fda83fc528bf032c7cbff6063aafb5c5/core/src/banking_stage/latest_validator_vote_packet.rs#L54
-        let (msg, bytes_read) = bincode::serde::decode_from_slice(bytes, BINCODE_CONFIG)?;
-        if bytes_read != bytes.len() {
-            return Err(bincode::error::DecodeError::UnexpectedEnd {
-                additional: bytes.len() - bytes_read,
-            });
-        }
-        Ok(msg)
-    }
-
-    /// Serializes this message into owned bytes using [`bincode`].
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let bytes = bincode::serde::encode_to_vec(self, BINCODE_CONFIG)
-            .expect("serialization should not panic");
-        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        bytes
-    }
-
-    /// Serializes this message into an existing buffer using [`bincode`].
-    ///
-    /// # Returns
-    ///
-    /// Number of bytes used in `buf`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if encoding returns an error, including if `buf` was not big enough.
-    /// Panics if encoding used more than [`MTU_BYTES`].
-    pub fn to_slice(&self, buf: &mut [u8]) -> usize {
-        let res = bincode::serde::encode_into_slice(self, buf, BINCODE_CONFIG);
-        match res {
-            Ok(written) => {
-                assert!(written <= MTU_BYTES, "each message should fit in MTU");
-                written
-            }
-            Err(err) => panic!("serialization failed with {err:?}"),
-        }
-    }
-}
-
-impl From<Shred> for NetworkMessage {
-    fn from(shred: Shred) -> Self {
-        Self::Shred(shred)
-    }
-}
-
-impl From<Vote> for NetworkMessage {
-    fn from(vote: Vote) -> Self {
-        Self::Vote(vote)
-    }
-}
-
-impl From<Cert> for NetworkMessage {
-    fn from(cert: Cert) -> Self {
-        Self::Cert(cert)
-    }
-}
-
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
     type Send;
     type Recv;
 
-    async fn send(&self, message: &Self::Send, to: SocketAddr) -> std::io::Result<()>;
+    /// Sends the `message` to all the addresses in `addrs`.
+    ///
+    /// Note that a possible strategy for the implementators is to send to one address after another.
+    /// In this strategy, it is possible that if sending to one address fails, the implementator gives up sending to the remaining addresses.
+    /// This means that the function is not atomic, if it fails, some messages may still have been sent.
+    //
+    // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
+    async fn send_to_many(
+        &self,
+        message: &Self::Send,
+        addrs: impl Iterator<Item = SocketAddr> + Send,
+    ) -> std::io::Result<()>;
 
-    async fn send_serialized(&self, bytes: &[u8], to: SocketAddr) -> std::io::Result<()>;
+    /// Sends the `message` to `addr`.
+    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> std::io::Result<()>;
 
     // TODO: implement brodcast at `Network` level?
 
     async fn receive(&self) -> std::io::Result<Self::Recv>;
 }
+
+/// A marker trait that constrains [`Network`] to send and receive [`Shred`]
+pub trait ShredNetwork: Network<Recv = Shred, Send = Shred> {}
+impl<N> ShredNetwork for N where N: Network<Recv = Shred, Send = Shred> {}
+
+/// A marker trait that constrains [`Network`] to receive [`Transaction`]
+pub trait TransactionNetwork: Network<Recv = Transaction> {}
+impl<N> TransactionNetwork for N where N: Network<Recv = Transaction> {}
+
+/// A marker trait that constrains [`Network`] to send and receive [`ConsensusMessage`]
+pub trait ConsensusNetwork: Network<Recv = ConsensusMessage, Send = ConsensusMessage> {}
+impl<N> ConsensusNetwork for N where N: Network<Recv = ConsensusMessage, Send = ConsensusMessage> {}
+
+/// A marker trait that constrains [`Network`] to send [`RepairResponse`] and receive [`RepairRequest`]
+pub trait RepairRequestNetwork: Network<Recv = RepairRequest, Send = RepairResponse> {}
+impl<N> RepairRequestNetwork for N where N: Network<Recv = RepairRequest, Send = RepairResponse> {}
+
+/// A marker trait that constrains [`Network`] to send [`RepairRequest`] and receive [`RepairResponse`]
+pub trait RepairNetwork: Network<Recv = RepairResponse, Send = RepairRequest> {}
+impl<N> RepairNetwork for N where N: Network<Recv = RepairResponse, Send = RepairRequest> {}
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
 ///
@@ -157,42 +107,4 @@ pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
 /// This should not be used in production.
 pub fn dontcare_sockaddr() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn basic() {
-        let msg = NetworkMessage::Ping;
-        let bytes = msg.to_bytes();
-        let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
-        assert!(matches!(deserialized, NetworkMessage::Ping));
-
-        let msg = NetworkMessage::Pong;
-        let bytes = msg.to_bytes();
-        let deserialized = NetworkMessage::from_bytes(&bytes).unwrap();
-        assert!(matches!(deserialized, NetworkMessage::Pong));
-    }
-
-    #[tokio::test]
-    async fn serialize_reuse_buffer() {
-        let mut buf = [0u8; MTU_BYTES];
-        for _ in 0..10 {
-            let msg = NetworkMessage::Ping;
-            let num_bytes = msg.to_slice(&mut buf);
-            let deserialized = NetworkMessage::from_bytes(&buf[..num_bytes]).unwrap();
-            assert!(matches!(deserialized, NetworkMessage::Ping));
-        }
-    }
-
-    #[tokio::test]
-    async fn deserialize_too_large() {
-        let bytes = vec![0u8; MTU_BYTES + 1];
-        assert!(NetworkMessage::from_bytes(&bytes).is_err());
-
-        let bytes = vec![0u8; 10 * MTU_BYTES];
-        assert!(NetworkMessage::from_bytes(&bytes).is_err());
-    }
 }
