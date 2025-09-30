@@ -47,12 +47,12 @@ pub trait Blockstore {
     async fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
         hash: Hash,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
@@ -103,7 +103,7 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
+    async fn send_votor_event(&self, event: VotorEvent) -> Option<BlockInfo> {
         match event {
             VotorEvent::FirstShred(_) => {
                 self.votor_channel.send(event).await.unwrap();
@@ -119,7 +119,7 @@ impl BlockstoreImpl {
                     block_info.parent.0,
                 );
 
-                Some((slot, block_info))
+                Some(block_info)
             }
             ev => panic!("unexpected event {ev:?}"),
         }
@@ -215,7 +215,7 @@ impl Blockstore for BlockstoreImpl {
     async fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
@@ -244,7 +244,7 @@ impl Blockstore for BlockstoreImpl {
         &mut self,
         hash: Hash,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
@@ -365,7 +365,7 @@ mod tests {
     async fn add_shred_ignore_duplicate(
         blockstore: &mut BlockstoreImpl,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         match blockstore.add_shred_from_disseminator(shred).await {
             Ok(output) => Ok(output),
             Err(AddShredError::Duplicate) => Ok(None),
