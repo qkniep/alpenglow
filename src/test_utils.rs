@@ -79,7 +79,7 @@ pub fn create_random_shredded_block(
 ) -> (Hash, MerkleTree, Vec<Vec<ValidatedShred>>) {
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap());
+        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap().to_vec());
     }
     let merkle_roots = shreds
         .iter()

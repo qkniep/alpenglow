@@ -22,7 +22,7 @@ use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
-use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::shredder::{Shred, ShredIndex};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
 
@@ -40,7 +40,7 @@ pub enum RepairRequestType {
     /// Request for the root hash of a slice, identified by block hash and slice index.
     SliceRoot(BlockId, SliceIndex),
     /// Request for shred, identified by block hash, slice index and shred index.
-    Shred(BlockId, SliceIndex, usize),
+    Shred(BlockId, SliceIndex, ShredIndex),
 }
 
 impl RepairRequestType {
@@ -329,7 +329,7 @@ where
 
                 // issue next requests
                 // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
-                for shred_index in 0..TOTAL_SHREDS {
+                for shred_index in ShredIndex::all() {
                     let req = RepairRequestType::Shred(block_id, slice, shred_index);
                     self.send_request(req).await.unwrap();
                 }
@@ -343,7 +343,7 @@ where
                 let (slot, block_hash) = block_id;
                 if shred.payload().header.slot != slot
                     || shred.payload().header.slice_index != slice
-                    || shred.payload().index_in_slice != index
+                    || shred.payload().shred_index != index
                 {
                     warn!("repair response (Shred) for mismatching shred index");
                     return;
@@ -363,7 +363,7 @@ where
                     .await
                     .add_shred_from_repair(block_hash, shred)
                     .await;
-                if let Ok(Some((slot, block_info))) = res {
+                if let Ok(Some(block_info)) = res {
                     assert_eq!(block_info.hash, block_hash);
                     self.pool
                         .write()
@@ -427,6 +427,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
+    use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
@@ -588,9 +589,9 @@ mod tests {
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
-            for _ in 0..TOTAL_SHREDS {
+            for _ in ShredIndex::all() {
                 let msg = other_network_request.receive().await.unwrap();
-                for shred_index in 0..TOTAL_SHREDS {
+                for shred_index in ShredIndex::all() {
                     let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
                     if msg.req_type == req_type {
                         shreds_requested.insert(shred_index);
@@ -602,6 +603,7 @@ mod tests {
             // assert all shreds requested + answer the requests
             let slice_shreds = shreds[slice.inner()].clone();
             for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
+                let shred_index = ShredIndex::new(shred_index).unwrap();
                 assert!(shreds_requested.contains(&shred_index));
                 let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
                 let response = RepairResponse::Shred(req_type, shred.into_shred());
@@ -684,7 +686,7 @@ mod tests {
             assert_eq!(proof, correct_proof);
 
             // request slice shreds
-            for shred_index in 0..TOTAL_SHREDS {
+            for shred_index in ShredIndex::all() {
                 let request = RepairRequest {
                     req_type: RepairRequestType::Shred(block_to_repair, slice, shred_index),
                     sender: 0,
@@ -699,7 +701,7 @@ mod tests {
                 assert_eq!(req_type, request.req_type);
                 assert_eq!(
                     shred.payload().data,
-                    shreds[slice.inner()][shred_index].payload().data
+                    shreds[slice.inner()][*shred_index].payload().data
                 );
             }
         }

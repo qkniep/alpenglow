@@ -1,5 +1,5 @@
 use std::collections::btree_map::Entry;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
@@ -38,7 +38,7 @@ impl ValidatedShred {
     ) -> Result<Self, ShredVerifyError> {
         if !MerkleTree::check_proof(
             &shred.payload().data,
-            shred.payload().index_in_slice,
+            *shred.payload().shred_index,
             shred.merkle_root,
             &shred.merkle_path,
         ) {
@@ -88,6 +88,12 @@ impl Deref for ValidatedShred {
     }
 }
 
+impl DerefMut for ValidatedShred {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -102,8 +108,9 @@ mod tests {
     fn create_random_shred() -> (Shred, SecretKey) {
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let mut shreds = RegularShredder::shred(slice, &sk).unwrap();
-        (shreds.pop().unwrap().into_shred(), sk)
+        let shreds = RegularShredder::shred(slice, &sk).unwrap();
+        let shred = shreds[shreds.len() - 1].clone().into_shred();
+        (shred, sk)
     }
 
     #[test]

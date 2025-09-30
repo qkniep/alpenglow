@@ -108,6 +108,27 @@ fn verify_ed25519(bencher: divan::Bencher) {
         );
 }
 
+#[divan::bench(consts = [100, 1000, 10_000])]
+fn aggregate_bls<const N: usize>(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut bytes = [0; 128];
+            let mut pks = Vec::new();
+            for _ in 0..N {
+                rng.fill_bytes(&mut bytes);
+                let sk = blst::min_pk::SecretKey::key_gen(&bytes, &[]).unwrap();
+                pks.push(sk.sk_to_pk());
+            }
+            pks
+        })
+        .bench_values(|pks: Vec<blst::min_pk::PublicKey>| {
+            let pk_refs: Vec<_> = pks.iter().collect();
+            blst::min_pk::AggregatePublicKey::aggregate(&pk_refs, false)
+        });
+}
+
 #[divan::bench]
 fn compress_bls(bencher: divan::Bencher) {
     bencher

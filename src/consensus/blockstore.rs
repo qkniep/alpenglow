@@ -18,7 +18,7 @@ use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::Hash;
-use crate::shredder::{Shred, ValidatedShred};
+use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
 
@@ -47,12 +47,12 @@ pub trait Blockstore {
     async fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
         hash: Hash,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError>;
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     fn disseminated_block_hash(&self, slot: Slot) -> Option<Hash>;
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: BlockId) -> Option<&'a Block>;
@@ -63,7 +63,7 @@ pub trait Blockstore {
         &'a self,
         block_id: BlockId,
         slice_index: SliceIndex,
-        shred_index: usize,
+        shred_index: ShredIndex,
     ) -> Option<&'a ValidatedShred>;
     fn create_double_merkle_proof(
         &self,
@@ -103,7 +103,7 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
+    async fn send_votor_event(&self, event: VotorEvent) -> Option<BlockInfo> {
         match event {
             VotorEvent::FirstShred(_) => {
                 self.votor_channel.send(event).await.unwrap();
@@ -119,7 +119,7 @@ impl BlockstoreImpl {
                     block_info.parent.0,
                 );
 
-                Some((slot, block_info))
+                Some(block_info)
             }
             ev => panic!("unexpected event {ev:?}"),
         }
@@ -163,10 +163,14 @@ impl BlockstoreImpl {
         &self,
         slot: Slot,
         slice: SliceIndex,
-        shred_index: usize,
+        shred_index: ShredIndex,
     ) -> Option<&ValidatedShred> {
-        self.slot_data(slot)
-            .and_then(|s| s.disseminated.shreds.get(&slice)?.get(shred_index))
+        self.slot_data(slot).and_then(|s| {
+            s.disseminated
+                .shreds
+                .get(&slice)
+                .and_then(|shreds| shreds[*shred_index].as_ref())
+        })
     }
 
     /// Gives the number of stored shreds for a given `slot` (across all slices).
@@ -174,8 +178,13 @@ impl BlockstoreImpl {
     /// Only used for testing.
     #[cfg(test)]
     fn stored_shreds_for_slot(&self, slot: Slot) -> usize {
-        self.slot_data(slot)
-            .map_or(0, |s| s.disseminated.shreds.values().map(Vec::len).sum())
+        self.slot_data(slot).map_or(0, |s| {
+            let mut cnt = 0;
+            for shreds in s.disseminated.shreds.values() {
+                cnt += shreds.iter().filter(|s| s.is_some()).count();
+            }
+            cnt
+        })
     }
 
     /// Gives the number of stored slices for a given `slot`.
@@ -206,7 +215,7 @@ impl Blockstore for BlockstoreImpl {
     async fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
@@ -235,7 +244,7 @@ impl Blockstore for BlockstoreImpl {
         &mut self,
         hash: Hash,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
@@ -290,7 +299,7 @@ impl Blockstore for BlockstoreImpl {
     fn get_slice_root(&self, block_id: BlockId, slice_index: SliceIndex) -> Option<Hash> {
         let block_data = self.get_block_data(block_id)?;
         let slice_shreds = block_data.shreds.get(&slice_index)?;
-        slice_shreds.first().map(|s| s.merkle_root)
+        slice_shreds.iter().flatten().next().map(|s| s.merkle_root)
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
@@ -300,13 +309,11 @@ impl Blockstore for BlockstoreImpl {
         &self,
         block_id: BlockId,
         slice_index: SliceIndex,
-        shred_index: usize,
+        shred_index: ShredIndex,
     ) -> Option<&ValidatedShred> {
         let block_data = self.get_block_data(block_id)?;
         let slice_shreds = block_data.shreds.get(&slice_index)?;
-        slice_shreds
-            .iter()
-            .find(|s| s.payload().index_in_slice == shred_index)
+        slice_shreds[*shred_index].as_ref()
     }
 
     /// Generates a Merkle proof for the given `slice_index` of the given `block_id`.
@@ -358,7 +365,7 @@ mod tests {
     async fn add_shred_ignore_duplicate(
         blockstore: &mut BlockstoreImpl,
         shred: Shred,
-    ) -> Result<Option<(Slot, BlockInfo)>, AddShredError> {
+    ) -> Result<Option<BlockInfo>, AddShredError> {
         match blockstore.add_shred_from_disseminator(shred).await {
             Ok(output) => Ok(output),
             Err(AddShredError::Duplicate) => Ok(None),
@@ -386,7 +393,7 @@ mod tests {
             let Some(stored_shred) = blockstore.get_disseminated_shred(
                 slot,
                 SliceIndex::first(),
-                shred.payload().index_in_slice,
+                shred.payload().shred_index,
             ) else {
                 panic!("shred not stored");
             };
@@ -642,7 +649,8 @@ mod tests {
         let block2 = create_random_block(block2_slot, 1);
 
         // insert shreds
-        let mut shreds = RegularShredder::shred(block0[0].clone(), &sk)?;
+        let mut shreds = vec![];
+        shreds.extend(RegularShredder::shred(block0[0].clone(), &sk)?);
         shreds.extend(RegularShredder::shred(block1[0].clone(), &sk)?);
         shreds.extend(RegularShredder::shred(block2[0].clone(), &sk)?);
         for shred in shreds {
