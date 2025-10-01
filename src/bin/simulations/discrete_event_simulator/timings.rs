@@ -83,11 +83,6 @@ impl<E: Event> Timings<E> {
         self.0.get(&event).map(|v| v.as_slice())
     }
 
-    /// Returns the timing entry for the given event and validator.
-    pub fn get_one(&self, event: E, validator: ValidatorId) -> SimTime {
-        self.get(event).unwrap()[validator as usize]
-    }
-
     /// Iterates over timing vectors for all events.
     pub fn iter(&self) -> impl Iterator<Item = (&E, &[SimTime])> {
         self.0.iter().map(|(k, v)| (k, v.as_slice()))
@@ -242,8 +237,25 @@ impl Default for EventTimingStats {
 
 #[cfg(test)]
 mod tests {
+    use crate::rotor::LatencyEvent;
+
     use super::*;
 
     #[test]
-    fn test() {}
+    fn basic() {
+        let mut timings = Timings::<LatencyEvent>::default();
+        let event = LatencyEvent::BlockSent;
+        timings.initialize(event, 2);
+        timings.record(event, SimTime::new(10), 0);
+        assert_eq!(timings.get(event).unwrap()[0], SimTime::new(10));
+        assert_eq!(timings.get(event).unwrap()[1], SimTime::NEVER);
+    }
+
+    // #[test]
+    // fn stats() {
+    //     let mut stats = TimingStats::default();
+    //     let mut stats = EventTimingStats::default();
+    //     stats.record_latencies(&[], &SimulationEnvironment::new());
+    //     assert_eq!(stats.get_avg_percentile_latency(1), 0.0);
+    // }
 }
