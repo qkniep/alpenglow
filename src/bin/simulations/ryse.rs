@@ -3,18 +3,26 @@
 
 //! Simulations for Ryse, the MCP proposal.
 //!
+//! Ryse is one instantiation of a multiple-concurrent proposers (MCP) consensus protocol.
+//! As such, it provides the following economic properties:
+//! - Selective-censorship resistance:
+//! - Hiding:
 //!
+//! Compared to Pyjama, Ryse aims to be a simple modification of Alpenglow.
+//! That is, it is not a general gadget that can be combined with any consensus protocol.
+//! Instead, it specifically modifies Alpenglow's Rotor block dissemination protocol.
+//! In Ryse, each relay would release shreds from all leaders simultaneously.
 
 mod latency;
 mod parameters;
-// mod robustness;
+mod robustness;
 
 use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use rand::prelude::*;
 
 pub use self::latency::{LatencyEvent, RyseLatencySimulation};
-// pub use self::robustness::RotorRobustnessTest;
+pub use self::robustness::run_robustness_tests;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Ryse protocol.

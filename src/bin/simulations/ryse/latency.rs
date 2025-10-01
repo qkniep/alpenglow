@@ -13,7 +13,8 @@ use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Builder, Event, Protocol, SimTime, SimulationEngine, SimulationEnvironment, Stage, Timings,
+    Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
+    Timings,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 use crate::ryse::{RyseInstance, RyseInstanceBuilder, RyseParams};
@@ -115,6 +116,7 @@ impl Event for LatencyEvent {
         &self,
         dependency_timings: &[&[SimTime]],
         _instance: &LatencySimInstance,
+        _resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         let broadcast_vote_threshold = |threshold: f64| -> Vec<SimTime> {

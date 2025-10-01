@@ -104,6 +104,9 @@ fn main() -> Result<()> {
 
     logging::enable_logforth();
 
+    crate::ryse::run_robustness_tests()?;
+    crate::pyjama::run_robustness_tests()?;
+
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
         let filename = PathBuf::from("data")

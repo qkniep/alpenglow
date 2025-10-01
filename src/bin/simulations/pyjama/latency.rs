@@ -12,7 +12,7 @@ use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use alpenglow::{ValidatorId, disseminator::rotor::StakeWeightedSampler};
 
 use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
-use crate::discrete_event_simulator::{Builder, SimulationEngine, Timings};
+use crate::discrete_event_simulator::{Builder, Resources, SimulationEngine, Timings};
 use crate::rotor::RotorParams;
 use crate::{
     alpenglow::AlpenglowLatencySimulation,
@@ -124,6 +124,7 @@ impl Event for LatencyEvent {
         &self,
         dependency_timings: &[&[SimTime]],
         instance: &PyjamaInstance,
+        _resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {

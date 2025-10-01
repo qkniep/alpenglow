@@ -15,18 +15,25 @@ use crate::discrete_event_simulator::Builder;
 /// Parameters for the Ryse MCP protocol.
 #[derive(Clone, Copy, Debug)]
 pub struct RyseParameters {
+    /// Number of leaders concurrently proposing in each slot.
     num_leaders: u64,
+    /// Number of relays to use in the modified Rotor disseminator.
     num_relays: u64,
-    can_decode_threshold: u64,
-    should_decode_threshold: u64,
+    /// Number of shreds required to successfully decode a block.
+    decode_threshold: u64,
+    /// Number of relays' signatures required for a block to become notarized.
+    relay_notar_threshold: u64,
 }
 
+///
+#[derive(Clone, Debug)]
 pub struct RyseInstance {
     leaders: Vec<ValidatorId>,
     relays: Vec<ValidatorId>,
     params: RyseParameters,
 }
 
+///
 pub struct RyseInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     relay_sampler: R,
@@ -88,9 +95,40 @@ impl RyseParameters {
         Self {
             num_leaders,
             num_relays,
-            can_decode_threshold: (num_relays * 50).div_ceil(100),
-            should_decode_threshold: (num_relays * 60).div_ceil(100),
+            decode_threshold: (num_relays * 30).div_ceil(100),
+            relay_notar_threshold: (num_relays * 60).div_ceil(100),
         }
+    }
+
+    /// Creates a new builder instance, with the provided sampling strategies.
+    pub fn optmize(&self, adv_strength: AdversaryStrength) -> Self {
+        let mut optimal_params = *self;
+        let mut optimal_attack_prob = self.strongest_attack_probability(adv_strength);
+
+        for relay_notar_threshold in 1..self.num_relays {
+            for decode_threshold in 1..relay_notar_threshold {
+                let new_params = RyseParameters {
+                    num_leaders: self.num_leaders,
+                    num_relays: self.num_relays,
+                    decode_threshold,
+                    relay_notar_threshold,
+                };
+                let attack_prob = new_params.strongest_attack_probability(adv_strength);
+                if attack_prob < optimal_attack_prob {
+                    optimal_params = new_params;
+                    optimal_attack_prob = attack_prob;
+                }
+            }
+        }
+
+        optimal_params
+    }
+
+    ///
+    pub fn strongest_attack_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+        self.break_hiding_probability(adv_strength)
+            .max(self.selective_censorship_probability(adv_strength))
+            .max(self.temporary_liveness_failure_probability(adv_strength))
     }
 
     /// Proobability that the adversary can break the hiding property in a slot.
@@ -98,7 +136,9 @@ impl RyseParameters {
         // probability that the adversary controls enough relays to decrypt
         let byzantine = adv_strength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
-        let relays_needed = self.should_decode_threshold - self.can_decode_threshold;
+        let relays_needed_1 = self.relay_notar_threshold - self.decode_threshold;
+        let relays_needed_2 = self.decode_threshold;
+        let relays_needed = relays_needed_1.min(relays_needed_2);
         1.0 - relays_dist.cdf(relays_needed - 1)
     }
 
@@ -111,7 +151,7 @@ impl RyseParameters {
 
         // probability that the adversary can exclude all proposers
         let relays_dist = Binomial::new(failed, self.num_relays).unwrap();
-        let relays_needed = self.num_relays - self.should_decode_threshold;
+        let relays_needed = self.num_relays - self.relay_notar_threshold;
         let prob_censor_relays = 1.0 - relays_dist.cdf(relays_needed - 1);
 
         // probability that either attack works
@@ -124,14 +164,16 @@ impl RyseParameters {
         self.selective_censorship_probability(adv_strength)
     }
 
+    /// Calculates the attack probabilities and prints them.
     ///
+    /// Capabilities of the adversary are specified in the `adv_strength` parameter.
     pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
             "Ryse parameters: leaders={}, relays={}, {:.2}/{:.2}",
             self.num_leaders,
             self.num_relays,
-            self.can_decode_threshold as f64 / self.num_relays as f64 * 100.0,
-            self.should_decode_threshold as f64 / self.num_relays as f64 * 100.0,
+            self.decode_threshold as f64 / self.num_relays as f64 * 100.0,
+            self.relay_notar_threshold as f64 / self.num_relays as f64 * 100.0,
         );
         info!(
             "successful attack probabilities (crashed={}, byzantine={}):",
@@ -162,7 +204,7 @@ mod tests {
         let params = RyseParameters::new(2, 5);
         assert_eq!(params.num_leaders, 2);
         assert_eq!(params.num_relays, 5);
-        assert_eq!(params.can_decode_threshold, 2);
-        assert_eq!(params.should_decode_threshold, 3);
+        assert_eq!(params.decode_threshold, 2);
+        assert_eq!(params.relay_notar_threshold, 3);
     }
 }

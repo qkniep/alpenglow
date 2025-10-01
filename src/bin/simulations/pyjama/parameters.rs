@@ -232,10 +232,12 @@ impl PyjamaParameters {
         1.0 - relays_dist.cdf(relays_needed - 1)
     }
 
+    /// Calculates and prints attack sucess probabilities.
     ///
+    /// Capabilities of the adversary are specified in the `adv_strength` parameter.
     pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
-            "MCP parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
+            "Pyjama parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
             self.num_proposers,
             self.num_relays,
             self.can_decode_threshold as f64 / self.num_relays as f64 * 100.0,
