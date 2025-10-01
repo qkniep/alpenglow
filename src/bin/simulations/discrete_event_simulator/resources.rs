@@ -53,8 +53,7 @@ impl Resource {
     }
 
     /// Returns the next time this resource will be free, after `time`.
-    // TODO: find better name
-    pub fn wait_for_next_free(&self, validator: ValidatorId, time: SimTime) -> SimTime {
+    pub fn time_next_free_after(&self, validator: ValidatorId, time: SimTime) -> SimTime {
         time.max(self.time_next_free(validator))
     }
 
@@ -68,7 +67,7 @@ impl Resource {
         target_start_time: SimTime,
         duration: SimTime,
     ) -> SimTime {
-        let actual_start_time = self.wait_for_next_free(validator, target_start_time);
+        let actual_start_time = self.time_next_free_after(validator, target_start_time);
         self.reserve(validator, actual_start_time, duration)
     }
 
@@ -90,5 +89,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test() {}
+    fn basic() {
+        let mut resource = Resource::new(2);
+        assert_eq!(resource.time_next_free(0), SimTime::ZERO);
+        assert_eq!(resource.time_next_free(1), SimTime::ZERO);
+
+        // schedule resource on validator 0 for time 1-11
+        assert_eq!(
+            resource.schedule(0, SimTime::new(1), SimTime::new(10)),
+            SimTime::new(11)
+        );
+
+        // next free works
+        assert_eq!(resource.time_next_free(0), SimTime::new(11));
+        assert_eq!(
+            resource.time_next_free_after(0, SimTime::new(10)),
+            SimTime::new(11)
+        );
+        assert_eq!(
+            resource.time_next_free_after(0, SimTime::new(20)),
+            SimTime::new(20)
+        );
+
+        // resource still free on other validator
+        assert_eq!(resource.time_next_free(1), SimTime::ZERO);
+    }
 }
