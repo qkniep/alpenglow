@@ -20,6 +20,7 @@ use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
+pub use self::resources::Resources;
 pub use self::timings::{SimTime, TimingStats, Timings};
 
 /// Wrapper trait for a specific protocol simulation.
@@ -68,6 +69,7 @@ pub trait Event: Clone + Copy + Debug + Eq + Hash {
         &self,
         dep_timings: &[&[SimTime]],
         instance: &Self::Instance,
+        resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime>;
 }
@@ -161,6 +163,8 @@ impl<P: Protocol> SimulationEngine<P> {
         let num_val = self.environment.num_validators();
         timings.clear();
 
+        let mut resources = Resources::new(num_val);
+
         // simulation loop
         for stage in P::Stage::all() {
             for event in stage.events(self.builder.params()) {
@@ -177,7 +181,12 @@ impl<P: Protocol> SimulationEngine<P> {
                         timings.get(dep).unwrap()
                     })
                     .collect::<Vec<_>>();
-                let latencies = event.calculate_timing(&dep_timings, instance, &self.environment);
+                let latencies = event.calculate_timing(
+                    &dep_timings,
+                    instance,
+                    &mut resources,
+                    &self.environment,
+                );
                 for (validator, latency) in latencies.iter().enumerate() {
                     timings.record(event, *latency, validator as ValidatorId);
                 }
@@ -220,9 +229,9 @@ where
 #[derive(Clone, Debug)]
 pub struct SimulationEnvironment {
     // core setup of the latency test
-    pub validators: Vec<ValidatorInfo>,
-    pub ping_servers: Vec<&'static PingServer>,
-    pub total_stake: Stake,
+    pub(crate) validators: Vec<ValidatorInfo>,
+    ping_servers: Vec<&'static PingServer>,
+    pub(crate) total_stake: Stake,
 
     // optional bandwidth information
     // if provided, these will be used to simulate transmission delays
