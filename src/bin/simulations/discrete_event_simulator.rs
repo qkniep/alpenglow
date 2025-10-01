@@ -69,6 +69,7 @@ pub trait Event: Clone + Copy + Debug + Eq + Hash {
         &self,
         dep_timings: &[&[SimTime]],
         instance: &Self::Instance,
+        resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime>;
 }
@@ -162,6 +163,8 @@ impl<P: Protocol> SimulationEngine<P> {
         let num_val = self.environment.num_validators();
         timings.clear();
 
+        let mut resources = Resources::new(num_val);
+
         // simulation loop
         for stage in P::Stage::all() {
             for event in stage.events(self.builder.params()) {
@@ -178,7 +181,12 @@ impl<P: Protocol> SimulationEngine<P> {
                         timings.get(dep).unwrap()
                     })
                     .collect::<Vec<_>>();
-                let latencies = event.calculate_timing(&dep_timings, instance, &self.environment);
+                let latencies = event.calculate_timing(
+                    &dep_timings,
+                    instance,
+                    &mut resources,
+                    &self.environment,
+                );
                 for (validator, latency) in latencies.iter().enumerate() {
                     timings.record(event, *latency, validator as ValidatorId);
                 }
@@ -224,7 +232,6 @@ pub struct SimulationEnvironment {
     pub(crate) validators: Vec<ValidatorInfo>,
     ping_servers: Vec<&'static PingServer>,
     pub(crate) total_stake: Stake,
-    resources: Resources,
 
     // optional bandwidth information
     // if provided, these will be used to simulate transmission delays
@@ -240,13 +247,10 @@ impl SimulationEnvironment {
         ping_servers: Vec<&'static PingServer>,
         total_stake: Stake,
     ) -> Self {
-        let num_val = validators.len();
-
         Self {
             validators,
             ping_servers,
             total_stake,
-            resources: Resources::new(num_val),
             leader_bandwidth: None,
             bandwidths: None,
         }

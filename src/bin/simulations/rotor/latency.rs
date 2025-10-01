@@ -12,7 +12,9 @@ use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
 use super::{RotorInstance, RotorInstanceBuilder, RotorParams};
-use crate::discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage};
+use crate::discrete_event_simulator::{
+    Event, Protocol, Resources, SimTime, SimulationEnvironment, Stage,
+};
 
 /// Wrapper type for the Rotor latency simulation.
 ///
@@ -139,17 +141,22 @@ impl Event for LatencyEvent {
         &self,
         dependency_timings: &[&[SimTime]],
         instance: &RotorInstance,
+        resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::BlockSent => (0..environment.num_validators())
-                .map(|leader| {
-                    let block_bytes = instance.params.num_slices
-                        * instance.params.num_shreds
-                        * MAX_DATA_PER_SHRED;
-                    environment.transmission_delay(block_bytes, instance.leader)
-                })
-                .collect(),
+            LatencyEvent::BlockSent => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let block_bytes =
+                    instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
+                let tx_time = environment.transmission_delay(block_bytes, instance.leader);
+                let finished_sending_time =
+                    resources
+                        .network
+                        .schedule(instance.leader, SimTime::ZERO, tx_time);
+                timings[instance.leader as usize] = finished_sending_time;
+                timings
+            }
             LatencyEvent::Direct(slice) => {
                 let mut timings = match *slice {
                     0 => (0..environment.num_validators() as ValidatorId)
@@ -166,7 +173,7 @@ impl Event for LatencyEvent {
             }
             LatencyEvent::FirstShredInSlice(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
-                for recipient in 0..environment.num_validators() {
+                for (recipient, timing) in timings.iter_mut().enumerate() {
                     // TODO: reserve network resource
                     let first_shred_time = instance.relays[*slice]
                         .iter()
@@ -179,14 +186,14 @@ impl Event for LatencyEvent {
                         })
                         .min()
                         .unwrap();
-                    timings[recipient] = first_shred_time;
+                    *timing = first_shred_time;
                 }
                 timings
             }
             LatencyEvent::Rotor(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_shreds];
-                for recipient in 0..environment.num_validators() {
+                for (recipient, timing) in timings.iter_mut().enumerate() {
                     // TODO: reserve network resource
                     shred_timings.fill(SimTime::NEVER);
                     for (i, relay) in instance.relays[*slice].iter().enumerate() {
@@ -197,7 +204,7 @@ impl Event for LatencyEvent {
                             .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
                     }
                     shred_timings.sort_unstable();
-                    timings[recipient] = shred_timings[instance.params.num_data_shreds - 1];
+                    *timing = shred_timings[instance.params.num_data_shreds - 1];
                 }
                 timings
             }

@@ -13,7 +13,8 @@ use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Builder, Event, Protocol, SimTime, SimulationEngine, SimulationEnvironment, Stage, Timings,
+    Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
+    Timings,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 
@@ -113,7 +114,8 @@ impl Event for LatencyEvent {
     fn calculate_timing(
         &self,
         dependency_timings: &[&[SimTime]],
-        _instance: &LatencySimInstance,
+        instance: &LatencySimInstance,
+        _resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         let broadcast_vote_threshold = |threshold: f64| -> Vec<SimTime> {
@@ -155,7 +157,7 @@ impl Event for LatencyEvent {
                 let builder = RotorInstanceBuilder::new(
                     StakeWeightedSampler::new(environment.validators.clone()),
                     StakeWeightedSampler::new(environment.validators.clone()),
-                    _instance.params.rotor_params,
+                    instance.params.rotor_params,
                 );
                 let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(
                     builder,
@@ -163,7 +165,7 @@ impl Event for LatencyEvent {
                 );
                 let mut timings = Timings::default();
                 // TODO: actually simulate more than one slot
-                engine.run(&_instance.rotor_instances[0], &mut timings);
+                engine.run(&instance.rotor_instances[0], &mut timings);
                 timings
                     .get(crate::rotor::LatencyEvent::Block)
                     .unwrap()
