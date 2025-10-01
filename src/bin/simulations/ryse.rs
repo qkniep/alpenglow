@@ -6,6 +6,7 @@
 //!
 
 mod latency;
+mod parameters;
 // mod robustness;
 
 use alpenglow::ValidatorId;

@@ -7,11 +7,13 @@
 
 use std::marker::PhantomData;
 
-use alpenglow::{disseminator::rotor::StakeWeightedSampler, ValidatorId};
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
+use alpenglow::{ValidatorId, disseminator::rotor::StakeWeightedSampler};
 
 use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
+use crate::discrete_event_simulator::{Builder, SimulationEngine, Timings};
+use crate::rotor::RotorParams;
 use crate::{
     alpenglow::AlpenglowLatencySimulation,
     discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage},
@@ -23,11 +25,16 @@ use crate::{
 /// There is probably never a need to construct this type directly.
 pub struct PyjamaLatencySimulation<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
-    _leader_sampler: PhantomData<P>,
+    _proposer_sampler: PhantomData<P>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L, P, R> Protocol for PyjamaLatencySimulation<L, P, R> where L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy {
+impl<L, P, R> Protocol for PyjamaLatencySimulation<L, P, R>
+where
+    L: SamplingStrategy,
+    P: SamplingStrategy,
+    R: SamplingStrategy,
+{
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = PyjamaParams;
@@ -103,7 +110,7 @@ impl Event for LatencyEvent {
         true
     }
 
-    fn dependencies(&self, params: &PyjamaParams) -> Vec<LatencyEvent> {
+    fn dependencies(&self, _params: &PyjamaParams) -> Vec<LatencyEvent> {
         match self {
             LatencyEvent::Propose => vec![],
             LatencyEvent::Relay => vec![LatencyEvent::Propose],
@@ -125,54 +132,61 @@ impl Event for LatencyEvent {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 timings[instance.leader as usize] = SimTime::ZERO;
                 let block_bytes =
-                    instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
+                    1 /* num_slices */ * instance.params.num_relays as usize * MAX_DATA_PER_SHRED;
                 timings[instance.leader as usize] +=
                     environment.transmission_delay(block_bytes, instance.leader);
                 timings
             }
-            LatencyEvent::Attestation => {
-                let mut timings = dependency_timings[0].to_vec();
-                for recipient in 0..environment.num_validators() {
-                    // TODO: reserve network resource
-                    let first_shred_time = instance.relays[*slice]
-                        .iter()
-                        .map(|relay| {
-                            let prop_delay =
-                                environment.propagation_delay(*relay, recipient as ValidatorId);
-                            let tx_delay = environment
-                                .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
-                            timings[*relay as usize] + prop_delay + tx_delay
-                        })
-                        .min()
-                        .unwrap();
-                    timings[recipient] = first_shred_time;
-                }
-                timings
-            }
+            LatencyEvent::Attestation => vec![SimTime::ZERO; environment.num_validators()],
+            // LatencyEvent::Attestation => {
+            //     let mut timings = dependency_timings[0].to_vec();
+            //     for recipient in 0..environment.num_validators() {
+            //         // TODO: reserve network resource
+            //         let first_shred_time = instance.relays[*slice]
+            //             .iter()
+            //             .map(|relay| {
+            //                 let prop_delay =
+            //                     environment.propagation_delay(*relay, recipient as ValidatorId);
+            //                 let tx_delay = environment
+            //                     .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
+            //                 timings[*relay as usize] + prop_delay + tx_delay
+            //             })
+            //             .min()
+            //             .unwrap();
+            //         timings[recipient] = first_shred_time;
+            //     }
+            //     timings
+            // }
             LatencyEvent::Consensus => {
                 // TODO: find better way of integrating sub-protocol
+                let rotor_params = RotorParams {
+                    num_data_shreds: instance.params.can_decode_threshold as usize,
+                    num_shreds: instance.params.num_relays as usize,
+                    num_slices: 1,
+                };
                 let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
                     StakeWeightedSampler::new(environment.validators.clone()),
                     StakeWeightedSampler::new(environment.validators.clone()),
-                    instance.
-                )
+                    rotor_params,
+                );
                 let builder = crate::alpenglow::LatencySimInstanceBuilder::new(
                     rotor_builder,
-                    _instance.params.rotor_params,
+                    crate::alpenglow::LatencySimParams::new(rotor_params, 4, 1),
                 );
+                let consensus_instance = builder.build(&mut rand::rng());
                 let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
                     builder,
                     environment.clone(),
                 );
                 let mut timings = Timings::default();
                 // TODO: actually simulate more than one slot
-                engine.run(&_instance.rotor_instances[0], &mut timings);
+                engine.run(&consensus_instance, &mut timings);
                 timings
                     .get(crate::alpenglow::LatencyEvent::Final)
                     .unwrap()
                     .to_vec()
             }
-            LatencyEvent::Reconstruct => column_min(dependency_timings),
+            LatencyEvent::Reconstruct => vec![SimTime::ZERO; environment.num_validators()],
         }
     }
 }

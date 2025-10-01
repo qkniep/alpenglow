@@ -25,10 +25,7 @@ use crate::rotor::RotorInstanceBuilder;
 /// Simulations stop early if the number of failures is greater than this.
 const MAX_FAILURES: usize = 10_000;
 
-<<<<<<<< HEAD:src/bin/simulations/rotor/robustness.rs
 /// Test harness for Rotor robustness testing.
-========
->>>>>>>> origin/main:src/bin/simulations/rotor_robustness.rs
 pub struct RotorRobustnessTest<S: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
@@ -38,12 +35,8 @@ pub struct RotorRobustnessTest<S: SamplingStrategy> {
     failures: RwLock<usize>,
 }
 
-<<<<<<<< HEAD:src/bin/simulations/rotor/robustness.rs
 impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
     /// Creates a new instance of the test harness.
-========
-impl<S: SamplingStrategy + Sync + Send> RotorRobustnessTest<S> {
->>>>>>>> origin/main:src/bin/simulations/rotor_robustness.rs
     pub fn new(
         validators: Vec<ValidatorInfo>,
         sampler: S,

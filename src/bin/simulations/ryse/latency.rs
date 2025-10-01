@@ -15,19 +15,20 @@ use rand::prelude::*;
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, SimTime, SimulationEngine, SimulationEnvironment, Stage, Timings,
 };
-use crate::ryse::{RyseInstance, RyseInstanceBuilder, RyseLatencySimulation, RyseParams};
+use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
+use crate::ryse::{RyseInstance, RyseInstanceBuilder, RyseParams};
 
 /// Size (in bytes) assumed per vote in the simulation.
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 /// Size (in bytes) assumed per certificate in the simulation.
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
-pub struct AlpenglowLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct RyseLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for AlpenglowLatencySimulation<L, R> {
+impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RyseLatencySimulation<L, R> {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = LatencySimParams;
@@ -174,7 +175,7 @@ impl Event for LatencyEvent {
     }
 }
 
-/// Parameters for the Alpenglow latency simulation.
+/// Parameters for the Ryse latency simulation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LatencySimParams {
     rotor_params: RotorParams,
@@ -183,7 +184,7 @@ pub struct LatencySimParams {
 }
 
 impl LatencySimParams {
-    /// Creates a parameter set for the Alpenglow latency simulation.
+    /// Creates a parameter set for the Ryse latency simulation.
     pub fn new(rotor_params: RotorParams, num_slots_per_window: usize, num_slots: usize) -> Self {
         Self {
             rotor_params,
@@ -193,7 +194,7 @@ impl LatencySimParams {
     }
 }
 
-/// A builder for Alpenglow latency simulation instances.
+/// A builder for Ryse latency simulation instances.
 pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
     rotor_builder: RotorInstanceBuilder<L, R>,
     params: LatencySimParams,
@@ -228,7 +229,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
     }
 }
 
-/// A specific instance of the Alpenglow latency simulation.
+/// A specific instance of the Ryse latency simulation.
 ///
 /// Contains one instance of the Rotor latency simulation, [`RotorInstance`], per slot.
 pub struct LatencySimInstance {

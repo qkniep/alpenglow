@@ -7,29 +7,84 @@
 
 use alpenglow::{ValidatorId, disseminator::rotor::SamplingStrategy};
 use log::info;
+use rand::prelude::*;
 use statrs::distribution::{Binomial, DiscreteCDF};
 
-/// Parameters for the MCP protocol.
+use crate::discrete_event_simulator::Builder;
+
+/// Parameters for the Pyjama MCP protocol.
 #[derive(Clone, Copy, Debug)]
 pub struct PyjamaParameters {
-    num_proposers: u64,
-    num_relays: u64,
-    can_decode_threshold: u64,
-    should_decode_threshold: u64,
-    attestations_threshold: u64,
+    pub num_proposers: u64,
+    pub num_relays: u64,
+    pub can_decode_threshold: u64,
+    pub should_decode_threshold: u64,
+    pub attestations_threshold: u64,
 }
 
+///
 pub struct PyjamaInstance {
-    proposers: Vec<ValidatorId>,
-    relays: Vec<ValidatorId>,
-    params: PyjamaParameters,
+    pub leader: ValidatorId,
+    pub proposers: Vec<ValidatorId>,
+    pub relays: Vec<ValidatorId>,
+    pub params: PyjamaParameters,
 }
 
+///
 pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     proposer_sampler: P,
     relay_sampler: R,
     params: PyjamaParameters,
+}
+
+impl<L, P, R> PyjamaInstanceBuilder<L, P, R>
+where
+    L: SamplingStrategy,
+    P: SamplingStrategy,
+    R: SamplingStrategy,
+{
+    /// Creates a new builder instance, with the provided sampling strategies.
+    pub fn new(
+        leader_sampler: L,
+        proposer_sampler: P,
+        relay_sampler: R,
+        params: PyjamaParameters,
+    ) -> Self {
+        Self {
+            leader_sampler,
+            proposer_sampler,
+            relay_sampler,
+            params,
+        }
+    }
+}
+
+impl<L, P, R> Builder for PyjamaInstanceBuilder<L, P, R>
+where
+    L: SamplingStrategy,
+    P: SamplingStrategy,
+    R: SamplingStrategy,
+{
+    type Params = PyjamaParameters;
+    type Instance = PyjamaInstance;
+
+    fn build(&self, rng: &mut impl Rng) -> PyjamaInstance {
+        PyjamaInstance {
+            leader: self.leader_sampler.sample(rng),
+            proposers: self
+                .proposer_sampler
+                .sample_multiple(self.params.num_proposers as usize, rng),
+            relays: self
+                .relay_sampler
+                .sample_multiple(self.params.num_relays as usize, rng),
+            params: self.params,
+        }
+    }
+
+    fn params(&self) -> &Self::Params {
+        &self.params
+    }
 }
 
 /// Adversary strength.
@@ -177,6 +232,7 @@ impl PyjamaParameters {
         1.0 - relays_dist.cdf(relays_needed - 1)
     }
 
+    ///
     pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
             "MCP parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
