@@ -83,8 +83,8 @@ pub struct AdversaryStrength {
 #[derive(Clone, Copy, Debug)]
 pub struct SpecificAdversaryStrength {
     is_leader: bool,
-    crashed_proposers: u64,
-    byzantine_proposers: u64,
+    crashed_leaders: u64,
+    byzantine_leaders: u64,
     crashed_relays: u64,
     byzantine_relays: u64,
 }
@@ -95,8 +95,8 @@ impl RyseParameters {
         Self {
             num_leaders,
             num_relays,
-            decode_threshold: (num_relays * 30).div_ceil(100),
-            relay_notar_threshold: (num_relays * 60).div_ceil(100),
+            decode_threshold: (num_relays * 50).div_ceil(100),
+            relay_notar_threshold: (num_relays * 70).div_ceil(100),
         }
     }
 
@@ -136,26 +136,26 @@ impl RyseParameters {
         // probability that the adversary controls enough relays to decrypt
         let byzantine = adv_strength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
-        let relays_needed_1 = self.relay_notar_threshold - self.decode_threshold;
-        let relays_needed_2 = self.decode_threshold;
-        let relays_needed = relays_needed_1.min(relays_needed_2);
-        1.0 - relays_dist.cdf(relays_needed - 1)
+        let crashed_relays = (adv_strength.crashed * self.num_relays as f64).round() as u64;
+        let relays_needed = (self.relay_notar_threshold + self.decode_threshold + crashed_relays)
+            .saturating_sub(self.num_relays);
+        1.0 - relays_dist.cdf(relays_needed.saturating_sub(1))
     }
 
-    /// Probability that the adversary can selectively censor proposers in a slot.
+    /// Probability that the adversary can selectively censor leaders in a slot.
     pub fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let proposers_dist = Binomial::new(failed, self.num_leaders).unwrap();
-        let prob_all_proposers = 1.0 - proposers_dist.cdf(self.num_leaders - 1);
+        let leaders_dist = Binomial::new(failed, self.num_leaders).unwrap();
+        let prob_all_leaders = 1.0 - leaders_dist.cdf(self.num_leaders - 1);
 
-        // probability that the adversary can exclude all proposers
+        // probability that the adversary can exclude all leaders
         let relays_dist = Binomial::new(failed, self.num_relays).unwrap();
         let relays_needed = self.num_relays - self.relay_notar_threshold;
         let prob_censor_relays = 1.0 - relays_dist.cdf(relays_needed - 1);
 
         // probability that either attack works
-        1.0 - (1.0 - prob_all_proposers) * (1.0 - prob_censor_relays)
+        1.0 - (1.0 - prob_all_leaders) * (1.0 - prob_censor_relays)
     }
 
     /// Probability that the adversary can cause a temporary liveness failure in a slot.

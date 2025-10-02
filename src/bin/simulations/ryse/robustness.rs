@@ -17,8 +17,8 @@ use super::parameters::{AdversaryStrength, RyseParameters};
 const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
 const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
-    crashed: 0.2,
-    byzantine: 0.18,
+    crashed: 0.0,
+    byzantine: 0.2,
 };
 
 pub fn run_robustness_tests() -> Result<()> {
