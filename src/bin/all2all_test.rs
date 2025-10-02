@@ -59,7 +59,7 @@ const TOTAL_NODES: usize = MACHINES * NODES_PER_MACHINE;
 const MSG_BUFFER_BYTES: usize = 1500;
 
 /// Simple program to greet a person
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(long)]

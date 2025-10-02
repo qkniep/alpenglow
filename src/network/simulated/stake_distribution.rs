@@ -43,7 +43,7 @@ pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
 /// Data for a single validator on Solana.
 ///
 /// This matches the format of the data in `data/mainnet_validators_validatorsdotapp.json`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ValidatorData {
     pub network: String,
     pub account: String,

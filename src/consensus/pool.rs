@@ -33,7 +33,7 @@ use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
 /// Errors the Pool may return when adding a vote.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddVoteError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
@@ -46,7 +46,7 @@ pub enum AddVoteError {
 }
 
 /// Errors the Pool may return when adding a certificate.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddCertError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
@@ -57,7 +57,7 @@ pub enum AddCertError {
 }
 
 /// Slashable offences that may be detected by the Pool.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum SlashableOffence {
     #[error("Validator {0} already voted notar on slot {1} for a different hash")]
     NotarDifferentHash(ValidatorId, Slot),
