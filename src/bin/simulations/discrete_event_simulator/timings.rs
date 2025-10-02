@@ -286,9 +286,8 @@ impl Default for EventTimingStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::rotor::LatencyEvent;
-
     use super::*;
+    use crate::rotor::LatencyEvent;
 
     #[test]
     fn basic() {
