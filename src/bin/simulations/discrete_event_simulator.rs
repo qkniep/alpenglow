@@ -12,7 +12,7 @@ mod timings;
 use std::cmp::Reverse;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard};
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
@@ -150,11 +150,6 @@ impl<P: Protocol> SimulationEngine<P> {
             let instance = self.builder.build(&mut rng);
             self.run(&instance, &mut timings);
         }
-        let stats_map = self.stats.read().unwrap();
-        // TODO: determine correct filename
-        stats_map
-            .write_to_csv("test.csv", self.builder.params())
-            .expect("failed to write stats to CSV");
     }
 
     /// Runs one iteration of the simulation.
@@ -168,7 +163,7 @@ impl<P: Protocol> SimulationEngine<P> {
         // simulation loop
         for stage in P::Stage::all() {
             for event in stage.events(self.builder.params()) {
-                debug!("initializing timings for event {:?}", event);
+                debug!("initializing timings for event {}", event.name());
                 timings.initialize(event, num_val);
             }
 
@@ -177,7 +172,7 @@ impl<P: Protocol> SimulationEngine<P> {
                     .dependencies(self.builder.params())
                     .into_iter()
                     .map(|dep| {
-                        debug!("requesting dep timings for event {:?}", dep);
+                        debug!("requesting dep timings for event {}", dep.name());
                         timings.get(dep).unwrap()
                     })
                     .collect::<Vec<_>>();
@@ -197,6 +192,11 @@ impl<P: Protocol> SimulationEngine<P> {
         let mut stats_map = self.stats.write().unwrap();
         stats_map.record_latencies(timings, &self.environment);
     }
+
+    /// References the timing stats.
+    pub fn stats<'a>(&'a self) -> RwLockReadGuard<'a, TimingStats<P>> {
+        self.stats.read().unwrap()
+    }
 }
 
 impl<P: Protocol> SimulationEngine<P>
@@ -215,11 +215,6 @@ where
             let instance = self.builder.build(&mut rng);
             self.run(&instance, &mut timings);
         });
-        let stats_map = self.stats.read().unwrap();
-        // TODO: determine correct filename
-        stats_map
-            .write_to_csv("test.csv", self.builder.params())
-            .expect("failed to write stats to CSV");
     }
 }
 
@@ -242,11 +237,8 @@ pub struct SimulationEnvironment {
 
 impl SimulationEnvironment {
     /// Creates a new simulation environment.
-    pub fn new(
-        validators: Vec<ValidatorInfo>,
-        ping_servers: Vec<&'static PingServer>,
-        total_stake: Stake,
-    ) -> Self {
+    pub fn new(validators: Vec<ValidatorInfo>, ping_servers: Vec<&'static PingServer>) -> Self {
+        let total_stake = validators.iter().map(|v| v.stake).sum();
         Self {
             validators,
             ping_servers,
@@ -270,8 +262,7 @@ impl SimulationEnvironment {
         // split and build environment
         let vals = vals_with_ping_data.iter().map(|(v, _)| v.clone()).collect();
         let ping_servers = vals_with_ping_data.iter().map(|(_, p)| *p).collect();
-        let total_stake: Stake = vals_with_ping_data.iter().map(|(v, _)| v.stake).sum();
-        Self::new(vals, ping_servers, total_stake)
+        Self::new(vals, ping_servers)
     }
 
     /// Sets the bandwidths for all validators for simulating transmission delays.
@@ -292,8 +283,7 @@ impl SimulationEnvironment {
             return SimTime::ZERO;
         };
         let latency_secs = bytes as f64 * 8.0 / bandwidths[validator as usize] as f64;
-        let latency_ns = (latency_secs * 1e9).round() as u64;
-        SimTime::new(latency_ns)
+        SimTime::from_secs(latency_secs)
     }
 
     /// Finds the latency between the `sender` and `receiver` validators.
@@ -301,16 +291,221 @@ impl SimulationEnvironment {
         let sender_server = self.ping_servers[sender as usize].id;
         let receiver_server = self.ping_servers[receiver as usize].id;
         let rtt_ping_ms = get_ping(sender_server, receiver_server).unwrap();
-        let one_way_ping_ms = rtt_ping_ms / 2.0;
-        let latency_ns = (one_way_ping_ms * 1e6).round() as u64;
-        SimTime::new(latency_ns)
+        let one_way_ping_secs = rtt_ping_ms / 2.0 / 1e3;
+        SimTime::from_secs(one_way_ping_secs)
     }
+}
+
+/// Returns the minimum of each column over the given rows.
+///
+/// Requires that all rows have the same length.
+/// Outputs a vector of the same length, containing the minimum in each column.
+///
+/// # Panics
+///
+/// - Panics if `rows` is empty.
+/// - Panics if any row does not have the same length as the first row.
+pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+    assert!(!rows.is_empty());
+    let mut result = rows[0].to_vec();
+    for row in &rows[1..] {
+        assert_eq!(row.len(), result.len(), "all rows must have same length");
+        for (res, &val) in result.iter_mut().zip(row.iter()) {
+            if val < *res {
+                *res = val;
+            }
+        }
+    }
+    result
+}
+
+/// Returns the maximum of each column over the given rows.
+///
+/// Requires that all rows have the same length.
+/// Outputs a vector of the same length, containing the maximum in each column.
+///
+/// # Panics
+///
+/// - Panics if `rows` is empty.
+/// - Panics if any row does not have the same length as the first row.
+pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+    assert!(!rows.is_empty());
+    let mut result = rows[0].to_vec();
+    for row in &rows[1..] {
+        assert_eq!(row.len(), result.len(), "all rows must have same length");
+        for (res, &val) in result.iter_mut().zip(row.iter()) {
+            if val > *res {
+                *res = val;
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
+    use alpenglow::network::simulated::stake_distribution::{
+        VALIDATOR_DATA, validators_from_validator_data,
+    };
+
     use super::*;
 
+    const TIME_PER_EVENT: SimTime = SimTime::from_secs(60.0);
+    const NUM_EVENTS: u64 = 20;
+    const NUM_SIMULATION_ITERATIONS: u64 = 100;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct TestEvent(u64);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct TestStage;
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    struct TestParams(u64);
+    #[derive(Clone, Copy, Debug)]
+    struct TestInstance;
+    #[derive(Clone, Copy, Debug)]
+    struct TestBuilder(TestParams);
+    #[derive(Clone, Copy, Debug)]
+    struct TestProtocol;
+
+    impl Event for TestEvent {
+        type Params = TestParams;
+        type Instance = TestInstance;
+
+        fn name(&self) -> String {
+            format!("test_event_{}", self.0)
+        }
+
+        fn should_track_stats(&self) -> bool {
+            true
+        }
+
+        fn dependencies(&self, _params: &Self::Params) -> Vec<Self> {
+            if self.0 > 0 {
+                vec![TestEvent(self.0 - 1)]
+            } else {
+                vec![]
+            }
+        }
+
+        fn calculate_timing(
+            &self,
+            dep_timings: &[&[SimTime]],
+            _instance: &TestInstance,
+            _resources: &mut Resources,
+            environment: &SimulationEnvironment,
+        ) -> Vec<SimTime> {
+            let mut timings = if self.0 == 0 {
+                vec![SimTime::ZERO; environment.num_validators()]
+            } else {
+                dep_timings[0].to_vec()
+            };
+            for timing in timings.iter_mut() {
+                *timing += TIME_PER_EVENT;
+            }
+            timings
+        }
+    }
+
+    impl Stage for TestStage {
+        type Event = TestEvent;
+        type Params = TestParams;
+
+        fn first() -> Self {
+            TestStage
+        }
+
+        fn next(&self) -> Option<Self> {
+            None
+        }
+
+        fn events(&self, params: &TestParams) -> Vec<TestEvent> {
+            (0..params.0).map(TestEvent).collect()
+        }
+    }
+
+    impl Builder for TestBuilder {
+        type Params = TestParams;
+        type Instance = TestInstance;
+
+        fn build(&self, _rng: &mut impl Rng) -> TestInstance {
+            TestInstance
+        }
+
+        fn params(&self) -> &TestParams {
+            &self.0
+        }
+    }
+
+    impl Protocol for TestProtocol {
+        type Event = TestEvent;
+        type Stage = TestStage;
+        type Params = TestParams;
+        type Instance = TestInstance;
+        type Builder = TestBuilder;
+    }
+
+    fn setup() -> (SimulationEngine<TestProtocol>, TestBuilder) {
+        let (_, vals_with_ping) = validators_from_validator_data(&VALIDATOR_DATA);
+        let environment = SimulationEnvironment::from_validators_with_ping_data(&vals_with_ping);
+        let builder = TestBuilder(TestParams(NUM_EVENTS));
+        let engine = SimulationEngine::new(builder, environment);
+        (engine, builder)
+    }
+
     #[test]
-    fn test() {}
+    fn single() {
+        let (engine, builder) = setup();
+        let instance = builder.build(&mut rand::rng());
+        let mut timings = Timings::default();
+        engine.run(&instance, &mut timings);
+
+        // check that the timings are correct
+        for event_id in 0..NUM_EVENTS {
+            for time in timings.get(TestEvent(event_id)).unwrap() {
+                let expected_time_secs = TIME_PER_EVENT.as_secs() * (event_id + 1) as f64;
+                let delta = (time.as_secs() - expected_time_secs).abs();
+                assert!(delta < f64::EPSILON);
+            }
+        }
+    }
+
+    const CUSTOM_EPSILON: f64 = 1e-6;
+
+    #[test]
+    fn many_parallel() {
+        let (engine, _builder) = setup();
+        engine.run_many_parallel(NUM_SIMULATION_ITERATIONS);
+
+        // check that the timings are correct
+        for event_id in 0..NUM_EVENTS {
+            let stats = engine.stats();
+            let event_stats = stats.get(&TestEvent(event_id)).unwrap();
+            // timings should be the same for all validators, thus also for all percentiles
+            for percentile in 1..=100 {
+                let avg_timing_ms = event_stats.get_avg_percentile_latency(percentile);
+                let expected_time_ms = TIME_PER_EVENT.as_millis() * (event_id + 1) as f64;
+                let delta = (avg_timing_ms - expected_time_ms).abs();
+                assert!(delta < CUSTOM_EPSILON);
+            }
+        }
+    }
+
+    #[test]
+    fn many_sequential() {
+        let (engine, _builder) = setup();
+        engine.run_many_sequential(NUM_SIMULATION_ITERATIONS);
+
+        // check that the timings are correct
+        for event_id in 0..NUM_EVENTS {
+            let stats = engine.stats();
+            let event_stats = stats.get(&TestEvent(event_id)).unwrap();
+            // timings should be the same for all validators, thus also for all percentiles
+            for percentile in 1..=100 {
+                let avg_timing_ms = event_stats.get_avg_percentile_latency(percentile);
+                let expected_time_ms = TIME_PER_EVENT.as_millis() * (event_id + 1) as f64;
+                let delta = (avg_timing_ms - expected_time_ms).abs();
+                assert!(delta < CUSTOM_EPSILON);
+            }
+        }
+    }
 }

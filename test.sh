@@ -13,7 +13,7 @@ slow_tests () {
 fast_tests () {
 	echo "🚀 Running fast tests!"
 	sleep 1
-	RUST_BACKTRACE=1 cargo nextest run
+	RUST_BACKTRACE=1 cargo nextest run --all-targets
 }
 
 sequential_tests () {

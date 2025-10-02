@@ -13,7 +13,7 @@ use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
 use super::{RotorInstance, RotorInstanceBuilder, RotorParams};
 use crate::discrete_event_simulator::{
-    Event, Protocol, Resources, SimTime, SimulationEnvironment, Stage,
+    Event, Protocol, Resources, SimTime, SimulationEnvironment, Stage, column_max, column_min,
 };
 
 /// Wrapper type for the Rotor latency simulation.
@@ -68,8 +68,9 @@ impl Stage for LatencyTestStage {
                 events
             }
             LatencyTestStage::Rotor => {
-                let mut events = Vec::with_capacity(2 * params.num_slices);
+                let mut events = Vec::with_capacity(3 * params.num_slices);
                 for slice in 0..params.num_slices {
+                    events.push(LatencyEvent::StartForwarding(slice));
                     events.push(LatencyEvent::FirstShredInSlice(slice));
                     events.push(LatencyEvent::Rotor(slice));
                 }
@@ -85,6 +86,7 @@ impl Stage for LatencyTestStage {
 pub enum LatencyEvent {
     BlockSent,
     Direct(usize),
+    StartForwarding(usize),
     FirstShredInSlice(usize),
     Rotor(usize),
     FirstShred,
@@ -97,43 +99,47 @@ impl Event for LatencyEvent {
 
     fn name(&self) -> String {
         match self {
-            LatencyEvent::BlockSent => "block_sent",
-            LatencyEvent::Direct(_) => "direct",
-            LatencyEvent::FirstShredInSlice(_) => "first_shred_in_slice",
-            LatencyEvent::Rotor(_) => "rotor",
-            LatencyEvent::FirstShred => "first_shred",
-            LatencyEvent::Block => "block",
+            Self::BlockSent => "block_sent".to_owned(),
+            Self::Direct(slice) => format!("direct_{}", slice),
+            Self::StartForwarding(_) => "start_forwarding".to_owned(),
+            Self::FirstShredInSlice(_) => "first_shred_in_slice".to_owned(),
+            Self::Rotor(slice) => format!("rotor_{}", slice),
+            Self::FirstShred => "first_shred".to_owned(),
+            Self::Block => "block".to_owned(),
         }
-        .to_owned()
     }
 
     fn should_track_stats(&self) -> bool {
         match self {
-            LatencyEvent::BlockSent => true,
-            LatencyEvent::Direct(slice) => *slice == 0,
-            LatencyEvent::FirstShredInSlice(_) => false,
-            LatencyEvent::Rotor(slice) => *slice == 0,
-            LatencyEvent::FirstShred => true,
-            LatencyEvent::Block => true,
+            Self::BlockSent => true,
+            Self::Direct(slice) => *slice == 0,
+            Self::StartForwarding(_) => false,
+            Self::FirstShredInSlice(_) => false,
+            Self::Rotor(slice) => *slice == 0,
+            Self::FirstShred => true,
+            Self::Block => true,
         }
     }
 
-    fn dependencies(&self, params: &RotorParams) -> Vec<LatencyEvent> {
+    fn dependencies(&self, params: &RotorParams) -> Vec<Self> {
         match self {
-            LatencyEvent::BlockSent => vec![],
-            LatencyEvent::Direct(slice) => {
+            Self::BlockSent => vec![],
+            Self::Direct(slice) => {
                 if *slice == 0 {
                     vec![]
                 } else {
-                    vec![LatencyEvent::Direct(*slice - 1)]
+                    vec![Self::Direct(*slice - 1)]
                 }
             }
-            LatencyEvent::FirstShredInSlice(slice) => vec![LatencyEvent::Direct(*slice)],
-            LatencyEvent::Rotor(slice) => vec![LatencyEvent::Direct(*slice)],
-            LatencyEvent::FirstShred => (0..params.num_slices)
-                .map(LatencyEvent::FirstShredInSlice)
+            Self::StartForwarding(slice) => vec![Self::Direct(*slice)],
+            Self::FirstShredInSlice(slice) => {
+                vec![Self::StartForwarding(*slice)]
+            }
+            Self::Rotor(slice) => vec![Self::StartForwarding(*slice)],
+            Self::FirstShred => (0..params.num_slices)
+                .map(Self::FirstShredInSlice)
                 .collect(),
-            LatencyEvent::Block => (0..params.num_slices).map(LatencyEvent::Rotor).collect(),
+            Self::Block => (0..params.num_slices).map(Self::Rotor).collect(),
         }
     }
 
@@ -145,7 +151,7 @@ impl Event for LatencyEvent {
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::BlockSent => {
+            Self::BlockSent => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let block_bytes =
                     instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
@@ -157,24 +163,34 @@ impl Event for LatencyEvent {
                 timings[instance.leader as usize] = finished_sending_time;
                 timings
             }
-            LatencyEvent::Direct(slice) => {
-                let mut timings = match *slice {
-                    0 => (0..environment.num_validators() as ValidatorId)
-                        .map(|recipient| environment.propagation_delay(instance.leader, recipient))
-                        .collect(),
-                    _ => dependency_timings[0].to_vec(),
-                };
-                // TODO: reserve network resource
+            Self::Direct(slice) => {
+                let mut timings = (0..environment.num_validators() as ValidatorId)
+                    .map(|recipient| environment.propagation_delay(instance.leader, recipient))
+                    .collect::<Vec<_>>();
                 for relay in &instance.relays[*slice] {
-                    timings[*relay as usize] +=
-                        environment.transmission_delay(MAX_DATA_PER_SHRED, instance.leader);
+                    let shred_send_index =
+                        slice * instance.params.num_shreds + (*relay as usize) + 1;
+                    let tx_delay = environment
+                        .transmission_delay(shred_send_index * MAX_DATA_PER_SHRED, instance.leader);
+                    timings[*relay as usize] += tx_delay;
                 }
                 timings
             }
-            LatencyEvent::FirstShredInSlice(slice) => {
+            Self::StartForwarding(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
+                for &relay in &instance.relays[*slice] {
+                    let timing = &mut timings[relay as usize];
+                    let total_bytes = environment.num_validators() * MAX_DATA_PER_SHRED;
+                    let total_tx_delay = environment.transmission_delay(total_bytes, relay);
+                    let start_time = resources.network.time_next_free_after(relay, *timing);
+                    resources.network.schedule(relay, *timing, total_tx_delay);
+                    *timing = start_time;
+                }
+                timings
+            }
+            Self::FirstShredInSlice(slice) => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
-                    // TODO: reserve network resource
                     let first_shred_time = instance.relays[*slice]
                         .iter()
                         .map(|relay| {
@@ -190,72 +206,23 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::Rotor(slice) => {
-                let mut timings = dependency_timings[0].to_vec();
+            Self::Rotor(slice) => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_shreds];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
-                    // TODO: reserve network resource
-                    shred_timings.fill(SimTime::NEVER);
                     for (i, relay) in instance.relays[*slice].iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][*relay as usize];
-                        shred_timings[i] +=
-                            environment.propagation_delay(*relay, recipient as ValidatorId);
-                        shred_timings[i] += environment
-                            .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
+                        shred_timings[i] = dependency_timings[0][*relay as usize]
+                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                            + environment
+                                .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
                     }
                     shred_timings.sort_unstable();
                     *timing = shred_timings[instance.params.num_data_shreds - 1];
                 }
                 timings
             }
-            LatencyEvent::FirstShred => column_min(dependency_timings),
-            LatencyEvent::Block => column_max(dependency_timings),
+            Self::FirstShred => column_min(dependency_timings),
+            Self::Block => column_max(dependency_timings),
         }
     }
-}
-
-/// Returns the minimum of each column over the given rows.
-///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the minimum in each column.
-///
-/// # Panics
-///
-/// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
-fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
-    assert!(!rows.is_empty());
-    let mut result = rows[0].to_vec();
-    for row in &rows[1..] {
-        assert_eq!(row.len(), result.len(), "all rows must have same length");
-        for (res, &val) in result.iter_mut().zip(row.iter()) {
-            if val < *res {
-                *res = val;
-            }
-        }
-    }
-    result
-}
-
-/// Returns the maximum of each column over the given rows.
-///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the maximum in each column.
-///
-/// # Panics
-///
-/// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
-fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
-    assert!(!rows.is_empty());
-    let mut result = rows[0].to_vec();
-    for row in &rows[1..] {
-        assert_eq!(row.len(), result.len(), "all rows must have same length");
-        for (res, &val) in result.iter_mut().zip(row.iter()) {
-            if val > *res {
-                *res = val;
-            }
-        }
-    }
-    result
 }
