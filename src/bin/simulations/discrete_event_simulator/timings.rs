@@ -39,7 +39,7 @@ impl SimTime {
 
     /// Constructs a new [`SimTime`] from the given number of seconds.
     pub const fn from_secs(time_secs: f64) -> Self {
-        let time_ns = (time_secs * 1e9).round() as u64;
+        let time_ns = (time_secs * 1e9) as u64;
         Self::new(time_ns)
     }
 
