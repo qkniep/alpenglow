@@ -163,7 +163,7 @@ impl<P: Protocol> SimulationEngine<P> {
         // simulation loop
         for stage in P::Stage::all() {
             for event in stage.events(self.builder.params()) {
-                debug!("initializing timings for event {:?}", event);
+                debug!("initializing timings for event {}", event.name());
                 timings.initialize(event, num_val);
             }
 
@@ -172,7 +172,7 @@ impl<P: Protocol> SimulationEngine<P> {
                     .dependencies(self.builder.params())
                     .into_iter()
                     .map(|dep| {
-                        debug!("requesting dep timings for event {:?}", dep);
+                        debug!("requesting dep timings for event {}", dep.name());
                         timings.get(dep).unwrap()
                     })
                     .collect::<Vec<_>>();
