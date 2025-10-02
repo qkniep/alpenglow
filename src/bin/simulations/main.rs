@@ -36,6 +36,7 @@ mod alpenglow;
 mod discrete_event_simulator;
 mod rotor;
 
+use std::cmp::Reverse;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -49,7 +50,7 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{ValidatorInfo, logging};
+use ::alpenglow::{ValidatorId, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
@@ -154,7 +155,16 @@ fn run_tests_for_stake_distribution(
     validator_data: &[ValidatorData],
 ) -> Result<()> {
     // load validator and ping data
-    let (validators, validators_and_ping_servers) = validators_from_validator_data(validator_data);
+    let (validators, mut validators_and_ping_servers) =
+        validators_from_validator_data(validator_data);
+
+    // sort by stake (from highest to lowest)
+    validators_and_ping_servers.sort_by_key(|(v, _)| Reverse(v.stake));
+    for (i, (v, _)) in validators_and_ping_servers.iter_mut().enumerate() {
+        v.id = i as ValidatorId;
+    }
+
+    // extract the validators only
     let validators_with_pings: Vec<ValidatorInfo> = validators_and_ping_servers
         .iter()
         .map(|(v, _)| v.clone())
@@ -350,7 +360,7 @@ fn run_tests<
             ping_rotor_sampler.clone(),
             params,
         );
-        let leader_bandwidth = 10_000_000_000; // 1 Gbps
+        let leader_bandwidth = 10_000_000_000; // 10 Gbps
         let bandwidths = vec![leader_bandwidth; validators.len()];
         let environment =
             SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
