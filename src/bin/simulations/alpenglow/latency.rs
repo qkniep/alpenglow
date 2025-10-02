@@ -8,13 +8,12 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
-    Timings, column_min,
+    Timings, broadcast_first_arrival_or_dep, broadcast_stake_threshold, column_min,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 
@@ -126,113 +125,19 @@ impl Event for LatencyEvent {
         resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
-        // reserve the network resource
-        // TODO: find a more automated way of doing this
-        match self {
-            Self::LocalNotar => {
-                for sender in 0..environment.num_validators() {
-                    let total_tx_time = environment.transmission_delay(
-                        environment.num_validators() * VOTE_SIZE,
-                        sender as ValidatorId,
-                    );
-                    resources.network.schedule(
-                        sender as ValidatorId,
-                        dependency_timings[0][sender],
-                        total_tx_time,
-                    );
-                }
-            }
-            Self::Notar => {
-                for sender in 0..environment.num_validators() {
-                    let total_tx_time = environment.transmission_delay(
-                        environment.num_validators() * CERT_SIZE,
-                        sender as ValidatorId,
-                    );
-                    resources.network.schedule(
-                        sender as ValidatorId,
-                        dependency_timings[0][sender],
-                        total_tx_time,
-                    );
-                }
-            }
-            _ => (),
-        }
+        let broadcast_vote_threshold =
+            |resources: &mut Resources, threshold: f64| -> Vec<SimTime> {
+                broadcast_stake_threshold(
+                    dependency_timings[0],
+                    resources,
+                    environment,
+                    VOTE_SIZE,
+                    threshold,
+                )
+            };
 
-        let broadcast_vote_threshold = |threshold: f64| -> Vec<SimTime> {
-            let mut timings = dependency_timings[0].to_vec();
-
-            // determine the start time for sending votes
-            let start_send_vote_timings = dependency_timings[0]
-                .iter()
-                .enumerate()
-                .map(|(sender, sender_timing)| {
-                    resources
-                        .network
-                        .time_next_free_after(sender as ValidatorId, *sender_timing)
-                })
-                .collect::<Vec<_>>();
-
-            for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
-                // calculate vote arrival timings
-                let mut vote_timings = start_send_vote_timings
-                    .iter()
-                    .enumerate()
-                    .map(|(sender, start_send)| {
-                        let prop_delay = environment
-                            .propagation_delay(sender as ValidatorId, recipient as ValidatorId);
-                        let tx_delay = environment
-                            .transmission_delay((recipient + 1) * VOTE_SIZE, sender as ValidatorId);
-                        (*start_send + prop_delay + tx_delay, sender)
-                    })
-                    .collect::<Vec<_>>();
-
-                // find time the stake threshold is first reached
-                vote_timings.sort_unstable();
-                let mut stake_so_far = 0;
-                for (vote_timing, sender) in vote_timings.into_iter() {
-                    *recipient_timing = vote_timing;
-                    stake_so_far += environment.validators[sender].stake;
-                    if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
-                        break;
-                    }
-                }
-            }
-            timings
-        };
-
-        let local_or_cert = |dependency_timings: &[&[SimTime]]| -> Vec<SimTime> {
-            let mut timings = dependency_timings[0].to_vec();
-
-            // reserve network for cert sending
-            let start_send_cert_timings = dependency_timings[0]
-                .iter()
-                .enumerate()
-                .map(|(sender, sender_timing)| {
-                    resources
-                        .network
-                        .time_next_free_after(sender as ValidatorId, *sender_timing)
-                })
-                .collect::<Vec<_>>();
-
-            for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
-                // calculate cert arrival timings
-                let first_cert_arrival_time = start_send_cert_timings
-                    .iter()
-                    .enumerate()
-                    .map(|(sender, start_send)| {
-                        let prop_delay = environment
-                            .propagation_delay(sender as ValidatorId, recipient as ValidatorId);
-                        let tx_delay = environment
-                            .transmission_delay((recipient + 1) * CERT_SIZE, sender as ValidatorId);
-                        *start_send + prop_delay + tx_delay
-                    })
-                    .min()
-                    .unwrap();
-                if first_cert_arrival_time <= *recipient_timing {
-                    *recipient_timing = first_cert_arrival_time;
-                }
-            }
-            timings
+        let local_or_cert = |resources: &mut Resources| -> Vec<SimTime> {
+            broadcast_first_arrival_or_dep(dependency_timings[0], resources, environment, CERT_SIZE)
         };
 
         match self {
@@ -255,14 +160,14 @@ impl Event for LatencyEvent {
                     .unwrap()
                     .to_vec()
             }
-            Self::LocalNotar => broadcast_vote_threshold(0.6),
-            Self::Notar => local_or_cert(dependency_timings),
-            Self::LocalFastFinal => broadcast_vote_threshold(0.8),
-            Self::LocalSlowFinal => broadcast_vote_threshold(0.6),
+            Self::LocalNotar => broadcast_vote_threshold(resources, 0.6),
+            Self::Notar => local_or_cert(resources),
+            Self::LocalFastFinal => broadcast_vote_threshold(resources, 0.8),
+            Self::LocalSlowFinal => broadcast_vote_threshold(resources, 0.6),
             Self::LocalFinal => column_min(dependency_timings),
             // NOTE: when sending final cert, final vote is already scheduled
             // TODO: this is not always optimal, handle this properly
-            Self::Final => local_or_cert(dependency_timings),
+            Self::Final => local_or_cert(resources),
         }
     }
 }

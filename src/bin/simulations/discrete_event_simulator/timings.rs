@@ -39,7 +39,8 @@ impl SimTime {
 
     /// Constructs a new [`SimTime`] from the given number of seconds.
     pub const fn from_secs(time_secs: f64) -> Self {
-        let time_ns = (time_secs * 1e9).round() as u64;
+        // TODO: correctly round once stable in const
+        let time_ns = (time_secs * 1e9) as u64;
         Self::new(time_ns)
     }
 
@@ -286,9 +287,8 @@ impl Default for EventTimingStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::rotor::LatencyEvent;
-
     use super::*;
+    use crate::rotor::LatencyEvent;
 
     #[test]
     fn basic() {

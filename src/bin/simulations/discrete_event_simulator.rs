@@ -106,20 +106,6 @@ pub trait Stage: Clone + Copy + Debug + Eq + Hash {
     fn events(&self, params: &Self::Params) -> Vec<Self::Event>;
 }
 
-/// Kinds of events that are directly supported by the simulation engine.
-pub enum EventKind {
-    /// This event fires as soon as its dependencies are ready.
-    Simple,
-    /// This event uses the senders outgoing network bandwidth.
-    Broadcast,
-    /// This event uses the CPU for a certain amount of time.
-    Compute,
-    /// To determine when this event fires, the simulation engine runs a sub-protocol.
-    SubProtocol,
-    /// This event fires based on a user-provided function.
-    Custom,
-}
-
 /// Matrix-based discrete-event simulation engine.
 // TODO: maybe generalize into a trait and then implement event queue-based engine as well
 pub struct SimulationEngine<P: Protocol> {
@@ -340,6 +326,107 @@ pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
         }
     }
     result
+}
+
+pub fn broadcast_first_arrival_or_dep(
+    start_times: &[SimTime],
+    resources: &mut Resources,
+    environment: &SimulationEnvironment,
+    message_size: usize,
+) -> Vec<SimTime> {
+    let mut timings = start_times.to_vec();
+
+    let send_time_iter = broadcast(start_times, resources, environment, message_size);
+    let start_send_times = send_time_iter.collect::<Vec<_>>();
+
+    for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
+        // calculate first message arrival time
+        let first_arrival_time = start_send_times
+            .iter()
+            .enumerate()
+            .map(|(sender, start_send)| {
+                let sender = sender as ValidatorId;
+                let prop_delay = environment.propagation_delay(sender, recipient as ValidatorId);
+                let tx_delay =
+                    environment.transmission_delay((recipient + 1) * message_size, sender);
+                *start_send + prop_delay + tx_delay
+            })
+            .min()
+            .unwrap();
+
+        if first_arrival_time < *recipient_timing {
+            *recipient_timing = first_arrival_time;
+        }
+    }
+    timings
+}
+
+pub fn broadcast_stake_threshold(
+    start_times: &[SimTime],
+    resources: &mut Resources,
+    environment: &SimulationEnvironment,
+    message_size: usize,
+    threshold: f64,
+) -> Vec<SimTime> {
+    let mut timings = start_times.to_vec();
+
+    let send_time_iter = broadcast(start_times, resources, environment, message_size);
+    let start_send_times = send_time_iter.collect::<Vec<_>>();
+
+    for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
+        // calculate message arrival timings
+        let mut arrival_timings = start_send_times
+            .iter()
+            .enumerate()
+            .map(|(sender, start_send)| {
+                let prop_delay =
+                    environment.propagation_delay(sender as ValidatorId, recipient as ValidatorId);
+                let tx_delay = environment
+                    .transmission_delay((recipient + 1) * message_size, sender as ValidatorId);
+                (*start_send + prop_delay + tx_delay, sender)
+            })
+            .collect::<Vec<_>>();
+
+        // find time the stake threshold is first reached
+        arrival_timings.sort_unstable();
+        let mut stake_so_far = 0;
+        for (arrival_timing, sender) in arrival_timings.into_iter() {
+            *recipient_timing = arrival_timing;
+            stake_so_far += environment.validators[sender].stake;
+            if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
+                break;
+            }
+        }
+    }
+    timings
+}
+
+pub fn broadcast(
+    start_times: &[SimTime],
+    resources: &mut Resources,
+    environment: &SimulationEnvironment,
+    message_size: usize,
+) -> impl Iterator<Item = SimTime> {
+    // reserve the network resource
+    for (sender, &start_time) in start_times.iter().enumerate() {
+        let sender = sender as ValidatorId;
+        let total_tx_time =
+            environment.transmission_delay(environment.num_validators() * message_size, sender);
+        resources
+            .network
+            .schedule(sender, start_time, total_tx_time);
+    }
+
+    // determine the start time for sending messages
+    let resources = &*resources;
+    start_times
+        .iter()
+        .enumerate()
+        .map(|(sender, sender_timing)| {
+            resources
+                .network
+                .time_next_free_after(sender as ValidatorId, *sender_timing)
+        })
 }
 
 #[cfg(test)]
