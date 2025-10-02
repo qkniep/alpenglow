@@ -10,6 +10,7 @@
 //! so the rows are only initialized as needed.
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufWriter, Write};
@@ -32,13 +33,40 @@ impl SimTime {
     pub const NEVER: Self = Self(u64::MAX);
 
     /// Constructs a new [`SimTime`] from the given number of nanoseconds.
-    pub fn new(time_ns: u64) -> Self {
+    pub const fn new(time_ns: u64) -> Self {
         Self(time_ns)
     }
 
-    /// Converts the [`SimTime`] to milliseconds.
+    /// Constructs a new [`SimTime`] from the given number of seconds.
+    pub const fn from_secs(time_secs: f64) -> Self {
+        let time_ns = (time_secs * 1e9).round() as u64;
+        Self::new(time_ns)
+    }
+
+    /// Returns the exact number of nanoseconds the [`SimTime`] represents.
+    pub const fn nanos(&self) -> Option<u64> {
+        match *self {
+            Self::NEVER => None,
+            Self(t) => Some(t),
+        }
+    }
+
+    /// Converts the [`SimTime`] to (fractional) microseconds.
+    pub fn as_micros(&self) -> f64 {
+        self.nanos()
+            .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e3)
+    }
+
+    /// Converts the [`SimTime`] to (fractional) milliseconds.
     pub fn as_millis(&self) -> f64 {
-        self.0 as f64 / 1e6
+        self.nanos()
+            .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e6)
+    }
+
+    /// Converts the [`SimTime`] to (fractional) seconds.
+    pub fn as_secs(&self) -> f64 {
+        self.nanos()
+            .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e9)
     }
 }
 
@@ -52,6 +80,22 @@ impl Add<SimTime> for SimTime {
 impl AddAssign<SimTime> for SimTime {
     fn add_assign(&mut self, other: SimTime) {
         self.0 += other.0;
+    }
+}
+
+impl Display for SimTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self == &SimTime::NEVER {
+            write!(f, "never")
+        } else if self.0 < 1_000 {
+            write!(f, "{} ns", self.0)
+        } else if self.0 < 1_000_000 {
+            write!(f, "{:.0} us", self.as_micros())
+        } else if self.0 < 1_000_000_000 {
+            write!(f, "{:.0} ms", self.as_millis())
+        } else {
+            write!(f, "{:.0} s", self.as_secs())
+        }
     }
 }
 
@@ -243,6 +287,24 @@ mod tests {
 
     #[test]
     fn basic() {
+        let mut time = SimTime::new(1_000_000);
+        assert!((time.as_secs() - 1e-3).abs() < f64::EPSILON);
+        assert!((time.as_millis() - 1.0).abs() < f64::EPSILON);
+        time += SimTime::new(1_000_000);
+        assert!((time.as_secs() - 2e-3).abs() < f64::EPSILON);
+        assert!((time.as_millis() - 2.0).abs() < f64::EPSILON);
+
+        let time = SimTime::from_millis(1);
+        assert!((time.as_secs() - 1e-3).abs() < f64::EPSILON);
+        assert!((time.as_millis() - 1.0).abs() < f64::EPSILON);
+
+        let time = SimTime::from_secs(0.1);
+        assert!((time.as_secs() - 0.1).abs() < f64::EPSILON);
+        assert!((time.as_millis() - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn timings() {
         let mut timings = Timings::<LatencyEvent>::default();
         let event = LatencyEvent::BlockSent;
         timings.initialize(event, 2);
