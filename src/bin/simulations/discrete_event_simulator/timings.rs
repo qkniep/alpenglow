@@ -162,6 +162,11 @@ impl<P: Protocol> TimingStats<P> {
         }
     }
 
+    /// References the [`EventTimingStats`] for the given event, if it exists.
+    pub fn get(&self, event: &P::Event) -> Option<&EventTimingStats> {
+        self.0.get(event)
+    }
+
     /// Writes percentiles to a CSV file.
     pub fn write_to_csv(
         &self,
@@ -196,7 +201,7 @@ impl<P: Protocol> TimingStats<P> {
             let event_timings = events
                 .iter()
                 .map(|(_name, event)| {
-                    let event_stats = self.0.get(event).unwrap();
+                    let event_stats = self.get(event).unwrap();
                     event_stats
                         .get_avg_percentile_latency(percentile)
                         .to_string()
@@ -261,7 +266,7 @@ impl EventTimingStats {
         self.count += 1;
     }
 
-    /// Returns the average timing for a given percentile.
+    /// Returns the average timing for a given percentile in milliseconds.
     pub fn get_avg_percentile_latency(&self, percentile: u8) -> f64 {
         assert!(percentile > 0 && percentile <= 100);
         let sum = self.sum_percentile_latencies[percentile as usize - 1];

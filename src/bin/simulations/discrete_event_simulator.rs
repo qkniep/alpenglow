@@ -12,7 +12,7 @@ mod timings;
 use std::cmp::Reverse;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard};
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
@@ -150,11 +150,6 @@ impl<P: Protocol> SimulationEngine<P> {
             let instance = self.builder.build(&mut rng);
             self.run(&instance, &mut timings);
         }
-        let stats_map = self.stats.read().unwrap();
-        // TODO: determine correct filename
-        stats_map
-            .write_to_csv("test.csv", self.builder.params())
-            .expect("failed to write stats to CSV");
     }
 
     /// Runs one iteration of the simulation.
@@ -197,6 +192,11 @@ impl<P: Protocol> SimulationEngine<P> {
         let mut stats_map = self.stats.write().unwrap();
         stats_map.record_latencies(timings, &self.environment);
     }
+
+    /// References the timing stats.
+    pub fn stats<'a>(&'a self) -> RwLockReadGuard<'a, TimingStats<P>> {
+        self.stats.read().unwrap()
+    }
 }
 
 impl<P: Protocol> SimulationEngine<P>
@@ -215,11 +215,6 @@ where
             let instance = self.builder.build(&mut rng);
             self.run(&instance, &mut timings);
         });
-        let stats_map = self.stats.read().unwrap();
-        // TODO: determine correct filename
-        stats_map
-            .write_to_csv("test.csv", self.builder.params())
-            .expect("failed to write stats to CSV");
     }
 }
 
@@ -460,25 +455,57 @@ mod tests {
     #[test]
     fn single() {
         let (engine, builder) = setup();
-
         let instance = builder.build(&mut rand::rng());
         let mut timings = Timings::default();
         engine.run(&instance, &mut timings);
-        for time in timings.get(TestEvent(NUM_EVENTS - 1)).unwrap() {
-            let delta = (time.as_secs() - TIME_PER_EVENT.as_secs() * NUM_EVENTS as f64).abs();
-            assert!(delta < f64::EPSILON);
+
+        // check that the timings are correct
+        for event_id in 0..NUM_EVENTS {
+            for time in timings.get(TestEvent(event_id)).unwrap() {
+                let expected_time_secs = TIME_PER_EVENT.as_secs() * (event_id + 1) as f64;
+                let delta = (time.as_secs() - expected_time_secs).abs();
+                assert!(delta < f64::EPSILON);
+            }
         }
     }
+
+    const CUSTOM_EPSILON: f64 = 1e-6;
 
     #[test]
     fn many_parallel() {
         let (engine, _builder) = setup();
         engine.run_many_parallel(NUM_SIMULATION_ITERATIONS);
+
+        // check that the timings are correct
+        for event_id in 0..NUM_EVENTS {
+            let stats = engine.stats();
+            let event_stats = stats.get(&TestEvent(event_id)).unwrap();
+            // timings should be the same for all validators, thus also for all percentiles
+            for percentile in 1..=100 {
+                let avg_timing_ms = event_stats.get_avg_percentile_latency(percentile);
+                let expected_time_ms = TIME_PER_EVENT.as_millis() * (event_id + 1) as f64;
+                let delta = (avg_timing_ms - expected_time_ms).abs();
+                assert!(delta < CUSTOM_EPSILON);
+            }
+        }
     }
 
     #[test]
     fn many_sequential() {
         let (engine, _builder) = setup();
         engine.run_many_sequential(NUM_SIMULATION_ITERATIONS);
+
+        // check that the timings are correct
+        for event_id in 0..NUM_EVENTS {
+            let stats = engine.stats();
+            let event_stats = stats.get(&TestEvent(event_id)).unwrap();
+            // timings should be the same for all validators, thus also for all percentiles
+            for percentile in 1..=100 {
+                let avg_timing_ms = event_stats.get_avg_percentile_latency(percentile);
+                let expected_time_ms = TIME_PER_EVENT.as_millis() * (event_id + 1) as f64;
+                let delta = (avg_timing_ms - expected_time_ms).abs();
+                assert!(delta < CUSTOM_EPSILON);
+            }
+        }
     }
 }
