@@ -23,6 +23,7 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 /// Size (in bytes) assumed per certificate in the simulation.
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
+/// Marker type for the Alpenglow latency simulation.
 pub struct AlpenglowLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,

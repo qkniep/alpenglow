@@ -350,7 +350,7 @@ fn run_tests<
             ping_rotor_sampler.clone(),
             params,
         );
-        let leader_bandwidth = 1_000_000_000; // 1 Gbps
+        let leader_bandwidth = 10_000_000_000; // 1 Gbps
         let bandwidths = vec![leader_bandwidth; validators.len()];
         let environment =
             SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
@@ -359,12 +359,14 @@ fn run_tests<
             SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
         info!("rotor latency sim (sequential)");
         engine.run_many_sequential(10);
-        engine.stats().write_to_csv("data/rotor_10.csv", &params)?;
+        engine
+            .stats()
+            .write_to_csv("data/output/rotor_10.csv", &params)?;
         info!("rotor latency sim (parallel)");
         engine.run_many_parallel(1000);
         engine
             .stats()
-            .write_to_csv("data/rotor_1000.csv", &params)?;
+            .write_to_csv("data/output/rotor_1000.csv", &params)?;
 
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
@@ -373,7 +375,7 @@ fn run_tests<
             let rotor_builder = RotorInstanceBuilder::new(
                 ping_leader_sampler.clone(),
                 ping_rotor_sampler.clone(),
-                params,
+                rotor_params,
             );
             let params = LatencySimParams::new(rotor_params, 4, 1);
             let builder = LatencySimInstanceBuilder::new(rotor_builder, params.clone());
@@ -384,7 +386,7 @@ fn run_tests<
             engine.run_many_parallel(1000);
             engine
                 .stats()
-                .write_to_csv("data/alpenglow_1000.csv", &params)?;
+                .write_to_csv("data/output/alpenglow_1000.csv", &params)?;
         }
 
         // latency experiments with fixed leaders
@@ -443,7 +445,7 @@ fn run_tests<
                 let rotor_builder = RotorInstanceBuilder::new(
                     AllSameSampler(leader),
                     ping_rotor_sampler.clone(),
-                    params,
+                    rotor_params,
                 );
                 let params = LatencySimParams::new(rotor_params, 4, 1);
                 let builder = LatencySimInstanceBuilder::new(rotor_builder, params.clone());
@@ -452,7 +454,7 @@ fn run_tests<
                     environment.clone(),
                 );
                 engine.run_many_sequential(1000);
-                let filename = format!("data/alpenglow_{}_1000.csv", city);
+                let filename = format!("data/output/alpenglow_{}_1000.csv", city);
                 engine.stats().write_to_csv(filename, &params)
             })?;
         }
