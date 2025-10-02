@@ -15,7 +15,7 @@ pub const SLOTS_PER_WINDOW: u64 = 4;
 pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Slot(u64);
 
 impl Slot {
