@@ -106,20 +106,6 @@ pub trait Stage: Clone + Copy + Debug + Eq + Hash {
     fn events(&self, params: &Self::Params) -> Vec<Self::Event>;
 }
 
-/// Kinds of events that are directly supported by the simulation engine.
-pub enum EventKind {
-    /// This event fires as soon as its dependencies are ready.
-    Simple,
-    /// This event uses the senders outgoing network bandwidth.
-    Broadcast,
-    /// This event uses the CPU for a certain amount of time.
-    Compute,
-    /// To determine when this event fires, the simulation engine runs a sub-protocol.
-    SubProtocol,
-    /// This event fires based on a user-provided function.
-    Custom,
-}
-
 /// Matrix-based discrete-event simulation engine.
 // TODO: maybe generalize into a trait and then implement event queue-based engine as well
 pub struct SimulationEngine<P: Protocol> {
@@ -422,14 +408,13 @@ pub fn broadcast(
     message_size: usize,
 ) -> impl Iterator<Item = SimTime> {
     // reserve the network resource
-    for sender in 0..environment.num_validators() {
-        let total_tx_time = environment.transmission_delay(
-            environment.num_validators() * message_size,
-            sender as ValidatorId,
-        );
+    for (sender, &start_time) in start_times.iter().enumerate() {
+        let sender = sender as ValidatorId;
+        let total_tx_time =
+            environment.transmission_delay(environment.num_validators() * message_size, sender);
         resources
             .network
-            .schedule(sender as ValidatorId, start_times[sender], total_tx_time);
+            .schedule(sender, start_time, total_tx_time);
     }
 
     // determine the start time for sending messages
