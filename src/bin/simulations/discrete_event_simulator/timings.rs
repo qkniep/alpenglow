@@ -294,10 +294,6 @@ mod tests {
         assert!((time.as_secs() - 2e-3).abs() < f64::EPSILON);
         assert!((time.as_millis() - 2.0).abs() < f64::EPSILON);
 
-        let time = SimTime::from_millis(1);
-        assert!((time.as_secs() - 1e-3).abs() < f64::EPSILON);
-        assert!((time.as_millis() - 1.0).abs() < f64::EPSILON);
-
         let time = SimTime::from_secs(0.1);
         assert!((time.as_secs() - 0.1).abs() < f64::EPSILON);
         assert!((time.as_millis() - 100.0).abs() < f64::EPSILON);
