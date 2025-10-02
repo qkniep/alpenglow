@@ -5,7 +5,8 @@
 //!
 //!
 
-use alpenglow::{ValidatorId, disseminator::rotor::SamplingStrategy};
+use alpenglow::ValidatorId;
+use alpenglow::disseminator::rotor::SamplingStrategy;
 use log::info;
 use rand::prelude::*;
 use statrs::distribution::{Binomial, DiscreteCDF};
