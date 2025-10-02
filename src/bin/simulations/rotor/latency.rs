@@ -13,7 +13,7 @@ use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
 use super::{RotorInstance, RotorInstanceBuilder, RotorParams};
 use crate::discrete_event_simulator::{
-    Event, Protocol, Resources, SimTime, SimulationEnvironment, Stage,
+    Event, Protocol, Resources, SimTime, SimulationEnvironment, Stage, column_max, column_min,
 };
 
 /// Wrapper type for the Rotor latency simulation.
@@ -212,50 +212,4 @@ impl Event for LatencyEvent {
             LatencyEvent::Block => column_max(dependency_timings),
         }
     }
-}
-
-/// Returns the minimum of each column over the given rows.
-///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the minimum in each column.
-///
-/// # Panics
-///
-/// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
-fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
-    assert!(!rows.is_empty());
-    let mut result = rows[0].to_vec();
-    for row in &rows[1..] {
-        assert_eq!(row.len(), result.len(), "all rows must have same length");
-        for (res, &val) in result.iter_mut().zip(row.iter()) {
-            if val < *res {
-                *res = val;
-            }
-        }
-    }
-    result
-}
-
-/// Returns the maximum of each column over the given rows.
-///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the maximum in each column.
-///
-/// # Panics
-///
-/// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
-fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
-    assert!(!rows.is_empty());
-    let mut result = rows[0].to_vec();
-    for row in &rows[1..] {
-        assert_eq!(row.len(), result.len(), "all rows must have same length");
-        for (res, &val) in result.iter_mut().zip(row.iter()) {
-            if val > *res {
-                *res = val;
-            }
-        }
-    }
-    result
 }

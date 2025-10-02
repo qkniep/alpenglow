@@ -14,7 +14,7 @@ use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
-    Timings,
+    Timings, column_min,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 
@@ -239,27 +239,4 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
 pub struct LatencySimInstance {
     rotor_instances: Vec<RotorInstance>,
     params: LatencySimParams,
-}
-
-/// Returns the minimum of each column over the given rows.
-///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the minimum in each column.
-///
-/// # Panics
-///
-/// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
-fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
-    assert!(!rows.is_empty());
-    let mut result = rows[0].to_vec();
-    for row in &rows[1..] {
-        assert_eq!(row.len(), result.len(), "all rows must have same length");
-        for (res, &val) in result.iter_mut().zip(row.iter()) {
-            if val < *res {
-                *res = val;
-            }
-        }
-    }
-    result
 }
