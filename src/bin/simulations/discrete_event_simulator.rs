@@ -342,6 +342,108 @@ pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     result
 }
 
+pub fn broadcast_first_arrival_or_dep(
+    start_times: &[SimTime],
+    resources: &mut Resources,
+    environment: &SimulationEnvironment,
+    message_size: usize,
+) -> Vec<SimTime> {
+    let mut timings = start_times.to_vec();
+
+    let send_time_iter = broadcast(start_times, resources, environment, message_size);
+    let start_send_times = send_time_iter.collect::<Vec<_>>();
+
+    for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
+        // calculate first message arrival time
+        let first_arrival_time = start_send_times
+            .iter()
+            .enumerate()
+            .map(|(sender, start_send)| {
+                let sender = sender as ValidatorId;
+                let prop_delay = environment.propagation_delay(sender, recipient as ValidatorId);
+                let tx_delay =
+                    environment.transmission_delay((recipient + 1) * message_size, sender);
+                *start_send + prop_delay + tx_delay
+            })
+            .min()
+            .unwrap();
+
+        if first_arrival_time < *recipient_timing {
+            *recipient_timing = first_arrival_time;
+        }
+    }
+    timings
+}
+
+pub fn broadcast_stake_threshold(
+    start_times: &[SimTime],
+    resources: &mut Resources,
+    environment: &SimulationEnvironment,
+    message_size: usize,
+    threshold: f64,
+) -> Vec<SimTime> {
+    let mut timings = start_times.to_vec();
+
+    let send_time_iter = broadcast(start_times, resources, environment, message_size);
+    let start_send_times = send_time_iter.collect::<Vec<_>>();
+
+    for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
+        // calculate message arrival timings
+        let mut arrival_timings = start_send_times
+            .iter()
+            .enumerate()
+            .map(|(sender, start_send)| {
+                let prop_delay =
+                    environment.propagation_delay(sender as ValidatorId, recipient as ValidatorId);
+                let tx_delay = environment
+                    .transmission_delay((recipient + 1) * message_size, sender as ValidatorId);
+                (*start_send + prop_delay + tx_delay, sender)
+            })
+            .collect::<Vec<_>>();
+
+        // find time the stake threshold is first reached
+        arrival_timings.sort_unstable();
+        let mut stake_so_far = 0;
+        for (arrival_timing, sender) in arrival_timings.into_iter() {
+            *recipient_timing = arrival_timing;
+            stake_so_far += environment.validators[sender].stake;
+            if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
+                break;
+            }
+        }
+    }
+    timings
+}
+
+pub fn broadcast(
+    start_times: &[SimTime],
+    resources: &mut Resources,
+    environment: &SimulationEnvironment,
+    message_size: usize,
+) -> impl Iterator<Item = SimTime> {
+    // reserve the network resource
+    for sender in 0..environment.num_validators() {
+        let total_tx_time = environment.transmission_delay(
+            environment.num_validators() * message_size,
+            sender as ValidatorId,
+        );
+        resources
+            .network
+            .schedule(sender as ValidatorId, start_times[sender], total_tx_time);
+    }
+
+    // determine the start time for sending messages
+    let resources = &*resources;
+    start_times
+        .iter()
+        .enumerate()
+        .map(|(sender, sender_timing)| {
+            resources
+                .network
+                .time_next_free_after(sender as ValidatorId, *sender_timing)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use alpenglow::network::simulated::stake_distribution::{
