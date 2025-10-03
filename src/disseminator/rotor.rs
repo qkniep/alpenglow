@@ -109,7 +109,7 @@ where
 }
 
 #[async_trait]
-impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
+impl<N, S: SamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
     N: ShredNetwork,
 {
