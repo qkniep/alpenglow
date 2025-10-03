@@ -694,6 +694,24 @@ mod tests {
     }
 
     #[test]
+    fn all_same_sampler() {
+        let validators = create_validator_info(10);
+        let sampler = AllSameSampler(validators[3].clone());
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            assert_eq!(sampler.sample(&mut rng), 3);
+            assert_eq!(sampler.sample_info(&mut rng).id, 3);
+        }
+
+        for _ in 0..10 {
+            let sampled_vals = sampler.sample_multiple(TOTAL_SHREDS, &mut rng);
+            for val in sampled_vals {
+                assert_eq!(val, 3);
+            }
+        }
+    }
+
+    #[test]
     fn uniform_sampler() {
         // apply Hoeffding's bound to number of different samples
         let validators = create_validator_info(1000);
