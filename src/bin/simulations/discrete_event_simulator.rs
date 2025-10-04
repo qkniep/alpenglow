@@ -67,6 +67,7 @@ pub trait Event: Clone + Copy + Debug + Eq + Hash {
     /// Calculates timing vector given dependencies.
     fn calculate_timing(
         &self,
+        start_time: SimTime,
         dep_timings: &[&[SimTime]],
         instance: &Self::Instance,
         resources: &mut Resources,
@@ -163,6 +164,7 @@ impl<P: Protocol> SimulationEngine<P> {
                     })
                     .collect::<Vec<_>>();
                 let latencies = event.calculate_timing(
+                    timings.start_time(),
                     &dep_timings,
                     instance,
                     &mut resources,

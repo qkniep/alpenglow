@@ -1,17 +1,15 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Calculations about the robustness of the Pyjama MCP protocol.
 //!
+//! Currently, this just runs some static calculations on the set of parameters.
 //!
-//!
+//! In the future, this would also simulate attack scenarios for a specific stake distribution.
+//! This is analogous to what is done for Rotor in [`crate::rotor::robustness`];
 
-use alpenglow::ValidatorInfo;
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use alpenglow::network::simulated::ping_data::PingServer;
-use alpenglow::network::simulated::stake_distribution::validators_from_validator_data;
 use color_eyre::Result;
 
-use super::latency::LatencyTestStage;
 use super::parameters::{AdversaryStrength, PyjamaParameters};
 
 const NUM_PROPOSERS: u64 = 16;

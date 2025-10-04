@@ -9,15 +9,14 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
-    Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
-    Timings, broadcast_first_arrival_or_dep, broadcast_stake_threshold, column_max, column_min,
+    Builder, Event, Protocol, Resources, SimTime, SimulationEnvironment, Stage,
+    broadcast_first_arrival_or_dep, broadcast_stake_threshold, column_max, column_min,
 };
-use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
 use crate::ryse::parameters::{RyseInstance, RyseInstanceBuilder, RyseParameters};
 
 /// Size (in bytes) assumed per vote in the simulation.
@@ -25,7 +24,7 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 /// Size (in bytes) assumed per certificate in the simulation.
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
-///
+/// Marker type for the Ryse latency simulation.
 pub struct RyseLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
@@ -184,6 +183,7 @@ impl Event for LatencyEvent {
 
     fn calculate_timing(
         &self,
+        start_time: SimTime,
         dependency_timings: &[&[SimTime]],
         instance: &LatencySimInstance,
         resources: &mut Resources,
@@ -206,7 +206,7 @@ impl Event for LatencyEvent {
 
         match self {
             Self::BlockSent => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut timings = vec![start_time; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
                 for &leader in instance.ryse_instances[0].leaders.iter() {
                     let block_bytes = instance.params.ryse_params.num_slices as usize
@@ -215,7 +215,7 @@ impl Event for LatencyEvent {
                     let tx_time = environment.transmission_delay(block_bytes, leader);
                     let finished_sending_time =
                         resources.network.schedule(leader, SimTime::ZERO, tx_time);
-                    timings[leader as usize] = finished_sending_time;
+                    timings[leader as usize] += finished_sending_time;
                 }
                 timings
             }
@@ -235,7 +235,7 @@ impl Event for LatencyEvent {
                                 shred_send_index as usize * MAX_DATA_PER_SHRED,
                                 *leader,
                             );
-                            prop_delay + tx_delay
+                            start_time + prop_delay + tx_delay
                         })
                         .max()
                         .unwrap();

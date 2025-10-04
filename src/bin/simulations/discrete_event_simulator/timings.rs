@@ -23,7 +23,7 @@ use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, St
 
 /// Simulated time in nanoseconds.
 // TODO: maybe split into a duration and an instant type?
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SimTime(u64);
 
 impl SimTime {
@@ -101,42 +101,59 @@ impl Display for SimTime {
 }
 
 /// The timing matrix, implemented as a map from events to timing vectors.
-pub struct Timings<E: Event>(HashMap<E, Vec<SimTime>>);
+pub struct Timings<E: Event> {
+    start_time: SimTime,
+    event_timings: HashMap<E, Vec<SimTime>>,
+}
 
 impl<E: Event> Timings<E> {
+    /// Constructs a new [`Timings`] from the given start time.
+    pub fn new(start_time: SimTime) -> Self {
+        Self {
+            start_time,
+            event_timings: HashMap::new(),
+        }
+    }
+
     /// Initializes the timing vector for the given event to infinity.
     pub fn initialize(&mut self, event: E, num_val: usize) {
-        self.0.insert(event, vec![SimTime::NEVER; num_val]);
+        self.event_timings
+            .insert(event, vec![SimTime::NEVER; num_val]);
     }
 
     /// Deletes all the rows from the [`HashMap`].
     pub fn clear(&mut self) {
-        self.0.clear();
+        self.event_timings.clear();
     }
 
     /// Records the latency for the given event and validator.
     pub fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
-        let vec = self.0.get_mut(&event).unwrap();
+        let vec = self.event_timings.get_mut(&event).unwrap();
         let entry = vec.get_mut(validator as usize).unwrap();
         if timing < *entry {
             *entry = timing;
         }
     }
 
+    /// Returns the start time.
+    pub fn start_time(&self) -> SimTime {
+        self.start_time
+    }
+
     /// Returns the timing vector for the given event.
     pub fn get(&self, event: E) -> Option<&[SimTime]> {
-        self.0.get(&event).map(|v| v.as_slice())
+        self.event_timings.get(&event).map(|v| v.as_slice())
     }
 
     /// Iterates over timing vectors for all events.
     pub fn iter(&self) -> impl Iterator<Item = (&E, &[SimTime])> {
-        self.0.iter().map(|(k, v)| (k, v.as_slice()))
+        self.event_timings.iter().map(|(k, v)| (k, v.as_slice()))
     }
 }
 
 impl<E: Event> Default for Timings<E> {
     fn default() -> Self {
-        Self(HashMap::new())
+        Self::new(SimTime::ZERO)
     }
 }
 

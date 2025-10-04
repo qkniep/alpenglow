@@ -7,7 +7,10 @@
 //! - Equivocation attack: Less than 20% of stake is Byzantine.
 //! - Censorship attack: Up to 40% of stake is crashed.
 //!
-//!
+//! For each attack scenario multiple adversary strategies are simulated:
+//! - Random: Corrupt a random subset of validators.
+//! - Small: Corrupt as many of the smallest validators as possible.
+//! - Large: Corrupt as many of the largest validators as possible.
 
 use std::fs::File;
 use std::sync::RwLock;

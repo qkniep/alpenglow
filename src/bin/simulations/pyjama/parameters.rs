@@ -21,9 +21,10 @@ pub struct PyjamaParameters {
     pub can_decode_threshold: u64,
     pub should_decode_threshold: u64,
     pub attestations_threshold: u64,
+    pub num_slices: u64,
 }
 
-///
+/// Specific instance of the Ryse protocol.
 pub struct PyjamaInstance {
     pub leader: ValidatorId,
     pub proposers: Vec<ValidatorId>,
@@ -31,7 +32,7 @@ pub struct PyjamaInstance {
     pub params: PyjamaParameters,
 }
 
-///
+/// Builder for Ryse instances with a specific set of parameters.
 pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     proposer_sampler: P,
@@ -114,6 +115,7 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 25).div_ceil(100),
             should_decode_threshold: (num_relays * 50).div_ceil(100),
             attestations_threshold: (num_relays * 75).div_ceil(100),
+            num_slices: 1,
         }
     }
 
@@ -125,6 +127,7 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 40).div_ceil(100),
             should_decode_threshold: (num_relays * 60).div_ceil(100),
             attestations_threshold: (num_relays * 80).div_ceil(100),
+            num_slices: 1,
         }
     }
 
@@ -136,6 +139,7 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 30).div_ceil(100),
             should_decode_threshold: (num_relays * 60).div_ceil(100),
             attestations_threshold: (num_relays * 80).div_ceil(100),
+            num_slices: 1,
         }
     }
 
@@ -147,6 +151,7 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 40).div_ceil(100),
             should_decode_threshold: (num_relays * 60).div_ceil(100),
             attestations_threshold: (num_relays * 80).div_ceil(100),
+            num_slices: 1,
         }
     }
 
@@ -158,6 +163,7 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 20).div_ceil(100),
             should_decode_threshold: (num_relays * 47).div_ceil(100),
             attestations_threshold: (num_relays * 73).div_ceil(100),
+            num_slices: 1,
         }
     }
 
@@ -169,6 +175,7 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 23).div_ceil(100),
             should_decode_threshold: (num_relays * 53).div_ceil(100),
             attestations_threshold: (num_relays * 76).div_ceil(100),
+            num_slices: 1,
         }
     }
 

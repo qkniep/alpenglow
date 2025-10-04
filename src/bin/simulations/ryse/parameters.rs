@@ -28,7 +28,7 @@ pub struct RyseParameters {
     pub relay_notar_threshold: u64,
 }
 
-///
+/// Specific instance of the Ryse protocol.
 #[derive(Clone, Debug)]
 pub struct RyseInstance {
     pub leaders: Vec<ValidatorId>,
@@ -36,7 +36,7 @@ pub struct RyseInstance {
     pub params: RyseParameters,
 }
 
-///
+/// Builder for Ryse instances with a specific set of parameters.
 pub struct RyseInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     relay_sampler: R,
@@ -110,7 +110,7 @@ impl RyseParameters {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn optmize(&self, adv_strength: AdversaryStrength) -> Self {
         let mut optimal_params = *self;
-        let mut optimal_attack_prob = self.strongest_attack_probability(adv_strength);
+        let mut optimal_attack_prob = self.any_attack_probability(adv_strength);
 
         for relay_notar_threshold in 1..self.num_relays {
             for decode_threshold in 1..relay_notar_threshold {
@@ -121,7 +121,7 @@ impl RyseParameters {
                     decode_threshold,
                     relay_notar_threshold,
                 };
-                let attack_prob = new_params.strongest_attack_probability(adv_strength);
+                let attack_prob = new_params.any_attack_probability(adv_strength);
                 if attack_prob < optimal_attack_prob {
                     optimal_params = new_params;
                     optimal_attack_prob = attack_prob;
@@ -132,8 +132,8 @@ impl RyseParameters {
         optimal_params
     }
 
-    ///
-    pub fn strongest_attack_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    /// Returns the probability that the adversary can make any attack in a slot.
+    pub fn any_attack_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         self.break_hiding_probability(adv_strength)
             .max(self.selective_censorship_probability(adv_strength))
             .max(self.temporary_liveness_failure_probability(adv_strength))

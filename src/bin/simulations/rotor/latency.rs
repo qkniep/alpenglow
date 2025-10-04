@@ -145,6 +145,7 @@ impl Event for LatencyEvent {
 
     fn calculate_timing(
         &self,
+        start_time: SimTime,
         dependency_timings: &[&[SimTime]],
         instance: &RotorInstance,
         resources: &mut Resources,
@@ -152,7 +153,7 @@ impl Event for LatencyEvent {
     ) -> Vec<SimTime> {
         match self {
             Self::BlockSent => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut timings = vec![start_time; environment.num_validators()];
                 let block_bytes =
                     instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
                 let tx_time = environment.transmission_delay(block_bytes, instance.leader);
@@ -160,13 +161,15 @@ impl Event for LatencyEvent {
                     resources
                         .network
                         .schedule(instance.leader, SimTime::ZERO, tx_time);
-                timings[instance.leader as usize] = finished_sending_time;
+                timings[instance.leader as usize] += finished_sending_time;
                 timings
             }
             Self::Direct(slice) => {
-                let mut timings = (0..environment.num_validators() as ValidatorId)
-                    .map(|recipient| environment.propagation_delay(instance.leader, recipient))
-                    .collect::<Vec<_>>();
+                let mut timings = vec![start_time; environment.num_validators()];
+                for (recipient, timing) in timings.iter_mut().enumerate() {
+                    *timing +=
+                        environment.propagation_delay(instance.leader, recipient as ValidatorId);
+                }
                 for relay in &instance.relays[*slice] {
                     let shred_send_index =
                         slice * instance.params.num_shreds + (*relay as usize) + 1;

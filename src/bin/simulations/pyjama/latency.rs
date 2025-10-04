@@ -15,7 +15,7 @@ use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
 use crate::alpenglow::AlpenglowLatencySimulation;
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
-    Timings,
+    Timings, column_max,
 };
 use crate::rotor::RotorParams;
 
@@ -76,7 +76,7 @@ impl Stage for LatencyTestStage {
             LatencyTestStage::Relay => vec![LatencyEvent::Relay],
             LatencyTestStage::Attestation => vec![LatencyEvent::Attestation],
             LatencyTestStage::Consensus => vec![LatencyEvent::Consensus],
-            LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct],
+            LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct, LatencyEvent::Final],
         }
     }
 }
@@ -89,6 +89,7 @@ pub enum LatencyEvent {
     Attestation,
     Consensus,
     Reconstruct,
+    Final,
 }
 
 impl Event for LatencyEvent {
@@ -102,6 +103,7 @@ impl Event for LatencyEvent {
             LatencyEvent::Attestation => "attestation",
             LatencyEvent::Consensus => "consensus",
             LatencyEvent::Reconstruct => "reconstruct",
+            LatencyEvent::Final => "final",
         }
         .to_owned()
     }
@@ -117,51 +119,57 @@ impl Event for LatencyEvent {
             LatencyEvent::Attestation => vec![LatencyEvent::Relay],
             LatencyEvent::Consensus => vec![LatencyEvent::Attestation],
             LatencyEvent::Reconstruct => vec![LatencyEvent::Consensus],
+            LatencyEvent::Final => vec![LatencyEvent::Consensus, LatencyEvent::Reconstruct],
         }
     }
 
     fn calculate_timing(
         &self,
+        start_time: SimTime,
         dependency_timings: &[&[SimTime]],
         instance: &PyjamaInstance,
         _resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::Propose => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                timings
-            }
+            LatencyEvent::Propose => vec![start_time; environment.num_validators()],
             LatencyEvent::Relay => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                timings[instance.leader as usize] = SimTime::ZERO;
-                let block_bytes =
-                    1 /* num_slices */ * instance.params.num_relays as usize * MAX_DATA_PER_SHRED;
-                timings[instance.leader as usize] +=
-                    environment.transmission_delay(block_bytes, instance.leader);
+                let mut timings = dependency_timings[0].to_vec();
+                // TODO: actually run for more than 1 slot
+                for &relay in &instance.relays {
+                    let shreds_from_all_leaders = instance
+                        .proposers
+                        .iter()
+                        .map(|proposer| {
+                            let prop_delay = environment.propagation_delay(*proposer, relay);
+                            let shred_send_index = relay + 1;
+                            let tx_delay = environment.transmission_delay(
+                                shred_send_index as usize * MAX_DATA_PER_SHRED,
+                                *proposer,
+                            );
+                            prop_delay + tx_delay
+                        })
+                        .max()
+                        .unwrap();
+                    timings[relay as usize] = timings[relay as usize].max(shreds_from_all_leaders);
+                }
                 timings
             }
-            LatencyEvent::Attestation => vec![SimTime::ZERO; environment.num_validators()],
-            // LatencyEvent::Attestation => {
-            //     let mut timings = dependency_timings[0].to_vec();
-            //     for recipient in 0..environment.num_validators() {
-            //         // TODO: reserve network resource
-            //         let first_shred_time = instance.relays[*slice]
-            //             .iter()
-            //             .map(|relay| {
-            //                 let prop_delay =
-            //                     environment.propagation_delay(*relay, recipient as ValidatorId);
-            //                 let tx_delay = environment
-            //                     .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
-            //                 timings[*relay as usize] + prop_delay + tx_delay
-            //             })
-            //             .min()
-            //             .unwrap();
-            //         timings[recipient] = first_shred_time;
-            //     }
-            //     timings
-            // }
+            LatencyEvent::Attestation => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
+                for (i, relay) in instance.relays.iter().enumerate() {
+                    shred_timings[i] = dependency_timings[0][*relay as usize]
+                        + environment.propagation_delay(*relay, instance.leader)
+                        + environment.transmission_delay(MAX_DATA_PER_SHRED, *relay);
+                }
+                shred_timings.sort_unstable();
+                timings[instance.leader as usize] =
+                    shred_timings[instance.params.attestations_threshold as usize - 1];
+                timings
+            }
             LatencyEvent::Consensus => {
+                let consensus_start_time = dependency_timings[0][instance.leader as usize];
                 // TODO: find better way of integrating sub-protocol
                 let rotor_params = RotorParams {
                     num_data_shreds: instance.params.can_decode_threshold as usize,
@@ -182,14 +190,33 @@ impl Event for LatencyEvent {
                     builder,
                     environment.clone(),
                 );
-                let mut timings = Timings::default();
+                let mut timings = Timings::new(consensus_start_time);
                 engine.run(&consensus_instance, &mut timings);
                 timings
                     .get(crate::alpenglow::LatencyEvent::Final)
                     .unwrap()
                     .to_vec()
             }
-            LatencyEvent::Reconstruct => vec![SimTime::ZERO; environment.num_validators()],
+            LatencyEvent::Reconstruct => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
+                for (recipient, timing) in timings.iter_mut().enumerate() {
+                    for (i, relay) in instance.relays.iter().enumerate() {
+                        shred_timings[i] = dependency_timings[0][*relay as usize]
+                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                            + environment.transmission_delay(
+                                (recipient + 1)
+                                    * instance.params.num_proposers as usize
+                                    * MAX_DATA_PER_SHRED,
+                                *relay,
+                            );
+                    }
+                    shred_timings.sort_unstable();
+                    *timing = shred_timings[instance.params.can_decode_threshold as usize - 1];
+                }
+                timings
+            }
+            LatencyEvent::Final => column_max(dependency_timings),
         }
     }
 }
