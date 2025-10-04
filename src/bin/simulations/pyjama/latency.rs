@@ -12,12 +12,12 @@ use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
 use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
-use crate::discrete_event_simulator::{Builder, Resources, SimulationEngine, Timings};
-use crate::rotor::RotorParams;
-use crate::{
-    alpenglow::AlpenglowLatencySimulation,
-    discrete_event_simulator::{Event, Protocol, SimTime, SimulationEnvironment, Stage},
+use crate::alpenglow::AlpenglowLatencySimulation;
+use crate::discrete_event_simulator::{
+    Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
+    Timings,
 };
+use crate::rotor::RotorParams;
 
 /// Wrapper type for the Pyjama latency simulation.
 ///

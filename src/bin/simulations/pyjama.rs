@@ -9,6 +9,5 @@ mod latency;
 mod parameters;
 mod robustness;
 
-pub use parameters::PyjamaParameters as PyjamaParams;
-pub use parameters::{PyjamaInstance, PyjamaInstanceBuilder};
+pub use parameters::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParameters as PyjamaParams};
 pub use robustness::run_robustness_tests;
