@@ -214,7 +214,7 @@ impl Event for LatencyEvent {
                         * MAX_DATA_PER_SHRED;
                     let tx_time = environment.transmission_delay(block_bytes, leader);
                     let finished_sending_time =
-                        resources.network.schedule(leader, SimTime::ZERO, tx_time);
+                        resources.network.schedule(leader, start_time, tx_time);
                     timings[leader as usize] += finished_sending_time;
                 }
                 timings

@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use alpenglow::shredder::MAX_DATA_PER_SHRED;
+use alpenglow::shredder::{DATA_SHREDS, MAX_DATA_PER_SHRED, TOTAL_SHREDS};
 
 use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
 use crate::alpenglow::AlpenglowLatencySimulation;
@@ -192,10 +192,11 @@ impl Event for LatencyEvent {
             LatencyEvent::Consensus => {
                 let consensus_start_time = dependency_timings[0][instance.leader as usize];
                 // TODO: find better way of integrating sub-protocol
+                let slices_required = 3;
                 let rotor_params = RotorParams {
-                    num_data_shreds: instance.params.can_decode_threshold as usize,
-                    num_shreds: instance.params.num_relays as usize,
-                    num_slices: 1,
+                    num_data_shreds: DATA_SHREDS,
+                    num_shreds: TOTAL_SHREDS,
+                    num_slices: slices_required,
                 };
                 let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
                     StakeWeightedSampler::new(environment.validators.clone()),
