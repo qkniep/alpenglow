@@ -387,7 +387,7 @@ fn run_tests<
             .write_to_csv("data/output/rotor_1000.csv", &params)?;
 
         // Ryse
-        let ryse_params = RyseParameters::new(4, 320);
+        let ryse_params = RyseParameters::new(8, 320);
         let ryse_builder = RyseInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
@@ -409,7 +409,7 @@ fn run_tests<
             .write_to_csv("data/output/ryse_1000.csv", &params)?;
 
         // Pyjama
-        let params = PyjamaParams::new(4, 320);
+        let params = PyjamaParams::new(8, 320);
         let builder = PyjamaInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_leader_sampler.clone(),

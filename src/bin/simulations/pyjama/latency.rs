@@ -76,7 +76,11 @@ impl Stage for LatencyTestStage {
             LatencyTestStage::Relay => vec![LatencyEvent::Relay],
             LatencyTestStage::Attestation => vec![LatencyEvent::Attestation],
             LatencyTestStage::Consensus => vec![LatencyEvent::Consensus],
-            LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct, LatencyEvent::Final],
+            LatencyTestStage::Reconstruct => vec![
+                LatencyEvent::Release,
+                LatencyEvent::Reconstruct,
+                LatencyEvent::Final,
+            ],
         }
     }
 }
@@ -88,6 +92,7 @@ pub enum LatencyEvent {
     Relay,
     Attestation,
     Consensus,
+    Release,
     Reconstruct,
     Final,
 }
@@ -102,6 +107,7 @@ impl Event for LatencyEvent {
             LatencyEvent::Relay => "relay",
             LatencyEvent::Attestation => "attestation",
             LatencyEvent::Consensus => "consensus",
+            LatencyEvent::Release => "release",
             LatencyEvent::Reconstruct => "reconstruct",
             LatencyEvent::Final => "final",
         }
@@ -118,7 +124,8 @@ impl Event for LatencyEvent {
             LatencyEvent::Relay => vec![LatencyEvent::Propose],
             LatencyEvent::Attestation => vec![LatencyEvent::Relay],
             LatencyEvent::Consensus => vec![LatencyEvent::Attestation],
-            LatencyEvent::Reconstruct => vec![LatencyEvent::Consensus],
+            LatencyEvent::Release => vec![LatencyEvent::Consensus],
+            LatencyEvent::Reconstruct => vec![LatencyEvent::Release],
             LatencyEvent::Final => vec![LatencyEvent::Consensus, LatencyEvent::Reconstruct],
         }
     }
@@ -128,26 +135,40 @@ impl Event for LatencyEvent {
         start_time: SimTime,
         dependency_timings: &[&[SimTime]],
         instance: &PyjamaInstance,
-        _resources: &mut Resources,
+        resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::Propose => vec![start_time; environment.num_validators()],
+            LatencyEvent::Propose => {
+                let mut timings = vec![start_time; environment.num_validators()];
+                for &proposer in instance.proposers.iter() {
+                    let block_bytes = instance.params.num_slices as usize
+                        * instance.params.num_relays as usize
+                        * MAX_DATA_PER_SHRED;
+                    let tx_time = environment.transmission_delay(block_bytes, proposer);
+                    let start_sending_time =
+                        resources.network.time_next_free_after(proposer, start_time);
+                    resources.network.schedule(proposer, start_time, tx_time);
+                    timings[proposer as usize] = start_sending_time;
+                }
+                timings
+            }
             LatencyEvent::Relay => {
-                let mut timings = dependency_timings[0].to_vec();
+                let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
                 for &relay in &instance.relays {
                     let shreds_from_all_leaders = instance
                         .proposers
                         .iter()
                         .map(|proposer| {
+                            let start_send_time = dependency_timings[0][*proposer as usize];
                             let prop_delay = environment.propagation_delay(*proposer, relay);
                             let shred_send_index = relay + 1;
                             let tx_delay = environment.transmission_delay(
                                 shred_send_index as usize * MAX_DATA_PER_SHRED,
                                 *proposer,
                             );
-                            prop_delay + tx_delay
+                            start_send_time + prop_delay + tx_delay
                         })
                         .max()
                         .unwrap();
@@ -196,6 +217,21 @@ impl Event for LatencyEvent {
                     .get(crate::alpenglow::LatencyEvent::Final)
                     .unwrap()
                     .to_vec()
+            }
+            LatencyEvent::Release => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                for relay in &instance.relays {
+                    let dep_time = dependency_timings[0][*relay as usize];
+                    let block_bytes = environment.num_validators()
+                        * instance.params.num_proposers as usize
+                        * MAX_DATA_PER_SHRED;
+                    let tx_time = environment.transmission_delay(block_bytes, *relay);
+                    let start_sending_time =
+                        resources.network.time_next_free_after(*relay, dep_time);
+                    resources.network.schedule(*relay, dep_time, tx_time);
+                    timings[*relay as usize] = start_sending_time;
+                }
+                timings
             }
             LatencyEvent::Reconstruct => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
