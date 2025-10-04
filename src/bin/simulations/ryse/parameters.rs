@@ -14,24 +14,26 @@ use statrs::distribution::{Binomial, DiscreteCDF};
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Ryse MCP protocol.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RyseParameters {
+    /// Number of slices in a block.
+    pub num_slices: u64,
     /// Number of leaders concurrently proposing in each slot.
-    num_leaders: u64,
+    pub num_leaders: u64,
     /// Number of relays to use in the modified Rotor disseminator.
-    num_relays: u64,
+    pub num_relays: u64,
     /// Number of shreds required to successfully decode a block.
-    decode_threshold: u64,
+    pub decode_threshold: u64,
     /// Number of relays' signatures required for a block to become notarized.
-    relay_notar_threshold: u64,
+    pub relay_notar_threshold: u64,
 }
 
 ///
 #[derive(Clone, Debug)]
 pub struct RyseInstance {
-    leaders: Vec<ValidatorId>,
-    relays: Vec<ValidatorId>,
-    params: RyseParameters,
+    pub leaders: Vec<ValidatorId>,
+    pub relays: Vec<Vec<ValidatorId>>,
+    pub params: RyseParameters,
 }
 
 ///
@@ -61,9 +63,12 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L
             leaders: self
                 .leader_sampler
                 .sample_multiple(self.params.num_leaders as usize, rng),
-            relays: self
-                .relay_sampler
-                .sample_multiple(self.params.num_relays as usize, rng),
+            relays: (0..self.params.num_slices)
+                .map(|_| {
+                    self.relay_sampler
+                        .sample_multiple(self.params.num_relays as usize, rng)
+                })
+                .collect(),
             params: self.params,
         }
     }
@@ -96,6 +101,7 @@ impl RyseParameters {
         Self {
             num_leaders,
             num_relays,
+            num_slices: 1,
             decode_threshold: (num_relays * 50).div_ceil(100),
             relay_notar_threshold: (num_relays * 70).div_ceil(100),
         }
@@ -111,6 +117,7 @@ impl RyseParameters {
                 let new_params = RyseParameters {
                     num_leaders: self.num_leaders,
                     num_relays: self.num_relays,
+                    num_slices: self.num_slices,
                     decode_threshold,
                     relay_notar_threshold,
                 };

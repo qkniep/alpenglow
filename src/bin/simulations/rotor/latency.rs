@@ -46,20 +46,20 @@ impl Stage for LatencyTestStage {
     type Params = RotorParams;
 
     fn first() -> Self {
-        LatencyTestStage::Direct
+        Self::Direct
     }
 
     fn next(&self) -> Option<Self> {
         match self {
-            LatencyTestStage::Direct => Some(LatencyTestStage::Rotor),
-            LatencyTestStage::Rotor => Some(LatencyTestStage::Block),
-            LatencyTestStage::Block => None,
+            Self::Direct => Some(Self::Rotor),
+            Self::Rotor => Some(Self::Block),
+            Self::Block => None,
         }
     }
 
-    fn events(&self, params: &Self::Params) -> Vec<LatencyEvent> {
+    fn events(&self, params: &RotorParams) -> Vec<LatencyEvent> {
         match self {
-            LatencyTestStage::Direct => {
+            Self::Direct => {
                 let mut events = Vec::with_capacity(params.num_slices + 1);
                 events.push(LatencyEvent::BlockSent);
                 for slice in 0..params.num_slices {
@@ -67,7 +67,7 @@ impl Stage for LatencyTestStage {
                 }
                 events
             }
-            LatencyTestStage::Rotor => {
+            Self::Rotor => {
                 let mut events = Vec::with_capacity(3 * params.num_slices);
                 for slice in 0..params.num_slices {
                     events.push(LatencyEvent::StartForwarding(slice));
@@ -76,7 +76,7 @@ impl Stage for LatencyTestStage {
                 }
                 events
             }
-            LatencyTestStage::Block => vec![LatencyEvent::FirstShred, LatencyEvent::Block],
+            Self::Block => vec![LatencyEvent::FirstShred, LatencyEvent::Block],
         }
     }
 }

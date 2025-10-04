@@ -64,6 +64,7 @@ use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
 use crate::rotor::{
     RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
 };
+use crate::ryse::{RyseLatencySimulation, RyseParameters};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
@@ -382,6 +383,27 @@ fn run_tests<
         engine
             .stats()
             .write_to_csv("data/output/rotor_1000.csv", &params)?;
+
+        let ryse_params = RyseParameters::new(1, 320);
+        let ryse_builder = ryse::RyseInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ryse_params,
+        );
+        let params = ryse::LatencySimParams::new(ryse_params, 4, 1);
+        let builder = ryse::LatencySimInstanceBuilder::new(ryse_builder, params.clone());
+        let leader_bandwidth = 10_000_000_000; // 10 Gbps
+        let bandwidths = vec![leader_bandwidth; validators.len()];
+        let environment =
+            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
+                .with_bandwidths(leader_bandwidth, bandwidths);
+        let engine =
+            SimulationEngine::<RyseLatencySimulation<_, _>>::new(builder, environment.clone());
+        info!("ryse latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/ryse_1000.csv", &params)?;
 
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {

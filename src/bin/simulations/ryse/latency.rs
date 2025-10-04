@@ -3,27 +3,29 @@
 
 //! Simulated latency test for Ryse, the MCP protocol.
 //!
-//! So far, this test can only simulate the good case.
+//! So far, this test can only simulate the happy path.
 
 use std::hash::Hash;
 use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
-    Timings,
+    Timings, broadcast_first_arrival_or_dep, broadcast_stake_threshold, column_max, column_min,
 };
 use crate::rotor::{RotorInstance, RotorInstanceBuilder, RotorLatencySimulation, RotorParams};
-use crate::ryse::{RyseInstance, RyseInstanceBuilder, RyseParams};
+use crate::ryse::parameters::{RyseInstance, RyseInstanceBuilder, RyseParameters};
 
 /// Size (in bytes) assumed per vote in the simulation.
 const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 /// Size (in bytes) assumed per certificate in the simulation.
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
+///
 pub struct RyseLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
@@ -40,7 +42,9 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RyseLatencySimulatio
 /// The sequential stages of the latency test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyTestStage {
+    Direct,
     Rotor,
+    Block,
     Notar,
     Final1,
     Final2,
@@ -51,24 +55,43 @@ impl Stage for LatencyTestStage {
     type Params = LatencySimParams;
 
     fn first() -> Self {
-        Self::Rotor
+        Self::Direct
     }
 
     fn next(&self) -> Option<Self> {
         match self {
-            Self::Rotor => Some(Self::Notar),
+            Self::Direct => Some(Self::Rotor),
+            Self::Rotor => Some(Self::Block),
+            Self::Block => Some(Self::Notar),
             Self::Notar => Some(Self::Final1),
             Self::Final1 => Some(Self::Final2),
             Self::Final2 => None,
         }
     }
 
-    fn events(&self, _params: &Self::Params) -> Vec<LatencyEvent> {
+    fn events(&self, params: &LatencySimParams) -> Vec<LatencyEvent> {
         match self {
-            Self::Rotor => vec![LatencyEvent::Block],
-            Self::Notar => vec![LatencyEvent::Notar],
-            Self::Final1 => vec![LatencyEvent::FastFinal, LatencyEvent::SlowFinal],
-            Self::Final2 => vec![LatencyEvent::Final],
+            Self::Direct => {
+                let mut events = Vec::with_capacity(params.ryse_params.num_slices as usize + 1);
+                events.push(LatencyEvent::BlockSent);
+                for slice in 0..params.ryse_params.num_slices {
+                    events.push(LatencyEvent::Direct(slice));
+                }
+                events
+            }
+            Self::Rotor => {
+                let mut events = Vec::with_capacity(3 * params.ryse_params.num_slices as usize);
+                for slice in 0..params.ryse_params.num_slices {
+                    events.push(LatencyEvent::StartForwarding(slice));
+                    events.push(LatencyEvent::FirstShredInSlice(slice));
+                    events.push(LatencyEvent::Rotor(slice));
+                }
+                events
+            }
+            Self::Block => vec![LatencyEvent::FirstShred, LatencyEvent::Block],
+            Self::Notar => vec![LatencyEvent::LocalNotar, LatencyEvent::Notar],
+            Self::Final1 => vec![LatencyEvent::LocalFastFinal, LatencyEvent::LocalSlowFinal],
+            Self::Final2 => vec![LatencyEvent::LocalFinal, LatencyEvent::Final],
         }
     }
 }
@@ -76,10 +99,20 @@ impl Stage for LatencyTestStage {
 /// Events that can occur at each validator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
+    // proposal dissemination
+    BlockSent,
+    Direct(u64),
+    StartForwarding(u64),
+    FirstShredInSlice(u64),
+    Rotor(u64),
+    FirstShred,
     Block,
+    // consensus
+    LocalNotar,
     Notar,
-    FastFinal,
-    SlowFinal,
+    LocalFastFinal,
+    LocalSlowFinal,
+    LocalFinal,
     Final,
 }
 
@@ -89,107 +122,216 @@ impl Event for LatencyEvent {
 
     fn name(&self) -> String {
         match self {
-            Self::Block => "block",
-            Self::Notar => "notar",
-            Self::FastFinal => "fast_final",
-            Self::SlowFinal => "slow_final",
-            Self::Final => "final",
+            Self::BlockSent => "block_sent".to_owned(),
+            Self::Direct(slice) => format!("direct_{}", slice),
+            Self::StartForwarding(_) => "start_forwarding".to_owned(),
+            Self::FirstShredInSlice(_) => "first_shred_in_slice".to_owned(),
+            Self::Rotor(slice) => format!("rotor_{}", slice),
+            Self::FirstShred => "first_shred".to_owned(),
+            Self::Block => "block".to_owned(),
+            Self::LocalNotar => "local_notar".to_owned(),
+            Self::Notar => "notar".to_owned(),
+            Self::LocalFastFinal => "local_fast_final".to_owned(),
+            Self::LocalSlowFinal => "local_slow_final".to_owned(),
+            Self::LocalFinal => "local_final".to_owned(),
+            Self::Final => "final".to_owned(),
         }
-        .to_owned()
     }
 
     fn should_track_stats(&self) -> bool {
-        true
+        match self {
+            Self::BlockSent => true,
+            Self::Direct(slice) => *slice == 0,
+            Self::StartForwarding(_) => false,
+            Self::FirstShredInSlice(_) => false,
+            Self::Rotor(slice) => *slice == 0,
+            Self::FirstShred => true,
+            Self::Block => true,
+            _ => true,
+        }
     }
 
-    fn dependencies(&self, _params: &LatencySimParams) -> Vec<Self> {
+    fn dependencies(&self, params: &LatencySimParams) -> Vec<Self> {
         match self {
-            Self::Block => vec![],
-            Self::Notar => vec![Self::Block],
-            Self::FastFinal => vec![Self::Notar],
-            Self::SlowFinal => vec![Self::Notar],
-            Self::Final => vec![Self::SlowFinal, Self::FastFinal],
+            Self::BlockSent => vec![],
+            Self::Direct(slice) => {
+                if *slice == 0 {
+                    vec![]
+                } else {
+                    vec![Self::Direct(*slice - 1)]
+                }
+            }
+            Self::StartForwarding(slice) => vec![Self::Direct(*slice)],
+            Self::FirstShredInSlice(slice) => {
+                vec![Self::StartForwarding(*slice)]
+            }
+            Self::Rotor(slice) => vec![Self::StartForwarding(*slice)],
+            Self::FirstShred => (0..params.ryse_params.num_slices)
+                .map(Self::FirstShredInSlice)
+                .collect(),
+            Self::Block => (0..params.ryse_params.num_slices)
+                .map(Self::Rotor)
+                .collect(),
+
+            Self::LocalNotar => vec![Self::Block],
+            Self::Notar => vec![Self::LocalNotar],
+            Self::LocalFastFinal => vec![Self::Block],
+            Self::LocalSlowFinal => vec![Self::Notar],
+            Self::LocalFinal => vec![Self::LocalFastFinal, Self::LocalSlowFinal],
+            Self::Final => vec![Self::LocalFinal],
         }
     }
 
     fn calculate_timing(
         &self,
         dependency_timings: &[&[SimTime]],
-        _instance: &LatencySimInstance,
-        _resources: &mut Resources,
+        instance: &LatencySimInstance,
+        resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
-        let broadcast_vote_threshold = |threshold: f64| -> Vec<SimTime> {
-            let mut timings = dependency_timings[0].to_vec();
-            for recipient in 0..environment.num_validators() {
-                // calculate vote arrival timings
-                // TODO: reserve network resource
-                let mut vote_timings = (0..environment.num_validators())
-                    .map(|sender| (SimTime::NEVER, sender))
-                    .collect::<Vec<_>>();
-                for sender in 0..environment.num_validators() {
-                    vote_timings[sender].0 = timings[sender]
-                        + environment
-                            .propagation_delay(sender as ValidatorId, recipient as ValidatorId)
-                        + environment
-                            .transmission_delay((recipient + 1) * VOTE_SIZE, sender as ValidatorId);
-                }
+        let broadcast_vote_threshold =
+            |resources: &mut Resources, threshold: f64| -> Vec<SimTime> {
+                broadcast_stake_threshold(
+                    dependency_timings[0],
+                    resources,
+                    environment,
+                    VOTE_SIZE,
+                    threshold,
+                )
+            };
 
-                // find time the stake threshold is first reached
-                vote_timings.sort_unstable();
-                let mut stake_so_far = 0;
-                for (vote_timing, sender) in vote_timings.into_iter() {
-                    timings[recipient] = vote_timing;
-                    stake_so_far += environment.validators[sender].stake;
-                    if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
-                        break;
-                    }
-                }
-            }
-            timings
+        let local_or_cert = |resources: &mut Resources| -> Vec<SimTime> {
+            broadcast_first_arrival_or_dep(dependency_timings[0], resources, environment, CERT_SIZE)
         };
 
         match self {
-            Self::Block => {
-                // TODO: find better way of integrating sub-protocol
-                let builder = RotorInstanceBuilder::new(
-                    StakeWeightedSampler::new(environment.validators.clone()),
-                    StakeWeightedSampler::new(environment.validators.clone()),
-                    _instance.params.rotor_params,
-                );
-                let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(
-                    builder,
-                    environment.clone(),
-                );
-                let mut timings = Timings::default();
-                // TODO: actually simulate more than one slot
-                engine.run(&_instance.rotor_instances[0], &mut timings);
+            Self::BlockSent => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                // TODO: actually run for more than 1 slot
+                for &leader in instance.ryse_instances[0].leaders.iter() {
+                    let block_bytes = instance.params.ryse_params.num_slices as usize
+                        * instance.params.ryse_params.num_relays as usize
+                        * MAX_DATA_PER_SHRED;
+                    let tx_time = environment.transmission_delay(block_bytes, leader);
+                    let finished_sending_time =
+                        resources.network.schedule(leader, SimTime::ZERO, tx_time);
+                    timings[leader as usize] = finished_sending_time;
+                }
                 timings
-                    .get(crate::rotor::LatencyEvent::Block)
-                    .unwrap()
-                    .to_vec()
             }
-            Self::Notar => broadcast_vote_threshold(0.6),
-            Self::FastFinal => broadcast_vote_threshold(0.8),
-            Self::SlowFinal => broadcast_vote_threshold(0.6),
-            Self::Final => column_min(dependency_timings),
+            Self::Direct(slice) => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                // TODO: actually run for more than 1 slot
+                for &relay in &instance.ryse_instances[0].relays[*slice as usize] {
+                    // TODO: correctly handle validators that are relays more than once
+                    let shreds_from_all_leaders = instance.ryse_instances[0]
+                        .leaders
+                        .iter()
+                        .map(|leader| {
+                            let prop_delay = environment.propagation_delay(*leader, relay);
+                            let shred_send_index =
+                                slice * instance.params.ryse_params.num_relays + relay + 1;
+                            let tx_delay = environment.transmission_delay(
+                                shred_send_index as usize * MAX_DATA_PER_SHRED,
+                                *leader,
+                            );
+                            prop_delay + tx_delay
+                        })
+                        .max()
+                        .unwrap();
+                    timings[relay as usize] = timings[relay as usize].min(shreds_from_all_leaders);
+                }
+                timings
+            }
+            Self::StartForwarding(slice) => {
+                let mut timings = dependency_timings[0].to_vec();
+                // TODO: actually run for more than 1 slot
+                for &relay in &instance.ryse_instances[0].relays[*slice as usize] {
+                    let timing = &mut timings[relay as usize];
+                    let total_bytes = instance.params.ryse_params.num_leaders as usize
+                        * environment.num_validators()
+                        * MAX_DATA_PER_SHRED;
+                    let total_tx_delay = environment.transmission_delay(total_bytes, relay);
+                    let start_time = resources.network.time_next_free_after(relay, *timing);
+                    resources.network.schedule(relay, *timing, total_tx_delay);
+                    *timing = start_time;
+                }
+                timings
+            }
+            Self::FirstShredInSlice(slice) => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                for (recipient, timing) in timings.iter_mut().enumerate() {
+                    // TODO: actually run for more than 1 slot
+                    let first_shred_time = instance.ryse_instances[0].relays[*slice as usize]
+                        .iter()
+                        .map(|relay| {
+                            let prop_delay =
+                                environment.propagation_delay(*relay, recipient as ValidatorId);
+                            let tx_delay = environment.transmission_delay(
+                                (recipient + 1)
+                                    * instance.params.ryse_params.num_relays as usize
+                                    * MAX_DATA_PER_SHRED,
+                                *relay,
+                            );
+                            dependency_timings[0][*relay as usize] + prop_delay + tx_delay
+                        })
+                        .min()
+                        .unwrap();
+                    *timing = first_shred_time;
+                }
+                timings
+            }
+            Self::Rotor(slice) => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut shred_timings =
+                    vec![SimTime::NEVER; instance.params.ryse_params.num_relays as usize];
+                for (recipient, timing) in timings.iter_mut().enumerate() {
+                    // TODO: actually run for more than 1 slot
+                    let slice_relays = &instance.ryse_instances[0].relays[*slice as usize];
+                    for (i, relay) in slice_relays.iter().enumerate() {
+                        shred_timings[i] = dependency_timings[0][*relay as usize]
+                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                            + environment.transmission_delay(
+                                (recipient + 1)
+                                    * instance.params.ryse_params.num_relays as usize
+                                    * MAX_DATA_PER_SHRED,
+                                *relay,
+                            );
+                    }
+                    shred_timings.sort_unstable();
+                    *timing =
+                        shred_timings[instance.params.ryse_params.decode_threshold as usize - 1];
+                }
+                timings
+            }
+            Self::FirstShred => column_min(dependency_timings),
+            Self::Block => column_max(dependency_timings),
+
+            Self::LocalNotar => broadcast_vote_threshold(resources, 0.6),
+            Self::Notar => local_or_cert(resources),
+            Self::LocalFastFinal => broadcast_vote_threshold(resources, 0.8),
+            Self::LocalSlowFinal => broadcast_vote_threshold(resources, 0.6),
+            Self::LocalFinal => column_min(dependency_timings),
+            // NOTE: when sending final cert, final vote is already scheduled
+            // TODO: this is not always optimal, handle this properly
+            Self::Final => local_or_cert(resources),
         }
     }
 }
 
 /// Parameters for the Ryse latency simulation.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LatencySimParams {
-    rotor_params: RotorParams,
+    ryse_params: RyseParameters,
     num_slots_per_window: usize,
     num_slots: usize,
 }
 
 impl LatencySimParams {
     /// Creates a parameter set for the Ryse latency simulation.
-    pub fn new(rotor_params: RotorParams, num_slots_per_window: usize, num_slots: usize) -> Self {
+    pub fn new(ryse_params: RyseParameters, num_slots_per_window: usize, num_slots: usize) -> Self {
         Self {
-            rotor_params,
+            ryse_params,
             num_slots_per_window,
             num_slots,
         }
@@ -198,15 +340,15 @@ impl LatencySimParams {
 
 /// A builder for Ryse latency simulation instances.
 pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
-    rotor_builder: RotorInstanceBuilder<L, R>,
+    ryse_builder: RyseInstanceBuilder<L, R>,
     params: LatencySimParams,
 }
 
 impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
     /// Creates a new builder instance from a builder for Rotor instances.
-    pub fn new(rotor_builder: RotorInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
+    pub fn new(ryse_builder: RyseInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
         Self {
-            rotor_builder,
+            ryse_builder,
             params,
         }
     }
@@ -217,11 +359,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
     type Instance = LatencySimInstance;
 
     fn build(&self, rng: &mut impl Rng) -> LatencySimInstance {
-        let rotor_instances = (0..self.params.num_slots)
-            .map(|_| self.rotor_builder.build(rng))
+        let ryse_instances = (0..self.params.num_slots)
+            .map(|_| self.ryse_builder.build(rng))
             .collect();
         LatencySimInstance {
-            rotor_instances,
+            ryse_instances,
             params: self.params.clone(),
         }
     }
@@ -233,31 +375,8 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
 
 /// A specific instance of the Ryse latency simulation.
 ///
-/// Contains one instance of the Rotor latency simulation, [`RotorInstance`], per slot.
+/// Contains one instance of the Ryse protocol, [`RyseInstance`], per slot.
 pub struct LatencySimInstance {
-    rotor_instances: Vec<RotorInstance>,
+    ryse_instances: Vec<RyseInstance>,
     params: LatencySimParams,
-}
-
-/// Returns the minimum of each column over the given rows.
-///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the minimum in each column.
-///
-/// # Panics
-///
-/// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
-fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
-    assert!(!rows.is_empty());
-    let mut result = rows[0].to_vec();
-    for row in &rows[1..] {
-        assert_eq!(row.len(), result.len(), "all rows must have same length");
-        for (res, &val) in result.iter_mut().zip(row.iter()) {
-            if val < *res {
-                *res = val;
-            }
-        }
-    }
-    result
 }

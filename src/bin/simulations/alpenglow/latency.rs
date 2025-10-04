@@ -3,7 +3,7 @@
 
 //! Simulated latency test for the Alpenglow protocol.
 //!
-//! So far, this test can only simulate the good case.
+//! So far, this test can only simulate the happy path.
 
 use std::hash::Hash;
 use std::marker::PhantomData;

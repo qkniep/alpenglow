@@ -3,13 +3,13 @@
 
 //! Latency simulation for Pyjama, the MCP protocol.
 //!
-//! So far, this test can only simulate the good case.
+//! So far, this test can only simulate the happy path.
 
 use std::marker::PhantomData;
 
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::ValidatorId;
+use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
-use alpenglow::{ValidatorId, disseminator::rotor::StakeWeightedSampler};
 
 use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
 use crate::discrete_event_simulator::{Builder, Resources, SimulationEngine, Timings};
@@ -128,7 +128,10 @@ impl Event for LatencyEvent {
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::Propose => vec![SimTime::ZERO; environment.num_validators()],
+            LatencyEvent::Propose => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                timings
+            }
             LatencyEvent::Relay => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 timings[instance.leader as usize] = SimTime::ZERO;
@@ -180,7 +183,6 @@ impl Event for LatencyEvent {
                     environment.clone(),
                 );
                 let mut timings = Timings::default();
-                // TODO: actually simulate more than one slot
                 engine.run(&consensus_instance, &mut timings);
                 timings
                     .get(crate::alpenglow::LatencyEvent::Final)
