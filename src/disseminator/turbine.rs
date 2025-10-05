@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use moka::future::Cache;
 use rand::prelude::*;
 
-pub(crate) use self::weighted_shuffle::WeightedShuffle;
+pub use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
