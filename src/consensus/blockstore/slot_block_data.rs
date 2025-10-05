@@ -188,7 +188,7 @@ impl BlockData {
         let header = &shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
-
+        debug!("add_validated_shred: slot={}, slice_index={}, shred_index={}", self.slot, slice_index, shred.payload().index_in_slice);
         match (header.is_last, self.last_slice) {
             (true, None) => {
                 self.last_slice = Some(slice_index);
@@ -232,15 +232,30 @@ impl BlockData {
         }
 
         match self.try_reconstruct_slice(slice_index) {
-            ReconstructSliceResult::NoAction => Ok(None),
-            ReconstructSliceResult::Error => Err(AddShredError::InvalidShred),
+            ReconstructSliceResult::NoAction => {
+                debug!("add_validated_shred: NoAction for slice {}", slice_index);
+                Ok(None)
+            },
+            ReconstructSliceResult::Error => {
+                debug!("add_validated_shred: Error reconstructing slice {}", slice_index);
+                Err(AddShredError::InvalidShred)
+            },
             ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
-                ReconstructBlockResult::NoAction => Ok(None),
-                ReconstructBlockResult::Error => Err(AddShredError::InvalidShred),
-                ReconstructBlockResult::Complete(block_info) => Ok(Some(VotorEvent::Block {
-                    slot: self.slot,
-                    block_info,
-                })),
+                ReconstructBlockResult::NoAction => {
+                    debug!("add_validated_shred: Block reconstruction NoAction");
+                    Ok(None)
+                },
+                ReconstructBlockResult::Error => {
+                    debug!("add_validated_shred: Block reconstruction Error");
+                    Err(AddShredError::InvalidShred)
+                },
+                ReconstructBlockResult::Complete(block_info) => {
+                    debug!("add_validated_shred: Block reconstructed with hash {}", &hex::encode(block_info.hash)[..8]);
+                    Ok(Some(VotorEvent::Block {
+                        slot: self.slot,
+                        block_info,
+                    }))
+                },
             },
         }
     }

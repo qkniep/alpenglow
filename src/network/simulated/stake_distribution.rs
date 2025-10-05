@@ -301,6 +301,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore] // This test processes real-world validator data and takes several minutes
     fn basic() {
         let validator_data = hub_validator_data(vec![("San Francisco".to_string(), 1.0)]);
         let (_, vals_with_ping) = validators_from_validator_data(&validator_data);

@@ -292,6 +292,7 @@ where
         slot: Slot,
         parent_block_id: BlockId,
     ) -> Result<BlockId> {
+        debug!("produce_block_parent_ready: slot={}, parent_slot={}, parent_hash={}", slot, parent_block_id.0, &hex::encode(parent_block_id.1)[..8]);
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = parent_block_id;
         info!(
@@ -327,7 +328,10 @@ where
             };
 
             match self.shred_and_disseminate(header, payload).await? {
-                Some(block_hash) => return Ok((slot, block_hash)),
+                Some(block_hash) => {
+                    debug!("produce_block_parent_ready: returning block_hash={} for slot {}", &hex::encode(block_hash)[..8], slot);
+                    return Ok((slot, block_hash));
+                },
                 None => {
                     assert!(!new_duration_left.is_zero());
                     duration_left = new_duration_left;

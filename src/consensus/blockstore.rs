@@ -104,6 +104,7 @@ impl BlockstoreImpl {
     }
 
     async fn send_votor_event(&self, event: VotorEvent) -> Option<(Slot, BlockInfo)> {
+        debug!("send_votor_event: event={:?}", event);
         match event {
             VotorEvent::FirstShred(_) => {
                 self.votor_channel.send(event).await.unwrap();

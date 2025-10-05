@@ -134,6 +134,7 @@ impl PoolImpl {
     /// - signature is valid
     /// - certificate is not a duplicate
     async fn add_valid_cert(&mut self, cert: Cert) {
+        debug!("add_valid_cert: cert={:?}", cert);
         let slot = cert.slot();
 
         // actually add certificate

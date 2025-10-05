@@ -55,6 +55,46 @@ The more extensive test suite, including some slow tests, can be run like this:
 ./test.sh slow
 ```
 
+## Debugging
+
+The Alpenglow implementation uses the [`logforth`](https://docs.rs/logforth) crate for logging. By default, the `run.sh` script sets `RUST_LOG="alpenglow=debug"` to show debug-level logs for the `alpenglow` crate, along with `RUST_BACKTRACE=1` to enable stack traces on panics.
+
+### Interpreting Logs
+
+When running the local cluster with `./run.sh`, you'll see logs like:
+
+- **DEBUG dropping duplicate shred X-Y in slot Z**: Indicates a duplicate data fragment (shred) was received and ignored. This is normal in distributed systems for redundancy.
+- **DEBUG reconstructed block HASH in slot Z with parent HASH in slot W**: A block was successfully assembled from shreds.
+- **DEBUG voted notar for slot Z**: The node voted to approve (notarize) a block.
+- **INFO producing block in slot Z with ready parent HASH in slot W**: Starting production of a new block.
+- **DEBUG produced block Z in TIME ms**: A block was created, with production time.
+- **INFO notarized(-fallback) block HASH in slot Z**: A block was notarized (approved by votes).
+- **INFO fast finalized slot Z** / **INFO slow finalized slot Z**: The slot (and its block) is permanently committed.
+
+### Enabling Verbose Debugging
+
+To see more details, including function inputs/outputs added for debugging:
+
+1. Run with full debug logging:
+   ```bash
+   RUST_LOG="alpenglow=debug,blockstore=debug,pool=debug,votor=debug,block_producer=debug" RUST_BACKTRACE=1 cargo run --release --bin=alpenglow
+   ```
+
+2. This will show additional debug prints like:
+   - `add_validated_shred: slot=X, slice_index=Y, shred_index=Z`
+   - `send_votor_event: event=Block { ... }`
+   - `try_notar: slot=X, hash=Y, parent_slot=Z, parent_hash=W`
+   - `produce_block_parent_ready: slot=X, parent_slot=Y, parent_hash=Z`
+
+### Common Debugging Scenarios
+
+- **No progress (blocks not advancing)**: Check for network issues (UDP ports blocked) or missing shreds (look for "repairing" logs).
+- **Crashes**: Enable `RUST_BACKTRACE=1` and share the stack trace.
+- **Performance**: Block production times >500ms may indicate CPU/network bottlenecks.
+- **Simulations not working**: Ensure `./download_data.sh` was run for latency simulations.
+
+For protocol details, refer to the [Alpenglow Whitepaper](https://drive.google.com/file/d/1y_7ddr8oNOknTQYHzXeeMD2ProQ0WjMs/view?usp=sharing).
+
 ## Standalone node
 
 There is a rudimentary implementation of a standalone node in the `node` binary. To use it, please do the folowing.

@@ -273,6 +273,7 @@ impl<A: All2All> Votor<A> {
     ///
     /// Returns `true` iff we decided to send a notarization vote for the block.
     async fn try_notar(&mut self, slot: Slot, block_info: BlockInfo) -> bool {
+        debug!("try_notar: slot={}, hash={}, parent_slot={}, parent_hash={}", slot, &hex::encode(block_info.hash)[..8], block_info.parent.0, &hex::encode(block_info.parent.1)[..8]);
         let BlockInfo {
             hash,
             parent: (parent_slot, parent_hash),
@@ -301,6 +302,7 @@ impl<A: All2All> Votor<A> {
         self.voted_notar.insert(slot, hash);
         self.pending_blocks.remove(&slot);
         self.try_final(slot, hash).await;
+        debug!("try_notar: returning true, voted for slot {}", slot);
         true
     }
 
