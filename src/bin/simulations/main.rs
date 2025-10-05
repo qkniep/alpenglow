@@ -35,6 +35,7 @@
 mod alpenglow;
 mod discrete_event_simulator;
 mod rotor;
+mod turbine;
 
 use std::cmp::Reverse;
 use std::fs::File;
