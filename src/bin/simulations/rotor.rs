@@ -64,20 +64,14 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
     type Instance = RotorInstance;
 
     fn build(&self, rng: &mut impl Rng) -> RotorInstance {
-        let relays = self
-            .rotor_sampler
-            .sample_multiple(self.params.num_shreds, rng);
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
             relays: (0..self.params.num_slices)
-                .map(|_| relays.clone())
+                .map(|_| {
+                    self.rotor_sampler
+                        .sample_multiple(self.params.num_shreds, rng)
+                })
                 .collect(),
-            // relays: (0..self.params.num_slices)
-            //     .map(|_| {
-            //         self.rotor_sampler
-            //             .sample_multiple(self.params.num_shreds, rng)
-            //     })
-            //     .collect(),
             params: self.params,
         }
     }
