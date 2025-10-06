@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(count_different_cities(&vals_with_ping), 1);
 
         let (validators, _) = validators_from_validator_data(&VALIDATOR_DATA);
-        assert_eq!(validators.len(), 1283);
+        assert_eq!(validators.len(), 954);
 
         let (validators, _) = validators_from_validator_data(&SUI_VALIDATOR_DATA);
         assert_eq!(validators.len(), 106);
