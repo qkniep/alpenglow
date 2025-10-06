@@ -4,7 +4,7 @@
 //! Utilities for working with the stake distribution of Solana mainnet.
 //!
 //! Validator data is taken from [Validators.app](https://validators.app/).
-//! The data is stored in the `data/mainnet_validators_epoch859.json` file.
+//! The data is stored in the `data/mainnet_validators_epoch860.json` file.
 //! It contains all validators (i.e. nodes with non-zero stake) on Solana mainnet.
 //!
 //! # Examples
@@ -35,14 +35,14 @@ use crate::{Stake, ValidatorId, ValidatorInfo};
 
 /// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
-    let file = File::open("data/mainnet_validators_epoch859.json").unwrap();
+    let file = File::open("data/mainnet_validators_epoch860.json").unwrap();
     let validators: Vec<ValidatorData> = serde_json::from_reader(file).unwrap();
     validators
 });
 
 /// Data for a single validator on Solana.
 ///
-/// This matches the format of the data in `data/mainnet_validators_epoch859.json`.
+/// This matches the format of the data in `data/mainnet_validators_epoch860.json`.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ValidatorData {
