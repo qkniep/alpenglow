@@ -16,7 +16,6 @@ use std::sync::{RwLock, RwLockReadGuard};
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorId, ValidatorInfo};
-use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
 
@@ -150,7 +149,6 @@ impl<P: Protocol> SimulationEngine<P> {
         // simulation loop
         for stage in P::Stage::all() {
             for event in stage.events(self.builder.params()) {
-                debug!("initializing timings for event {}", event.name());
                 timings.initialize(event, num_val);
             }
 
@@ -158,10 +156,7 @@ impl<P: Protocol> SimulationEngine<P> {
                 let dep_timings = event
                     .dependencies(self.builder.params())
                     .into_iter()
-                    .map(|dep| {
-                        debug!("requesting dep timings for event {}", dep.name());
-                        timings.get(dep).unwrap()
-                    })
+                    .map(|dep| timings.get(dep).unwrap())
                     .collect::<Vec<_>>();
                 let latencies = event.calculate_timing(
                     timings.start_time(),
@@ -478,13 +473,14 @@ mod tests {
 
         fn calculate_timing(
             &self,
+            start_time: SimTime,
             dep_timings: &[&[SimTime]],
             _instance: &TestInstance,
             _resources: &mut Resources,
             environment: &SimulationEnvironment,
         ) -> Vec<SimTime> {
             let mut timings = if self.0 == 0 {
-                vec![SimTime::ZERO; environment.num_validators()]
+                vec![start_time; environment.num_validators()]
             } else {
                 dep_timings[0].to_vec()
             };
