@@ -11,6 +11,7 @@ use std::marker::PhantomData;
 use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
+use log::debug;
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
@@ -220,7 +221,7 @@ impl Event for LatencyEvent {
                 timings
             }
             Self::Direct(slice) => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
                 let slice_relays = &instance.ryse_instances[0].relays[*slice as usize];
                 for (relay_offset, &relay) in slice_relays.iter().enumerate() {
@@ -240,8 +241,18 @@ impl Event for LatencyEvent {
                         })
                         .max()
                         .unwrap();
-                    timings[relay as usize] = timings[relay as usize].min(shreds_from_all_leaders);
+                    timings[relay as usize] = timings[relay as usize].max(shreds_from_all_leaders);
                 }
+                // TODO: remove this again
+                let mut relay_timings = slice_relays
+                    .iter()
+                    .map(|&relay| timings[relay as usize])
+                    .collect::<Vec<_>>();
+                relay_timings.sort_unstable();
+                debug!(
+                    "p50 relay received proposals at: {}",
+                    relay_timings[relay_timings.len() / 2]
+                );
                 timings
             }
             Self::StartForwarding(slice) => {
@@ -270,7 +281,7 @@ impl Event for LatencyEvent {
                                 environment.propagation_delay(*relay, recipient as ValidatorId);
                             let tx_delay = environment.transmission_delay(
                                 (recipient + 1)
-                                    * instance.params.ryse_params.num_relays as usize
+                                    * instance.params.ryse_params.num_leaders as usize
                                     * MAX_DATA_PER_SHRED,
                                 *relay,
                             );
@@ -294,7 +305,7 @@ impl Event for LatencyEvent {
                             + environment.propagation_delay(*relay, recipient as ValidatorId)
                             + environment.transmission_delay(
                                 (recipient + 1)
-                                    * instance.params.ryse_params.num_relays as usize
+                                    * instance.params.ryse_params.num_leaders as usize
                                     * MAX_DATA_PER_SHRED,
                                 *relay,
                             );

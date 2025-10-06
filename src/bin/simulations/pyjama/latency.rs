@@ -103,13 +103,13 @@ impl Event for LatencyEvent {
 
     fn name(&self) -> String {
         match self {
-            LatencyEvent::Propose => "propose",
-            LatencyEvent::Relay => "relay",
-            LatencyEvent::Attestation => "attestation",
-            LatencyEvent::Consensus => "consensus",
-            LatencyEvent::Release => "release",
-            LatencyEvent::Reconstruct => "reconstruct",
-            LatencyEvent::Final => "final",
+            Self::Propose => "propose",
+            Self::Relay => "relay",
+            Self::Attestation => "attestation",
+            Self::Consensus => "consensus",
+            Self::Release => "release",
+            Self::Reconstruct => "reconstruct",
+            Self::Final => "final",
         }
         .to_owned()
     }
@@ -118,15 +118,15 @@ impl Event for LatencyEvent {
         true
     }
 
-    fn dependencies(&self, _params: &PyjamaParams) -> Vec<LatencyEvent> {
+    fn dependencies(&self, _params: &PyjamaParams) -> Vec<Self> {
         match self {
-            LatencyEvent::Propose => vec![],
-            LatencyEvent::Relay => vec![LatencyEvent::Propose],
-            LatencyEvent::Attestation => vec![LatencyEvent::Relay],
-            LatencyEvent::Consensus => vec![LatencyEvent::Attestation],
-            LatencyEvent::Release => vec![LatencyEvent::Consensus],
-            LatencyEvent::Reconstruct => vec![LatencyEvent::Release],
-            LatencyEvent::Final => vec![LatencyEvent::Consensus, LatencyEvent::Reconstruct],
+            Self::Propose => vec![],
+            Self::Relay => vec![Self::Propose],
+            Self::Attestation => vec![Self::Relay],
+            Self::Consensus => vec![Self::Attestation],
+            Self::Release => vec![Self::Consensus],
+            Self::Reconstruct => vec![Self::Release],
+            Self::Final => vec![Self::Consensus, Self::Reconstruct],
         }
     }
 
@@ -139,7 +139,7 @@ impl Event for LatencyEvent {
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
         match self {
-            LatencyEvent::Propose => {
+            Self::Propose => {
                 let mut timings = vec![start_time; environment.num_validators()];
                 for &proposer in instance.proposers.iter() {
                     let block_bytes = instance.params.num_slices as usize
@@ -153,11 +153,11 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::Relay => {
+            Self::Relay => {
                 let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
                 for (relay_offset, &relay) in instance.relays.iter().enumerate() {
-                    let shreds_from_all_leaders = instance
+                    let shreds_from_all_proposers = instance
                         .proposers
                         .iter()
                         .map(|proposer| {
@@ -172,11 +172,12 @@ impl Event for LatencyEvent {
                         })
                         .max()
                         .unwrap();
-                    timings[relay as usize] = timings[relay as usize].max(shreds_from_all_leaders);
+                    timings[relay as usize] =
+                        timings[relay as usize].max(shreds_from_all_proposers);
                 }
                 timings
             }
-            LatencyEvent::Attestation => {
+            Self::Attestation => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (i, relay) in instance.relays.iter().enumerate() {
@@ -189,7 +190,7 @@ impl Event for LatencyEvent {
                     shred_timings[instance.params.attestations_threshold as usize - 1];
                 timings
             }
-            LatencyEvent::Consensus => {
+            Self::Consensus => {
                 let consensus_start_time = dependency_timings[0][instance.leader as usize];
                 // TODO: find better way of integrating sub-protocol
                 let slices_required = 3;
@@ -219,7 +220,7 @@ impl Event for LatencyEvent {
                     .unwrap()
                     .to_vec()
             }
-            LatencyEvent::Release => {
+            Self::Release => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 for relay in &instance.relays {
                     let dep_time = dependency_timings[0][*relay as usize];
@@ -234,7 +235,7 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::Reconstruct => {
+            Self::Reconstruct => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
@@ -253,7 +254,7 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            LatencyEvent::Final => column_max(dependency_timings),
+            Self::Final => column_max(dependency_timings),
         }
     }
 }
