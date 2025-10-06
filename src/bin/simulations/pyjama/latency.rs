@@ -156,16 +156,16 @@ impl Event for LatencyEvent {
             LatencyEvent::Relay => {
                 let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
-                for &relay in &instance.relays {
+                for (relay_offset, &relay) in instance.relays.iter().enumerate() {
                     let shreds_from_all_leaders = instance
                         .proposers
                         .iter()
                         .map(|proposer| {
                             let start_send_time = dependency_timings[0][*proposer as usize];
                             let prop_delay = environment.propagation_delay(*proposer, relay);
-                            let shred_send_index = relay + 1;
+                            let shred_send_index = relay_offset + 1;
                             let tx_delay = environment.transmission_delay(
-                                shred_send_index as usize * MAX_DATA_PER_SHRED,
+                                shred_send_index * MAX_DATA_PER_SHRED,
                                 *proposer,
                             );
                             start_send_time + prop_delay + tx_delay

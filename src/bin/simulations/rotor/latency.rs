@@ -170,12 +170,11 @@ impl Event for LatencyEvent {
                     *timing +=
                         environment.propagation_delay(instance.leader, recipient as ValidatorId);
                 }
-                for relay in &instance.relays[*slice] {
-                    let shred_send_index =
-                        slice * instance.params.num_shreds + (*relay as usize) + 1;
+                for (relay_offset, &relay) in instance.relays[*slice].iter().enumerate() {
+                    let shred_send_index = slice * instance.params.num_shreds + relay_offset + 1;
                     let tx_delay = environment
                         .transmission_delay(shred_send_index * MAX_DATA_PER_SHRED, instance.leader);
-                    timings[*relay as usize] += tx_delay;
+                    timings[relay as usize] += tx_delay;
                 }
                 timings
             }

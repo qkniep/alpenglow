@@ -222,15 +222,16 @@ impl Event for LatencyEvent {
             Self::Direct(slice) => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
-                for &relay in &instance.ryse_instances[0].relays[*slice as usize] {
+                let slice_relays = &instance.ryse_instances[0].relays[*slice as usize];
+                for (relay_offset, &relay) in slice_relays.iter().enumerate() {
                     // TODO: correctly handle validators that are relays more than once
                     let shreds_from_all_leaders = instance.ryse_instances[0]
                         .leaders
                         .iter()
                         .map(|leader| {
                             let prop_delay = environment.propagation_delay(*leader, relay);
-                            let shred_send_index =
-                                slice * instance.params.ryse_params.num_relays + relay + 1;
+                            let shred_send_index = slice * instance.params.ryse_params.num_relays
+                                + (relay_offset + 1) as u64;
                             let tx_delay = environment.transmission_delay(
                                 shred_send_index as usize * MAX_DATA_PER_SHRED,
                                 *leader,
