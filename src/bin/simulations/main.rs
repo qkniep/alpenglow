@@ -361,6 +361,12 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
+        let leader_bandwidth = 10_000_000_000; // 10 Gbps
+        let bandwidths = vec![leader_bandwidth; validators.len()];
+        let environment =
+            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
+                .with_bandwidths(leader_bandwidth, bandwidths);
+
         // Rotor
         let params = RotorParams::new(32, 64, 40);
         let builder = RotorInstanceBuilder::new(
@@ -368,11 +374,6 @@ fn run_tests<
             ping_rotor_sampler.clone(),
             params,
         );
-        let leader_bandwidth = 10_000_000_000; // 10 Gbps
-        let bandwidths = vec![leader_bandwidth; validators.len()];
-        let environment =
-            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
-                .with_bandwidths(leader_bandwidth, bandwidths);
         let engine =
             SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
         info!("rotor latency sim (sequential)");
@@ -395,11 +396,6 @@ fn run_tests<
         );
         let params = ryse::LatencySimParams::new(ryse_params, 4, 1);
         let builder = ryse::LatencySimInstanceBuilder::new(ryse_builder, params.clone());
-        let leader_bandwidth = 10_000_000_000; // 10 Gbps
-        let bandwidths = vec![leader_bandwidth; validators.len()];
-        let environment =
-            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
-                .with_bandwidths(leader_bandwidth, bandwidths);
         let engine =
             SimulationEngine::<RyseLatencySimulation<_, _>>::new(builder, environment.clone());
         info!("ryse latency sim (parallel)");
@@ -409,18 +405,13 @@ fn run_tests<
             .write_to_csv("data/output/ryse_1000.csv", &params)?;
 
         // Pyjama
-        let params = PyjamaParams::new(8, 320);
+        let params = PyjamaParams::new(8, 640);
         let builder = PyjamaInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
             params,
         );
-        let leader_bandwidth = 10_000_000_000; // 10 Gbps
-        let bandwidths = vec![leader_bandwidth; validators.len()];
-        let environment =
-            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
-                .with_bandwidths(leader_bandwidth, bandwidths);
         let engine =
             SimulationEngine::<PyjamaLatencySimulation<_, _, _>>::new(builder, environment.clone());
         info!("pyjama latency sim (parallel)");
