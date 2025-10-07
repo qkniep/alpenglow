@@ -403,11 +403,11 @@ fn run_tests<
         // latency experiments with fixed leaders
         let cities = if test_name.starts_with("solana") {
             vec![
-                "Westpoort",
+                "Westpoort", // Amsterdam
                 "Frankfurt",
                 "London",
-                "Zurich",
-                "New York City",
+                "Basel",
+                "Secaucus", // NYC/NJ
                 "Los Angeles",
                 "Tokyo",
                 "Singapore",
@@ -417,7 +417,7 @@ fn run_tests<
         } else if test_name.starts_with("sui") {
             vec![
                 "Los Angeles",
-                // "New Jersey",
+                "Secaucus", // NYC/NJ
                 "Dublin",
                 "London",
                 "Paris",
@@ -428,7 +428,7 @@ fn run_tests<
         } else if test_name.starts_with("5hubs") {
             vec![
                 "San Francisco",
-                "New York City",
+                "Secaucus", // NYC/NJ
                 "London",
                 "Shanghai",
                 "Tokyo",
@@ -436,7 +436,7 @@ fn run_tests<
         } else if test_name.starts_with("stock_exchanges") {
             vec![
                 "Toronto",
-                "New York City",
+                "Secaucus", // NYC/NJ
                 "Westpoort",
                 "Taipei",
                 "Pune",
