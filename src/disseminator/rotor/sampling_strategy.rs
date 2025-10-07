@@ -671,7 +671,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::disseminator::turbine::WeightedShuffle;
     use crate::network::dontcare_sockaddr;
-    use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
+    use crate::network::simulated::stake_distribution::{VALIDATOR_DATA, ValidatorData};
     use crate::shredder::TOTAL_SHREDS;
 
     fn create_validator_info(count: ValidatorId) -> Vec<ValidatorInfo> {
@@ -897,15 +897,10 @@ mod tests {
         const SLICES: usize = 100_000;
 
         // use real mainnet validator stake distribution
-        let mut stakes = Vec::new();
-        for validator in VALIDATOR_DATA.iter() {
-            if validator.is_active && validator.delinquent == Some(false) {
-                let stake = validator.active_stake.unwrap();
-                if stake > 0 {
-                    stakes.push(stake);
-                }
-            }
-        }
+        let stakes = VALIDATOR_DATA
+            .iter()
+            .filter_map(ValidatorData::active_stake)
+            .collect::<Vec<_>>();
         let total_stake: Stake = stakes.iter().sum();
         let mut validators = create_validator_info(stakes.len() as ValidatorId);
         for (i, stake) in stakes.into_iter().enumerate() {
