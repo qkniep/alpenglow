@@ -52,7 +52,7 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{ValidatorId, ValidatorInfo, logging};
+use ::alpenglow::{Stake, ValidatorId, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
@@ -554,8 +554,19 @@ fn test_reuse_cycle_sampling(
     validators_and_ping_servers: &[(ValidatorInfo, &'static PingServer)],
     validators_with_pings: &[ValidatorInfo],
 ) -> Result<()> {
+    let total_stake: Stake = validators_with_pings.iter().map(|v| v.stake).sum();
+
     let leader_bandwidth = 10_000_000_000; // 10 Gbps
-    let bandwidths = vec![leader_bandwidth; validators_with_pings.len()];
+    let min_bandwidth = 1_000_000_000; // 1 Gbps
+    let bandwidths = validators_with_pings
+        .iter()
+        .map(|v| {
+            ((v.stake as f64 / total_stake as f64
+                * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
+                .round() as u64)
+                .max(min_bandwidth)
+        })
+        .collect();
     let environment =
         SimulationEnvironment::from_validators_with_ping_data(validators_and_ping_servers)
             .with_bandwidths(leader_bandwidth, bandwidths);
@@ -609,7 +620,7 @@ fn test_reuse_cycle_sampling(
             let builder = RotorInstanceBuilder::new(leader_sampler.clone(), rotor_sampler, params);
             let engine =
                 SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
-            engine.run_many_parallel(100_000);
+            engine.run_many_parallel(10_000);
             let median_block_time = engine
                 .stats()
                 .get(&crate::rotor::LatencyEvent::Block)
