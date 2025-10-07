@@ -3,3 +3,23 @@
 /data/output
 flamegraph.svg
 tarpaulin-report.html
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# TLA+ generated files
+formal-verification/states/
+formal-verification/__pycache__/
+formal-verification/*.log
+formal-verification/verification_output.txt
+formal-verification/verification_test.txt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
