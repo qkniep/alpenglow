@@ -68,8 +68,8 @@ pub trait SamplingStrategy {
 
 /// A sampler that reuses sampled validators after `cycle_length` iterations.
 ///
-/// That is, for `cycle_length = 1` this sampler resuses the same single set validators.
-/// For `cycle_length -> inf` this sampler behaves as the underlying sampler.
+/// That is, for `cycle_length -> inf` this sampler resuses the same single set validators.
+/// For `cycle_length = 1` this sampler behaves as the underlying sampler.
 ///
 /// For simplicity, cycles are kept separate for different `k`.
 /// So, calling `sample_multiple(2)` and `sample_multiple(4)` uses different cycles.
@@ -140,7 +140,10 @@ impl<S: SamplingStrategy> SamplingStrategy for ReuseCycleSampler<S> {
     }
 }
 
+/// A sampler that reuses sampled validators `batch_length` times in a row.
 ///
+/// That is, for `batch_length -> sinf` this sampler resuses the same single set validators.
+/// For `batch_length = 1` this sampler behaves as the underlying sampler.
 // TODO: add tests for `ReuseBatchSampler`
 pub struct ReuseBatchSampler<S: SamplingStrategy> {
     sampler: S,
