@@ -33,7 +33,6 @@ pub struct RyseParameters {
 pub struct RyseInstance {
     pub leaders: Vec<ValidatorId>,
     pub relays: Vec<Vec<ValidatorId>>,
-    pub params: RyseParameters,
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
@@ -69,7 +68,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L
                         .sample_multiple(self.params.num_relays as usize, rng)
                 })
                 .collect(),
-            params: self.params,
         }
     }
 
@@ -83,16 +81,6 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L
 pub struct AdversaryStrength {
     pub crashed: f64,
     pub byzantine: f64,
-}
-
-/// Specific instantiation of the adversary's strength for MPC.
-#[derive(Clone, Copy, Debug)]
-pub struct SpecificAdversaryStrength {
-    is_leader: bool,
-    crashed_leaders: u64,
-    byzantine_leaders: u64,
-    crashed_relays: u64,
-    byzantine_relays: u64,
 }
 
 impl RyseParameters {

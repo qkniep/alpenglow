@@ -96,16 +96,6 @@ pub struct AdversaryStrength {
     pub byzantine: f64,
 }
 
-/// Specific instantiation of the adversary's strength for MPC.
-#[derive(Clone, Copy, Debug)]
-pub struct SpecificAdversaryStrength {
-    is_leader: bool,
-    crashed_proposers: u64,
-    byzantine_proposers: u64,
-    crashed_relays: u64,
-    byzantine_relays: u64,
-}
-
 impl PyjamaParameters {
     /// Generates a new balanced parameter set, equally resistant against all attacks.
     pub fn new(num_proposers: u64, num_relays: u64) -> Self {
