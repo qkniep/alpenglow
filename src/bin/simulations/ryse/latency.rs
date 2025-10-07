@@ -5,6 +5,8 @@
 //!
 //! So far, this test can only simulate the happy path.
 
+// TODO: lots of shared code with `rotor/latency` and `alpenglow/latency`
+
 use std::hash::Hash;
 use std::marker::PhantomData;
 
