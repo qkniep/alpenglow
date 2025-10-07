@@ -197,10 +197,10 @@ mod tests {
 
     #[test]
     fn test_mcp_parameters() {
-        let params = RyseParameters::new(2, 5);
+        let params = RyseParameters::new(2, 10);
         assert_eq!(params.num_leaders, 2);
-        assert_eq!(params.num_relays, 5);
-        assert_eq!(params.decode_threshold, 2);
-        assert_eq!(params.relay_notar_threshold, 3);
+        assert_eq!(params.num_relays, 10);
+        assert_eq!(params.decode_threshold, 5);
+        assert_eq!(params.relay_notar_threshold, 7);
     }
 }
