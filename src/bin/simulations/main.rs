@@ -52,7 +52,7 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{ValidatorId, ValidatorInfo, logging};
+use ::alpenglow::{Stake, ValidatorId, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
@@ -361,8 +361,22 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
+        let validators_with_pings = validators_with_ping_data
+            .iter()
+            .map(|(v, _)| v.clone())
+            .collect::<Vec<_>>();
+        let total_stake: Stake = validators_with_pings.iter().map(|v| v.stake).sum();
         let leader_bandwidth = 10_000_000_000; // 10 Gbps
-        let bandwidths = vec![leader_bandwidth; validators.len()];
+        let min_bandwidth = 1_000_000_000; // 1 Gbps
+        let bandwidths = validators_with_pings
+            .iter()
+            .map(|v| {
+                ((v.stake as f64 / total_stake as f64
+                    * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
+                    .round() as u64)
+                    .max(min_bandwidth)
+            })
+            .collect();
         let environment =
             SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
                 .with_bandwidths(leader_bandwidth, bandwidths);
