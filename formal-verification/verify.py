@@ -330,6 +330,15 @@ def show_menu():
     print(f"  {Colors.OKCYAN}{Colors.BOLD}[5]{Colors.ENDC} {Colors.OKCYAN}View Results Summary{Colors.ENDC}")
     print(f"      {Colors.ENDC}→ Show all completed verifications{Colors.ENDC}")
     print()
+    print(f"  {Colors.WARNING}{Colors.BOLD}[6]{Colors.ENDC} {Colors.WARNING}Rotor Block Propagation{Colors.ENDC}")
+    print(f"      {Colors.ENDC}→ 3 invariants, ~1-2 minutes{Colors.ENDC}")
+    print()
+    print(f"  {Colors.OKCYAN}{Colors.BOLD}[7]{Colors.ENDC} {Colors.OKCYAN}20+20 Resilience Proof{Colors.ENDC}")
+    print(f"      {Colors.ENDC}→ 11 invariants, ~3-5 minutes{Colors.ENDC}")
+    print()
+    print(f"  {Colors.WARNING}{Colors.BOLD}[8]{Colors.ENDC} {Colors.WARNING}Large-Scale Simulation{Colors.ENDC}")
+    print(f"      {Colors.ENDC}→ 20 validators, statistical verification{Colors.ENDC}")
+    print()
     print(f"  {Colors.FAIL}{Colors.BOLD}[0]{Colors.ENDC} Exit")
     print()
 
@@ -378,7 +387,7 @@ def main():
     while True:
         show_menu()
         
-        choice = input(f"{Colors.BOLD}Enter choice (0-5): {Colors.ENDC}").strip()
+        choice = input(f"{Colors.BOLD}Enter choice (0-8): {Colors.ENDC}").strip()
         
         if choice == '0':
             print()
@@ -396,8 +405,35 @@ def main():
             input(f"\n{Colors.BOLD}Press Enter to continue...{Colors.ENDC}")
             continue
         
+        elif choice == '6':
+            success = run_verification(
+                'rotor',
+                'RotorMC.cfg',
+                'Rotor.tla',
+                'Rotor Block Propagation'
+            )
+            all_results['Rotor Propagation'] = success
+        
+        elif choice == '7':
+            success = run_verification(
+                'resilience',
+                'ResilienceAlpenglowMC.cfg',
+                'ResilienceAlpenglow.tla',
+                '20+20 Resilience Proof'
+            )
+            all_results['20+20 Resilience'] = success
+        
+        elif choice == '8':
+            success = run_verification(
+                'simulation',
+                'AlpenglowSimulation.cfg',
+                'AlpenglowSimulation.tla',
+                'Large-Scale Simulation'
+            )
+            all_results['Large-Scale Simulation'] = success
+        
         elif choice not in ['1', '2', '3', '4']:
-            print_error("Invalid choice. Please enter 0-5.")
+            print_error("Invalid choice. Please enter 0-8.")
             input(f"\n{Colors.BOLD}Press Enter to continue...{Colors.ENDC}")
             continue
         
@@ -454,6 +490,30 @@ def main():
                 'Liveness Properties'
             )
             all_results['Liveness'] = success3
+            
+            success4 = run_verification(
+                'rotor',
+                'RotorMC.cfg',
+                'Rotor.tla',
+                'Rotor Block Propagation'
+            )
+            all_results['Rotor Propagation'] = success4
+            
+            success5 = run_verification(
+                'resilience',
+                'ResilienceAlpenglowMC.cfg',
+                'ResilienceAlpenglow.tla',
+                '20+20 Resilience Proof'
+            )
+            all_results['20+20 Resilience'] = success5
+            
+            success6 = run_verification(
+                'simulation',
+                'AlpenglowSimulation.cfg',
+                'AlpenglowSimulation.tla',
+                'Large-Scale Simulation'
+            )
+            all_results['Large-Scale Simulation'] = success6
         
         # Show quick summary after each run
         print()
