@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Calculations about the robustness of the Rotor block dissemination protocol.
+//! Monte-Carlo simulations to evaluate robustness of random quorums.
 //!
 //! This implements two main attack scenarios:
 //! - Equivocation attack: Less than 20% of stake is Byzantine.
@@ -15,57 +15,72 @@
 use std::fs::File;
 use std::sync::RwLock;
 
-use alpenglow::disseminator::rotor::sampling_strategy::UniformSampler;
 use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, SamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
 use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
+use static_assertions::const_assert_eq;
 
-use super::{RotorInstanceBuilder, RotorParams};
-
+/// Parallelism level for rayon.
+const PARALLELISM: usize = 1000;
+/// Interval to take write locks on `tests` and `failures`.
+const WRITE_BATCH: usize = 1000;
+/// Number of total iterations per attack scenario.
+const TOTAL_ITERATIONS: usize = 100_000_000;
+const_assert_eq!(TOTAL_ITERATIONS % (PARALLELISM * WRITE_BATCH), 0);
 /// Simulations stop early if the number of failures is greater than this.
 const MAX_FAILURES: usize = 10_000;
 
-/// Test harness for Rotor robustness testing.
-pub struct RotorRobustnessTest<S: SamplingStrategy> {
-    validators: Vec<ValidatorInfo>,
-    total_stake: Stake,
-    builder: RotorInstanceBuilder<UniformSampler, S>,
+/// Adversary strength.
+#[derive(Clone, Copy, Debug)]
+pub struct AdversaryStrength {
+    pub crashed: f64,
+    pub byzantine: f64,
+}
+
+/// Test harness for quorum robustness testing.
+pub struct QuorumRobustnessTest<S: SamplingStrategy> {
+    sampler: RwLock<S>,
+    quorum_size: usize,
+    byzantine_quorum_thresholds: Vec<usize>,
+    crashed_quorum_thresholds: Vec<usize>,
 
     tests: RwLock<usize>,
     failures: RwLock<usize>,
+
+    validators: Vec<ValidatorInfo>,
+    total_stake: Stake,
+    stake_distribution: String,
 }
 
-impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
+impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Creates a new instance of the test harness.
     pub fn new(
         validators: Vec<ValidatorInfo>,
+        stake_distribution: String,
         sampler: S,
-        num_data_shreds: usize,
-        num_shreds: usize,
+        quorum_size: usize,
+        byzantine_quorum_thresholds: Vec<usize>,
+        crashed_quorum_thresholds: Vec<usize>,
     ) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let sampler = RwLock::new(sampler);
         let tests = RwLock::new(0);
         let failures = RwLock::new(0);
-        // let sampler = RwLock::new(sampler);
-
-        let params = RotorParams {
-            num_data_shreds,
-            num_shreds,
-            num_slices: 1,
-        };
-
-        let builder =
-            RotorInstanceBuilder::new(UniformSampler::new(validators.clone()), sampler, params);
 
         Self {
-            validators,
-            total_stake,
-            builder,
+            sampler,
+            quorum_size,
+            byzantine_quorum_thresholds,
+            crashed_quorum_thresholds,
 
             tests,
             failures,
+
+            validators,
+            total_stake,
+            stake_distribution,
         }
     }
 
@@ -74,9 +89,13 @@ impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
     /// This runs the various strategies of choosing validators to corrupt.
     /// Returns the failure probability for the strongest adversary strategy.
     ///
-    /// The `test_name` should be of the form "<stake-distribution>-<sampling-strategy>".
     /// Results are written as a single line into to `csv_file`.
-    pub fn run(&self, test_name: &str, attack_frac: f64, csv_file: &mut csv::Writer<File>) {
+    pub fn run(
+        &self,
+        stake_distribution: &str,
+        attack_frac: f64,
+        csv_file: &mut csv::Writer<File>,
+    ) {
         let mut attack_prob = 0.0;
 
         // try three different adversary strategies
@@ -105,12 +124,11 @@ impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
         attack_prob = attack_prob.max(large_failure_rate);
 
         // write results to CSV
-        let parts = test_name.split('-').collect::<Vec<_>>();
-        let stake_distribution = parts[0];
-        let sampling_strategy = parts[1];
+        let stake_distribution = self.stake_distribution;
+        let sampling_strategy = S::name();
         csv_file
             .write_record(&[
-                stake_distribution.to_string(),
+                stake_distribution,
                 sampling_strategy.to_string(),
                 attack_frac.to_string(),
                 self.params().num_data_shreds.to_string(),
@@ -137,9 +155,10 @@ impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
                 break;
             }
         }
-        (0..1000).into_par_iter().for_each(|_| {
-            for _ in 0..100_000 {
-                let (tests, done) = self.run_with_corrupted(1000, attack_frac == 0.2, &corrupted);
+        (0..PARALLELISM).into_par_iter().for_each(|_| {
+            for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
+                let (tests, done) =
+                    self.run_with_corrupted(WRITE_BATCH, attack_frac == 0.2, &corrupted);
                 *self.tests.write().unwrap() += tests;
                 if done
                     || *self.tests.read().unwrap() as f64
@@ -216,14 +235,13 @@ impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
         debug!("running attack with bin-packing attack");
         let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
             self.validators.clone(),
-            self.params().num_shreds as u64,
+            self.quorum_size as u64,
         );
         let bin_sampler = fa1_sampler.fallback_sampler;
         let vals = &bin_sampler.bin_validators;
         let stakes = &bin_sampler.bin_stakes;
-        let attack_frac_in_bins =
-            attack_frac / (vals.len() as f64 / self.params().num_shreds as f64);
-        let stake_per_bin = self.total_stake as f64 / self.params().num_shreds as f64;
+        let attack_frac_in_bins = attack_frac / (vals.len() as f64 / self.quorum_size as f64);
+        let stake_per_bin = self.total_stake as f64 / self.quorum_size as f64;
 
         (0..1000).into_par_iter().for_each(|_| {
             // greedily corrupt less than `attack_frac` of validators
@@ -270,14 +288,19 @@ impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
         *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
     }
 
-    fn run_with_corrupted(&self, n: usize, byzantine: bool, corrupted: &[bool]) -> (usize, bool) {
+    fn run_with_corrupted(
+        &self,
+        iterations: usize,
+        byzantine: &[bool],
+        crashed: &[bool],
+    ) -> (usize, bool) {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         let mut tests = 0;
-        let sampler = &self.builder.rotor_sampler;
-        for _ in 0..n {
+        let sampler = &self.sampler;
+        for _ in 0..iterations {
             tests += 1;
             for _ in 0..self.params().num_slices {
-                let sampled = sampler.sample_multiple(self.params().num_shreds, &mut rng);
+                let sampled = sampler.sample_multiple(self.quorum_size, &mut rng);
                 let corrupted_samples = sampled
                     .into_iter()
                     .filter(|v| corrupted[*v as usize])
@@ -295,9 +318,5 @@ impl<S: SamplingStrategy + Send + Sync> RotorRobustnessTest<S> {
             }
         }
         (tests, false)
-    }
-
-    fn params(&self) -> &RotorParams {
-        &self.builder.params
     }
 }
