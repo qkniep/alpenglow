@@ -3,7 +3,7 @@
 
 //! Simulated latency test for the Alpenglow protocol.
 //!
-//! So far, this test can only simulate the good case.
+//! So far, this test can only simulate the happy path.
 
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -120,6 +120,7 @@ impl Event for LatencyEvent {
 
     fn calculate_timing(
         &self,
+        start_time: SimTime,
         dependency_timings: &[&[SimTime]],
         instance: &LatencySimInstance,
         resources: &mut Resources,
@@ -152,7 +153,7 @@ impl Event for LatencyEvent {
                     builder,
                     environment.clone(),
                 );
-                let mut timings = Timings::default();
+                let mut timings = Timings::new(start_time);
                 // TODO: actually simulate more than one slot
                 engine.run(&instance.rotor_instances[0], &mut timings);
                 timings

@@ -46,20 +46,20 @@ impl Stage for LatencyTestStage {
     type Params = RotorParams;
 
     fn first() -> Self {
-        LatencyTestStage::Direct
+        Self::Direct
     }
 
     fn next(&self) -> Option<Self> {
         match self {
-            LatencyTestStage::Direct => Some(LatencyTestStage::Rotor),
-            LatencyTestStage::Rotor => Some(LatencyTestStage::Block),
-            LatencyTestStage::Block => None,
+            Self::Direct => Some(Self::Rotor),
+            Self::Rotor => Some(Self::Block),
+            Self::Block => None,
         }
     }
 
-    fn events(&self, params: &Self::Params) -> Vec<LatencyEvent> {
+    fn events(&self, params: &RotorParams) -> Vec<LatencyEvent> {
         match self {
-            LatencyTestStage::Direct => {
+            Self::Direct => {
                 let mut events = Vec::with_capacity(params.num_slices + 1);
                 events.push(LatencyEvent::BlockSent);
                 for slice in 0..params.num_slices {
@@ -67,7 +67,7 @@ impl Stage for LatencyTestStage {
                 }
                 events
             }
-            LatencyTestStage::Rotor => {
+            Self::Rotor => {
                 let mut events = Vec::with_capacity(3 * params.num_slices);
                 for slice in 0..params.num_slices {
                     events.push(LatencyEvent::StartForwarding(slice));
@@ -76,7 +76,7 @@ impl Stage for LatencyTestStage {
                 }
                 events
             }
-            LatencyTestStage::Block => vec![LatencyEvent::FirstShred, LatencyEvent::Block],
+            Self::Block => vec![LatencyEvent::FirstShred, LatencyEvent::Block],
         }
     }
 }
@@ -145,6 +145,7 @@ impl Event for LatencyEvent {
 
     fn calculate_timing(
         &self,
+        start_time: SimTime,
         dependency_timings: &[&[SimTime]],
         instance: &RotorInstance,
         resources: &mut Resources,
@@ -152,7 +153,7 @@ impl Event for LatencyEvent {
     ) -> Vec<SimTime> {
         match self {
             Self::BlockSent => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut timings = vec![start_time; environment.num_validators()];
                 let block_bytes =
                     instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
                 let tx_time = environment.transmission_delay(block_bytes, instance.leader);
@@ -160,19 +161,20 @@ impl Event for LatencyEvent {
                     resources
                         .network
                         .schedule(instance.leader, SimTime::ZERO, tx_time);
-                timings[instance.leader as usize] = finished_sending_time;
+                timings[instance.leader as usize] += finished_sending_time;
                 timings
             }
             Self::Direct(slice) => {
-                let mut timings = (0..environment.num_validators() as ValidatorId)
-                    .map(|recipient| environment.propagation_delay(instance.leader, recipient))
-                    .collect::<Vec<_>>();
-                for relay in &instance.relays[*slice] {
-                    let shred_send_index =
-                        slice * instance.params.num_shreds + (*relay as usize) + 1;
+                let mut timings = vec![start_time; environment.num_validators()];
+                for (recipient, timing) in timings.iter_mut().enumerate() {
+                    *timing +=
+                        environment.propagation_delay(instance.leader, recipient as ValidatorId);
+                }
+                for (relay_offset, &relay) in instance.relays[*slice].iter().enumerate() {
+                    let shred_send_index = slice * instance.params.num_shreds + relay_offset + 1;
                     let tx_delay = environment
                         .transmission_delay(shred_send_index * MAX_DATA_PER_SHRED, instance.leader);
-                    timings[*relay as usize] += tx_delay;
+                    timings[relay as usize] += tx_delay;
                 }
                 timings
             }
