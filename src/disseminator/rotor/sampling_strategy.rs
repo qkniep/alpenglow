@@ -29,6 +29,7 @@ use rand::prelude::*;
 use crate::disseminator::turbine::DEFAULT_FANOUT;
 use crate::{Stake, ValidatorId, ValidatorInfo};
 
+/// Sampling strategies involving rejection sampling may panic after rejecting this many samples.
 const MAX_TRIES_PER_SAMPLE: usize = 100_000;
 
 /// An abstraction for randomly sampling validators based on some distribution.
