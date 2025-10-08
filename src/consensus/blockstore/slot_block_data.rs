@@ -23,7 +23,7 @@ use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddShredError {
     #[error("shred has invalid signature")]
     InvalidSignature,

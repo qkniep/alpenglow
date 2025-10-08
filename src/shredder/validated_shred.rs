@@ -22,7 +22,7 @@ pub enum ShredVerifyError {
 ///
 /// It uses the new type pattern to encode verification in the type system.  
 /// The encapsulated [`Shred`] has passed all required checks.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 #[repr(transparent)]
 pub struct ValidatedShred(Shred);
 

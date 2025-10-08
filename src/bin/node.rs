@@ -30,7 +30,7 @@ use rand::rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct ConfigFile {
     id: u64,
     identity_key: SecretKey,
@@ -41,7 +41,7 @@ struct ConfigFile {
 }
 
 /// Standalone Alpenglow node.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Generates configs for a cluster from a file with IPs (one per line).

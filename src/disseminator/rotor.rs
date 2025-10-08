@@ -1,6 +1,17 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implementation of Alpenglow's new Rotor block dissemination protocol.
+//!
+//! This is an evolution of Solana's original Turbine block dissemination protocol.
+//! Instead of a multi-layered tree, it always uses a single layer of relayers.
+//!
+//! Rotor can be instantiated with any quorum sampling strategy.
+//! Therefore, this module also provides multiple implementation of such.
+//! See also, the [`sampling_strategy`] module and the [`SamplingStrategy`] trait.
+//!
+//! For an implementation of Turbine, see [`crate::disseminator::turbine::Turbine`].
+
 pub mod sampling_strategy;
 
 use std::sync::Arc;
@@ -109,7 +120,7 @@ where
 }
 
 #[async_trait]
-impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
+impl<N, S: SamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
     N: ShredNetwork,
 {
