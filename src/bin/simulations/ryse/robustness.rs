@@ -6,7 +6,7 @@
 //! Currently, this just runs some static calculations on the set of parameters.
 //!
 //! In the future, this would also simulate attack scenarios for a specific stake distribution.
-//! This is analogous to what is done for Rotor in [`crate::rotor::robustness`];
+//! This is analogous to what is done for Rotor in [`crate::rotor::RotorRobustnessTest`];
 
 use color_eyre::Result;
 
@@ -15,7 +15,7 @@ use super::parameters::{AdversaryStrength, RyseParameters};
 const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
 const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
-    crashed: 0.0,
+    crashed: 0.2,
     byzantine: 0.2,
 };
 
