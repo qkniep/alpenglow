@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Parameters for Pyjama, the MCP protocol.
+//! Parameters for Quick Release MCP, the MCP protocol.
 //!
 //!
 
@@ -13,9 +13,9 @@ use statrs::distribution::{Binomial, DiscreteCDF};
 
 use crate::discrete_event_simulator::Builder;
 
-/// Parameters for the Pyjama MCP protocol.
+/// Parameters for the Quick Release MCP MCP protocol.
 #[derive(Clone, Copy, Debug)]
-pub struct PyjamaParameters {
+pub struct QuickReleaseParameters {
     pub num_proposers: u64,
     pub num_relays: u64,
     pub can_decode_threshold: u64,
@@ -24,23 +24,27 @@ pub struct PyjamaParameters {
     pub num_slices: u64,
 }
 
-/// Specific instance of the Pyjama protocol.
-pub struct PyjamaInstance {
+/// Specific instance of the Quick Release MCP protocol.
+pub struct QuickReleaseInstance {
     pub leader: ValidatorId,
     pub proposers: Vec<ValidatorId>,
     pub relays: Vec<ValidatorId>,
-    pub params: PyjamaParameters,
+    pub params: QuickReleaseParameters,
 }
 
-/// Builder for Pyjama instances with a specific set of parameters.
-pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+/// Builder for Quick Release MCP instances with a specific set of parameters.
+pub struct QuickReleaseInstanceBuilder<
+    L: SamplingStrategy,
+    P: SamplingStrategy,
+    R: SamplingStrategy,
+> {
     leader_sampler: L,
     proposer_sampler: P,
     relay_sampler: R,
-    params: PyjamaParameters,
+    params: QuickReleaseParameters,
 }
 
-impl<L, P, R> PyjamaInstanceBuilder<L, P, R>
+impl<L, P, R> QuickReleaseInstanceBuilder<L, P, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
@@ -51,7 +55,7 @@ where
         leader_sampler: L,
         proposer_sampler: P,
         relay_sampler: R,
-        params: PyjamaParameters,
+        params: QuickReleaseParameters,
     ) -> Self {
         Self {
             leader_sampler,
@@ -62,17 +66,17 @@ where
     }
 }
 
-impl<L, P, R> Builder for PyjamaInstanceBuilder<L, P, R>
+impl<L, P, R> Builder for QuickReleaseInstanceBuilder<L, P, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
     R: SamplingStrategy,
 {
-    type Params = PyjamaParameters;
-    type Instance = PyjamaInstance;
+    type Params = QuickReleaseParameters;
+    type Instance = QuickReleaseInstance;
 
-    fn build(&self, rng: &mut impl Rng) -> PyjamaInstance {
-        PyjamaInstance {
+    fn build(&self, rng: &mut impl Rng) -> QuickReleaseInstance {
+        QuickReleaseInstance {
             leader: self.leader_sampler.sample(rng),
             proposers: self
                 .proposer_sampler
@@ -96,7 +100,7 @@ pub struct AdversaryStrength {
     pub byzantine: f64,
 }
 
-impl PyjamaParameters {
+impl QuickReleaseParameters {
     /// Generates a new balanced parameter set, equally resistant against all attacks.
     pub fn new(num_proposers: u64, num_relays: u64) -> Self {
         Self {
@@ -235,7 +239,7 @@ impl PyjamaParameters {
     /// Capabilities of the adversary are specified in the `adv_strength` parameter.
     pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
-            "Pyjama parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
+            "QuickRelease parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
             self.num_proposers,
             self.num_relays,
             self.can_decode_threshold as f64 / self.num_relays as f64 * 100.0,
@@ -273,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_mcp_parameters() {
-        let params = PyjamaParameters::new(2, 5);
+        let params = QuickReleaseParameters::new(2, 5);
         assert_eq!(params.num_proposers, 2);
         assert_eq!(params.num_relays, 5);
         assert_eq!(params.can_decode_threshold, 2);

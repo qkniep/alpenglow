@@ -35,6 +35,7 @@
 mod alpenglow;
 mod discrete_event_simulator;
 mod pyjama;
+mod quick_release;
 mod rotor;
 mod ryse;
 
