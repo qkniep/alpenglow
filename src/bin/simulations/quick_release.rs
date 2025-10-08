@@ -10,7 +10,8 @@
 //! - Weak hiding:
 //!   A malicious proposer cannot condition the contents of their block on the contents of another.
 //!
-//! Additionally, Quick Release MCP provides the following stronger economic property:
+//! Quick Release MCP is a variation of the Pyjama MCP protocol.
+//! As such, it also provides the following stronger economic property:
 //! - Strong hiding:
 //!   A malicious proposer cannot condition inclusion of their block on the contents of another.
 //!
@@ -21,6 +22,8 @@ mod latency;
 mod parameters;
 mod robustness;
 
-pub use latency::PyjamaLatencySimulation;
-pub use parameters::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParameters as PyjamaParams};
+pub use latency::QuickReleaseLatencySimulation;
+pub use parameters::{
+    QuickReleaseInstance, QuickReleaseInstanceBuilder, QuickReleaseParameters as QuickReleaseParams,
+};
 pub use robustness::run_robustness_tests;
