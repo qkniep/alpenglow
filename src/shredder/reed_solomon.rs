@@ -7,10 +7,10 @@ use reed_solomon_simd as rs;
 use thiserror::Error;
 
 use super::{
-    CodingShred, DATA_SHREDS, DataShred, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
-    ShredPayload, ShredPayloadType, SliceHeader, TOTAL_SHREDS,
+    DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING, ShredPayloadType,
+    TOTAL_SHREDS,
 };
-use crate::shredder::Shred;
+use crate::shredder::ValidatedShred;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
@@ -22,20 +22,24 @@ pub(super) enum ReedSolomonShredError {
 pub(super) enum ReedSolomonDeshredError {
     #[error("not enough shreds to reconstruct")]
     NotEnoughShreds,
-    #[error("more shreds than expected")]
-    TooManyShreds,
     #[error("too much data for slice")]
     TooMuchData,
 }
 
-/// Splits the given slice into `num_data` data shreds, then generates
-/// `num_coding` additional Reed-Solomon coding shreds.
+/// The data and coding shreds returned from [`reed_solomon_shred()`] on success.
+pub(super) struct RawShreds {
+    /// A list of data shreds.
+    pub(super) data: Vec<Vec<u8>>,
+    /// A list of coding shreds.
+    pub(super) coding: Vec<Vec<u8>>,
+}
+
+/// Splits the given slice into `num_data` data shreds, then generates `num_coding` additional Reed-Solomon coding shreds.
 pub(super) fn reed_solomon_shred(
-    header: SliceHeader,
     mut payload: Vec<u8>,
-    num_data: usize,
     num_coding: usize,
-) -> Result<(Vec<DataShred>, Vec<CodingShred>), ReedSolomonShredError> {
+) -> Result<RawShreds, ReedSolomonShredError> {
+    assert!(num_coding <= TOTAL_SHREDS);
     if payload.len() > MAX_DATA_PER_SLICE {
         return Err(ReedSolomonShredError::TooMuchData);
     }
@@ -48,54 +52,45 @@ pub(super) fn reed_solomon_shred(
     assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
 
     let shred_bytes = payload.len().div_ceil(DATA_SHREDS);
-    let coding_parts = rs::encode(num_data, num_coding, payload.chunks(shred_bytes)).unwrap();
-
-    // map raw data/coding parts to `DataShred` and `CodingShred`
-    let payload_from_index_and_data = |index_in_slice: usize, data: Vec<u8>| ShredPayload {
-        header: header.clone(),
-        index_in_slice,
-        data: data.into(),
-    };
-    let data_shreds = payload
-        .chunks(shred_bytes)
-        .enumerate()
-        .map(|(i, p)| DataShred(payload_from_index_and_data(i, p.to_vec())))
-        .collect();
-    let coding_shreds = coding_parts
-        .into_iter()
-        .enumerate()
-        .map(|(i, p)| CodingShred(payload_from_index_and_data(i, p)))
-        .collect();
-
-    Ok((data_shreds, coding_shreds))
+    let data = payload.chunks(shred_bytes).map(|c| c.to_vec()).collect();
+    let coding = rs::encode(DATA_SHREDS, num_coding, &data).unwrap();
+    Ok(RawShreds { data, coding })
 }
 
 /// Reconstructs the raw data from the given shreds.
+///
+/// Errors
+///
+/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns `Err(ReedSolomonDeshredError::NotEnoughShreds)`.
+/// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns `Err(ReedSolomonDeshredError::TooMuchData)`.
 pub(super) fn reed_solomon_deshred(
-    shreds: &[Shred],
-    num_data: usize,
+    shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     num_coding: usize,
-    coding_offset: usize,
 ) -> Result<Vec<u8>, ReedSolomonDeshredError> {
-    assert!(coding_offset <= DATA_SHREDS);
-    if shreds.len() < DATA_SHREDS {
+    assert!(num_coding <= TOTAL_SHREDS);
+    let shreds_cnt = shreds.iter().filter(|s| s.is_some()).count();
+    if shreds_cnt < DATA_SHREDS {
         return Err(ReedSolomonDeshredError::NotEnoughShreds);
     }
-    if shreds.len() > TOTAL_SHREDS {
-        return Err(ReedSolomonDeshredError::TooManyShreds);
-    }
+
+    let coding_offset = TOTAL_SHREDS - num_coding;
 
     // filter to split data and coding shreds
-    let data = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Data(d) => Some((d.index_in_slice, &d.data)),
-        ShredPayloadType::Coding(_) => None,
-    });
-    let coding = shreds.iter().filter_map(|s| match &s.payload_type {
-        ShredPayloadType::Coding(c) => Some((c.index_in_slice - coding_offset, &c.data)),
-        ShredPayloadType::Data(_) => None,
+    let data = shreds.iter().take(coding_offset).filter_map(|s| {
+        s.as_ref().map(|s| match &s.payload_type {
+            ShredPayloadType::Data(d) => (*d.shred_index, &d.data),
+            ShredPayloadType::Coding(_) => panic!("should be a data shred"),
+        })
     });
 
-    let restored = rs::decode(num_data, num_coding, data.clone(), coding).unwrap();
+    let coding = shreds.iter().skip(coding_offset).filter_map(|s| {
+        s.as_ref().map(|s| match &s.payload_type {
+            ShredPayloadType::Coding(c) => (*c.shred_index - coding_offset, &c.data),
+            ShredPayloadType::Data(_) => panic!("should be a coding shred"),
+        })
+    });
+
+    let restored = rs::decode(DATA_SHREDS, num_coding, data.clone(), coding).unwrap();
 
     let mut data_shreds = vec![None; DATA_SHREDS];
     for (i, d) in data {
@@ -130,8 +125,8 @@ mod tests {
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::data_and_coding_to_output_shreds;
-    use crate::types::SliceIndex;
     use crate::types::slice::create_slice_with_invalid_txs;
+    use crate::types::{SliceHeader, SliceIndex};
 
     #[test]
     fn restore_full() {
@@ -169,56 +164,43 @@ mod tests {
 
     #[test]
     fn shred_too_much_data() {
-        let header = SliceHeader {
-            slot: Slot::new(0),
-            slice_index: SliceIndex::first(),
-            is_last: true,
-        };
         let payload = vec![0; MAX_DATA_PER_SLICE + 1];
-        let res = reed_solomon_shred(header, payload, DATA_SHREDS, DATA_SHREDS);
+        let res = reed_solomon_shred(payload, TOTAL_SHREDS - DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonShredError::TooMuchData);
     }
 
     #[test]
-    fn deshred_too_many_shreds() {
-        const CODING_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
-        let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
-        let (data, coding) =
-            reed_solomon_shred(header, payload.clone().into(), DATA_SHREDS, CODING_SHREDS).unwrap();
-        let sk = SecretKey::new(&mut rand::rng());
-        let shreds = data_and_coding_to_output_shreds(data, coding, &sk);
-        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS);
-        assert!(res.is_err());
-        assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::TooManyShreds);
-    }
-
-    #[test]
     fn deshred_not_enough_shreds() {
         let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
-        let (data, coding) =
-            reed_solomon_shred(header, payload.clone().into(), DATA_SHREDS, DATA_SHREDS).unwrap();
+        let shreds =
+            reed_solomon_shred(payload.clone().into(), TOTAL_SHREDS - DATA_SHREDS).unwrap();
         let sk = SecretKey::new(&mut rand::rng());
-        let mut shreds = data_and_coding_to_output_shreds(data, coding, &sk);
-        shreds.truncate(DATA_SHREDS - 1);
-        let res = reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS);
+        let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
+        for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
+            *shred = None;
+        }
+        let res = reed_solomon_deshred(&shreds, DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
     }
 
     fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
-        let (data, coding) =
-            reed_solomon_shred(header, payload.clone(), DATA_SHREDS, DATA_SHREDS).unwrap();
-        let shreds = take_and_map_enough_shreds(data, coding);
-        let restored =
-            reed_solomon_deshred(&shreds, DATA_SHREDS, DATA_SHREDS, DATA_SHREDS).unwrap();
+        let shreds = reed_solomon_shred(payload.clone(), TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let shreds = take_and_map_enough_shreds(header, shreds);
+        let restored = reed_solomon_deshred(&shreds, DATA_SHREDS).unwrap();
         assert_eq!(restored, payload);
     }
 
-    fn take_and_map_enough_shreds(data: Vec<DataShred>, coding: Vec<CodingShred>) -> Vec<Shred> {
+    fn take_and_map_enough_shreds(
+        header: SliceHeader,
+        shreds: RawShreds,
+    ) -> [Option<ValidatedShred>; TOTAL_SHREDS] {
         let sk = SecretKey::new(&mut rand::rng());
-        let shreds = data_and_coding_to_output_shreds(data, coding, &sk);
-        // reverse order to get coding shreds, not just data shreds
-        shreds.into_iter().rev().take(DATA_SHREDS).collect()
+        let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
+        for shred in shreds.iter_mut().skip(TOTAL_SHREDS - DATA_SHREDS) {
+            *shred = None;
+        }
+        shreds
     }
 }

@@ -15,7 +15,7 @@ pub const SLOTS_PER_WINDOW: u64 = 4;
 pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
-#[derive(Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Slot(u64);
 
 impl Slot {
@@ -66,7 +66,7 @@ impl Slot {
 
     /// Returns true if `self` is the first slot in the window.
     pub fn is_start_of_window(&self) -> bool {
-        self.0 % SLOTS_PER_WINDOW == 0
+        self.0.is_multiple_of(SLOTS_PER_WINDOW)
     }
 
     /// Returns the next slot after `self`.

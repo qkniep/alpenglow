@@ -33,6 +33,7 @@ use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
+use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -45,10 +46,10 @@ pub use self::vote::Vote;
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{Network, NetworkMessage};
-use crate::repair::{Repair, RepairRequest, RepairRequestHandler, RepairResponse};
+use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
+use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
-use crate::{All2All, Disseminator, Slot, Transaction, ValidatorInfo};
+use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 const DELTA: Duration = Duration::from_millis(250);
@@ -62,10 +63,28 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ConsensusMessage {
+    Vote(Vote),
+    Cert(Cert),
+}
+
+impl From<Vote> for ConsensusMessage {
+    fn from(vote: Vote) -> Self {
+        Self::Vote(vote)
+    }
+}
+
+impl From<Cert> for ConsensusMessage {
+    fn from(cert: Cert) -> Self {
+        Self::Cert(cert)
+    }
+}
+
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, T>
 where
-    T: Network<Recv = Transaction> + Send + Sync + 'static,
+    T: TransactionNetwork + 'static,
 {
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
@@ -91,9 +110,9 @@ where
 
 impl<A, D, T> Alpenglow<A, D, T>
 where
-    A: All2All + Sync + Send + 'static,
-    D: Disseminator + Sync + Send + 'static,
-    T: Network<Recv = Transaction> + Send + Sync + 'static,
+    A: All2All + Send + Sync + 'static,
+    D: Disseminator + Send + Sync + 'static,
+    T: TransactionNetwork + 'static,
 {
     /// Creates a new Alpenglow consensus node.
     ///
@@ -112,8 +131,8 @@ where
         txs_receiver: T,
     ) -> Self
     where
-        RR: Network<Recv = RepairRequest, Send = RepairResponse> + Send + Sync + 'static,
-        RN: Network<Recv = RepairResponse, Send = RepairRequest> + Send + Sync + 'static,
+        RR: RepairRequestNetwork + 'static,
+        RN: RepairNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (votor_tx, votor_rx) = mpsc::channel(1024);
@@ -275,21 +294,20 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
-    async fn handle_all2all_message(&self, msg: NetworkMessage) {
+    async fn handle_all2all_message(&self, msg: ConsensusMessage) {
         trace!("received all2all msg: {msg:?}");
         match msg {
-            NetworkMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
+            ConsensusMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
                 Ok(()) => {}
                 Err(AddVoteError::Slashable(offence)) => {
                     warn!("slashable offence detected: {offence}");
                 }
                 Err(err) => trace!("ignoring invalid vote: {err}"),
             },
-            NetworkMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
+            ConsensusMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
                 Ok(()) => {}
                 Err(err) => trace!("ignoring invalid cert: {err}"),
             },
-            msg => warn!("unexpected message on all2all port: {msg:?}"),
         }
     }
 
@@ -311,7 +329,7 @@ where
             .await
             .add_shred_from_disseminator(shred)
             .await;
-        if let Ok(Some((slot, block_info))) = res {
+        if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
             guard.add_block(block_id, block_info.parent).await;

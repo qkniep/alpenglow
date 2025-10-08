@@ -18,12 +18,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::{BINCODE_CONFIG, Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{
-    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, Transaction,
-    highest_non_zero_byte,
+    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
 };
 
 /// Produces blocks from transactions and dissminates them.
@@ -63,7 +62,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 impl<D, T> BlockProducer<D, T>
 where
     D: Disseminator,
-    T: Network<Recv = Transaction>,
+    T: TransactionNetwork,
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -359,13 +358,12 @@ where
                 .blockstore
                 .write()
                 .await
-                .add_shred_from_disseminator(s)
+                .add_shred_from_disseminator(s.into_shred())
                 .await;
-            if let Ok(Some((block_slot, block_info))) = block {
-                assert_eq!(block_slot, slot);
+            if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash);
-                let block_id = (block_slot, block_info.hash);
+                let block_id = (slot, block_info.hash);
                 self.pool
                     .write()
                     .await
@@ -390,7 +388,7 @@ async fn produce_slice_payload<T>(
     duration_left: Duration,
 ) -> (SlicePayload, Duration)
 where
-    T: Network<Recv = Transaction>,
+    T: TransactionNetwork,
 {
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
@@ -685,7 +683,7 @@ mod tests {
             .expect_add_shred_from_disseminator()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(Some((slot, block_info))) }));
+            .returning(move |_| Box::pin(async move { Ok(Some(block_info)) }));
 
         let mut pool = MockPool::new();
         pool.expect_add_block()
@@ -769,7 +767,7 @@ mod tests {
                 Box::pin(async move {
                     // final shred of second slice
                     // block is constructed with the new parent
-                    Ok(Some((slot, new_block_info)))
+                    Ok(Some(new_block_info))
                 })
             });
 

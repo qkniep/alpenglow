@@ -65,6 +65,20 @@ pub trait SamplingStrategy {
     }
 }
 
+/// A trivial sampler that picks the same validator all the time.
+#[derive(Clone)]
+pub struct AllSameSampler(pub ValidatorInfo);
+
+impl SamplingStrategy for AllSameSampler {
+    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
+        self.0.id
+    }
+
+    fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
+        &self.0
+    }
+}
+
 /// A basic sampler that picks all validators with equal probability.
 ///
 /// This sampler is stateless and chooses validators with replacement.
@@ -657,7 +671,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::disseminator::turbine::WeightedShuffle;
     use crate::network::dontcare_sockaddr;
-    use crate::network::simulated::stake_distribution::VALIDATOR_DATA;
+    use crate::network::simulated::stake_distribution::{VALIDATOR_DATA, ValidatorData};
     use crate::shredder::TOTAL_SHREDS;
 
     fn create_validator_info(count: ValidatorId) -> Vec<ValidatorInfo> {
@@ -677,6 +691,24 @@ mod tests {
             });
         }
         validators
+    }
+
+    #[test]
+    fn all_same_sampler() {
+        let validators = create_validator_info(10);
+        let sampler = AllSameSampler(validators[3].clone());
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            assert_eq!(sampler.sample(&mut rng), 3);
+            assert_eq!(sampler.sample_info(&mut rng).id, 3);
+        }
+
+        for _ in 0..10 {
+            let sampled_vals = sampler.sample_multiple(TOTAL_SHREDS, &mut rng);
+            for val in sampled_vals {
+                assert_eq!(val, 3);
+            }
+        }
     }
 
     #[test]
@@ -865,15 +897,10 @@ mod tests {
         const SLICES: usize = 100_000;
 
         // use real mainnet validator stake distribution
-        let mut stakes = Vec::new();
-        for validator in VALIDATOR_DATA.iter() {
-            if validator.is_active && validator.delinquent == Some(false) {
-                let stake = validator.active_stake.unwrap();
-                if stake > 0 {
-                    stakes.push(stake);
-                }
-            }
-        }
+        let stakes = VALIDATOR_DATA
+            .iter()
+            .filter_map(ValidatorData::active_stake)
+            .collect::<Vec<_>>();
         let total_stake: Stake = stakes.iter().sum();
         let mut validators = create_validator_info(stakes.len() as ValidatorId);
         for (i, stake) in stakes.into_iter().enumerate() {

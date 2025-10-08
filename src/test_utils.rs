@@ -4,18 +4,31 @@
 use std::sync::Arc;
 
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 use crate::all2all::TrivialAll2All;
-use crate::consensus::EpochInfo;
+use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::{Hash, MerkleTree, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{BINCODE_CONFIG, NetworkMessage, SimulatedNetwork, localhost_ip_sockaddr};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
+use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
 };
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Ping;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Pong;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PingOrPong {
+    Ping,
+    Pong,
+}
 
 pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
     let mut rng = rand::rng();
@@ -42,7 +55,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
 
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
-) -> Vec<TrivialAll2All<SimulatedNetwork<NetworkMessage, NetworkMessage>>> {
+) -> Vec<TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>> {
     let core = Arc::new(
         SimulatedNetworkCore::default()
             .with_jitter(0.0)
@@ -63,10 +76,10 @@ pub fn create_random_shredded_block(
     slot: Slot,
     num_slices: usize,
     sk: &signature::SecretKey,
-) -> (Hash, MerkleTree, Vec<Vec<Shred>>) {
+) -> (Hash, MerkleTree, Vec<Vec<ValidatedShred>>) {
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap());
+        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap().to_vec());
     }
     let merkle_roots = shreds
         .iter()

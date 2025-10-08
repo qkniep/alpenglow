@@ -1,19 +1,29 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implementation of Alpenglow's new Rotor block dissemination protocol.
+//!
+//! This is an evolution of Solana's original Turbine block dissemination protocol.
+//! Instead of a multi-layered tree, it always uses a single layer of relayers.
+//!
+//! Rotor can be instantiated with any quorum sampling strategy.
+//! Therefore, this module also provides multiple implementation of such.
+//! See also, the [`sampling_strategy`] module and the [`SamplingStrategy`] trait.
+//!
+//! For an implementation of Turbine, see [`crate::disseminator::turbine::Turbine`].
+
 pub mod sampling_strategy;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::warn;
 use rand::prelude::*;
 
 use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
 use crate::consensus::EpochInfo;
-use crate::network::{Network, NetworkMessage};
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
 
@@ -59,7 +69,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
 
 impl<N, S: SamplingStrategy> Rotor<N, S>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: ShredNetwork,
 {
     /// Turns this instance into a new instance with a different sampling strategy.
     #[must_use]
@@ -70,9 +80,8 @@ where
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
-        let msg: NetworkMessage = shred.clone().into();
         let v = self.epoch_info.validator(relay);
-        self.network.send(&msg, v.disseminator_address).await
+        self.network.send(shred, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
@@ -87,16 +96,13 @@ where
         }
 
         // otherwise, broadcast
-        let msg: NetworkMessage = shred.clone().into();
-        let bytes = msg.to_bytes();
-        for v in &self.epoch_info.validators {
-            if v.id == leader || v.id == relay {
-                continue;
-            }
-            self.network
-                .send_serialized(&bytes, v.disseminator_address)
-                .await?;
-        }
+        let to = self
+            .epoch_info
+            .validators
+            .iter()
+            .filter(|v| v.id != leader && v.id != relay)
+            .map(|v| v.disseminator_address);
+        self.network.send_to_many(shred, to).await?;
         Ok(())
     }
 
@@ -114,9 +120,9 @@ where
 }
 
 #[async_trait]
-impl<N, S: SamplingStrategy + Sync + Send + 'static> Disseminator for Rotor<N, S>
+impl<N, S: SamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
-    N: Network<Recv = NetworkMessage, Send = NetworkMessage>,
+    N: ShredNetwork,
 {
     async fn send(&self, shred: &Shred) -> std::io::Result<()> {
         Self::send_as_leader(self, shred).await
@@ -127,12 +133,7 @@ where
     }
 
     async fn receive(&self) -> std::io::Result<Shred> {
-        loop {
-            match self.network.receive().await? {
-                NetworkMessage::Shred(s) => return Ok(s),
-                m => warn!("unexpected message type for Rotor: {m:?}"),
-            }
-        }
+        self.network.receive().await
     }
 }
 
@@ -153,7 +154,7 @@ mod tests {
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
 
-    type MyRotor = Rotor<UdpNetwork<NetworkMessage, NetworkMessage>, StakeWeightedSampler>;
+    type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
 
     fn create_rotor_instances(count: u64, base_port: u16) -> (Vec<SecretKey>, Vec<MyRotor>) {
         let mut sks = Vec::new();
@@ -202,8 +203,8 @@ mod tests {
                         Ok(shred) => {
                             rotor_non_leader.forward(&shred).await.unwrap();
                             let mut guard = shreds_received.lock().await;
-                            assert!(!guard.contains(&shred.payload().index_in_slice));
-                            guard.insert(shred.payload().index_in_slice);
+                            assert!(!guard.contains(&*shred.payload().shred_index));
+                            guard.insert(*shred.payload().shred_index);
                         }
                         _ => continue,
                     }
