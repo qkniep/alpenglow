@@ -44,9 +44,8 @@ pub struct AdversaryStrength {
 /// Test harness for quorum robustness testing.
 pub struct QuorumRobustnessTest<S: SamplingStrategy> {
     sampler: RwLock<S>,
-    quorum_size: usize,
-    byzantine_quorum_thresholds: Vec<usize>,
-    crashed_quorum_thresholds: Vec<usize>,
+    quorum_sizes: Vec<usize>,
+    attacks: Vec<QuorumAttack>,
 
     tests: RwLock<usize>,
     failures: RwLock<usize>,
@@ -62,9 +61,8 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         validators: Vec<ValidatorInfo>,
         stake_distribution: String,
         sampler: S,
-        quorum_size: usize,
-        byzantine_quorum_thresholds: Vec<usize>,
-        crashed_quorum_thresholds: Vec<usize>,
+        quorum_sizes: Vec<usize>,
+        attacks: Vec<QuorumAttack>,
     ) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let sampler = RwLock::new(sampler);
@@ -73,9 +71,8 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
 
         Self {
             sampler,
-            quorum_size,
-            byzantine_quorum_thresholds,
-            crashed_quorum_thresholds,
+            quorum_sizes,
+            attacks,
 
             tests,
             failures,
@@ -91,13 +88,8 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// This runs the various strategies of choosing validators to corrupt.
     /// Returns the failure probability for the strongest adversary strategy.
     ///
-    /// Results are written as a single line into to `csv_file`.
-    pub fn run(
-        &self,
-        stake_distribution: &str,
-        attack_frac: f64,
-        csv_file: &mut csv::Writer<File>,
-    ) {
+    /// Results are written as a single line into `csv_file`.
+    pub fn run(&self, adversary_strength: AdversaryStrength, csv_file: &mut csv::Writer<File>) {
         let mut attack_prob = 0.0;
 
         // try three different adversary strategies
@@ -302,9 +294,9 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             tests += 1;
             for _ in 0..self.params().num_slices {
                 let sampled = sampler.sample_multiple(self.quorum_size, &mut rng);
-                let corrupted_samples = sampled
+                let byzantine_samples = sampled
                     .into_iter()
-                    .filter(|v| corrupted[*v as usize])
+                    .filter(|v| byzantine[*v as usize])
                     .count();
                 if (!byzantine
                     && corrupted_samples > self.params().num_shreds - self.params().num_data_shreds)
@@ -325,4 +317,19 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         *self.tests.write().unwrap() = 0;
         *self.failures.write().unwrap() = 0;
     }
+}
+
+pub struct QuorumAttack {
+    pub name: String,
+    pub quorum: QuorumThreshold,
+}
+
+pub enum QuorumThreshold {
+    Simple {
+        quorum: usize,
+        threshold: usize,
+        is_crash_enough: bool,
+    },
+    All(Vec<QuorumThreshold>),
+    Any(Vec<QuorumThreshold>),
 }
