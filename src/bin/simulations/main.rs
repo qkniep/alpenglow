@@ -34,7 +34,9 @@
 
 mod alpenglow;
 mod discrete_event_simulator;
+mod pyjama;
 mod rotor;
+mod ryse;
 
 use std::cmp::Reverse;
 use std::fs::File;
@@ -50,7 +52,7 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{ValidatorId, ValidatorInfo, logging};
+use ::alpenglow::{Stake, ValidatorId, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
@@ -59,9 +61,11 @@ use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
+use crate::pyjama::{PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams};
 use crate::rotor::{
     RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
 };
+use crate::ryse::{RyseInstanceBuilder, RyseLatencySimulation, RyseParameters};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
@@ -102,6 +106,9 @@ fn main() -> Result<()> {
     color_eyre::install()?;
 
     logging::enable_logforth();
+
+    crate::ryse::run_robustness_tests()?;
+    crate::pyjama::run_robustness_tests()?;
 
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
@@ -354,17 +361,33 @@ fn run_tests<
     }
 
     if RUN_LATENCY_TESTS {
+        let validators_with_pings = validators_with_ping_data
+            .iter()
+            .map(|(v, _)| v.clone())
+            .collect::<Vec<_>>();
+        let total_stake: Stake = validators_with_pings.iter().map(|v| v.stake).sum();
+        let leader_bandwidth = 10_000_000_000; // 10 Gbps
+        let min_bandwidth = 1_000_000_000; // 1 Gbps
+        let bandwidths = validators_with_pings
+            .iter()
+            .map(|v| {
+                ((v.stake as f64 / total_stake as f64
+                    * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
+                    .round() as u64)
+                    .max(min_bandwidth)
+            })
+            .collect();
+        let environment =
+            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
+                .with_bandwidths(leader_bandwidth, bandwidths);
+
+        // Rotor
         let params = RotorParams::new(32, 64, 40);
         let builder = RotorInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
             params,
         );
-        let leader_bandwidth = 10_000_000_000; // 10 Gbps
-        let bandwidths = vec![leader_bandwidth; validators.len()];
-        let environment =
-            SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
-                .with_bandwidths(leader_bandwidth, bandwidths);
         let engine =
             SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
         info!("rotor latency sim (sequential)");
@@ -378,6 +401,40 @@ fn run_tests<
             .stats()
             .write_to_csv("data/output/rotor_1000.csv", &params)?;
 
+        // Ryse
+        let ryse_params = RyseParameters::new(8, 320);
+        let ryse_builder = RyseInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ryse_params,
+        );
+        let params = ryse::LatencySimParams::new(ryse_params, 4, 1);
+        let builder = ryse::LatencySimInstanceBuilder::new(ryse_builder, params.clone());
+        let engine =
+            SimulationEngine::<RyseLatencySimulation<_, _>>::new(builder, environment.clone());
+        info!("ryse latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/ryse_1000.csv", &params)?;
+
+        // Pyjama
+        let params = PyjamaParams::new(8, 640);
+        let builder = PyjamaInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine =
+            SimulationEngine::<PyjamaLatencySimulation<_, _, _>>::new(builder, environment.clone());
+        info!("pyjama latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/pyjama_1000.csv", &params)?;
+
+        // Alpenglow
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
