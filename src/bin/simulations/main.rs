@@ -70,8 +70,7 @@ use crate::ryse::{RyseInstanceBuilder, RyseLatencySimulation, RyseParameters};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
-const RUN_CRASH_ROTOR_TESTS: bool = false;
-const RUN_BYZANTINE_ROTOR_TESTS: bool = false;
+const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
@@ -528,7 +527,7 @@ fn run_tests<
         }
     }
 
-    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
+    if RUN_ROTOR_ROBUSTNESS_TESTS {
         // TODO: clean up code
         let filename = PathBuf::from("data")
             .join("output")
@@ -539,25 +538,9 @@ fn run_tests<
         let file = File::options().append(true).open(filename)?;
         let mut writer = csv::Writer::from_writer(file);
 
-        run_rotor_robustness_test();
-
-        // if RUN_CRASH_ROTOR_TESTS {
-        //     // Rotor robustness experiments (Crash + Byz., 40%)
-        //     for (n, k) in &SHRED_COMBINATIONS {
-        //         info!("{test_name} robustness test (crash=0.4, n={n}, k={k})");
-        //         run_rotor_robustness_test();
-        //     }
-        // }
-        //
-        // if RUN_BYZANTINE_ROTOR_TESTS {
-        //     // Rotor robustness experiments (Byzantine only, 20%)
-        //     for (n, k) in &SHRED_COMBINATIONS {
-        //         info!("{test_name} robustness test (byz=0.2, n={n}, k={k})");
-        //         let tester =
-        //             RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-        //         tester.run(test_name, 0.2, &mut writer);
-        //     }
-        // }
+        for &(n, k) in &SHRED_COMBINATIONS {
+            run_rotor_robustness_test(n, k);
+        }
     }
 
     Ok(())

@@ -14,30 +14,28 @@
 
 use std::fs::File;
 
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use alpenglow::shredder::{DATA_SHREDS, TOTAL_SHREDS};
 
-use super::{RotorInstanceBuilder, RotorParams};
+use super::RotorParams;
 use crate::quorum_robustness::{
     AdversaryStrength, QuorumAttack, QuorumRobustnessTest, QuorumThreshold,
 };
 
 // TODO: support different: stake distributions, sampling strategies, Rotor params
 
-pub fn run_rotor_robustness_test() {
+pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler = StakeWeightedSampler::new(validators.clone());
     let rotor_sampler = StakeWeightedSampler::new(validators.clone());
 
     let params = RotorParams {
-        num_data_shreds: DATA_SHREDS,
-        num_shreds: TOTAL_SHREDS,
+        num_data_shreds: data_shreds,
+        num_shreds: total_shreds,
         num_slices: 1,
     };
-    let builder = RotorInstanceBuilder::new(leader_sampler, rotor_sampler.clone(), params);
 
     let equivocation_thresholds = (0..params.num_slices)
         .map(|slice| QuorumThreshold::Simple {
@@ -75,7 +73,12 @@ pub fn run_rotor_robustness_test() {
         byzantine: 0.2,
     };
 
-    let file = File::create("data/output/rotor_robustness.csv").unwrap();
+    let filename = format!("rotor_robustness_{}_{}", data_shreds, total_shreds);
+    let path = std::path::Path::new("data")
+        .join("output")
+        .join(filename)
+        .with_extension("csv");
+    let file = File::create(path).unwrap();
     let mut csv_file = csv::Writer::from_writer(file);
 
     test.run(adversary_strength, &mut csv_file);
