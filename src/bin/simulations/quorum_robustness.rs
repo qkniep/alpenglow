@@ -12,6 +12,7 @@
 //! - Small: Corrupt as many of the smallest validators as possible.
 //! - Large: Corrupt as many of the largest validators as possible.
 
+use std::cmp::Reverse;
 use std::fs::File;
 use std::sync::RwLock;
 
@@ -90,28 +91,40 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     ///
     /// Results are written as a single line into `csv_file`.
     pub fn run(&self, adversary_strength: AdversaryStrength, csv_file: &mut csv::Writer<File>) {
-        let mut attack_prob = 0.0;
+        let mut attack_probs = vec![0.0; self.attacks.len()];
 
         // try three different adversary strategies
-        // let partition_failure_rate = self.run_bin_packing(attack_frac, attack_prob);
-        // debug!("bin-packing failure rate: {}", partition_failure_rate);
+        // let partition_failure_rate = self.run_bin_packing(adversary_strength, attack_probs);
+        // debug!("bin-packing failure rates:");
+        // for (attack, prob) in self.attacks.iter().zip(partition_failure_rate.iter()) {
+        //     debug!("  - {}: {:.1}%", attack.name, prob);
+        // }
         // self.reset();
         // attack_prob = attack_prob.max(parittion_failure_rate);
 
-        let random_failure_rate = self.run_random(attack_frac, attack_prob);
-        debug!("random failure rate: {random_failure_rate}");
+        let random_attack_probs = self.run_random(adversary_strength, attack_probs);
+        debug!("random failure rates:");
+        for (attack, prob) in self.attacks.iter().zip(random_attack_probs.iter()) {
+            debug!("  - {}: {:.1}%", attack.name, prob);
+        }
         self.reset();
-        attack_prob = attack_prob.max(random_failure_rate);
+        // attack_prob = attack_prob.max(random_failure_rate);
 
-        let small_failure_rate = self.run_small(attack_frac, attack_prob);
-        debug!("small failure rate: {small_failure_rate}");
+        let small_attack_probs = self.run_small(adversary_strength, attack_probs);
+        debug!("small failure rates:");
+        for (attack, prob) in self.attacks.iter().zip(small_attack_probs.iter()) {
+            debug!("  - {}: {:.1}%", attack.name, prob);
+        }
         self.reset();
-        attack_prob = small_failure_rate.max(attack_prob);
+        // attack_prob = small_failure_rate.max(attack_prob);
 
-        let large_failure_rate = self.run_large(attack_frac, attack_prob);
-        debug!("large failure rate: {large_failure_rate}");
+        let large_attack_porbs = self.run_large(adversary_strength, attack_probs);
+        debug!("large failure rate:");
+        for (attack, prob) in self.attacks.iter().zip(large_attack_porbs.iter()) {
+            debug!("  - {}: {:.1}%", attack.name, prob);
+        }
         self.reset();
-        attack_prob = attack_prob.max(large_failure_rate);
+        // attack_prob = attack_prob.max(large_failure_rate);
 
         // write results to CSV
         let stake_distribution = self.stake_distribution;
@@ -120,35 +133,89 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             .write_record(&[
                 stake_distribution,
                 sampling_strategy.to_string(),
-                attack_frac.to_string(),
-                self.params().num_data_shreds.to_string(),
-                self.params().num_shreds.to_string(),
+                adversary_strength.byzantine.to_string(),
+                adversary_strength.crashed.to_string(),
+                // self.params().num_data_shreds.to_string(),
+                // self.params().num_shreds.to_string(),
                 attack_prob.log2().to_string(),
             ])
             .unwrap();
         csv_file.flush().unwrap();
     }
 
-    fn run_small(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
+    fn run_small(
+        &self,
+        adversary_strength: AdversaryStrength,
+        know_attack_probs: Vec<f64>,
+    ) -> Vec<f64> {
         debug!("running attack with small nodes corrupted");
-        // corrupt `attack_frac` smallest validators
-        let mut corrupted = vec![false; self.validators.len()];
+        let mut byzantine = vec![false; self.validators.len()];
+        let mut crashed = vec![false; self.validators.len()];
         let mut validators_to_corrupt = self.validators.clone();
         validators_to_corrupt.sort_by_key(|v| v.stake);
-        let mut corrupted_stake = 0.0;
+
+        // corrupt smallest validators (first byzantine, then crashed)
+        let mut byzantine_stake = 0.0;
+        let mut crashed_stake = 0.0;
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
-            if corrupted_stake + rel_stake < attack_frac {
-                corrupted[v.id as usize] = true;
-                corrupted_stake += rel_stake;
+            if byzantine_stake + rel_stake < adversary_strength.byzantine {
+                byzantine[v.id as usize] = true;
+                byzantine_stake += rel_stake;
+            } else if crashed_stake + rel_stake < adversary_strength.crashed {
+                crashed[v.id as usize] = true;
+                crashed_stake += rel_stake;
+            } else {
+                break;
+            }
+        }
+
+        // run tests
+        (0..PARALLELISM).into_par_iter().for_each(|_| {
+            for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
+                let (tests, done) = self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
+                *self.tests.write().unwrap() += tests;
+                if done
+                    || *self.tests.read().unwrap() as f64
+                        > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
+                {
+                    break;
+                }
+            }
+        });
+
+        self.attack_probabilities()
+    }
+
+    fn run_large(
+        &self,
+        adversary_strength: AdversaryStrength,
+        know_attack_probs: Vec<f64>,
+    ) -> Vec<f64> {
+        debug!("running attack with large nodes corrupted");
+        let mut byzantine = vec![false; self.validators.len()];
+        let mut crashed = vec![false; self.validators.len()];
+        let mut validators_to_corrupt = self.validators.clone();
+        validators_to_corrupt.sort_by_key(|v| Reverse(v.stake));
+
+        // corrupt largest validators (first byzantine, then crashed)
+        let mut byzantine_stake = 0.0;
+        let mut crashed_stake = 0.0;
+        for v in &validators_to_corrupt {
+            let rel_stake = v.stake as f64 / self.total_stake as f64;
+            if byzantine_stake + rel_stake < adversary_strength.byzantine {
+                byzantine[v.id as usize] = true;
+                byzantine_stake += rel_stake;
+            } else if crashed_stake + rel_stake < adversary_strength.crashed {
+                crashed[v.id as usize] = true;
+                crashed_stake += rel_stake;
             } else {
                 break;
             }
         }
         (0..PARALLELISM).into_par_iter().for_each(|_| {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
-                let (tests, done) =
-                    self.run_with_corrupted(WRITE_BATCH, attack_frac == 0.2, &corrupted);
+                let (tests, done) = self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
                 *self.tests.write().unwrap() += tests;
                 if done
                     || *self.tests.read().unwrap() as f64
@@ -158,40 +225,14 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 }
             }
         });
-        *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
+        self.attack_probabilities()
     }
 
-    fn run_large(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
-        debug!("running attack with large nodes corrupted");
-        // corrupt `attack_frac` largest validators
-        let mut corrupted = vec![false; self.validators.len()];
-        let mut validators_to_corrupt = self.validators.clone();
-        validators_to_corrupt.sort_by_key(|v| -(v.stake as i64));
-        let mut corrupted_stake = 0.0;
-        for v in &validators_to_corrupt {
-            let rel_stake = v.stake as f64 / self.total_stake as f64;
-            if corrupted_stake + rel_stake < attack_frac {
-                corrupted[v.id as usize] = true;
-                corrupted_stake += rel_stake;
-            }
-        }
-        (0..PARALLELISM).into_par_iter().for_each(|_| {
-            for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
-                let (tests, done) =
-                    self.run_with_corrupted(WRITE_BATCH, attack_frac == 0.2, &corrupted);
-                *self.tests.write().unwrap() += tests;
-                if done
-                    || *self.tests.read().unwrap() as f64
-                        > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
-                {
-                    break;
-                }
-            }
-        });
-        *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
-    }
-
-    fn run_random(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
+    fn run_random(
+        &self,
+        adversary_strength: AdversaryStrength,
+        know_attack_probs: Vec<f64>,
+    ) -> Vec<f64> {
         debug!("running attack with random nodes corrupted");
         (0..PARALLELISM).into_par_iter().for_each(|_| {
             // greedily corrupt less than `attack_frac` of validators
@@ -220,10 +261,14 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 }
             }
         });
-        *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
+        self.attack_probabilities()
     }
 
-    fn _run_bin_packing(&self, attack_frac: f64, know_attack_prob: f64) -> f64 {
+    fn _run_bin_packing(
+        &self,
+        adversary_strength: AdversaryStrength,
+        know_attack_probs: Vec<f64>,
+    ) -> Vec<f64> {
         debug!("running attack with bin-packing attack");
         let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
             self.validators.clone(),
@@ -278,7 +323,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 }
             }
         });
-        *self.failures.read().unwrap() as f64 / *self.tests.read().unwrap() as f64
+        self.attack_probabilities()
     }
 
     fn run_with_corrupted(
@@ -315,6 +360,12 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             }
         }
         (tests, false)
+    }
+
+    fn attack_probabilities(&self) -> Vec<f64> {
+        (0..self.attacks.len())
+            .map(|i| self.failures.read().unwrap()[i] as f64 / *self.tests.read().unwrap() as f64)
+            .collect()
     }
 
     fn reset(&self) {
