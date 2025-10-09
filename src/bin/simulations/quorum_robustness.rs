@@ -28,7 +28,7 @@ const PARALLELISM: usize = 1000;
 /// Interval to take write locks on `tests` and `failures`.
 const WRITE_BATCH: usize = 1000;
 /// Number of total iterations per attack scenario.
-const TOTAL_ITERATIONS: usize = 100_000_000;
+const TOTAL_ITERATIONS: usize = 100_000_000_000;
 const_assert_eq!(TOTAL_ITERATIONS % (PARALLELISM * WRITE_BATCH), 0);
 /// Simulations stop early if the number of failures is greater than this.
 const MAX_FAILURES: usize = 10_000;
@@ -97,7 +97,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         // let partition_attack_probs = self.run_bin_packing(adversary_strength, attack_probs);
         // debug!("bin-packing failure rates:");
         // for (attack, prob) in self.attacks.iter().zip(partition_attack_probs.iter()) {
-        //     debug!("  - {}: {:.1}%", attack.name, prob);
+        //     debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
         // }
         // self.reset();
         // vec_max(&mut attack_probs, &partition_attack_probs);
@@ -105,7 +105,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let random_attack_probs = self.run_random(adversary_strength, &attack_probs);
         debug!("random failure rates:");
         for (attack, prob) in self.attacks.iter().zip(random_attack_probs.iter()) {
-            debug!("  - {}: {:.1}%", attack.name, prob);
+            debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
         }
         self.reset();
         vec_max(&mut attack_probs, &random_attack_probs);
@@ -113,7 +113,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let small_attack_probs = self.run_small(adversary_strength, &attack_probs);
         debug!("small failure rates:");
         for (attack, prob) in self.attacks.iter().zip(small_attack_probs.iter()) {
-            debug!("  - {}: {:.1}%", attack.name, prob);
+            debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
         }
         self.reset();
         vec_max(&mut attack_probs, &small_attack_probs);
@@ -121,7 +121,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let large_attack_probs = self.run_large(adversary_strength, &attack_probs);
         debug!("large failure rate:");
         for (attack, prob) in self.attacks.iter().zip(large_attack_probs.iter()) {
-            debug!("  - {}: {:.1}%", attack.name, prob);
+            debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
         }
         self.reset();
         vec_max(&mut attack_probs, &large_attack_probs);
