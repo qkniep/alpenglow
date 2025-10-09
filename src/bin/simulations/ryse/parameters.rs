@@ -135,9 +135,8 @@ impl RyseParameters {
         // probability that the adversary controls enough relays to decrypt before proposing
         let byzantine = adv_strength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
-        let relays_needed = (self.relay_notar_threshold + self.decode_threshold)
-            .saturating_sub(self.num_relays)
-            .div_ceil(2);
+        let relays_needed =
+            (self.relay_notar_threshold + self.decode_threshold).saturating_sub(self.num_relays);
         1.0 - relays_dist.cdf(relays_needed.saturating_sub(1))
     }
 
