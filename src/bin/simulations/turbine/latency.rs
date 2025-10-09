@@ -191,23 +191,22 @@ impl Event for LatencyEvent {
                 let mut timings = (0..environment.num_validators() as ValidatorId)
                     .map(|recipient| environment.propagation_delay(instance.leader, recipient))
                     .collect::<Vec<_>>();
-                for relay in &instance.relays[*slice] {
-                    let shred_send_index =
-                        slice * instance.params.num_shreds + (*relay as usize) + 1;
+                for (shred_index, &root) in instance.roots(*slice).iter().enumerate() {
+                    let shred_send_index = slice * instance.params.num_shreds + shred_index + 1;
                     let tx_delay = environment
                         .transmission_delay(shred_send_index * MAX_DATA_PER_SHRED, instance.leader);
-                    timings[*relay as usize] += tx_delay;
+                    timings[root as usize] += tx_delay;
                 }
                 timings
             }
             Self::StartForwardingRoot(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
-                for &relay in &instance.relays[*slice] {
-                    let timing = &mut timings[relay as usize];
+                for (shred_index, &root) in instance.roots(*slice).iter().enumerate() {
+                    let timing = &mut timings[root as usize];
                     let total_bytes = environment.num_validators() * MAX_DATA_PER_SHRED;
-                    let total_tx_delay = environment.transmission_delay(total_bytes, relay);
-                    let start_time = resources.network.time_next_free_after(relay, *timing);
-                    resources.network.schedule(relay, *timing, total_tx_delay);
+                    let total_tx_delay = environment.transmission_delay(total_bytes, root);
+                    let start_time = resources.network.time_next_free_after(root, *timing);
+                    resources.network.schedule(root, *timing, total_tx_delay);
                     *timing = start_time;
                 }
                 timings

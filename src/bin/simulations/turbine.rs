@@ -115,6 +115,12 @@ impl TurbineInstance {
         }
     }
 
+    pub fn roots(&self, slice: usize) -> Vec<ValidatorId> {
+        (0..self.params.num_shreds)
+            .map(|shred| self.root(slice, shred))
+            .collect()
+    }
+
     pub fn layer1_parents(&self, slice: usize, v: ValidatorId) -> Vec<ValidatorId> {
         (0..self.params.num_shreds)
             .filter(|shred| self.layer1(slice, *shred).contains(&v))
