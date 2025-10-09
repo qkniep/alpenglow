@@ -64,7 +64,7 @@ use crate::alpenglow::{
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
 use crate::pyjama::{PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams};
 use crate::rotor::{
-    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
+    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
 };
 use crate::ryse::{RyseInstanceBuilder, RyseLatencySimulation, RyseParameters};
 
@@ -539,25 +539,25 @@ fn run_tests<
         let file = File::options().append(true).open(filename)?;
         let mut writer = csv::Writer::from_writer(file);
 
-        if RUN_CRASH_ROTOR_TESTS {
-            // Rotor robustness experiments (Crash + Byz., 40%)
-            for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} robustness test (crash=0.4, n={n}, k={k})");
-                let tester =
-                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-                tester.run(test_name, 0.4, &mut writer);
-            }
-        }
+        run_rotor_robustness_test();
 
-        if RUN_BYZANTINE_ROTOR_TESTS {
-            // Rotor robustness experiments (Byzantine only, 20%)
-            for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} robustness test (byz=0.2, n={n}, k={k})");
-                let tester =
-                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-                tester.run(test_name, 0.2, &mut writer);
-            }
-        }
+        // if RUN_CRASH_ROTOR_TESTS {
+        //     // Rotor robustness experiments (Crash + Byz., 40%)
+        //     for (n, k) in &SHRED_COMBINATIONS {
+        //         info!("{test_name} robustness test (crash=0.4, n={n}, k={k})");
+        //         run_rotor_robustness_test();
+        //     }
+        // }
+        //
+        // if RUN_BYZANTINE_ROTOR_TESTS {
+        //     // Rotor robustness experiments (Byzantine only, 20%)
+        //     for (n, k) in &SHRED_COMBINATIONS {
+        //         info!("{test_name} robustness test (byz=0.2, n={n}, k={k})");
+        //         let tester =
+        //             RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
+        //         tester.run(test_name, 0.2, &mut writer);
+        //     }
+        // }
     }
 
     Ok(())
