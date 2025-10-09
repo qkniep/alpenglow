@@ -26,9 +26,8 @@
 //! - Decaying acceptance (with 3.0 max samples)
 //! - Turbine
 //!
-//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`],
-//! [`RUN_CRASH_ROTOR_TESTS`], and [`RUN_BYZANTINE_ROTOR_TESTS`]
-//! control which tests to run.
+//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`], and
+//! [`RUN_ROTOR_ROBUSTNESS_TESTS`] control which tests to run.
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
@@ -134,7 +133,7 @@ fn main() -> Result<()> {
         let _ = File::create(filename)?;
     }
 
-    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
+    if RUN_ROTOR_ROBUSTNESS_TESTS {
         // create saftey evaluation file
         let filename = PathBuf::from("data")
             .join("output")

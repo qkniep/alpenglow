@@ -34,7 +34,7 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) {
     let params = RotorParams {
         num_data_shreds: data_shreds,
         num_shreds: total_shreds,
-        num_slices: 1,
+        num_slices: 40,
     };
 
     let equivocation_thresholds = (0..params.num_slices)
