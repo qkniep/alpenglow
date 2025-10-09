@@ -323,6 +323,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct QuorumAttack {
     pub name: String,
     pub quorum: QuorumThreshold,
@@ -334,6 +335,7 @@ impl QuorumAttack {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum QuorumThreshold {
     Simple {
         quorum: usize,
@@ -376,5 +378,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn basic() {}
+    fn quorum_threshold() {
+        let threshold1 = QuorumThreshold::Simple {
+            quorum: 0,
+            threshold: 1,
+            is_crash_enough: false,
+        };
+        let threshold2 = QuorumThreshold::Simple {
+            quorum: 1,
+            threshold: 2,
+            is_crash_enough: true,
+        };
+        let threshold_both = QuorumThreshold::All(vec![threshold1.clone(), threshold2.clone()]);
+        let threshold_either = QuorumThreshold::Any(vec![threshold1.clone(), threshold2.clone()]);
+
+        let corrupted = [(0, 0), (0, 0)];
+        assert_eq!(threshold1.evaluate(&corrupted), false);
+        assert_eq!(threshold2.evaluate(&corrupted), false);
+        assert_eq!(threshold_both.evaluate(&corrupted), false);
+        assert_eq!(threshold_either.evaluate(&corrupted), false);
+
+        let corrupted = [(0, 1), (0, 0)];
+        assert_eq!(threshold1.evaluate(&corrupted), false);
+        assert_eq!(threshold2.evaluate(&corrupted), false);
+        assert_eq!(threshold_both.evaluate(&corrupted), false);
+        assert_eq!(threshold_either.evaluate(&corrupted), false);
+
+        let corrupted = [(1, 0), (0, 0)];
+        assert_eq!(threshold1.evaluate(&corrupted), true);
+        assert_eq!(threshold2.evaluate(&corrupted), false);
+        assert_eq!(threshold_both.evaluate(&corrupted), false);
+        assert_eq!(threshold_either.evaluate(&corrupted), true);
+
+        let corrupted = [(1, 0), (2, 0)];
+        assert_eq!(threshold1.evaluate(&corrupted), true);
+        assert_eq!(threshold2.evaluate(&corrupted), true);
+        assert_eq!(threshold_both.evaluate(&corrupted), true);
+        assert_eq!(threshold_either.evaluate(&corrupted), true);
+
+        let corrupted = [(1, 0), (0, 2)];
+        assert_eq!(threshold1.evaluate(&corrupted), true);
+        assert_eq!(threshold2.evaluate(&corrupted), true);
+        assert_eq!(threshold_both.evaluate(&corrupted), true);
+        assert_eq!(threshold_either.evaluate(&corrupted), true);
+
+        let corrupted = [(1, 0), (1, 1)];
+        assert_eq!(threshold1.evaluate(&corrupted), true);
+        assert_eq!(threshold2.evaluate(&corrupted), true);
+        assert_eq!(threshold_both.evaluate(&corrupted), true);
+        assert_eq!(threshold_either.evaluate(&corrupted), true);
+    }
 }
