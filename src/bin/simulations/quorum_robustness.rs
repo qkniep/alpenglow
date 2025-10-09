@@ -289,24 +289,28 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     ) -> (usize, bool) {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         let mut tests = 0;
-        let sampler = &self.sampler;
+        let sampler = &self.sampler.read().unwrap();
         for _ in 0..iterations {
             tests += 1;
-            for _ in 0..self.params().num_slices {
-                let sampled = sampler.sample_multiple(self.quorum_size, &mut rng);
-                let byzantine_samples = sampled
-                    .into_iter()
-                    .filter(|v| byzantine[*v as usize])
-                    .count();
-                if (!byzantine
-                    && corrupted_samples > self.params().num_shreds - self.params().num_data_shreds)
-                    || (byzantine && corrupted_samples >= self.params().num_data_shreds)
-                {
+            let corrupted = self
+                .quorum_sizes
+                .iter()
+                .copied()
+                .map(|quorum_size| {
+                    let sampled = sampler.sample_multiple(quorum_size, &mut rng);
+                    let byzantine_samples =
+                        sampled.iter().filter(|v| byzantine[**v as usize]).count();
+                    let crashed_samples = sampled.iter().filter(|v| crashed[**v as usize]).count();
+                    (byzantine_samples, crashed_samples)
+                })
+                .collect();
+            for attack in &self.attacks {
+                if attack.evaluate(&corrupted) {
                     *self.failures.write().unwrap() += 1;
                     break;
-                }
-                if *self.failures.read().unwrap() >= MAX_FAILURES {
-                    return (tests, true);
+                    if *self.failures.read().unwrap() >= MAX_FAILURES {
+                        return (tests, true);
+                    }
                 }
             }
         }
@@ -324,6 +328,12 @@ pub struct QuorumAttack {
     pub quorum: QuorumThreshold,
 }
 
+impl QuorumAttack {
+    fn evaluate(&self, corrupted: &[(usize, usize)]) -> bool {
+        self.quorum.evaluate(corrupted)
+    }
+}
+
 pub enum QuorumThreshold {
     Simple {
         quorum: usize,
@@ -332,4 +342,39 @@ pub enum QuorumThreshold {
     },
     All(Vec<QuorumThreshold>),
     Any(Vec<QuorumThreshold>),
+}
+
+impl QuorumThreshold {
+    fn evaluate(&self, corrupted: &[(usize, usize)]) -> bool {
+        match self {
+            QuorumThreshold::Simple {
+                quorum,
+                threshold,
+                is_crash_enough,
+            } => {
+                let (byzantine, crashed) = corrupted[*quorum];
+                if *is_crash_enough {
+                    byzantine + crashed >= *threshold
+                } else {
+                    byzantine >= *threshold
+                }
+            }
+            QuorumThreshold::All(thresholds) => thresholds
+                .iter()
+                .map(|threshold| threshold.evaluate(corrupted))
+                .all(|b| b),
+            QuorumThreshold::Any(thresholds) => thresholds
+                .iter()
+                .map(|threshold| threshold.evaluate(corrupted))
+                .any(|b| b),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {}
 }
