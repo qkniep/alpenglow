@@ -91,7 +91,7 @@ impl RyseParameters {
             num_relays,
             num_slices: 1,
             decode_threshold: (num_relays * 50).div_ceil(100),
-            relay_notar_threshold: (num_relays * 70).div_ceil(100),
+            relay_notar_threshold: (num_relays * 60).div_ceil(100),
         }
     }
 
@@ -127,14 +127,17 @@ impl RyseParameters {
             .max(self.temporary_liveness_failure_probability(adv_strength))
     }
 
-    /// Proobability that the adversary can break the hiding property in a slot.
+    /// Probability that the adversary can break the hiding property in a slot.
+    ///
+    /// This attack is easier for the adversary if no nodes are crashed.
+    /// So, this is the case that we consider here to get a worst-case analysis.
     pub fn break_hiding_probability(&self, adv_strength: AdversaryStrength) -> f64 {
-        // probability that the adversary controls enough relays to decrypt
+        // probability that the adversary controls enough relays to decrypt before proposing
         let byzantine = adv_strength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
-        let crashed_relays = (adv_strength.crashed * self.num_relays as f64).round() as u64;
-        let relays_needed = (self.relay_notar_threshold + self.decode_threshold + crashed_relays)
-            .saturating_sub(self.num_relays);
+        let relays_needed = (self.relay_notar_threshold + self.decode_threshold)
+            .saturating_sub(self.num_relays)
+            .div_ceil(2);
         1.0 - relays_dist.cdf(relays_needed.saturating_sub(1))
     }
 
