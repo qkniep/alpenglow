@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use std::fs::File;
 use std::sync::RwLock;
 
-use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, SamplingStrategy};
+use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::{Stake, ValidatorInfo};
 use log::debug;
 use rand::prelude::*;
@@ -94,13 +94,13 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let mut attack_probs = vec![0.0; self.attacks.len()];
 
         // try three different adversary strategies
-        // let partition_failure_rate = self.run_bin_packing(adversary_strength, attack_probs);
+        // let partition_attack_probs = self.run_bin_packing(adversary_strength, attack_probs);
         // debug!("bin-packing failure rates:");
-        // for (attack, prob) in self.attacks.iter().zip(partition_failure_rate.iter()) {
+        // for (attack, prob) in self.attacks.iter().zip(partition_attack_probs.iter()) {
         //     debug!("  - {}: {:.1}%", attack.name, prob);
         // }
         // self.reset();
-        // attack_prob = attack_prob.max(parittion_failure_rate);
+        // vec_max(&mut attack_probs, &partition_attack_probs);
 
         let random_attack_probs = self.run_random(adversary_strength, &attack_probs);
         debug!("random failure rates:");
@@ -108,7 +108,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             debug!("  - {}: {:.1}%", attack.name, prob);
         }
         self.reset();
-        // attack_prob = attack_prob.max(random_failure_rate);
+        vec_max(&mut attack_probs, &random_attack_probs);
 
         let small_attack_probs = self.run_small(adversary_strength, &attack_probs);
         debug!("small failure rates:");
@@ -116,15 +116,15 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             debug!("  - {}: {:.1}%", attack.name, prob);
         }
         self.reset();
-        // attack_prob = small_failure_rate.max(attack_prob);
+        vec_max(&mut attack_probs, &small_attack_probs);
 
-        let large_attack_porbs = self.run_large(adversary_strength, &attack_probs);
+        let large_attack_probs = self.run_large(adversary_strength, &attack_probs);
         debug!("large failure rate:");
-        for (attack, prob) in self.attacks.iter().zip(large_attack_porbs.iter()) {
+        for (attack, prob) in self.attacks.iter().zip(large_attack_probs.iter()) {
             debug!("  - {}: {:.1}%", attack.name, prob);
         }
         self.reset();
-        // attack_prob = attack_prob.max(large_failure_rate);
+        vec_max(&mut attack_probs, &large_attack_probs);
 
         // write results to CSV
         let sampling_strategy = S::name();
@@ -428,14 +428,19 @@ impl QuorumThreshold {
             }
             QuorumThreshold::All(thresholds) => thresholds
                 .iter()
-                .map(|threshold| threshold.evaluate(corrupted))
-                .all(|b| b),
+                .all(|threshold| threshold.evaluate(corrupted)),
             QuorumThreshold::Any(thresholds) => thresholds
                 .iter()
-                .map(|threshold| threshold.evaluate(corrupted))
-                .any(|b| b),
+                .any(|threshold| threshold.evaluate(corrupted)),
         }
     }
+}
+
+fn vec_max(old_vec: &mut [f64], new_vec: &[f64]) {
+    old_vec
+        .iter_mut()
+        .zip(new_vec.iter())
+        .for_each(|(old, new)| *old = (*old).max(*new));
 }
 
 #[cfg(test)]
@@ -458,39 +463,39 @@ mod tests {
         let threshold_either = QuorumThreshold::Any(vec![threshold1.clone(), threshold2.clone()]);
 
         let corrupted = [(0, 0), (0, 0)];
-        assert_eq!(threshold1.evaluate(&corrupted), false);
-        assert_eq!(threshold2.evaluate(&corrupted), false);
-        assert_eq!(threshold_both.evaluate(&corrupted), false);
-        assert_eq!(threshold_either.evaluate(&corrupted), false);
+        assert!(!threshold1.evaluate(&corrupted));
+        assert!(!threshold2.evaluate(&corrupted));
+        assert!(!threshold_both.evaluate(&corrupted));
+        assert!(!threshold_either.evaluate(&corrupted));
 
         let corrupted = [(0, 1), (0, 0)];
-        assert_eq!(threshold1.evaluate(&corrupted), false);
-        assert_eq!(threshold2.evaluate(&corrupted), false);
-        assert_eq!(threshold_both.evaluate(&corrupted), false);
-        assert_eq!(threshold_either.evaluate(&corrupted), false);
+        assert!(!threshold1.evaluate(&corrupted));
+        assert!(!threshold2.evaluate(&corrupted));
+        assert!(!threshold_both.evaluate(&corrupted));
+        assert!(!threshold_either.evaluate(&corrupted));
 
         let corrupted = [(1, 0), (0, 0)];
-        assert_eq!(threshold1.evaluate(&corrupted), true);
-        assert_eq!(threshold2.evaluate(&corrupted), false);
-        assert_eq!(threshold_both.evaluate(&corrupted), false);
-        assert_eq!(threshold_either.evaluate(&corrupted), true);
+        assert!(threshold1.evaluate(&corrupted));
+        assert!(!threshold2.evaluate(&corrupted));
+        assert!(!threshold_both.evaluate(&corrupted));
+        assert!(threshold_either.evaluate(&corrupted));
 
         let corrupted = [(1, 0), (2, 0)];
-        assert_eq!(threshold1.evaluate(&corrupted), true);
-        assert_eq!(threshold2.evaluate(&corrupted), true);
-        assert_eq!(threshold_both.evaluate(&corrupted), true);
-        assert_eq!(threshold_either.evaluate(&corrupted), true);
+        assert!(threshold1.evaluate(&corrupted));
+        assert!(threshold2.evaluate(&corrupted));
+        assert!(threshold_both.evaluate(&corrupted));
+        assert!(threshold_either.evaluate(&corrupted));
 
         let corrupted = [(1, 0), (0, 2)];
-        assert_eq!(threshold1.evaluate(&corrupted), true);
-        assert_eq!(threshold2.evaluate(&corrupted), true);
-        assert_eq!(threshold_both.evaluate(&corrupted), true);
-        assert_eq!(threshold_either.evaluate(&corrupted), true);
+        assert!(threshold1.evaluate(&corrupted));
+        assert!(threshold2.evaluate(&corrupted));
+        assert!(threshold_both.evaluate(&corrupted));
+        assert!(threshold_either.evaluate(&corrupted));
 
         let corrupted = [(1, 0), (1, 1)];
-        assert_eq!(threshold1.evaluate(&corrupted), true);
-        assert_eq!(threshold2.evaluate(&corrupted), true);
-        assert_eq!(threshold_both.evaluate(&corrupted), true);
-        assert_eq!(threshold_either.evaluate(&corrupted), true);
+        assert!(threshold1.evaluate(&corrupted));
+        assert!(threshold2.evaluate(&corrupted));
+        assert!(threshold_both.evaluate(&corrupted));
+        assert!(threshold_either.evaluate(&corrupted));
     }
 }
