@@ -10,9 +10,9 @@
 
 use std::fs::File;
 
-use alpenglow::{
-    disseminator::rotor::FaitAccompli1Sampler,
-    network::simulated::stake_distribution::{VALIDATOR_DATA, validators_from_validator_data},
+use alpenglow::disseminator::rotor::FaitAccompli1Sampler;
+use alpenglow::network::simulated::stake_distribution::{
+    VALIDATOR_DATA, validators_from_validator_data,
 };
 use color_eyre::Result;
 
@@ -83,8 +83,8 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
         vec![hiding_attack, censorship_attack],
     );
     let adversary_strength = crate::quorum_robustness::AdversaryStrength {
-        crashed: 0.2,
-        byzantine: 0.2,
+        crashed: 0.0,
+        byzantine: 0.1,
     };
 
     let filename = format!("ryse_robustness_{}_{}", params.num_leaders, total_shreds);
