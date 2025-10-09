@@ -65,7 +65,9 @@ use crate::pyjama::{PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams
 use crate::rotor::{
     RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
 };
-use crate::ryse::{RyseInstanceBuilder, RyseLatencySimulation, RyseParameters};
+use crate::ryse::{
+    RyseInstanceBuilder, RyseLatencySimulation, RyseParameters, run_ryse_robustness_test,
+};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
@@ -108,6 +110,10 @@ fn main() -> Result<()> {
 
     crate::ryse::run_robustness_tests()?;
     crate::pyjama::run_robustness_tests()?;
+
+    for k in [64, 128, 256, 512] {
+        run_ryse_robustness_test(k);
+    }
 
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
