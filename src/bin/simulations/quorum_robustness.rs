@@ -48,7 +48,7 @@ pub struct QuorumRobustnessTest<S: SamplingStrategy> {
     attacks: Vec<QuorumAttack>,
 
     tests: RwLock<usize>,
-    failures: RwLock<usize>,
+    failures: RwLock<Vec<usize>>,
 
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
@@ -67,7 +67,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
         let sampler = RwLock::new(sampler);
         let tests = RwLock::new(0);
-        let failures = RwLock::new(0);
+        let failures = RwLock::new(vec![0; attacks.len()]);
 
         Self {
             sampler,
@@ -303,12 +303,12 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                     let crashed_samples = sampled.iter().filter(|v| crashed[**v as usize]).count();
                     (byzantine_samples, crashed_samples)
                 })
-                .collect();
-            for attack in &self.attacks {
+                .collect::<Vec<_>>();
+            for (attack_index, attack) in self.attacks.iter().enumerate() {
                 if attack.evaluate(&corrupted) {
-                    *self.failures.write().unwrap() += 1;
-                    break;
-                    if *self.failures.read().unwrap() >= MAX_FAILURES {
+                    let attack_failures = &mut self.failures.write().unwrap()[attack_index];
+                    *attack_failures += 1;
+                    if *attack_failures >= MAX_FAILURES {
                         return (tests, true);
                     }
                 }
@@ -319,7 +319,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
 
     fn reset(&self) {
         *self.tests.write().unwrap() = 0;
-        *self.failures.write().unwrap() = 0;
+        *self.failures.write().unwrap() = vec![0; self.attacks.len()];
     }
 }
 
