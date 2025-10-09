@@ -37,6 +37,7 @@ mod discrete_event_simulator;
 mod pyjama;
 mod rotor;
 mod ryse;
+mod turbine;
 
 use std::cmp::Reverse;
 use std::fs::File;
