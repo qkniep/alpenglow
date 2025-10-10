@@ -22,7 +22,7 @@ use crate::quorum_robustness::{QuorumAttack, QuorumRobustnessTest, QuorumThresho
 const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
 const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
-    crashed: 0.0,
+    crashed: 0.05,
     byzantine: 0.2,
 };
 
@@ -80,12 +80,12 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
         "solana".to_string(),
         vec![proposer_sampler, relay_sampler],
         vec![0, 1],
-        vec![NUM_PROPOSERS as usize, NUM_RELAYS as usize],
+        vec![params.num_leaders as usize, params.num_relays as usize],
         vec![hiding_attack, censorship_attack],
     );
     let adversary_strength = crate::quorum_robustness::AdversaryStrength {
-        crashed: 0.0,
-        byzantine: 0.1,
+        crashed: 0.05,
+        byzantine: 0.2,
     };
 
     let filename = format!("ryse_robustness_{}_{}", params.num_leaders, total_shreds);

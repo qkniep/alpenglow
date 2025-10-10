@@ -31,7 +31,7 @@ const WRITE_BATCH: usize = 1000;
 const TOTAL_ITERATIONS: usize = 100_000_000_000;
 const_assert_eq!(TOTAL_ITERATIONS % (PARALLELISM * WRITE_BATCH), 0);
 /// Simulations stop early if the number of failures is greater than this.
-const MAX_FAILURES: usize = 10_000;
+const MAX_FAILURES: usize = 100;
 
 /// Adversary strength.
 #[derive(Clone, Copy, Debug)]
@@ -100,7 +100,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         // let partition_attack_probs = self.run_bin_packing(adversary_strength, attack_probs);
         // debug!("bin-packing failure rates:");
         // for (attack, prob) in self.attacks.iter().zip(partition_attack_probs.iter()) {
-        //     debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
+        //     debug!("  - {}: {:.2}", attack.name, prob.log10());
         // }
         // self.reset();
         // vec_max(&mut attack_probs, &partition_attack_probs);
@@ -108,7 +108,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let random_attack_probs = self.run_random(adversary_strength, &attack_probs);
         debug!("random failure rates:");
         for (attack, prob) in self.attacks.iter().zip(random_attack_probs.iter()) {
-            debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
+            debug!("  - {}: {:.2}", attack.name, prob.log10());
         }
         self.reset();
         vec_max(&mut attack_probs, &random_attack_probs);
@@ -116,7 +116,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let small_attack_probs = self.run_small(adversary_strength, &attack_probs);
         debug!("small failure rates:");
         for (attack, prob) in self.attacks.iter().zip(small_attack_probs.iter()) {
-            debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
+            debug!("  - {}: {:.2}", attack.name, prob.log10());
         }
         self.reset();
         vec_max(&mut attack_probs, &small_attack_probs);
@@ -124,7 +124,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let large_attack_probs = self.run_large(adversary_strength, &attack_probs);
         debug!("large failure rate:");
         for (attack, prob) in self.attacks.iter().zip(large_attack_probs.iter()) {
-            debug!("  - {}: {:.1}%", attack.name, prob * 100.0);
+            debug!("  - {}: {:.2}", attack.name, prob.log10());
         }
         self.reset();
         vec_max(&mut attack_probs, &large_attack_probs);
@@ -179,10 +179,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
                 *self.tests.write().unwrap() += tests;
-                if hit_max_failures
-                // || *self.tests.read().unwrap() as f64
-                //     > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
-                {
+                if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
             }
@@ -224,10 +221,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
                 *self.tests.write().unwrap() += tests;
-                if hit_max_failures
-                // || *self.tests.read().unwrap() as f64
-                //     > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob
-                {
+                if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
             }
@@ -267,11 +261,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
                 *self.tests.write().unwrap() += tests;
-                // let better_attack_known = *self.tests.read().unwrap() as f64
-                //     > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob;
-                if hit_max_failures
-                // || better_attack_known
-                {
+                if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
             }
@@ -331,11 +321,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     //             let (tests, hit_max_failures) =
     //                 self.run_with_corrupted(WRITE_BATCH, attack_frac == 0.2, &corrupted);
     //             *self.tests.write().unwrap() += tests;
-    //             // let better_attack_known = *self.tests.read().unwrap() as f64
-    //             //     > 3.0 * (*self.failures.read().unwrap() as f64) / know_attack_prob;
-    //             if hit_max_failures
-    //             // || better_attack_known
-    //             {
+    //             if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
     //                 break;
     //             }
     //         }
@@ -370,9 +356,8 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 .collect::<Vec<_>>();
             for (attack_index, attack) in self.attacks.iter().enumerate() {
                 if attack.evaluate(&corrupted) {
-                    let attack_failures = &mut self.failures.write().unwrap()[attack_index];
-                    *attack_failures += 1;
-                    if *attack_failures >= MAX_FAILURES {
+                    self.failures.write().unwrap()[attack_index] += 1;
+                    if *self.failures.read().unwrap().iter().min().unwrap() >= MAX_FAILURES {
                         return (tests, true);
                     }
                 }
@@ -382,9 +367,19 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 
     fn attack_probabilities(&self) -> Vec<f64> {
-        (0..self.attacks.len())
-            .map(|i| self.failures.read().unwrap()[i] as f64 / *self.tests.read().unwrap() as f64)
-            .collect()
+        let tests = *self.tests.read().unwrap();
+        let failures = self.failures.read().unwrap();
+        failures.iter().map(|f| *f as f64 / tests as f64).collect()
+    }
+
+    fn is_better_attack_known(&self, known_attack_probs: &[f64]) -> bool {
+        const MARGIN: f64 = 3.0;
+        let tests = *self.tests.read().unwrap();
+        let failures = self.failures.read().unwrap();
+        known_attack_probs
+            .iter()
+            .enumerate()
+            .all(|(i, p)| tests as f64 > MARGIN * failures[i] as f64 / *p)
     }
 
     fn reset(&self) {

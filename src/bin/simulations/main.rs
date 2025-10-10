@@ -533,16 +533,6 @@ fn run_tests<
     }
 
     if RUN_ROTOR_ROBUSTNESS_TESTS {
-        // TODO: clean up code
-        let filename = PathBuf::from("data")
-            .join("output")
-            .join("simulations")
-            .join("rotor_robustness")
-            .join("rotor_robustness")
-            .with_extension("csv");
-        let file = File::options().append(true).open(filename)?;
-        let mut writer = csv::Writer::from_writer(file);
-
         for &(n, k) in &SHRED_COMBINATIONS {
             run_rotor_robustness_test(n, k);
         }
