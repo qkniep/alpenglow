@@ -78,7 +78,8 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
     let test = QuorumRobustnessTest::new(
         validators,
         "solana".to_string(),
-        relay_sampler,
+        vec![proposer_sampler, relay_sampler],
+        vec![0, 1],
         vec![NUM_PROPOSERS as usize, NUM_RELAYS as usize],
         vec![hiding_attack, censorship_attack],
     );

@@ -27,7 +27,7 @@ use static_assertions::const_assert_eq;
 const PARALLELISM: usize = 1000;
 /// Interval to take write locks on `tests` and `failures`.
 const WRITE_BATCH: usize = 1000;
-/// Number of total iterations per attack scenario.
+/// Maximum number of total iterations per attack scenario.
 const TOTAL_ITERATIONS: usize = 100_000_000_000;
 const_assert_eq!(TOTAL_ITERATIONS % (PARALLELISM * WRITE_BATCH), 0);
 /// Simulations stop early if the number of failures is greater than this.
@@ -44,7 +44,8 @@ pub struct AdversaryStrength {
 
 /// Test harness for quorum robustness testing.
 pub struct QuorumRobustnessTest<S: SamplingStrategy> {
-    sampler: RwLock<S>,
+    samplers: RwLock<Vec<S>>,
+    quorum_samplers: Vec<usize>,
     quorum_sizes: Vec<usize>,
     attacks: Vec<QuorumAttack>,
 
@@ -61,17 +62,19 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     pub fn new(
         validators: Vec<ValidatorInfo>,
         stake_distribution: String,
-        sampler: S,
+        samplers: Vec<S>,
+        quorum_samplers: Vec<usize>,
         quorum_sizes: Vec<usize>,
         attacks: Vec<QuorumAttack>,
     ) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let sampler = RwLock::new(sampler);
+        let samplers = RwLock::new(samplers);
         let tests = RwLock::new(0);
         let failures = RwLock::new(vec![0; attacks.len()]);
 
         Self {
-            sampler,
+            samplers,
+            quorum_samplers,
             quorum_sizes,
             attacks,
 
@@ -348,14 +351,16 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     ) -> (usize, bool) {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         let mut tests = 0;
-        let sampler = &self.sampler.read().unwrap();
+        let samplers = &self.samplers.read().unwrap();
         for _ in 0..iterations {
             tests += 1;
             let corrupted = self
                 .quorum_sizes
                 .iter()
                 .copied()
-                .map(|quorum_size| {
+                .enumerate()
+                .map(|(quorum_index, quorum_size)| {
+                    let sampler = &samplers[self.quorum_samplers[quorum_index]];
                     let sampled = sampler.sample_multiple(quorum_size, &mut rng);
                     let byzantine_samples =
                         sampled.iter().filter(|v| byzantine[**v as usize]).count();
