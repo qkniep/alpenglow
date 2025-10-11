@@ -9,6 +9,7 @@ import sys
 import os
 import time
 import re
+import signal
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
@@ -198,24 +199,46 @@ def format_number(num_str: str) -> str:
     except:
         return num_str
 
+def format_time(seconds: float) -> str:
+    """Format seconds into human-readable time"""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        mins = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{mins}m {secs}s"
+    else:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h {mins}m"
+
 def run_verification(model: str, config: str, spec_file: str, model_name: str) -> bool:
-    """Run TLC verification with beautiful output"""
+    """Run TLC verification with beautiful output and progress tracking"""
     global TLA_JAR_PATH
     
     print_section(f"Running {model_name}")
     print_info(f"Specification: {spec_file}")
     print_info(f"Configuration: {config}")
+    
+    # Show helpful note for long-running verifications
+    if "Byzantine" in model_name or "Liveness" in model_name:
+        print()
+        print(f"{Colors.WARNING}  {emoji('ℹ️', '[i]')} This verification may take 5-15 minutes{Colors.ENDC}")
+        print(f"{Colors.WARNING}  {emoji('⌨️', '[i]')} Press Ctrl+C to stop at any time{Colors.ENDC}")
+        print(f"{Colors.WARNING}  {emoji('📊', '[i]')} Progress shown: Depth | States | Queue | Time | Speed{Colors.ENDC}")
+    
     print()
     
     cmd = [
         'java', '-XX:+UseParallelGC', '-cp', TLA_JAR_PATH,
-        'tlc2.TLC', '-deadlock',
+        'tlc2.TLC', '-workers', '4', '-deadlock',
         '-config', config,
         spec_file
     ]
     
     start_time = time.time()
     last_progress_time = start_time
+    last_update_time = start_time
     
     try:
         process = subprocess.Popen(
@@ -229,6 +252,10 @@ def run_verification(model: str, config: str, spec_file: str, model_name: str) -
         
         last_stats = {}
         temporal_checking = False
+        first_states = 0
+        first_states_time = 0
+        states_per_second = 0
+        progress_count = 0
         
         for line in process.stdout: # type: ignore
             line = line.strip()
@@ -239,19 +266,51 @@ def run_verification(model: str, config: str, spec_file: str, model_name: str) -
             
             if parsed:
                 if parsed['type'] == 'progress':
-                    elapsed = time.time() - last_progress_time
+                    current_time = time.time()
+                    elapsed_total = current_time - start_time
+                    elapsed_since_last = current_time - last_update_time
+                    
+                    # Convert to integers for calculation
+                    total_int = int(parsed['total'])
+                    distinct_int = int(parsed['distinct'])
+                    queue_int = int(parsed['queue'])
+                    depth = parsed['depth']
+                    
+                    # Format for display
                     total = format_number(parsed['total'])
                     distinct = format_number(parsed['distinct'])
                     queue = format_number(parsed['queue'])
-                    depth = parsed['depth']
                     
-                    print(f"{Colors.OKCYAN}  {emoji('📊', '►')} Depth {depth:2} │ "
-                          f"States: {total:>12} │ "
-                          f"Distinct: {distinct:>10} │ "
-                          f"Queue: {queue:>10}{Colors.ENDC}")
+                    # Calculate states per second for ETA
+                    if progress_count == 0:
+                        first_states = total_int
+                        first_states_time = current_time
+                    elif progress_count > 0 and elapsed_since_last > 0:
+                        states_delta = total_int - last_stats.get('total', 0)
+                        states_per_second = states_delta / elapsed_since_last
                     
-                    last_progress_time = time.time()
-                    last_stats = parsed
+                    # Build progress line with timing info
+                    progress_line = (f"{Colors.OKCYAN}  {emoji('📊', '►')} Depth {depth:2} │ "
+                                   f"States: {total:>12} │ "
+                                   f"Distinct: {distinct:>10} │ "
+                                   f"Queue: {queue:>10}")
+                    
+                    # Add elapsed time
+                    elapsed_str = format_time(elapsed_total)
+                    progress_line += f" │ {elapsed_str}"
+                    
+                    # Add states/sec if available
+                    if states_per_second > 0:
+                        sps_formatted = format_number(str(int(states_per_second)))
+                        progress_line += f" │ {sps_formatted} st/s"
+                    
+                    progress_line += f"{Colors.ENDC}"
+                    print(progress_line)
+                    
+                    last_update_time = current_time
+                    last_progress_time = current_time
+                    last_stats = {'total': total_int, 'distinct': distinct_int, 'queue': queue_int, 'depth': depth}
+                    progress_count += 1
                 
                 elif parsed['type'] == 'temporal_start':
                     temporal_checking = True
@@ -333,12 +392,6 @@ def show_menu():
     print(f"  {Colors.WARNING}{Colors.BOLD}[6]{Colors.ENDC} {Colors.WARNING}Rotor Block Propagation{Colors.ENDC}")
     print(f"      {Colors.ENDC}→ 3 invariants, ~1-2 minutes{Colors.ENDC}")
     print()
-    print(f"  {Colors.OKCYAN}{Colors.BOLD}[7]{Colors.ENDC} {Colors.OKCYAN}20+20 Resilience Proof{Colors.ENDC}")
-    print(f"      {Colors.ENDC}→ 11 invariants, ~3-5 minutes{Colors.ENDC}")
-    print()
-    print(f"  {Colors.WARNING}{Colors.BOLD}[8]{Colors.ENDC} {Colors.WARNING}Large-Scale Simulation{Colors.ENDC}")
-    print(f"      {Colors.ENDC}→ 20 validators, statistical verification{Colors.ENDC}")
-    print()
     print(f"  {Colors.FAIL}{Colors.BOLD}[0]{Colors.ENDC} Exit")
     print()
 
@@ -387,7 +440,7 @@ def main():
     while True:
         show_menu()
         
-        choice = input(f"{Colors.BOLD}Enter choice (0-8): {Colors.ENDC}").strip()
+        choice = input(f"{Colors.BOLD}Enter choice (0-6): {Colors.ENDC}").strip()
         
         if choice == '0':
             print()
@@ -414,26 +467,8 @@ def main():
             )
             all_results['Rotor Propagation'] = success
         
-        elif choice == '7':
-            success = run_verification(
-                'resilience',
-                'ResilienceAlpenglowMC.cfg',
-                'ResilienceAlpenglow.tla',
-                '20+20 Resilience Proof'
-            )
-            all_results['20+20 Resilience'] = success
-        
-        elif choice == '8':
-            success = run_verification(
-                'simulation',
-                'AlpenglowSimulation.cfg',
-                'AlpenglowSimulation.tla',
-                'Large-Scale Simulation'
-            )
-            all_results['Large-Scale Simulation'] = success
-        
         elif choice not in ['1', '2', '3', '4']:
-            print_error("Invalid choice. Please enter 0-8.")
+            print_error("Invalid choice. Please enter 0-6.")
             input(f"\n{Colors.BOLD}Press Enter to continue...{Colors.ENDC}")
             continue
         
@@ -498,22 +533,6 @@ def main():
                 'Rotor Block Propagation'
             )
             all_results['Rotor Propagation'] = success4
-            
-            success5 = run_verification(
-                'resilience',
-                'ResilienceAlpenglowMC.cfg',
-                'ResilienceAlpenglow.tla',
-                '20+20 Resilience Proof'
-            )
-            all_results['20+20 Resilience'] = success5
-            
-            success6 = run_verification(
-                'simulation',
-                'AlpenglowSimulation.cfg',
-                'AlpenglowSimulation.tla',
-                'Large-Scale Simulation'
-            )
-            all_results['Large-Scale Simulation'] = success6
         
         # Show quick summary after each run
         print()

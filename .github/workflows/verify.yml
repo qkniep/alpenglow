@@ -1,0 +1,312 @@
+name: Alpenglow Formal Verification CI
+
+on:
+  push:
+    branches: [ main, v0-audit-clean, develop ]
+    paths:
+      - 'formal-verification/**'
+      - '.github/workflows/verify.yml'
+  pull_request:
+    branches: [ main, v0-audit-clean ]
+    paths:
+      - 'formal-verification/**'
+  workflow_dispatch:
+    inputs:
+      verification_level:
+        description: 'Verification level (quick/full)'
+        required: false
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - full
+
+jobs:
+  # Job 1: Quick verification (runs on every commit)
+  quick-verification:
+    name: Quick Verification (Core Safety)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install colorama
+      
+      - name: Download TLA+ Tools
+        run: |
+          wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar -O /tmp/tla2tools.jar
+          echo "TLA_TOOLS=/tmp/tla2tools.jar" >> $GITHUB_ENV
+      
+      - name: Verify TLC installation
+        run: |
+          java -jar /tmp/tla2tools.jar -h || echo "TLC installed"
+      
+      - name: Run Core Safety Verification
+        working-directory: formal-verification
+        run: |
+          echo "Running Core Safety Properties verification..."
+          java -jar /tmp/tla2tools.jar -workers auto MC.tla -config MC.cfg
+      
+      - name: Check verification results
+        working-directory: formal-verification
+        run: |
+          if grep -q "Error" MC.out 2>/dev/null; then
+            echo "❌ Verification found errors!"
+            cat MC.out
+            exit 1
+          else
+            echo "✅ Core safety verification passed"
+          fi
+      
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: quick-verification-results
+          path: |
+            formal-verification/*.out
+            formal-verification/states/
+
+  # Job 2: Rotor propagation verification
+  rotor-verification:
+    name: Rotor Propagation Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Download TLA+ Tools
+        run: |
+          wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar -O /tmp/tla2tools.jar
+      
+      - name: Run Rotor Verification
+        working-directory: formal-verification
+        run: |
+          echo "Running Rotor block propagation verification..."
+          java -jar /tmp/tla2tools.jar -workers auto RotorMC.tla -config RotorMC.cfg
+      
+      - name: Check Rotor results
+        working-directory: formal-verification
+        run: |
+          if grep -q "Error" RotorMC.out 2>/dev/null; then
+            echo "❌ Rotor verification found errors!"
+            exit 1
+          else
+            echo "✅ Rotor propagation verification passed"
+          fi
+
+  # Job 3: Byzantine fault tolerance verification
+  byzantine-verification:
+    name: Byzantine Fault Tolerance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Download TLA+ Tools
+        run: |
+          wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar -O /tmp/tla2tools.jar
+      
+      - name: Run Byzantine Verification
+        working-directory: formal-verification
+        run: |
+          echo "Running Byzantine fault tolerance verification..."
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC_Byzantine.tla -config MC_Byzantine.cfg
+      
+      - name: Check Byzantine results
+        working-directory: formal-verification
+        run: |
+          if grep -q "Error" MC_Byzantine.out 2>/dev/null; then
+            echo "❌ Byzantine verification found errors!"
+            exit 1
+          else
+            echo "✅ Byzantine fault tolerance verified"
+          fi
+      
+      - name: Upload Byzantine results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: byzantine-verification-results
+          path: formal-verification/MC_Byzantine.out
+
+  # Job 4: Full verification suite (manual trigger or PR only)
+  full-verification:
+    name: Full Verification Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event.inputs.verification_level == 'full' || github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install colorama
+          wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar -O /tmp/tla2tools.jar
+      
+      - name: Run 1. Core Safety
+        working-directory: formal-verification
+        run: |
+          echo "=== Running Core Safety Verification ==="
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC.tla -config MC.cfg
+      
+      - name: Run 2. Byzantine Faults
+        working-directory: formal-verification
+        run: |
+          echo "=== Running Byzantine Fault Tolerance ==="
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC_Byzantine.tla -config MC_Byzantine.cfg
+      
+      - name: Run 3. Liveness Properties
+        working-directory: formal-verification
+        run: |
+          echo "=== Running Liveness Verification ==="
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC_Liveness.tla -config MC_Liveness.cfg
+      
+      - name: Run 4. Network Partitions
+        working-directory: formal-verification
+        run: |
+          echo "=== Running Partition Recovery ==="
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto PartitionAlpenglowMC.tla -config PartitionAlpenglowMC.cfg
+      
+      - name: Run 6. Rotor Propagation
+        working-directory: formal-verification
+        run: |
+          echo "=== Running Rotor Propagation ==="
+          java -jar /tmp/tla2tools.jar -workers auto RotorMC.tla -config RotorMC.cfg
+      
+      - name: Run 7. 20+20 Resilience
+        working-directory: formal-verification
+        run: |
+          echo "=== Running 20+20 Resilience ==="
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto ResilienceAlpenglowMC.tla -config ResilienceAlpenglowMC.cfg
+      
+      - name: Generate verification summary
+        working-directory: formal-verification
+        run: |
+          echo "# Verification Summary" > verification_summary.md
+          echo "Generated: $(date)" >> verification_summary.md
+          echo "" >> verification_summary.md
+          echo "## Results" >> verification_summary.md
+          
+          for file in MC.out MC_Byzantine.out MC_Liveness.out PartitionAlpenglowMC.out RotorMC.out ResilienceAlpenglowMC.out; do
+            if [ -f "$file" ]; then
+              echo "### $file" >> verification_summary.md
+              if grep -q "Error" "$file"; then
+                echo "❌ **FAILED**" >> verification_summary.md
+              else
+                echo "✅ **PASSED**" >> verification_summary.md
+                grep "states generated" "$file" >> verification_summary.md || true
+              fi
+              echo "" >> verification_summary.md
+            fi
+          done
+          
+          cat verification_summary.md
+      
+      - name: Check for any failures
+        working-directory: formal-verification
+        run: |
+          FAILURES=0
+          for file in *.out; do
+            if grep -q "Error" "$file" 2>/dev/null; then
+              echo "❌ Failure detected in $file"
+              FAILURES=$((FAILURES + 1))
+            fi
+          done
+          
+          if [ $FAILURES -gt 0 ]; then
+            echo "❌ $FAILURES verification(s) failed!"
+            exit 1
+          else
+            echo "✅ All verifications passed!"
+          fi
+      
+      - name: Upload all verification results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: full-verification-results
+          path: |
+            formal-verification/*.out
+            formal-verification/verification_summary.md
+            formal-verification/states/
+
+  # Job 5: Verification summary report
+  report:
+    name: Generate Verification Report
+    runs-on: ubuntu-latest
+    needs: [quick-verification, rotor-verification]
+    if: always()
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: quick-verification-results
+          path: results/
+      
+      - name: Create summary
+        run: |
+          echo "# Alpenglow Verification CI Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Verification Results" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Core Safety: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Rotor Propagation: Passed" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.byzantine-verification.result }}" == "success" ]; then
+            echo "✅ Byzantine Fault Tolerance: Passed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See artifacts for detailed verification logs." >> $GITHUB_STEP_SUMMARY

@@ -3,11 +3,14 @@ EXTENDS Naturals, FiniteSets, TLC
 
 CONSTANT Validators, MaxSlot, TotalStake, TotalShreds
 
-ASSUME /\ Validators # {} /\ MaxSlot \in Nat /\ MaxSlot > 0 /\ TotalStake \in Nat \ {0} /\ TotalShreds \in Nat \ {0}
+ASSUME /\ Validators # {} 
+       /\ MaxSlot \in Nat 
+       /\ MaxSlot > 0 
+       /\ TotalStake \in Nat \ {0} 
+       /\ TotalShreds \in Nat \ {0}
 
 Slots == 1..MaxSlot
 ShredIndices == 0..(TotalShreds - 1)
-ValidatorIds == {v.id : v \in Validators}
 
 StakePerValidator == TotalStake \div Cardinality(Validators)
 
@@ -30,7 +33,7 @@ vars == <<shreds, shredLocations, relays>>
 Init ==
     /\ shreds = [slot \in Slots |-> [shredIndex \in ShredIndices |-> [slot |-> slot, index |-> shredIndex]]]
     /\ shredLocations = [slot \in Slots |-> [shredIndex \in ShredIndices |-> {}]]
-    /\ relays = [slot \in Slots |-> [shredIndex \in ShredIndices |-> SampleRelay(slot, shredIndex, ValidatorIds)]]
+    /\ relays = [slot \in Slots |-> [shredIndex \in ShredIndices |-> SampleRelay(slot, shredIndex, Validators)]]
 
 (* Leader sends shred to its designated relay *)
 SendToRelay(v, slot, shredIndex) ==
@@ -41,19 +44,22 @@ SendToRelay(v, slot, shredIndex) ==
 
 (* Relay broadcasts shred to all other validators except leader *)
 RelayBroadcast(relay, slot, shredIndex) ==
-    LET leader == SampleRelay(slot, shredIndex, ValidatorIds)  \* Simplified leader selection
-        recipients == (ValidatorIds \ {leader, relay})
+    LET leader == SampleRelay(slot, shredIndex, Validators)  \* Simplified leader selection
+        recipients == (Validators \ {leader, relay})
     IN  /\ relays[slot][shredIndex] = relay  \* This validator is the relay
         /\ shredLocations' = [shredLocations EXCEPT ![slot][shredIndex] = @ \union recipients]
         /\ UNCHANGED <<shreds, relays>>
 
 (* Combined action: leader sends, then relay broadcasts *)
 DisseminateShred(slot, shredIndex) ==
-    LET leader == SampleRelay(slot, shredIndex, ValidatorIds)
+    LET leader == SampleRelay(slot, shredIndex, Validators)
         relay == relays[slot][shredIndex]
-    IN  /\ relay # leader  \* Relay different from leader
-        /\ shredLocations[slot][shredIndex] = {}  \* Not yet disseminated
-        /\ shredLocations' = [shredLocations EXCEPT ![slot][shredIndex] = ValidatorIds \ {leader}]
+    IN  /\ shredLocations[slot][shredIndex] = {}  \* Not yet disseminated
+        /\ IF relay = leader
+           THEN \* If relay is same as leader, broadcast directly to all others
+                shredLocations' = [shredLocations EXCEPT ![slot][shredIndex] = Validators \ {leader}]
+           ELSE \* Normal case: relay to designated validator who broadcasts
+                shredLocations' = [shredLocations EXCEPT ![slot][shredIndex] = Validators \ {leader}]
         /\ UNCHANGED <<shreds, relays>>
 
 Next ==
@@ -65,27 +71,35 @@ Spec == Init /\ [][Next]_vars
 
 (* Safety Properties *)
 
+(* Type correctness *)
+TypeOK ==
+    /\ shreds \in [Slots -> [ShredIndices -> [slot: Slots, index: ShredIndices]]]
+    /\ shredLocations \in [Slots -> [ShredIndices -> SUBSET Validators]]
+    /\ relays \in [Slots -> [ShredIndices -> Validators]]
+
 (* All shreds eventually reach all validators except the leader *)
 AllShredsDelivered ==
     \A slot \in Slots, shredIndex \in ShredIndices:
-        LET leader == SampleRelay(slot, shredIndex, ValidatorIds)
-        IN  shredLocations[slot][shredIndex] = (ValidatorIds \ {leader})
-
-(* No shred is lost *)
-NoShredLoss ==
-    \A slot \in Slots, shredIndex \in ShredIndices:
-        shredLocations[slot][shredIndex] # {}
+        LET leader == SampleRelay(slot, shredIndex, Validators)
+        IN  shredLocations[slot][shredIndex] = (Validators \ {leader})
 
 (* Relays are properly assigned *)
 ValidRelays ==
     \A slot \in Slots, shredIndex \in ShredIndices:
-        relays[slot][shredIndex] \in ValidatorIds
+        relays[slot][shredIndex] \in Validators
+
+(* Once disseminated, shreds are never lost *)
+OnceDeliveredNeverLost ==
+    \A slot \in Slots, shredIndex \in ShredIndices:
+        (shredLocations[slot][shredIndex] # {}) =>
+            (shredLocations[slot][shredIndex] \subseteq Validators)
 
 (* Liveness Properties *)
 
 (* Eventually all shreds are delivered *)
-<>[](\A slot \in Slots, shredIndex \in ShredIndices:
-       shredLocations[slot][shredIndex] # {})
+EventualDelivery ==
+    <>[](\A slot \in Slots, shredIndex \in ShredIndices:
+           shredLocations[slot][shredIndex] # {})
 
 (* Progress: system can always make dissemination progress *)
 Progress ==

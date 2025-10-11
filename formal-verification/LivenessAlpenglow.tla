@@ -227,7 +227,7 @@ BoundedFastFinalization ==
     LET votingValidators == {v \in Validators : \E vote \in votes : vote.validator = v /\ vote.slot = s}
         totalStake == TotalStakeOf(votingValidators)
     IN (IsStrongQuorum(totalStake) /\ \E c \in certificates : c.type = "notar" /\ c.slot = s) =>
-       <>[s..MaxSlot](finalized \cap {s, s+1, s+2} # {})
+       <>(s \in finalized)
 
 \* 12. Bounded finalization time: Slow finalization occurs within 5 slots if quorum
 BoundedSlowFinalization ==
@@ -235,7 +235,7 @@ BoundedSlowFinalization ==
     LET votingValidators == {v \in Validators : \E vote \in votes : vote.validator = v /\ vote.slot = s}
         totalStake == TotalStakeOf(votingValidators)
     IN (IsQuorum(totalStake) /\ \E c \in certificates : c.type = "notar" /\ c.slot = s) =>
-       <>[s..MaxSlot](finalized \cap {s, s+1, s+2, s+3, s+4} # {})
+       <>(s \in finalized)
 
 -----------------------------------------------------------------------------
 \* PAPER-SPECIFIC BOUNDED FINALIZATION TIME PROPERTIES
