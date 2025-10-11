@@ -61,7 +61,7 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "Running Core Safety Properties verification..."
-          java -jar /tmp/tla2tools.jar -workers auto MC.tla -config MC.cfg
+          java -jar /tmp/tla2tools.jar -workers auto -config MC.cfg MC.tla
       
       - name: Check verification results
         working-directory: formal-verification
@@ -107,7 +107,7 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "Running Rotor block propagation verification..."
-          java -jar /tmp/tla2tools.jar -workers auto RotorMC.tla -config RotorMC.cfg
+          java -jar /tmp/tla2tools.jar -workers auto -config RotorMC.cfg Rotor.tla
       
       - name: Check Rotor results
         working-directory: formal-verification
@@ -144,7 +144,7 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "Running Byzantine fault tolerance verification..."
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC_Byzantine.tla -config MC_Byzantine.cfg
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC_Byzantine.cfg MC_Byzantine.tla
       
       - name: Check Byzantine results
         working-directory: formal-verification
@@ -195,37 +195,37 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "=== Running Core Safety Verification ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC.tla -config MC.cfg
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC.cfg MC.tla
       
       - name: Run 2. Byzantine Faults
         working-directory: formal-verification
         run: |
           echo "=== Running Byzantine Fault Tolerance ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC_Byzantine.tla -config MC_Byzantine.cfg
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC_Byzantine.cfg MC_Byzantine.tla
       
       - name: Run 3. Liveness Properties
         working-directory: formal-verification
         run: |
           echo "=== Running Liveness Verification ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto MC_Liveness.tla -config MC_Liveness.cfg
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC_Liveness.cfg MC_Liveness.tla
       
       - name: Run 4. Network Partitions
         working-directory: formal-verification
         run: |
           echo "=== Running Partition Recovery ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto PartitionAlpenglowMC.tla -config PartitionAlpenglowMC.cfg
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config PartitionAlpenglowMC.cfg PartitionAlpenglowMC.tla
       
       - name: Run 6. Rotor Propagation
         working-directory: formal-verification
         run: |
           echo "=== Running Rotor Propagation ==="
-          java -jar /tmp/tla2tools.jar -workers auto RotorMC.tla -config RotorMC.cfg
+          java -jar /tmp/tla2tools.jar -workers auto -config RotorMC.cfg Rotor.tla
       
       - name: Run 7. 20+20 Resilience
         working-directory: formal-verification
         run: |
           echo "=== Running 20+20 Resilience ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto ResilienceAlpenglowMC.tla -config ResilienceAlpenglowMC.cfg
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config ResilienceAlpenglowMC.cfg ResilienceAlpenglowMC.tla
       
       - name: Generate verification summary
         working-directory: formal-verification
