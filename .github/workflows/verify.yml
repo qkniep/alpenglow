@@ -61,7 +61,7 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "Running Core Safety Properties verification..."
-          java -jar /tmp/tla2tools.jar -workers auto -config MC.cfg Alpenglow.tla 2>&1 | tee verification.log
+          java -jar /tmp/tla2tools.jar -deadlock -workers auto -config MC.cfg Alpenglow.tla 2>&1 | tee verification.log
           
       - name: Check verification results
         working-directory: formal-verification
@@ -200,7 +200,7 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "=== Running Core Safety Verification ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC.cfg Alpenglow.tla
+          java -Xmx4g -jar /tmp/tla2tools.jar -deadlock -workers auto -config MC.cfg Alpenglow.tla
       
       - name: Run 2. Byzantine Faults
         working-directory: formal-verification
