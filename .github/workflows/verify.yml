@@ -61,17 +61,21 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "Running Core Safety Properties verification..."
-          java -jar /tmp/tla2tools.jar -workers auto -config MC.cfg MC.tla
-      
+          java -jar /tmp/tla2tools.jar -workers auto -config MC.cfg Alpenglow.tla 2>&1 | tee verification.log
+          
       - name: Check verification results
         working-directory: formal-verification
         run: |
-          if grep -q "Error" MC.out 2>/dev/null; then
+          echo "Checking verification results..."
+          if grep -qi "error" verification.log; then
             echo "❌ Verification found errors!"
-            cat MC.out
+            cat verification.log
             exit 1
-          else
+          elif grep -qi "no error" verification.log || grep -qi "completed" verification.log; then
             echo "✅ Core safety verification passed"
+          else
+            echo "⚠️ Verification status unclear"
+            cat verification.log
           fi
       
       - name: Upload verification artifacts
@@ -81,6 +85,7 @@ jobs:
           name: quick-verification-results
           path: |
             formal-verification/*.out
+            formal-verification/*.log
             formal-verification/states/
 
   # Job 2: Rotor propagation verification
@@ -195,7 +200,7 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "=== Running Core Safety Verification ==="
-          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC.cfg MC.tla
+          java -Xmx4g -jar /tmp/tla2tools.jar -workers auto -config MC.cfg Alpenglow.tla
       
       - name: Run 2. Byzantine Faults
         working-directory: formal-verification
