@@ -67,15 +67,17 @@ jobs:
         working-directory: formal-verification
         run: |
           echo "Checking verification results..."
-          if grep -qi "error" verification.log; then
+          if grep -q "No error has been found" verification.log; then
+            echo "✅ Core safety verification passed"
+            grep "states generated" verification.log || true
+          elif grep -qi "Error:" verification.log | grep -v "No error"; then
             echo "❌ Verification found errors!"
             cat verification.log
             exit 1
-          elif grep -qi "no error" verification.log || grep -qi "completed" verification.log; then
-            echo "✅ Core safety verification passed"
           else
             echo "⚠️ Verification status unclear"
             cat verification.log
+            exit 1
           fi
       
       - name: Upload verification artifacts
