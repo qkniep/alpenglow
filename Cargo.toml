@@ -52,6 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
+wincode = { version = "0.1", features = ["derive"] }
 
 [dev-dependencies]
 divan = "0.1"

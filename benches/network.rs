@@ -8,7 +8,9 @@ use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::{BytesCount, ItemsCount};
-use rand::RngCore;
+use rand::{Rng, RngCore};
+use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 fn main() {
     // run registered benchmarks.
@@ -46,6 +48,81 @@ fn deserialize_vote(bencher: divan::Bencher) {
         .bench_values(|bytes: Vec<u8>| {
             let (_msg, _bytes_read): (ConsensusMessage, usize) =
                 bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
+        });
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+struct FakeCert {
+    slot: u64,
+    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
+    hash: Hash,
+    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<_>>")]
+    sig: Vec<u8>,
+    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<_>>")]
+    bitmask: Vec<u8>,
+}
+
+impl FakeCert {
+    fn new() -> Self {
+        let mut rng = rand::rng();
+        let mut sig = vec![0; 128];
+        rng.fill_bytes(&mut sig);
+        let mut bitmask = vec![255; 256];
+        for _ in 0..200 {
+            let pos = rng.random_range(0..256);
+            let shift = rng.random_range(0..8);
+            let mask = 1 << shift;
+            bitmask[pos] |= 255 ^ mask;
+        }
+        Self {
+            slot: rng.random(),
+            hash: rng.random(),
+            sig,
+            bitmask,
+        }
+    }
+}
+
+#[divan::bench]
+fn serialize_fake_cert_bincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(FakeCert::new)
+        .bench_values(|msg: FakeCert| bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap());
+}
+
+#[divan::bench]
+fn deserialize_fake_cert_bincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let msg = FakeCert::new();
+            bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap()
+        })
+        .bench_values(|bytes: Vec<u8>| {
+            let (_msg, _bytes_read): (FakeCert, usize) =
+                bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
+        });
+}
+
+#[divan::bench]
+fn serialize_fake_cert_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(FakeCert::new)
+        .bench_values(|msg: FakeCert| wincode::serialize(&msg).unwrap());
+}
+
+#[divan::bench]
+fn deserialize_fake_cert_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let msg = FakeCert::new();
+            wincode::serialize(&msg).unwrap()
+        })
+        .bench_values(|bytes: Vec<u8>| {
+            let _msg: FakeCert = wincode::deserialize(&bytes).unwrap();
         });
 }
 
