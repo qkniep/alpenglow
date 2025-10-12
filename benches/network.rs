@@ -51,6 +51,39 @@ fn deserialize_vote(bencher: divan::Bencher) {
         });
 }
 
+#[divan::bench]
+fn serialize_vote_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut hash = Hash::default();
+            rng.fill_bytes(&mut hash);
+            let sk = aggsig::SecretKey::new(&mut rng);
+            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            ConsensusMessage::Vote(vote)
+        })
+        .bench_values(|msg: ConsensusMessage| wincode::serialize(&msg));
+}
+
+#[divan::bench]
+fn deserialize_vote_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut hash = Hash::default();
+            rng.fill_bytes(&mut hash);
+            let sk = aggsig::SecretKey::new(&mut rng);
+            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            let msg = ConsensusMessage::Vote(vote);
+            wincode::serialize(&msg).unwrap()
+        })
+        .bench_values(|bytes: Vec<u8>| {
+            let _msg: ConsensusMessage = wincode::deserialize(&bytes).unwrap();
+        });
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct FakeCert {
     slot: u64,

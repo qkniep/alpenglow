@@ -25,6 +25,8 @@
 //! assert!(aggsig.verify(msg, &[pk1, pk2]));
 //! ```
 
+use std::mem::MaybeUninit;
+
 use bitvec::vec::BitVec;
 use blst::BLST_ERROR;
 use blst::min_sig::{
@@ -33,6 +35,7 @@ use blst::min_sig::{
 };
 use rand::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ValidatorId;
 
@@ -82,6 +85,38 @@ impl PublicKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndividualSignature(pub BlstSignature);
 
+impl<'de> SchemaRead<'de> for IndividualSignature {
+    type Dst = IndividualSignature;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let mut sig_bytes: MaybeUninit<[u8; 48]> = MaybeUninit::uninit();
+        unsafe {
+            reader.read_t(&mut sig_bytes)?;
+            // let sig_bytes: [u8; 48] = <[u8; 48]>::get(reader)?;
+            // FIXME: unwrap
+            let sig = BlstSignature::from_bytes(sig_bytes.assume_init_ref()).unwrap();
+            // let sig: BlstSignature = MyBlstSignature::get(reader)?;
+            dst.write(IndividualSignature(sig));
+        }
+        wincode::ReadResult::Ok(())
+    }
+}
+
+impl SchemaWrite for IndividualSignature {
+    type Src = IndividualSignature;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        <[u8; 48] as wincode::SchemaWrite>::size_of(&src.0.to_bytes())
+    }
+
+    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        unsafe { Ok(writer.write_t(&src.0.to_bytes())?) }
+    }
+}
+
 /// An aggregated signature that contains a bitmask of signers.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
@@ -89,6 +124,44 @@ pub struct IndividualSignature(pub BlstSignature);
 pub struct AggregateSignature {
     sig: BlstSignature,
     bitmask: BitVec,
+}
+
+impl<'de> SchemaRead<'de> for AggregateSignature {
+    type Dst = AggregateSignature;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let sig_bytes: [u8; 48] = <[u8; 48]>::get(reader)?;
+        let bitmask_bytes = <Vec<usize>>::get(reader)?;
+        // FIXME: unwrap
+        let sig = BlstSignature::from_bytes(&sig_bytes).unwrap();
+        let bitmask = BitVec::from_vec(bitmask_bytes);
+        // let sig: BlstSignature = MyBlstSignature::get(reader)?;
+        dst.write(AggregateSignature { sig, bitmask });
+        wincode::ReadResult::Ok(())
+    }
+}
+
+impl SchemaWrite for AggregateSignature {
+    type Src = AggregateSignature;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        Ok(
+            <[u8; 48] as wincode::SchemaWrite>::size_of(&src.sig.to_bytes())?
+                + <Vec<usize> as wincode::SchemaWrite>::size_of(
+                    &src.bitmask.to_bitvec().into_vec(),
+                )?,
+        )
+    }
+
+    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        unsafe {
+            writer.write_t(&src.sig.to_bytes())?;
+            Ok(writer.write_t(&src.bitmask.to_bitvec().into_vec())?)
+        }
+    }
 }
 
 impl SecretKey {
