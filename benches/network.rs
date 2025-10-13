@@ -135,11 +135,8 @@ fn deserialize_cert_wincode(bencher: divan::Bencher) {
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 struct FakeCert {
     slot: u64,
-    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
     hash: Hash,
-    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<_>>")]
     sig: Vec<u8>,
-    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<_>>")]
     bitmask: Vec<u8>,
 }
 

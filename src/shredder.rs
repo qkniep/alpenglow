@@ -113,10 +113,8 @@ pub enum ShredPayloadType {
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct Shred {
     pub(crate) payload_type: ShredPayloadType,
-    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
     pub(crate) merkle_root: Hash,
     merkle_root_sig: Signature,
-    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<[u8; 32]>>")]
     merkle_path: Vec<Hash>,
 }
 
@@ -172,7 +170,6 @@ pub struct ShredPayload {
     /// Index of this shred within the slice.
     pub(crate) shred_index: ShredIndex,
     /// Raw payload bytes of this shred, part of the erasure-coded slice payload.
-    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<_>>")]
     pub(crate) data: Vec<u8>,
 }
 

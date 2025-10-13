@@ -154,7 +154,6 @@ impl Cert {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct NotarCert {
     slot: Slot,
-    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
     block_hash: Hash,
     agg_sig: AggregateSignature,
     stake: Stake,
@@ -226,7 +225,6 @@ impl NotarCert {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct NotarFallbackCert {
     slot: Slot,
-    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
     block_hash: Hash,
     agg_sig_notar: Option<AggregateSignature>,
     agg_sig_notar_fallback: Option<AggregateSignature>,
@@ -414,7 +412,6 @@ impl SkipCert {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct FastFinalCert {
     slot: Slot,
-    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
     block_hash: Hash,
     agg_sig: AggregateSignature,
     stake: Stake,
