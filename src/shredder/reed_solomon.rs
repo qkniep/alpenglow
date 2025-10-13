@@ -101,7 +101,7 @@ pub(super) fn reed_solomon_deshred(
     let mut restored_payload = Vec::with_capacity(MAX_DATA_PER_SLICE_AFTER_PADDING);
     for (i, d) in data_shreds.into_iter().enumerate() {
         let shred_data = match d {
-            Some(data_ref) => data_ref.as_ref(),
+            Some(data_ref) => data_ref,
             None => restored.get(&i).unwrap(),
         };
         if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE_AFTER_PADDING {

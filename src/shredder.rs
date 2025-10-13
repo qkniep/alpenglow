@@ -507,7 +507,7 @@ fn data_and_coding_to_output_shreds(
         let payload = ShredPayload {
             header: header.clone(),
             shred_index,
-            data: data.into(),
+            data,
         };
         (merkle_path, payload)
     };
@@ -563,7 +563,7 @@ fn create_output_shreds_for_other_leader(
         let payload = ShredPayload {
             header: header.clone(),
             shred_index,
-            data: data.into(),
+            data,
         };
         (merkle_path, payload)
     };

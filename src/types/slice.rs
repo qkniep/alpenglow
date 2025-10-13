@@ -89,7 +89,7 @@ impl Slice {
 
 /// Struct to hold all the header payload of a [`Slice`].
 ///
-/// This is included in each [`Shred`] after shredding.
+/// This is included in each [`crate::shredder::Shred`] after shredding.
 #[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
@@ -102,7 +102,7 @@ pub(crate) struct SliceHeader {
 
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
-/// This is what actually gets "shredded" into different [`Shred`]s.
+/// This is what actually gets "shredded" into different [`crate::shredder::Shred`]s.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
     pub(crate) parent: Option<(Slot, Hash)>,
@@ -140,7 +140,8 @@ impl From<Vec<u8>> for SlicePayload {
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
+// XXX: This is only used in test and benchmarking code.
+// Ensure it is only compiled when we are testing or benchmarking.
 pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<(Slot, Hash)>,
     desired_size: usize,
