@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
@@ -33,7 +34,7 @@ use crate::{BlockId, ValidatorId};
 const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Different types of [`RepairRequest`] messages.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub enum RepairRequestType {
     /// Request for the total number of slices in block with a given hash.
     LastSliceRoot(BlockId),
@@ -56,7 +57,7 @@ impl RepairRequestType {
 }
 
 /// Request messages for the repair sub-protocol.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct RepairRequest {
     /// The validator that sent the message.
     sender: ValidatorId,
@@ -69,7 +70,7 @@ pub struct RepairRequest {
 /// Each response type corresponds to a specific request message type.
 /// Each response contains the request message that it is a response to.
 /// If well-formed, it thus contains the corresponding variant of [`RepairRequest`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub enum RepairResponse {
     /// Response with the last slice's Merkle root hash, plus corresponding proof.
     LastSliceRoot(RepairRequestType, SliceIndex, Hash, Vec<Hash>),
