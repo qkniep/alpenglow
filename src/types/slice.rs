@@ -5,6 +5,7 @@
 
 use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::Hash;
 use crate::network::BINCODE_CONFIG;
@@ -89,7 +90,7 @@ impl Slice {
 /// Struct to hold all the header payload of a [`Slice`].
 ///
 /// This is included in each [`Shred`] after shredding.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,

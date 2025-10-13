@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::mem::MaybeUninit;
+
 use alpenglow::consensus::{ConsensusMessage, Vote};
 use alpenglow::crypto::{Hash, aggsig, signature};
 use alpenglow::network::BINCODE_CONFIG;
@@ -63,7 +65,7 @@ fn serialize_vote_wincode(bencher: divan::Bencher) {
             let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
             ConsensusMessage::Vote(vote)
         })
-        .bench_values(|msg: ConsensusMessage| wincode::serialize(&msg));
+        .bench_values(|msg: ConsensusMessage| wincode::serialize(&msg).unwrap());
 }
 
 #[divan::bench]
@@ -228,6 +230,77 @@ fn deserialize_slice(bencher: divan::Bencher) {
             for bytes in serialized {
                 let (_shred, _bytes_read): (Shred, usize) =
                     bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
+            }
+        });
+}
+
+#[divan::bench]
+fn serialize_slice_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .counter(BytesCount::new(MAX_DATA_PER_SLICE))
+        .with_inputs(|| {
+            let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+            let mut rng = rand::rng();
+            let sk = signature::SecretKey::new(&mut rng);
+            RegularShredder::shred(slice, &sk)
+                .unwrap()
+                .into_iter()
+                .map(|v| v.into_shred())
+                .collect::<Vec<_>>()
+        })
+        .bench_values(|shreds: Vec<Shred>| {
+            for shred in shreds {
+                let _bytes = wincode::serialize(&shred).unwrap();
+            }
+        });
+}
+
+#[divan::bench]
+fn serialize_slice_into_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .counter(BytesCount::new(MAX_DATA_PER_SLICE))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+            let sk = signature::SecretKey::new(&mut rng);
+            let shreds = RegularShredder::shred(slice, &sk)
+                .unwrap()
+                .into_iter()
+                .map(|v| v.into_shred())
+                .collect::<Vec<_>>();
+            let buf = vec![MaybeUninit::uninit(); 1500];
+            (buf, shreds)
+        })
+        .bench_values(|(mut buf, shreds): (Vec<MaybeUninit<u8>>, Vec<Shred>)| {
+            for shred in shreds {
+                let _bytes_written = wincode::serialize_into(&shred, &mut buf)
+                    .expect("serialization should not panic");
+            }
+        });
+}
+
+#[divan::bench]
+fn deserialize_slice_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .counter(BytesCount::new(MAX_DATA_PER_SLICE))
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+            let sk = signature::SecretKey::new(&mut rng);
+            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let mut serialized = Vec::new();
+            for shred in shreds {
+                let bytes = wincode::serialize(&shred.into_shred()).unwrap();
+                serialized.push(bytes);
+            }
+            serialized
+        })
+        .bench_values(|serialized: Vec<Vec<u8>>| {
+            for bytes in serialized {
+                let _shred: Shred = wincode::deserialize(&bytes).unwrap();
             }
         });
 }

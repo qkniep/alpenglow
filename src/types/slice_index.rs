@@ -5,6 +5,7 @@ use std::fmt::Display;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Maximum number of slices a leader may produce per block.
 pub const MAX_SLICES_PER_BLOCK: usize = 1024;
@@ -12,7 +13,10 @@ pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 /// Slice index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= MAX_SLICES_PER_BLOCK.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+// FIXME: custom `SchemaRead` implementation needed
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaRead, SchemaWrite,
+)]
 pub struct SliceIndex(usize);
 
 impl SliceIndex {

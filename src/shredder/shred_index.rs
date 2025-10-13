@@ -6,13 +6,17 @@ use std::ops::Deref;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::shredder::TOTAL_SHREDS;
 
 /// Shred index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= TOTAL_SHREDS.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+// FIXME: custom `SchemaRead` implementation needed
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaRead, SchemaWrite,
+)]
 pub struct ShredIndex(usize);
 
 impl ShredIndex {

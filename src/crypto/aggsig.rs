@@ -81,7 +81,7 @@ impl PublicKey {
 //
 // Deriving PartialEq and Eq to support testing.
 // It only makes sense beccause the underlying signature scheme happens to be deterministic and unique.
-// Revaluate if we change the signature scheme.
+// Reevaluate if we change the signature scheme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndividualSignature(pub BlstSignature);
 
@@ -92,15 +92,10 @@ impl<'de> SchemaRead<'de> for IndividualSignature {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let mut sig_bytes: MaybeUninit<[u8; 48]> = MaybeUninit::uninit();
-        unsafe {
-            reader.read_t(&mut sig_bytes)?;
-            // let sig_bytes: [u8; 48] = <[u8; 48]>::get(reader)?;
-            // FIXME: unwrap
-            let sig = BlstSignature::from_bytes(sig_bytes.assume_init_ref()).unwrap();
-            // let sig: BlstSignature = MyBlstSignature::get(reader)?;
-            dst.write(IndividualSignature(sig));
-        }
+        let sig_bytes = reader.read_borrowed(96)?;
+        // FIXME: unwrap
+        let sig = BlstSignature::deserialize(sig_bytes).unwrap();
+        dst.write(IndividualSignature(sig));
         wincode::ReadResult::Ok(())
     }
 }
@@ -108,12 +103,12 @@ impl<'de> SchemaRead<'de> for IndividualSignature {
 impl SchemaWrite for IndividualSignature {
     type Src = IndividualSignature;
 
-    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        <[u8; 48] as wincode::SchemaWrite>::size_of(&src.0.to_bytes())
+    fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
+        Ok(96)
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        unsafe { Ok(writer.write_t(&src.0.to_bytes())?) }
+        unsafe { Ok(writer.write_t(&src.0.serialize())?) }
     }
 }
 

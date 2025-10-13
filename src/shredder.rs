@@ -28,6 +28,7 @@ use ctr::Ctr64LE;
 use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use wincode::{SchemaRead, SchemaWrite};
 
 use self::reed_solomon::{
     RawShreds, ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred,
@@ -101,7 +102,7 @@ impl From<ReedSolomonShredError> for DeshredError {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
     Coding(ShredPayload),
@@ -109,11 +110,13 @@ pub enum ShredPayloadType {
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct Shred {
     pub(crate) payload_type: ShredPayloadType,
+    #[wincode(with = "wincode::containers::Pod<[u8; 32]>")]
     pub(crate) merkle_root: Hash,
     merkle_root_sig: Signature,
+    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<[u8; 32]>>")]
     merkle_path: Vec<Hash>,
 }
 
@@ -162,14 +165,15 @@ impl Shred {
 }
 
 /// Base payload of a shred, regardless of its type.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct ShredPayload {
     /// Slice header replicated in each shred.
     pub(crate) header: SliceHeader,
     /// Index of this shred within the slice.
     pub(crate) shred_index: ShredIndex,
     /// Raw payload bytes of this shred, part of the erasure-coded slice payload.
-    pub(crate) data: bytes::Bytes,
+    #[wincode(with = "wincode::containers::Vec<wincode::containers::Pod<_>>")]
+    pub(crate) data: Vec<u8>,
 }
 
 impl ShredPayload {
