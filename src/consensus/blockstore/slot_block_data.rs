@@ -15,7 +15,6 @@ use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::signature::PublicKey;
 use crate::crypto::{Hash, MerkleTree};
-use crate::network::BINCODE_CONFIG;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
@@ -335,23 +334,13 @@ impl BlockData {
                 parent = new_parent;
             }
 
-            let (mut txs, bytes_read) =
-                match bincode::serde::decode_from_slice(&slice.data, BINCODE_CONFIG) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        warn!("decoding slice {ind} failed with {err:?}");
-                        return ReconstructBlockResult::Error;
-                    }
-                };
-            if bytes_read != slice.data.len() {
-                warn!(
-                    "decoding slice {}: read {} but actual length is {}",
-                    ind,
-                    bytes_read,
-                    slice.data.len()
-                );
-                return ReconstructBlockResult::Error;
-            }
+            let mut txs = match wincode::deserialize(&slice.data) {
+                Ok(r) => r,
+                Err(err) => {
+                    warn!("decoding slice {ind} failed with {err:?}");
+                    return ReconstructBlockResult::Error;
+                }
+            };
             transactions.append(&mut txs);
         }
 

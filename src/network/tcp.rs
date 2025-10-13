@@ -18,9 +18,10 @@ use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::Network;
-use crate::network::{BINCODE_CONFIG, MTU_BYTES};
+use crate::network::MTU_BYTES;
 
 type StreamReader = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
@@ -86,8 +87,8 @@ impl<S, R> TcpNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for TcpNetwork<S, R>
 where
-    S: Serialize + Send + Sync,
-    R: DeserializeOwned + Send + Sync,
+    S: Serialize + SchemaWrite<Src = S> + Send + Sync,
+    R: DeserializeOwned + for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -97,7 +98,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = &bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = &wincode::serialize(msg).unwrap();
         let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
@@ -106,7 +107,7 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = wincode::serialize(msg).unwrap();
         self.send_serialized(&bytes, addr).await
     }
 

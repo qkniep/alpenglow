@@ -3,12 +3,13 @@
 
 //! Defines the [`Slice`] and related data structures.
 
+use std::mem::MaybeUninit;
+
 use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::Hash;
-use crate::network::BINCODE_CONFIG;
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Slot, highest_non_zero_byte};
@@ -103,7 +104,7 @@ pub(crate) struct SliceHeader {
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
 /// This is what actually gets "shredded" into different [`crate::shredder::Shred`]s.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
     pub(crate) parent: Option<(Slot, Hash)>,
     pub(crate) data: Vec<u8>,
@@ -117,7 +118,7 @@ impl SlicePayload {
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        bincode::serde::encode_to_vec(payload, BINCODE_CONFIG).unwrap()
+        wincode::serialize(&payload).unwrap()
     }
 }
 
@@ -128,10 +129,7 @@ impl From<Vec<u8>> for SlicePayload {
             "payload.len()={} {MAX_DATA_PER_SLICE}",
             payload.len()
         );
-        let (ret, bytes): (SlicePayload, usize) =
-            bincode::serde::decode_from_slice(&payload, BINCODE_CONFIG).unwrap();
-        assert_eq!(payload.len(), bytes);
-        ret
+        wincode::deserialize(&payload).unwrap()
     }
 }
 
@@ -146,26 +144,24 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<(Slot, Hash)>,
     desired_size: usize,
 ) -> SlicePayload {
-    let mut payload = vec![0; desired_size];
+    let mut payload = vec![MaybeUninit::uninit(); desired_size];
 
-    let used = bincode::serde::encode_into_slice(parent, &mut payload, BINCODE_CONFIG).unwrap();
+    let mut used = wincode::serialize_into(&parent, &mut payload).unwrap();
     let left = desired_size.checked_sub(used).unwrap();
 
-    // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`.  If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.  Otherwise, it takes number of non-zero bytes minus 1.
-    let highest_byte = highest_non_zero_byte(desired_size);
-    let size = if highest_byte == 1 {
-        left.checked_sub(highest_byte).unwrap()
-    } else {
-        left.checked_sub(highest_byte)
-            .unwrap()
-            .checked_sub(1)
-            .unwrap()
-    };
+    let size = left.checked_sub(8).unwrap();
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
-    bincode::serde::encode_into_slice(data, &mut payload[used..], BINCODE_CONFIG).unwrap();
+    used += wincode::serialize_into(&data, &mut payload[used..]).unwrap();
+    assert_eq!(used, desired_size);
 
+    let len = payload.len();
+    let cap = payload.capacity();
+    let ptr = payload.as_mut_ptr() as *mut u8;
+    std::mem::forget(payload); // prevent dropping uninitialized memory
+    let payload: Vec<u8> = unsafe { Vec::from_raw_parts(ptr, len, cap) };
+    // FIXME: handle `MaybeUninit`
     payload.into()
 }
 

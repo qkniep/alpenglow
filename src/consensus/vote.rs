@@ -10,7 +10,6 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::aggsig::{PublicKey, SecretKey};
 use crate::crypto::{Hash, IndividualSignature, Signable};
-use crate::network::BINCODE_CONFIG;
 use crate::{Slot, ValidatorId};
 
 /// A signed vote used in consensus.
@@ -191,7 +190,7 @@ impl VoteKind {
 
 impl Signable for VoteKind {
     fn bytes_to_sign(&self) -> Vec<u8> {
-        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).expect("serialization should not panic")
+        wincode::serialize(self).expect("serialization should not panic")
     }
 }
 

@@ -31,12 +31,13 @@ use log::warn;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, RwLock, mpsc};
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
 use super::Network;
 use crate::ValidatorId;
-use crate::network::{BINCODE_CONFIG, MTU_BYTES};
+use crate::network::MTU_BYTES;
 
 /// A simulated network interface for local testing and simulations.
 // TODO: add examples
@@ -72,8 +73,8 @@ impl<S, R> SimulatedNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
-    S: Serialize + Send + Sync,
-    R: DeserializeOwned + Send + Sync,
+    S: Serialize + SchemaWrite<Src = S> + Send + Sync,
+    R: DeserializeOwned + for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -83,7 +84,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = wincode::serialize(msg).unwrap();
         let tasks = addrs.map(|addr| {
             let bytes = bytes.clone();
             async move { self.send_serialized(bytes, addr).await }
@@ -95,7 +96,7 @@ where
     }
 
     async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = wincode::serialize(msg).unwrap();
         self.send_serialized(bytes, addr).await
     }
 
@@ -104,20 +105,13 @@ where
             let Some(buf) = self.receiver.lock().await.recv().await else {
                 return Err(std::io::Error::other("channel closed"));
             };
-            let (msg, bytes_used) = match bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG) {
+            let msg = match wincode::deserialize(&buf) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("deserializing failed with {err:?}");
                     continue;
                 }
             };
-            if bytes_used != buf.len() {
-                warn!(
-                    "deserialization used {bytes_used} bytes; expected to use {}",
-                    buf.len()
-                );
-                continue;
-            }
             return Ok(msg);
         }
     }

@@ -22,7 +22,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
+use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
 use crate::shredder::{Shred, ShredIndex};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -51,7 +51,7 @@ impl RepairRequestType {
             req_type: self.clone(),
             sender: 0,
         };
-        let msg_bytes = bincode::serde::encode_to_vec(repair, BINCODE_CONFIG).unwrap();
+        let msg_bytes = wincode::serialize(&repair).unwrap();
         hash(&msg_bytes)
     }
 }

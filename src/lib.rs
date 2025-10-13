@@ -22,6 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::all2all::All2All;
 pub use self::consensus::Alpenglow;
@@ -63,7 +64,7 @@ pub struct Block {
 /// Dummy transaction containing payload bytes.
 ///
 /// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
 pub struct Transaction(pub Vec<u8>);
 
 /// Validator information as known about other validators.
