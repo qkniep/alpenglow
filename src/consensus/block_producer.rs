@@ -18,12 +18,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::{Hash, signature};
-use crate::network::{BINCODE_CONFIG, Network, TransactionNetwork};
+use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
-use crate::{
-    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
-};
+use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
 /// Produces blocks from transactions and dissminates them.
 ///
@@ -393,17 +391,12 @@ where
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = bincode::serde::encode_to_vec(parent, BINCODE_CONFIG)
-        .unwrap()
-        .len();
+    let parent_encoded_len = wincode::serialize(&parent).unwrap().len();
 
-    // HACK: As long as the size of the txs vec fits in a single byte,
-    // bincode encoding seems to take a single byte so account for that here.
-    assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
         .checked_sub(parent_encoded_len)
         .unwrap()
-        .checked_sub(1)
+        .checked_sub(8)
         .unwrap();
     let mut txs = Vec::new();
 
@@ -418,8 +411,7 @@ where
             }
         };
         let tx = res.expect("receiving tx");
-        let tx = bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG)
-            .expect("serialization should not panic");
+        let tx = wincode::serialize(&tx).expect("serialization should not panic");
         slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
         txs.push(tx);
         if slice_capacity_left < MAX_TRANSACTION_SIZE {
@@ -428,8 +420,7 @@ where
     };
 
     // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
-    let txs = bincode::serde::encode_to_vec(&txs, BINCODE_CONFIG)
-        .expect("serialization should not panic");
+    let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     (payload, ret)
 }
@@ -536,16 +527,16 @@ mod tests {
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty Vec takes 1 byte
-        assert_eq!(payload.data.len(), 1);
+        // bin encoding an empty Vec takes 8 bytes
+        assert_eq!(payload.data.len(), 8);
 
         let parent = Some((Slot::genesis(), Hash::default()));
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty Vec takes 1 byte
-        assert_eq!(payload.data.len(), 1);
+        // bin encoding an empty Vec takes 8 bytes
+        assert_eq!(payload.data.len(), 8);
     }
 
     #[tokio::test]

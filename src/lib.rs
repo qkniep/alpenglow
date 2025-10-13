@@ -83,16 +83,6 @@ pub struct ValidatorInfo {
     pub repair_response_address: SocketAddr,
 }
 
-/// Returns the highest non-zero byte in `val`.
-pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
-    let mut cnt = 0;
-    while val != 0 {
-        val /= 256;
-        cnt += 1;
-    }
-    cnt
-}
-
 type TestNode = Alpenglow<
     TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
     Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,

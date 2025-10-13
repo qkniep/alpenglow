@@ -53,7 +53,7 @@ pub const MAX_DATA_PER_SHRED: usize = 1024;
 /// Maximum number of bytes an entire slice can hold, incl. padding.
 pub const MAX_DATA_PER_SLICE_AFTER_PADDING: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
 /// Maximum number of payload bytes a slice can hold.
-pub const MAX_DATA_PER_SLICE: usize = MAX_DATA_PER_SLICE_AFTER_PADDING - 1;
+pub const MAX_DATA_PER_SLICE: usize = MAX_DATA_PER_SLICE_AFTER_PADDING - 8;
 
 /// Errors that may occur during shredding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]

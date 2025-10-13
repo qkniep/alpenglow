@@ -6,7 +6,7 @@ use std::mem::MaybeUninit;
 use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, Vote};
 use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::crypto::{Hash, aggsig, signature};
-use alpenglow::network::{BINCODE_CONFIG, localhost_ip_sockaddr};
+use alpenglow::network::localhost_ip_sockaddr;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
@@ -15,6 +15,8 @@ use divan::counter::{BytesCount, ItemsCount};
 use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
+
+pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 fn main() {
     // run registered benchmarks.

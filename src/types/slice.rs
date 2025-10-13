@@ -9,10 +9,10 @@ use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
+use crate::Slot;
 use crate::crypto::Hash;
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
-use crate::{Slot, highest_non_zero_byte};
 
 /// A slice is the unit of data between block and shred.
 ///
