@@ -345,11 +345,11 @@ impl BlockData {
         }
 
         let block = Block {
-            slot: self.slot,
+            _slot: self.slot,
             block_hash,
             parent: parent.0,
             parent_hash: parent.1,
-            transactions,
+            _transactions: transactions,
         };
         let block_info = BlockInfo::from(&block);
         self.completed = Some((block_hash, block));
