@@ -49,8 +49,6 @@ pub type BlockId = (Slot, Hash);
 
 const MAX_TRANSACTION_SIZE: usize = 512;
 
-const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
-
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
