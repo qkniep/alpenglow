@@ -52,11 +52,13 @@ const MAX_TRANSACTION_SIZE: usize = 512;
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug)]
 pub struct Block {
-    slot: Slot,
+    // TODO: unused
+    _slot: Slot,
     block_hash: Hash,
     parent: Slot,
     parent_hash: Hash,
-    transactions: Vec<Transaction>,
+    // TODO: unused
+    _transactions: Vec<Transaction>,
 }
 
 /// Dummy transaction containing payload bytes.
