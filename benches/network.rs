@@ -3,12 +3,14 @@
 
 use std::mem::MaybeUninit;
 
-use alpenglow::consensus::{ConsensusMessage, Vote};
+use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, Vote};
+use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::crypto::{Hash, aggsig, signature};
-use alpenglow::network::BINCODE_CONFIG;
+use alpenglow::network::{BINCODE_CONFIG, localhost_ip_sockaddr};
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
+use alpenglow::{ValidatorId, ValidatorInfo};
 use divan::counter::{BytesCount, ItemsCount};
 use rand::{Rng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -19,18 +21,19 @@ fn main() {
     divan::main();
 }
 
+fn generate_vote() -> Vote {
+    let mut rng = rand::rng();
+    let mut hash = Hash::default();
+    rng.fill_bytes(&mut hash);
+    let sk = aggsig::SecretKey::new(&mut rng);
+    Vote::new_notar(Slot::new(0), hash, &sk, 0)
+}
+
 #[divan::bench]
 fn serialize_vote(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
-        .with_inputs(|| {
-            let mut rng = rand::rng();
-            let mut hash = Hash::default();
-            rng.fill_bytes(&mut hash);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
-            ConsensusMessage::Vote(vote)
-        })
+        .with_inputs(|| ConsensusMessage::Vote(generate_vote()))
         .bench_values(|msg: ConsensusMessage| bincode::serde::encode_to_vec(msg, BINCODE_CONFIG));
 }
 
@@ -39,12 +42,7 @@ fn deserialize_vote(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
-            let mut rng = rand::rng();
-            let mut hash = Hash::default();
-            rng.fill_bytes(&mut hash);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
-            let msg = ConsensusMessage::Vote(vote);
+            let msg = ConsensusMessage::Vote(generate_vote());
             bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap()
         })
         .bench_values(|bytes: Vec<u8>| {
@@ -57,14 +55,7 @@ fn deserialize_vote(bencher: divan::Bencher) {
 fn serialize_vote_wincode(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
-        .with_inputs(|| {
-            let mut rng = rand::rng();
-            let mut hash = Hash::default();
-            rng.fill_bytes(&mut hash);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
-            ConsensusMessage::Vote(vote)
-        })
+        .with_inputs(|| ConsensusMessage::Vote(generate_vote()))
         .bench_values(|msg: ConsensusMessage| wincode::serialize(&msg).unwrap());
 }
 
@@ -73,12 +64,65 @@ fn deserialize_vote_wincode(bencher: divan::Bencher) {
     bencher
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
-            let mut rng = rand::rng();
-            let mut hash = Hash::default();
-            rng.fill_bytes(&mut hash);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
-            let msg = ConsensusMessage::Vote(vote);
+            let msg = ConsensusMessage::Vote(generate_vote());
+            wincode::serialize(&msg).unwrap()
+        })
+        .bench_values(|bytes: Vec<u8>| {
+            let _msg: ConsensusMessage = wincode::deserialize(&bytes).unwrap();
+        });
+}
+
+fn generate_cert() -> Cert {
+    let (sks, val_info) = generate_validators(100);
+
+    let mut rng = rand::rng();
+    let mut hash = Hash::default();
+    rng.fill_bytes(&mut hash);
+    let votes = sks
+        .iter()
+        .enumerate()
+        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash, sk, v as ValidatorId))
+        .collect::<Vec<_>>();
+    let notar_cert = NotarCert::try_new(&votes, &val_info).unwrap();
+    Cert::Notar(notar_cert)
+}
+
+#[divan::bench]
+fn serialize_cert(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| ConsensusMessage::Cert(generate_cert()))
+        .bench_values(|msg: ConsensusMessage| bincode::serde::encode_to_vec(msg, BINCODE_CONFIG));
+}
+
+#[divan::bench]
+fn deserialize_cert(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let msg = ConsensusMessage::Cert(generate_cert());
+            bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap()
+        })
+        .bench_values(|bytes: Vec<u8>| {
+            let (_msg, _bytes_read): (ConsensusMessage, usize) =
+                bincode::serde::decode_from_slice(&bytes, BINCODE_CONFIG).unwrap();
+        });
+}
+
+#[divan::bench]
+fn serialize_cert_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| ConsensusMessage::Cert(generate_cert()))
+        .bench_values(|msg: ConsensusMessage| wincode::serialize(&msg).unwrap());
+}
+
+#[divan::bench]
+fn deserialize_cert_wincode(bencher: divan::Bencher) {
+    bencher
+        .counter(ItemsCount::new(1_usize))
+        .with_inputs(|| {
+            let msg = ConsensusMessage::Cert(generate_cert());
             wincode::serialize(&msg).unwrap()
         })
         .bench_values(|bytes: Vec<u8>| {
@@ -303,4 +347,26 @@ fn deserialize_slice_wincode(bencher: divan::Bencher) {
                 let _shred: Shred = wincode::deserialize(&bytes).unwrap();
             }
         });
+}
+
+pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
+    let mut rng = rand::rng();
+    let mut sks = Vec::new();
+    let mut voting_sks = Vec::new();
+    let mut validators = Vec::new();
+    for i in 0..num_validators {
+        sks.push(signature::SecretKey::new(&mut rng));
+        voting_sks.push(SecretKey::new(&mut rng));
+        validators.push(ValidatorInfo {
+            id: i,
+            stake: 1,
+            pubkey: sks[i as usize].to_pk(),
+            voting_pubkey: voting_sks[i as usize].to_pk(),
+            all2all_address: localhost_ip_sockaddr(0),
+            disseminator_address: localhost_ip_sockaddr(0),
+            repair_request_address: localhost_ip_sockaddr(0),
+            repair_response_address: localhost_ip_sockaddr(0),
+        });
+    }
+    (voting_sks, validators)
 }

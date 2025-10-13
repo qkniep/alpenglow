@@ -128,12 +128,15 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let sig_bytes: [u8; 48] = <[u8; 48]>::get(reader)?;
-        let bitmask_bytes = <Vec<usize>>::get(reader)?;
+        let sig_bytes = reader.read_borrowed(96)?;
+        let num_bits = <usize>::get(reader)?;
+        let bitmask_raw_vec = <Vec<usize>>::get(reader)?;
         // FIXME: unwrap
-        let sig = BlstSignature::from_bytes(&sig_bytes).unwrap();
-        let bitmask = BitVec::from_vec(bitmask_bytes);
-        // let sig: BlstSignature = MyBlstSignature::get(reader)?;
+        let sig = BlstSignature::from_bytes(sig_bytes).unwrap();
+        let mut bitmask = BitVec::try_from_vec(bitmask_raw_vec).unwrap();
+        unsafe {
+            bitmask.set_len(num_bits);
+        }
         dst.write(AggregateSignature { sig, bitmask });
         wincode::ReadResult::Ok(())
     }
@@ -143,18 +146,20 @@ impl SchemaWrite for AggregateSignature {
     type Src = AggregateSignature;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        Ok(
-            <[u8; 48] as wincode::SchemaWrite>::size_of(&src.sig.to_bytes())?
-                + <Vec<usize> as wincode::SchemaWrite>::size_of(
-                    &src.bitmask.to_bitvec().into_vec(),
-                )?,
-        )
+        let data = src.bitmask.as_bitslice().domain().collect::<Vec<usize>>();
+        Ok(96 + 8 + <Vec<usize> as wincode::SchemaWrite>::size_of(&data)?)
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         unsafe {
-            writer.write_t(&src.sig.to_bytes())?;
-            Ok(writer.write_t(&src.bitmask.to_bitvec().into_vec())?)
+            writer.write_t(&src.sig.serialize())?;
+            writer.write_t(&src.bitmask.as_bitslice().len())?;
+            let data = src.bitmask.as_bitslice().domain();
+            writer.write_t(&data.len())?;
+            for elem in data {
+                writer.write_t(&elem)?;
+            }
+            Ok(())
         }
     }
 }

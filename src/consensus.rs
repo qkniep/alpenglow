@@ -40,7 +40,7 @@ use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
-pub use self::cert::Cert;
+pub use self::cert::{Cert, NotarCert};
 pub use self::epoch_info::EpochInfo;
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
 pub use self::vote::Vote;
