@@ -6,7 +6,6 @@
 use std::mem::MaybeUninit;
 
 use rand::{RngCore, rng};
-use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::Slot;
@@ -91,7 +90,7 @@ impl Slice {
 /// Struct to hold all the header payload of a [`Slice`].
 ///
 /// This is included in each [`crate::shredder::Shred`] after shredding.
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,
@@ -104,7 +103,7 @@ pub(crate) struct SliceHeader {
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
 /// This is what actually gets "shredded" into different [`crate::shredder::Shred`]s.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
     pub(crate) parent: Option<(Slot, Hash)>,
     pub(crate) data: Vec<u8>,

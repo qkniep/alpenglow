@@ -28,8 +28,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -73,8 +71,8 @@ impl<S, R> SimulatedNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
-    S: Serialize + SchemaWrite<Src = S> + Send + Sync,
-    R: DeserializeOwned + for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;

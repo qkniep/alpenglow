@@ -12,8 +12,6 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use async_trait::async_trait;
 use futures::SinkExt;
 use futures::future::join_all;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -87,8 +85,8 @@ impl<S, R> TcpNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for TcpNetwork<S, R>
 where
-    S: Serialize + SchemaWrite<Src = S> + Send + Sync,
-    R: DeserializeOwned + for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;

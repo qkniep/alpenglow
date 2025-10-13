@@ -53,7 +53,6 @@ toml = "0.9"
 wincode = { version = "0.1", features = ["derive"] }
 
 [dev-dependencies]
-bincode = { version = "2", features = ["serde"] }
 divan = "0.1"
 
 [lints.clippy]

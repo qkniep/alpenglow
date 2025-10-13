@@ -5,7 +5,6 @@
 //!
 //!
 
-use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::aggsig::{PublicKey, SecretKey};
@@ -18,7 +17,7 @@ use crate::{Slot, ValidatorId};
 /// allowing type-specific data to be authenticated and verified.
 ///
 /// This struct is produced by signing the bytes of a `VoteKind` instance.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Vote {
     kind: VoteKind,
     sig: IndividualSignature,
@@ -26,7 +25,7 @@ pub struct Vote {
 }
 
 /// Represents the type-specific vote payload as per the protocol.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum VoteKind {
     /// A notarization vote for a given block hash in a given slot.
     Notar(Slot, Hash),

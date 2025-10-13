@@ -29,7 +29,7 @@ pub struct PublicKey(VerificationKey);
 /// A digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct Signature(ed25519_consensus::Signature);
 
 impl<'de> SchemaRead<'de> for Signature {

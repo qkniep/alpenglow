@@ -26,7 +26,6 @@ use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
 use ctr::Ctr64LE;
 use rand::{RngCore, rng};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -102,7 +101,7 @@ impl From<ReedSolomonShredError> for DeshredError {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
     Coding(ShredPayload),
@@ -110,7 +109,7 @@ pub enum ShredPayloadType {
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     pub(crate) payload_type: ShredPayloadType,
     pub(crate) merkle_root: Hash,
@@ -163,7 +162,7 @@ impl Shred {
 }
 
 /// Base payload of a shred, regardless of its type.
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct ShredPayload {
     /// Slice header replicated in each shred.
     pub(crate) header: SliceHeader,

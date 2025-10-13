@@ -12,8 +12,6 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tokio::net::UdpSocket;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -71,8 +69,8 @@ impl<S, R> UdpNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for UdpNetwork<S, R>
 where
-    S: Serialize + SchemaWrite<Src = S> + Send + Sync,
-    R: DeserializeOwned + for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;

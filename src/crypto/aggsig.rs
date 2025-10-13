@@ -82,7 +82,7 @@ impl PublicKey {
 // Deriving PartialEq and Eq to support testing.
 // It only makes sense beccause the underlying signature scheme happens to be deterministic and unique.
 // Reevaluate if we change the signature scheme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndividualSignature(pub BlstSignature);
 
 impl<'de> SchemaRead<'de> for IndividualSignature {
@@ -115,7 +115,7 @@ impl SchemaWrite for IndividualSignature {
 /// An aggregated signature that contains a bitmask of signers.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateSignature {
     sig: BlstSignature,
     bitmask: BitVec,

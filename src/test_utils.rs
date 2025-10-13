@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
@@ -19,13 +18,13 @@ use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Ping;
 
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Pong;
 
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum PingOrPong {
     Ping,
     Pong,

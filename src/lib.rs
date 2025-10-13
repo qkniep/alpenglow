@@ -50,7 +50,7 @@ pub type BlockId = (Slot, Hash);
 const MAX_TRANSACTION_SIZE: usize = 512;
 
 /// Parsed block with information about parent and transactions as payload.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Block {
     slot: Slot,
     block_hash: Hash,
@@ -62,7 +62,7 @@ pub struct Block {
 /// Dummy transaction containing payload bytes.
 ///
 /// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
-#[derive(Clone, Debug, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Transaction(pub Vec<u8>);
 
 /// Validator information as known about other validators.
