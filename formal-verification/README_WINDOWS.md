@@ -313,5 +313,4 @@ See the main repository LICENSE file for details.
 **Last Updated:** October 10, 2025  
 **Verification Status:** ✅ PASSED (All 70+ theorems verified)  
 **Model Checker:** TLC 2.20  
-**Theorem Prover:** TLAPS 1.4.5  
-**Winning Probability:** 85-95% 🎯
+**Theorem Prover:** TLAPS 1.4.5 
