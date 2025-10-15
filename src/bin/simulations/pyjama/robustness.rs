@@ -16,9 +16,8 @@ use alpenglow::network::simulated::stake_distribution::{
 };
 use color_eyre::Result;
 
-use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
-
 use super::parameters::{AdversaryStrength, PyjamaParameters};
+use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
 
 const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
