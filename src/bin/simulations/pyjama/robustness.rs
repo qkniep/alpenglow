@@ -61,35 +61,25 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
     };
     let hiding_attack = hiding_threshold.into_attack("hiding");
 
-    let censorship_proposer_threshold = QuorumThreshold::Simple {
+    let all_proposers_threshold = QuorumThreshold::Simple {
         quorum: 1,
         threshold: params.num_proposers as usize,
-        is_crash_enough: true,
-    };
-    let censorship_relay_threshold = QuorumThreshold::Simple {
-        quorum: 2,
-        threshold: (params.attestations_threshold - params.should_decode_threshold) as usize,
-        is_crash_enough: true,
-    };
-    let censorship_attack = QuorumThreshold::Any(vec![
-        censorship_proposer_threshold,
-        censorship_relay_threshold,
-    ])
-    .into_attack("censorship");
-
-    let temporary_liveness_proposer_threshold = QuorumThreshold::Simple {
-        quorum: 1,
-        threshold: params.num_proposers as usize,
-        is_crash_enough: true,
-    };
-    let relays_to_hold_protocol_threshold = QuorumThreshold::Simple {
-        quorum: 2,
-        threshold: (params.should_decode_threshold - params.can_decode_threshold) as usize,
         is_crash_enough: true,
     };
     let relays_to_censor_proposers_threshold = QuorumThreshold::Simple {
         quorum: 2,
         threshold: (params.attestations_threshold - params.should_decode_threshold) as usize,
+        is_crash_enough: true,
+    };
+    let censorship_attack = QuorumThreshold::Any(vec![
+        all_proposers_threshold.clone(),
+        relays_to_censor_proposers_threshold.clone(),
+    ])
+    .into_attack("censorship");
+
+    let relays_to_hold_protocol_threshold = QuorumThreshold::Simple {
+        quorum: 2,
+        threshold: (params.should_decode_threshold - params.can_decode_threshold) as usize,
         is_crash_enough: true,
     };
     let relays_to_censor_leader_threshold = QuorumThreshold::Simple {
@@ -98,7 +88,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
         is_crash_enough: true,
     };
     let temporary_liveness_attack = QuorumThreshold::Any(vec![
-        temporary_liveness_proposer_threshold,
+        all_proposers_threshold,
         relays_to_hold_protocol_threshold,
         relays_to_censor_proposers_threshold,
         relays_to_censor_leader_threshold,
