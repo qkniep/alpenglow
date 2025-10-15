@@ -16,7 +16,7 @@ use alpenglow::network::simulated::stake_distribution::{
 };
 use color_eyre::Result;
 
-use crate::quorum_robustness::{QuorumAttack, QuorumRobustnessTest, QuorumThreshold};
+use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
 
 use super::parameters::{AdversaryStrength, PyjamaParameters};
 
@@ -59,10 +59,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
         threshold: params.can_decode_threshold as usize,
         is_crash_enough: false,
     };
-    let hiding_attack = QuorumAttack {
-        name: "hiding".to_string(),
-        quorum: hiding_threshold,
-    };
+    let hiding_attack = hiding_threshold.into_attack("hiding");
 
     let censorship_proposer_threshold = QuorumThreshold::Simple {
         quorum: 1,
@@ -74,13 +71,11 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
         threshold: (params.attestations_threshold - params.should_decode_threshold) as usize,
         is_crash_enough: true,
     };
-    let censorship_attack = QuorumAttack {
-        name: "censorship".to_string(),
-        quorum: QuorumThreshold::Any(vec![
-            censorship_proposer_threshold,
-            censorship_relay_threshold,
-        ]),
-    };
+    let censorship_attack = QuorumThreshold::Any(vec![
+        censorship_proposer_threshold,
+        censorship_relay_threshold,
+    ])
+    .into_attack("censorship");
 
     let temporary_liveness_proposer_threshold = QuorumThreshold::Simple {
         quorum: 1,
@@ -102,25 +97,21 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
         threshold: (params.num_relays - params.attestations_threshold) as usize,
         is_crash_enough: true,
     };
-    let temporary_liveness_attack = QuorumAttack {
-        name: "temporary_liveness".to_string(),
-        quorum: QuorumThreshold::Any(vec![
-            temporary_liveness_proposer_threshold,
-            relays_to_hold_protocol_threshold,
-            relays_to_censor_proposers_threshold,
-            relays_to_censor_leader_threshold,
-        ]),
-    };
+    let temporary_liveness_attack = QuorumThreshold::Any(vec![
+        temporary_liveness_proposer_threshold,
+        relays_to_hold_protocol_threshold,
+        relays_to_censor_proposers_threshold,
+        relays_to_censor_leader_threshold,
+    ])
+    .into_attack("temporary_liveness");
 
     let permanent_liveness_threshold = QuorumThreshold::Simple {
         quorum: 2,
         threshold: (params.should_decode_threshold - params.can_decode_threshold) as usize,
         is_crash_enough: false,
     };
-    let permanent_liveness_attack = QuorumAttack {
-        name: "permanent_liveness".to_string(),
-        quorum: QuorumThreshold::Any(vec![permanent_liveness_threshold]),
-    };
+    let permanent_liveness_attack =
+        QuorumThreshold::Any(vec![permanent_liveness_threshold]).into_attack("permanent_liveness");
 
     let test = QuorumRobustnessTest::new(
         validators,

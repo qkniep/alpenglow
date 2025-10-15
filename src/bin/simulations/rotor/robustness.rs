@@ -20,9 +20,7 @@ use alpenglow::network::simulated::stake_distribution::{
 };
 
 use super::RotorParams;
-use crate::quorum_robustness::{
-    AdversaryStrength, QuorumAttack, QuorumRobustnessTest, QuorumThreshold,
-};
+use crate::quorum_robustness::{AdversaryStrength, QuorumRobustnessTest, QuorumThreshold};
 
 // TODO: support different: stake distributions, sampling strategies, Rotor params
 
@@ -44,10 +42,8 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) {
             is_crash_enough: false,
         })
         .collect::<Vec<_>>();
-    let equivocation_attack = QuorumAttack {
-        name: "equivocation".to_string(),
-        quorum: QuorumThreshold::Any(equivocation_thresholds),
-    };
+    let equivocation_attack =
+        QuorumThreshold::Any(equivocation_thresholds).into_attack("equivocation");
 
     let censorship_thresholds = (0..params.num_slices)
         .map(|slice| QuorumThreshold::Simple {
@@ -56,10 +52,7 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) {
             is_crash_enough: true,
         })
         .collect::<Vec<_>>();
-    let censorship_attack = QuorumAttack {
-        name: "censorship".to_string(),
-        quorum: QuorumThreshold::Any(censorship_thresholds),
-    };
+    let censorship_attack = QuorumThreshold::Any(censorship_thresholds).into_attack("censorship");
 
     let test = QuorumRobustnessTest::new(
         validators,

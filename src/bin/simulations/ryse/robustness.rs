@@ -17,7 +17,7 @@ use alpenglow::network::simulated::stake_distribution::{
 use color_eyre::Result;
 
 use super::parameters::{AdversaryStrength, RyseParameters};
-use crate::quorum_robustness::{QuorumAttack, QuorumRobustnessTest, QuorumThreshold};
+use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
 
 const NUM_PROPOSERS: u64 = 16;
 const NUM_RELAYS: u64 = 512;
@@ -49,10 +49,7 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
             .saturating_sub(params.num_relays) as usize,
         is_crash_enough: false,
     };
-    let hiding_attack = QuorumAttack {
-        name: "hiding".to_string(),
-        quorum: hiding_threshold,
-    };
+    let hiding_attack = hiding_threshold.into_attack("hiding");
 
     let censorship_proposer_threshold = QuorumThreshold::Simple {
         quorum: 0,
@@ -64,13 +61,11 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
         threshold: (params.num_relays - params.relay_notar_threshold) as usize,
         is_crash_enough: true,
     };
-    let censorship_attack = QuorumAttack {
-        name: "censorship".to_string(),
-        quorum: QuorumThreshold::Any(vec![
-            censorship_proposer_threshold,
-            censorship_relay_threshold,
-        ]),
-    };
+    let censorship_attack = QuorumThreshold::Any(vec![
+        censorship_proposer_threshold,
+        censorship_relay_threshold,
+    ])
+    .into_attack("censorship");
 
     let test = QuorumRobustnessTest::new(
         validators,

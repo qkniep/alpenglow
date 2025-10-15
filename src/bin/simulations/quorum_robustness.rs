@@ -392,10 +392,11 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 }
 
+/// Named wrapper for a [`QuorumThreshold`].
 #[derive(Clone, Debug)]
 pub struct QuorumAttack {
-    pub name: String,
-    pub quorum: QuorumThreshold,
+    name: String,
+    quorum: QuorumThreshold,
 }
 
 impl QuorumAttack {
@@ -404,18 +405,33 @@ impl QuorumAttack {
     }
 }
 
+/// Represents a threshold for one or more quorums.
+///
+/// This is used to model different attack scenarios in [`QuorumRobustnessTest`].
 #[derive(Clone, Debug)]
 pub enum QuorumThreshold {
+    /// This threshold is reached if the `quorum` contains at least `threshold` corrupted validators.
+    ///
+    /// Where "corrupted" means Byz. + crashed if `is_crash_enough` is true (otherwise only Byz.).
     Simple {
         quorum: usize,
         threshold: usize,
         is_crash_enough: bool,
     },
+    /// This threshold is reached if all of the contained thresholds are reached.
     All(Vec<QuorumThreshold>),
+    /// This threshold is reached if at least one of the contained thresholds are reached.
     Any(Vec<QuorumThreshold>),
 }
 
 impl QuorumThreshold {
+    pub fn into_attack(self, name: &str) -> QuorumAttack {
+        QuorumAttack {
+            name: name.to_owned(),
+            quorum: self,
+        }
+    }
+
     fn evaluate(&self, corrupted: &[(usize, usize)]) -> bool {
         match self {
             QuorumThreshold::Simple {
