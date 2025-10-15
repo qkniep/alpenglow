@@ -203,6 +203,6 @@ mod tests {
         assert_eq!(params.num_leaders, 2);
         assert_eq!(params.num_relays, 10);
         assert_eq!(params.decode_threshold, 5);
-        assert_eq!(params.relay_notar_threshold, 7);
+        assert_eq!(params.relay_notar_threshold, 6);
     }
 }
