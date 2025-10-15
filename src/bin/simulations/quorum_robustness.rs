@@ -412,13 +412,14 @@ impl QuorumAttack {
 pub enum QuorumThreshold {
     /// This threshold is reached if the `quorum` contains at least `threshold` corrupted validators.
     ///
-    /// Where "corrupted" means Byz. + crashed if `is_crash_enough` is true (otherwise only Byz.).
+    /// Where "corrupted" means Byzantine (plus crashed if `is_crash_enough` is true).
     Simple {
         quorum: usize,
         threshold: usize,
         is_crash_enough: bool,
     },
     /// This threshold is reached if all of the contained thresholds are reached.
+    #[allow(dead_code)] // currently unused
     All(Vec<Self>),
     /// This threshold is reached if at least one of the contained thresholds are reached.
     Any(Vec<Self>),
