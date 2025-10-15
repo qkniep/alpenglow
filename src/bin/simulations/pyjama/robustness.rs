@@ -71,11 +71,10 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
         threshold: (params.attestations_threshold - params.should_decode_threshold) as usize,
         is_crash_enough: true,
     };
-    let censorship_attack = QuorumThreshold::Any(vec![
-        all_proposers_threshold.clone(),
-        relays_to_censor_proposers_threshold.clone(),
-    ])
-    .into_attack("censorship");
+    let censorship_attack = all_proposers_threshold
+        .clone()
+        .or(relays_to_censor_proposers_threshold.clone())
+        .into_attack("censorship");
 
     let relays_to_hold_protocol_threshold = QuorumThreshold::Simple {
         quorum: 2,

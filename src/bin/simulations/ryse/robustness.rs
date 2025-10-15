@@ -61,11 +61,9 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
         threshold: (params.num_relays - params.relay_notar_threshold) as usize,
         is_crash_enough: true,
     };
-    let censorship_attack = QuorumThreshold::Any(vec![
-        censorship_proposer_threshold,
-        censorship_relay_threshold,
-    ])
-    .into_attack("censorship");
+    let censorship_attack = censorship_proposer_threshold
+        .or(censorship_relay_threshold)
+        .into_attack("censorship");
 
     let test = QuorumRobustnessTest::new(
         validators,

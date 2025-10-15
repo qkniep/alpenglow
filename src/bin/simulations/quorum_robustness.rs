@@ -419,12 +419,23 @@ pub enum QuorumThreshold {
         is_crash_enough: bool,
     },
     /// This threshold is reached if all of the contained thresholds are reached.
-    All(Vec<QuorumThreshold>),
+    All(Vec<Self>),
     /// This threshold is reached if at least one of the contained thresholds are reached.
-    Any(Vec<QuorumThreshold>),
+    Any(Vec<Self>),
 }
 
 impl QuorumThreshold {
+    /// Returns a [`QuorumThreshold`] that is the logical OR of `self` and `other`.
+    pub fn or(self, other: Self) -> Self {
+        if let Self::Any(mut thresholds) = self {
+            thresholds.push(other);
+            Self::Any(thresholds)
+        } else {
+            Self::Any(vec![self, other])
+        }
+    }
+
+    /// Turns this [`QuorumThreshold`] into a [`QuorumAttack`] with the given name.
     pub fn into_attack(self, name: &str) -> QuorumAttack {
         QuorumAttack {
             name: name.to_owned(),
@@ -434,7 +445,7 @@ impl QuorumThreshold {
 
     fn evaluate(&self, corrupted: &[(usize, usize)]) -> bool {
         match self {
-            QuorumThreshold::Simple {
+            Self::Simple {
                 quorum,
                 threshold,
                 is_crash_enough,
@@ -446,10 +457,10 @@ impl QuorumThreshold {
                     byzantine >= *threshold
                 }
             }
-            QuorumThreshold::All(thresholds) => thresholds
+            Self::All(thresholds) => thresholds
                 .iter()
                 .all(|threshold| threshold.evaluate(corrupted)),
-            QuorumThreshold::Any(thresholds) => thresholds
+            Self::Any(thresholds) => thresholds
                 .iter()
                 .any(|threshold| threshold.evaluate(corrupted)),
         }
