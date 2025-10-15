@@ -61,7 +61,9 @@ use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
-use crate::pyjama::{PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams};
+use crate::pyjama::{
+    PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
+};
 use crate::rotor::{
     RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
 };
@@ -113,6 +115,7 @@ fn main() -> Result<()> {
 
     for k in [64, 128, 256, 512] {
         run_ryse_robustness_test(k);
+        run_pyjama_robustness_test(k);
     }
 
     if RUN_BANDWIDTH_TESTS {

@@ -32,9 +32,6 @@ pub fn run_robustness_tests() -> Result<()> {
     let optimal_params = params.optmize(ADVERSARY_STRENGTH);
     optimal_params.print_failure_probabilities(ADVERSARY_STRENGTH);
 
-    // TODO: extend with robustness tests for actual stake distribution
-    //       and different sampling strategies (analogous to `rotor/robustness`)
-
     Ok(())
 }
 

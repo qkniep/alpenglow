@@ -8,7 +8,15 @@
 //! In the future, this would also simulate attack scenarios for a specific stake distribution.
 //! This is analogous to what is done for Rotor in [`crate::rotor::robustness`];
 
+use std::fs::File;
+
+use alpenglow::disseminator::rotor::FaitAccompli1Sampler;
+use alpenglow::network::simulated::stake_distribution::{
+    VALIDATOR_DATA, validators_from_validator_data,
+};
 use color_eyre::Result;
+
+use crate::quorum_robustness::{QuorumAttack, QuorumRobustnessTest, QuorumThreshold};
 
 use super::parameters::{AdversaryStrength, PyjamaParameters};
 
@@ -33,8 +41,108 @@ pub fn run_robustness_tests() -> Result<()> {
     PyjamaParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
 
-    // TODO: extend with robustness tests for actual stake distribution
-    //       and different sampling strategies (analogous to `rotor/robustness`)
-
     Ok(())
+}
+
+pub fn run_pyjama_robustness_test(total_shreds: u64) {
+    let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
+    let leader_sampler =
+        FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 1);
+    let proposer_sampler =
+        FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), NUM_PROPOSERS);
+    let relay_sampler =
+        FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), total_shreds);
+    let params = PyjamaParameters::new(NUM_PROPOSERS, total_shreds);
+
+    let hiding_threshold = QuorumThreshold::Simple {
+        quorum: 2,
+        threshold: params.can_decode_threshold as usize,
+        is_crash_enough: false,
+    };
+    let hiding_attack = QuorumAttack {
+        name: "hiding".to_string(),
+        quorum: hiding_threshold,
+    };
+
+    let censorship_proposer_threshold = QuorumThreshold::Simple {
+        quorum: 1,
+        threshold: params.num_proposers as usize,
+        is_crash_enough: true,
+    };
+    let censorship_relay_threshold = QuorumThreshold::Simple {
+        quorum: 2,
+        threshold: (params.attestations_threshold - params.should_decode_threshold) as usize,
+        is_crash_enough: true,
+    };
+    let censorship_attack = QuorumAttack {
+        name: "censorship".to_string(),
+        quorum: QuorumThreshold::Any(vec![
+            censorship_proposer_threshold,
+            censorship_relay_threshold,
+        ]),
+    };
+
+    let temporary_liveness_proposer_threshold = QuorumThreshold::Simple {
+        quorum: 1,
+        threshold: params.num_proposers as usize,
+        is_crash_enough: true,
+    };
+    let relays_to_hold_protocol = params.should_decode_threshold - params.can_decode_threshold;
+    let relays_to_censor_proposers = params.attestations_threshold - params.should_decode_threshold;
+    let relays_to_censor_leader = params.num_relays - params.attestations_threshold;
+    let temporary_liveness_relay_threshold = QuorumThreshold::Simple {
+        quorum: 2,
+        threshold: relays_to_hold_protocol
+            .min(relays_to_censor_proposers)
+            .min(relays_to_censor_leader) as usize,
+        is_crash_enough: true,
+    };
+    let temporary_liveness_attack = QuorumAttack {
+        name: "temporary_liveness".to_string(),
+        quorum: QuorumThreshold::Any(vec![
+            temporary_liveness_proposer_threshold,
+            temporary_liveness_relay_threshold,
+        ]),
+    };
+
+    let permanent_liveness_threshold = QuorumThreshold::Simple {
+        quorum: 2,
+        threshold: (params.should_decode_threshold - params.can_decode_threshold) as usize,
+        is_crash_enough: false,
+    };
+    let permanent_liveness_attack = QuorumAttack {
+        name: "permanent_liveness".to_string(),
+        quorum: QuorumThreshold::Any(vec![permanent_liveness_threshold]),
+    };
+
+    let test = QuorumRobustnessTest::new(
+        validators,
+        "solana".to_string(),
+        vec![leader_sampler, proposer_sampler, relay_sampler],
+        vec![0, 1, 2],
+        vec![1, params.num_proposers as usize, params.num_relays as usize],
+        vec![
+            hiding_attack,
+            censorship_attack,
+            temporary_liveness_attack,
+            permanent_liveness_attack,
+        ],
+    );
+    let adversary_strength = crate::quorum_robustness::AdversaryStrength {
+        crashed: 0.05,
+        byzantine: 0.2,
+    };
+
+    let filename = format!(
+        "pyjama_robustness_{}_{}",
+        params.num_proposers, total_shreds
+    );
+    let path = std::path::Path::new("data")
+        .join("output")
+        .join(filename)
+        .with_extension("csv");
+    let file = File::create(path).unwrap();
+    let mut csv_file = csv::Writer::from_writer(file);
+
+    test.run(adversary_strength, &mut csv_file);
 }
