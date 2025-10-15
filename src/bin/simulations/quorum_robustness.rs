@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use std::fs::File;
 use std::sync::RwLock;
 
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, SamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
 use log::debug;
 use rand::prelude::*;
@@ -269,65 +269,69 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         self.attack_probabilities()
     }
 
-    // fn _run_bin_packing(
-    //     &self,
-    //     adversary_strength: AdversaryStrength,
-    //     known_attack_probs: &[f64],
-    // ) -> Vec<f64> {
-    //     debug!("running attack with bin-packing attack");
-    //     let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
-    //         self.validators.clone(),
-    //         self.quorum_size as u64,
-    //     );
-    //     let bin_sampler = fa1_sampler.fallback_sampler;
-    //     let vals = &bin_sampler.bin_validators;
-    //     let stakes = &bin_sampler.bin_stakes;
-    //     let attack_frac_in_bins = attack_frac / (vals.len() as f64 / self.quorum_size as f64);
-    //     let stake_per_bin = self.total_stake as f64 / self.quorum_size as f64;
-    //
-    //     (0..PARALLELISM).into_par_iter().for_each(|_| {
-    //         // greedily corrupt less than `attack_frac` of validators
-    //         // evenly spread over the bins!
-    //         let mut corrupted = vec![false; self.validators.len()];
-    //         let mut total_corrupted_stake = 0.0;
-    //
-    //         for bin in 0..vals.len() {
-    //             let mut corrupted_stake = 0.0;
-    //             let mut entries: Vec<_> = stakes[bin].iter().zip(vals[bin].iter()).collect();
-    //             entries.sort_by_key(|(s, _)| **s);
-    //             for (stake, id) in &entries {
-    //                 if corrupted[**id as usize] {
-    //                     corrupted_stake += **stake as f64;
-    //                 }
-    //             }
-    //             for (stake, id) in entries {
-    //                 let val_stake = self.validators[*id as usize].stake as f64;
-    //                 if corrupted[*id as usize] {
-    //                     continue;
-    //                 } else if corrupted_stake + (*stake as f64)
-    //                     < stake_per_bin * attack_frac_in_bins
-    //                     // && val_stake < stake_per_bin
-    //                     && total_corrupted_stake + val_stake < self.total_stake as f64 * attack_frac
-    //                 {
-    //                     corrupted[*id as usize] = true;
-    //                     corrupted_stake += *stake as f64;
-    //                     total_corrupted_stake += val_stake;
-    //                 }
-    //             }
-    //         }
-    //         assert!(total_corrupted_stake < self.total_stake as f64 * attack_frac);
-    //
-    //         for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
-    //             let (tests, hit_max_failures) =
-    //                 self.run_with_corrupted(WRITE_BATCH, attack_frac == 0.2, &corrupted);
-    //             *self.tests.write().unwrap() += tests;
-    //             if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
-    //                 break;
-    //             }
-    //         }
-    //     });
-    //     self.attack_probabilities()
-    // }
+    // TODO: extend to multiple quorums and crash failures
+    fn _run_bin_packing(
+        &self,
+        adversary_strength: AdversaryStrength,
+        known_attack_probs: &[f64],
+    ) -> Vec<f64> {
+        debug!("running attack with bin-packing attack");
+        let fa1_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
+            self.validators.clone(),
+            self.quorum_sizes[0] as u64,
+        );
+        let bin_sampler = fa1_sampler.fallback_sampler;
+        let vals = &bin_sampler.bin_validators;
+        let stakes = &bin_sampler.bin_stakes;
+        let byzantine_bins =
+            adversary_strength.byzantine / (vals.len() as f64 / self.quorum_sizes[0] as f64);
+        let _crashed_bins =
+            adversary_strength.crashed / (vals.len() as f64 / self.quorum_sizes[0] as f64);
+        let stake_per_bin = self.total_stake as f64 / self.quorum_sizes[0] as f64;
+
+        (0..PARALLELISM).into_par_iter().for_each(|_| {
+            // greedily corrupt less than `attack_frac` of validators
+            // evenly spread over the bins!
+            let mut corrupted = vec![false; self.validators.len()];
+            let mut total_corrupted_stake = 0.0;
+
+            for bin in 0..vals.len() {
+                let mut corrupted_stake = 0.0;
+                let mut entries: Vec<_> = stakes[bin].iter().zip(vals[bin].iter()).collect();
+                entries.sort_by_key(|(s, _)| **s);
+                for (stake, id) in &entries {
+                    if corrupted[**id as usize] {
+                        corrupted_stake += **stake as f64;
+                    }
+                }
+                for (stake, id) in entries {
+                    let val_stake = self.validators[*id as usize].stake as f64;
+                    if corrupted[*id as usize] {
+                        continue;
+                    } else if corrupted_stake + (*stake as f64)
+                        < stake_per_bin * byzantine_bins
+                        // && val_stake < stake_per_bin
+                        && total_corrupted_stake + val_stake < self.total_stake as f64 * adversary_strength.byzantine
+                    {
+                        corrupted[*id as usize] = true;
+                        corrupted_stake += *stake as f64;
+                        total_corrupted_stake += val_stake;
+                    }
+                }
+            }
+            assert!(total_corrupted_stake < self.total_stake as f64 * adversary_strength.byzantine);
+
+            for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
+                let (tests, hit_max_failures) =
+                    self.run_with_corrupted(WRITE_BATCH, &corrupted, &[]);
+                *self.tests.write().unwrap() += tests;
+                if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
+                    break;
+                }
+            }
+        });
+        self.attack_probabilities()
+    }
 
     fn run_with_corrupted(
         &self,
