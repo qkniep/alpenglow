@@ -28,17 +28,17 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
 /// Marker type for the Ryse latency simulation.
-pub struct RyseLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
-    _leader_sampler: PhantomData<L>,
+pub struct RyseLatencySimulation<P: SamplingStrategy, R: SamplingStrategy> {
+    _proposer_sampler: PhantomData<P>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RyseLatencySimulation<L, R> {
+impl<P: SamplingStrategy, R: SamplingStrategy> Protocol for RyseLatencySimulation<P, R> {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = LatencySimParams;
     type Instance = LatencySimInstance;
-    type Builder = LatencySimInstanceBuilder<L, R>;
+    type Builder = LatencySimInstanceBuilder<P, R>;
 }
 
 /// The sequential stages of the latency test.
@@ -211,14 +211,14 @@ impl Event for LatencyEvent {
             Self::BlockSent => {
                 let mut timings = vec![start_time; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
-                for &leader in instance.ryse_instances[0].leaders.iter() {
+                for &proposer in instance.ryse_instances[0].proposers.iter() {
                     let block_bytes = instance.params.ryse_params.num_slices as usize
                         * instance.params.ryse_params.num_relays as usize
                         * MAX_DATA_PER_SHRED;
-                    let tx_time = environment.transmission_delay(block_bytes, leader);
+                    let tx_time = environment.transmission_delay(block_bytes, proposer);
                     let finished_sending_time =
-                        resources.network.schedule(leader, start_time, tx_time);
-                    timings[leader as usize] += finished_sending_time;
+                        resources.network.schedule(proposer, start_time, tx_time);
+                    timings[proposer as usize] += finished_sending_time;
                 }
                 timings
             }
@@ -228,22 +228,23 @@ impl Event for LatencyEvent {
                 let slice_relays = &instance.ryse_instances[0].relays[*slice as usize];
                 for (relay_offset, &relay) in slice_relays.iter().enumerate() {
                     // TODO: correctly handle validators that are relays more than once
-                    let shreds_from_all_leaders = instance.ryse_instances[0]
-                        .leaders
+                    let shreds_from_all_proposers = instance.ryse_instances[0]
+                        .proposers
                         .iter()
-                        .map(|leader| {
-                            let prop_delay = environment.propagation_delay(*leader, relay);
+                        .map(|proposer| {
+                            let prop_delay = environment.propagation_delay(*proposer, relay);
                             let shred_send_index = slice * instance.params.ryse_params.num_relays
                                 + (relay_offset + 1) as u64;
                             let tx_delay = environment.transmission_delay(
                                 shred_send_index as usize * MAX_DATA_PER_SHRED,
-                                *leader,
+                                *proposer,
                             );
                             start_time + prop_delay + tx_delay
                         })
                         .max()
                         .unwrap();
-                    timings[relay as usize] = timings[relay as usize].max(shreds_from_all_leaders);
+                    timings[relay as usize] =
+                        timings[relay as usize].max(shreds_from_all_proposers);
                 }
                 // TODO: remove this again
                 let mut relay_timings = slice_relays
@@ -262,7 +263,7 @@ impl Event for LatencyEvent {
                 // TODO: actually run for more than 1 slot
                 for &relay in &instance.ryse_instances[0].relays[*slice as usize] {
                     let timing = &mut timings[relay as usize];
-                    let total_bytes = instance.params.ryse_params.num_leaders as usize
+                    let total_bytes = instance.params.ryse_params.num_proposers as usize
                         * environment.num_validators()
                         * MAX_DATA_PER_SHRED;
                     let total_tx_delay = environment.transmission_delay(total_bytes, relay);
@@ -283,7 +284,7 @@ impl Event for LatencyEvent {
                                 environment.propagation_delay(*relay, recipient as ValidatorId);
                             let tx_delay = environment.transmission_delay(
                                 (recipient + 1)
-                                    * instance.params.ryse_params.num_leaders as usize
+                                    * instance.params.ryse_params.num_proposers as usize
                                     * MAX_DATA_PER_SHRED,
                                 *relay,
                             );
@@ -307,7 +308,7 @@ impl Event for LatencyEvent {
                             + environment.propagation_delay(*relay, recipient as ValidatorId)
                             + environment.transmission_delay(
                                 (recipient + 1)
-                                    * instance.params.ryse_params.num_leaders as usize
+                                    * instance.params.ryse_params.num_proposers as usize
                                     * MAX_DATA_PER_SHRED,
                                 *relay,
                             );
@@ -353,14 +354,14 @@ impl LatencySimParams {
 }
 
 /// A builder for Ryse latency simulation instances.
-pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
-    ryse_builder: RyseInstanceBuilder<L, R>,
+pub struct LatencySimInstanceBuilder<P: SamplingStrategy, R: SamplingStrategy> {
+    ryse_builder: RyseInstanceBuilder<P, R>,
     params: LatencySimParams,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
+impl<P: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<P, R> {
     /// Creates a new builder instance from a builder for Rotor instances.
-    pub fn new(ryse_builder: RyseInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
+    pub fn new(ryse_builder: RyseInstanceBuilder<P, R>, params: LatencySimParams) -> Self {
         Self {
             ryse_builder,
             params,
@@ -368,7 +369,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBuilder<L, R> {
+impl<P: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBuilder<P, R> {
     type Params = LatencySimParams;
     type Instance = LatencySimInstance;
 

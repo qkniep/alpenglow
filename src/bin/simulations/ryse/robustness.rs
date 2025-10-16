@@ -53,7 +53,7 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
 
     let censorship_proposer_threshold = QuorumThreshold::Simple {
         quorum: 0,
-        threshold: params.num_leaders as usize,
+        threshold: params.num_proposers as usize,
         is_crash_enough: true,
     };
     let censorship_relay_threshold = QuorumThreshold::Simple {
@@ -70,7 +70,7 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
         "solana".to_string(),
         vec![proposer_sampler, relay_sampler],
         vec![0, 1],
-        vec![params.num_leaders as usize, params.num_relays as usize],
+        vec![params.num_proposers as usize, params.num_relays as usize],
         vec![hiding_attack, censorship_attack],
     );
     let adversary_strength = crate::quorum_robustness::AdversaryStrength {
@@ -78,7 +78,7 @@ pub fn run_ryse_robustness_test(total_shreds: u64) {
         byzantine: 0.2,
     };
 
-    let filename = format!("ryse_robustness_{}_{}", params.num_leaders, total_shreds);
+    let filename = format!("ryse_robustness_{}_{}", params.num_proposers, total_shreds);
     let path = std::path::Path::new("data")
         .join("output")
         .join(filename)

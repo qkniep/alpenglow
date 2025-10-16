@@ -18,8 +18,8 @@ use crate::discrete_event_simulator::Builder;
 pub struct RyseParameters {
     /// Number of slices in a block.
     pub num_slices: u64,
-    /// Number of leaders concurrently proposing in each slot.
-    pub num_leaders: u64,
+    /// Number of proposers concurrently proposing in each slot.
+    pub num_proposers: u64,
     /// Number of relays to use in the modified Rotor disseminator.
     pub num_relays: u64,
     /// Number of shreds required to successfully decode a block.
@@ -31,7 +31,7 @@ pub struct RyseParameters {
 /// Specific instance of the Ryse protocol.
 #[derive(Clone, Debug)]
 pub struct RyseInstance {
-    pub leaders: Vec<ValidatorId>,
+    pub proposers: Vec<ValidatorId>,
     pub relays: Vec<Vec<ValidatorId>>,
 }
 
@@ -59,9 +59,9 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L
 
     fn build(&self, rng: &mut impl Rng) -> RyseInstance {
         RyseInstance {
-            leaders: self
+            proposers: self
                 .leader_sampler
-                .sample_multiple(self.params.num_leaders as usize, rng),
+                .sample_multiple(self.params.num_proposers as usize, rng),
             relays: (0..self.params.num_slices)
                 .map(|_| {
                     self.relay_sampler
@@ -85,9 +85,9 @@ pub struct AdversaryStrength {
 
 impl RyseParameters {
     /// Generates a new balanced parameter set, equally resistant against all attacks.
-    pub fn new(num_leaders: u64, num_relays: u64) -> Self {
+    pub fn new(num_proposers: u64, num_relays: u64) -> Self {
         Self {
-            num_leaders,
+            num_proposers,
             num_relays,
             num_slices: 1,
             decode_threshold: (num_relays * 50).div_ceil(100),
@@ -103,7 +103,7 @@ impl RyseParameters {
         for relay_notar_threshold in 1..self.num_relays {
             for decode_threshold in 1..relay_notar_threshold {
                 let new_params = RyseParameters {
-                    num_leaders: self.num_leaders,
+                    num_proposers: self.num_proposers,
                     num_relays: self.num_relays,
                     num_slices: self.num_slices,
                     decode_threshold,
@@ -140,20 +140,20 @@ impl RyseParameters {
         1.0 - relays_dist.cdf(relays_needed.saturating_sub(1))
     }
 
-    /// Probability that the adversary can selectively censor leaders in a slot.
+    /// Probability that the adversary can selectively censor proposers in a slot.
     pub fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let leaders_dist = Binomial::new(failed, self.num_leaders).unwrap();
-        let prob_all_leaders = 1.0 - leaders_dist.cdf(self.num_leaders - 1);
+        let proposers_dist = Binomial::new(failed, self.num_proposers).unwrap();
+        let prob_all_proposers = 1.0 - proposers_dist.cdf(self.num_proposers - 1);
 
-        // probability that the adversary can exclude all leaders
+        // probability that the adversary can exclude all proposers
         let relays_dist = Binomial::new(failed, self.num_relays).unwrap();
         let relays_needed = self.num_relays - self.relay_notar_threshold;
         let prob_censor_relays = 1.0 - relays_dist.cdf(relays_needed - 1);
 
         // probability that either attack works
-        1.0 - (1.0 - prob_all_leaders) * (1.0 - prob_censor_relays)
+        1.0 - (1.0 - prob_all_proposers) * (1.0 - prob_censor_relays)
     }
 
     /// Probability that the adversary can cause a temporary liveness failure in a slot.
@@ -168,7 +168,7 @@ impl RyseParameters {
     pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
             "Ryse parameters: leaders={}, relays={}, {:.2}/{:.2}",
-            self.num_leaders,
+            self.num_proposers,
             self.num_relays,
             self.decode_threshold as f64 / self.num_relays as f64 * 100.0,
             self.relay_notar_threshold as f64 / self.num_relays as f64 * 100.0,
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_mcp_parameters() {
         let params = RyseParameters::new(2, 10);
-        assert_eq!(params.num_leaders, 2);
+        assert_eq!(params.num_proposers, 2);
         assert_eq!(params.num_relays, 10);
         assert_eq!(params.decode_threshold, 5);
         assert_eq!(params.relay_notar_threshold, 6);
