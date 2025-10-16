@@ -7,7 +7,7 @@
 //! That is, a tree with 3 leaves is equivalent to a tree with 4 leaves,
 //! where the 4th leaf has the empty byte slice `&[]` as its data.
 //!
-//! The maximum height of trees supported is [`MAX_TREE_HEIGHT`].
+//! The maximum height of trees supported is [`MAX_MERKLE_TREE_HEIGHT`].
 //! Once constructed, the tree is immutable.
 //!
 //! Labels are used to reduce the impact of multiple attack vectors:
@@ -24,17 +24,19 @@ use crate::shredder::TOTAL_SHREDS;
 use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 
 /// Maximum height of Merkle trees currently supported.
-pub const MAX_TREE_HEIGHT: usize = 32;
+pub const MAX_MERKLE_TREE_HEIGHT: usize = 32;
+/// Maximum number of leaf nodes in the Merkle trees currently supported.
+pub const MAX_MERKLE_TREE_LEAVES: usize = 1 << MAX_MERKLE_TREE_HEIGHT;
 // need to be able to build Merkle tree for each slice
-const_assert!(TOTAL_SHREDS <= 1 << MAX_TREE_HEIGHT);
+const_assert!(TOTAL_SHREDS <= MAX_MERKLE_TREE_LEAVES);
 // need to be able to build double-Merkle tree for each block
-const_assert!(MAX_SLICES_PER_BLOCK <= 1 << MAX_TREE_HEIGHT);
+const_assert!(MAX_SLICES_PER_BLOCK <= MAX_MERKLE_TREE_LEAVES);
 
 const LEAF_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEAF-NODE";
 const LEFT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEFT-NODE";
 const RIGHT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE RIGHT-NODE";
 
-/// Pre-calculated empty roots for up to `2 ^ MAX_TREE_HEIGHT` leaves.
+/// Pre-calculated empty roots for up to `2 ^ MAX_MERKLE_TREE_HEIGHT` leaves.
 ///
 /// For each given `height` these are calculated as `empty_root_fast(height)` below,
 /// which is much faster than but equivalent to the straightforward `empty_root(height)`.
@@ -58,7 +60,7 @@ const RIGHT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE RIGHT-NODE";
 /// ```
 ///
 /// Used for efficient check whether leaf is last in [`MerkleTree::check_proof_last`].
-const EMPTY_ROOTS: [Hash; MAX_TREE_HEIGHT] = [
+const EMPTY_ROOTS: [Hash; MAX_MERKLE_TREE_HEIGHT] = [
     hex!("50c4672b7a309041b109458b1f3a11f82c225970975a95cd1025209301fcbcab"),
     hex!("2aa0cc78c82100f0fa3a26606a9794a928d5ddd0f5d381f93d6b0d64d065aa6f"),
     hex!("be22d038e2a34ff9386f4df7241c0a381ff433c98e36e2e0a59b3cfef7950c5b"),
