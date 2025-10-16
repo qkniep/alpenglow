@@ -159,14 +159,16 @@ impl SlotState {
 
         let (certs_created, mut votor_events, mut blocks_to_repair) = match vote.kind() {
             VoteKind::Notar(_, _) => {
-                let block_hash = vote.block_hash().unwrap();
+                let block_hash = vote.block_hash().unwrap().clone();
+                let outputs = self.count_notar_stake(slot, &block_hash, voter_stake);
                 self.votes.notar[v] = Some((block_hash, vote));
-                self.count_notar_stake(slot, &block_hash, voter_stake)
+                outputs
             }
             VoteKind::NotarFallback(_, _) => {
-                let block_hash = vote.block_hash().unwrap();
+                let block_hash = vote.block_hash().unwrap().clone();
+                let outputs = self.count_notar_fallback_stake(&block_hash, voter_stake);
                 self.votes.notar_fallback[v].push((block_hash, vote));
-                self.count_notar_fallback_stake(&block_hash, voter_stake)
+                outputs
             }
             VoteKind::Skip(_) => {
                 self.votes.skip[v] = Some(vote);
@@ -265,7 +267,11 @@ impl SlotState {
         let mut blocks_to_repair = SmallVec::new();
 
         // increment stake
-        let notar_stake = self.voted_stakes.notar.entry(*block_hash).or_insert(0);
+        let notar_stake = self
+            .voted_stakes
+            .notar
+            .entry(block_hash.clone())
+            .or_insert(0);
         *notar_stake += stake;
         self.voted_stakes.notar_or_skip += stake;
         let notar_stake = *notar_stake;
@@ -275,9 +281,11 @@ impl SlotState {
         if !self.sent_safe_to_notar.contains(block_hash) {
             match self.check_safe_to_notar(block_hash) {
                 SafeToNotarStatus::SafeToNotar => {
-                    votor_events.push(VotorEvent::SafeToNotar(slot, *block_hash));
+                    votor_events.push(VotorEvent::SafeToNotar(slot, block_hash.clone()));
                 }
-                SafeToNotarStatus::MissingBlock => blocks_to_repair.push((slot, *block_hash)),
+                SafeToNotarStatus::MissingBlock => {
+                    blocks_to_repair.push((slot, block_hash.clone()))
+                }
                 SafeToNotarStatus::AwaitingVotes => {}
             }
         }
@@ -324,7 +332,7 @@ impl SlotState {
     ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let nf_stakes = &mut self.voted_stakes.notar_fallback;
-        let nf_stake = nf_stakes.entry(*block_hash).or_insert(0);
+        let nf_stake = nf_stakes.entry(block_hash.clone()).or_insert(0);
         *nf_stake += stake;
         let nf_stake = *nf_stake;
         let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
@@ -409,7 +417,7 @@ impl SlotState {
                 if self.votes.skip[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
-                if let Some((old_hash, _)) = self.votes.notar[v]
+                if let Some((old_hash, _)) = &self.votes.notar[v]
                     && block_hash != old_hash
                 {
                     return Some(SlashableOffence::NotarDifferentHash(voter, slot));
@@ -453,7 +461,7 @@ impl SlotState {
             VoteKind::Notar(_, _) => self.votes.notar[v].is_some(),
             VoteKind::NotarFallback(_, _) => self.votes.notar_fallback[v]
                 .iter()
-                .any(|(hash, _)| hash == vote.block_hash().as_ref().unwrap()),
+                .any(|(hash, _)| hash == vote.block_hash().unwrap()),
             VoteKind::Skip(_) | VoteKind::SkipFallback(_) => {
                 self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some()
             }
@@ -469,7 +477,7 @@ impl SlotState {
             return SafeToNotarStatus::AwaitingVotes;
         }
         if !self.is_weak_quorum(notar_stake) && !self.is_quorum(notar_stake + skip_stake) {
-            self.pending_safe_to_notar.insert(*block_hash);
+            self.pending_safe_to_notar.insert(block_hash.clone());
             return SafeToNotarStatus::AwaitingVotes;
         }
 
@@ -485,12 +493,12 @@ impl SlotState {
         let skip = &self.votes.skip[own_id as usize];
         let notar = &self.votes.notar[own_id as usize];
         if skip.is_some() || notar.is_some() && &notar.as_ref().unwrap().0 != block_hash {
-            self.sent_safe_to_notar.insert(*block_hash);
+            self.sent_safe_to_notar.insert(block_hash.clone());
             self.pending_safe_to_notar.remove(block_hash);
             SafeToNotarStatus::SafeToNotar
         } else {
             if skip.is_none() && notar.is_none() {
-                self.pending_safe_to_notar.insert(*block_hash);
+                self.pending_safe_to_notar.insert(block_hash.clone());
             }
             SafeToNotarStatus::AwaitingVotes
         }
@@ -642,10 +650,10 @@ mod tests {
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);
         assert!(blocks.is_empty());
-        match events[0] {
+        match &events[0] {
             VotorEvent::SafeToNotar(s, h) => {
-                assert_eq!(s, Slot::new(1));
-                assert_eq!(h, [1; 32].into());
+                assert_eq!(*s, Slot::new(1));
+                assert_eq!(*h, [1; 32].into());
             }
             _ => unreachable!(),
         }

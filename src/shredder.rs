@@ -634,7 +634,7 @@ mod tests {
         // restore from all shreds
         let all = into_array(&shreds);
         let (slice_restored, _) = RegularShredder::deshred(&all)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore only from data shreds
@@ -688,7 +688,7 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = CodingOnlyShredder::deshred(&input)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
@@ -730,7 +730,7 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = AontShredder::deshred(&input)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
@@ -779,7 +779,7 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = PetsShredder::deshred(&input)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds

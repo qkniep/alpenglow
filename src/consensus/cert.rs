@@ -64,11 +64,11 @@ impl Cert {
     ///
     /// Returns `None` if this is a skip or finalization certificates.
     #[must_use]
-    pub const fn block_hash(&self) -> Option<BlockHash> {
+    pub const fn block_hash(&self) -> Option<&BlockHash> {
         match self {
-            Self::Notar(n) => Some(n.block_hash),
-            Self::NotarFallback(n) => Some(n.block_hash),
-            Self::FastFinal(f) => Some(f.block_hash),
+            Self::Notar(n) => Some(&n.block_hash),
+            Self::NotarFallback(n) => Some(&n.block_hash),
+            Self::FastFinal(f) => Some(&f.block_hash),
             Self::Skip(_) | Self::Final(_) => None,
         }
     }
@@ -172,14 +172,14 @@ impl NotarCert {
             return Err(CertError::WrongVoteType);
         }
         let slot = votes[0].slot();
-        let block_hash = votes[0].block_hash().unwrap();
+        let block_hash = votes[0].block_hash().unwrap().clone();
 
         for vote in votes {
             if vote.slot() != slot {
                 return Err(CertError::SlotMismatch);
             } else if !vote.is_notar() {
                 return Err(CertError::WrongVoteType);
-            } else if vote.block_hash() != Some(block_hash) {
+            } else if vote.block_hash() != Some(&block_hash) {
                 return Err(CertError::BlockHashMismatch);
             }
         }
@@ -211,7 +211,7 @@ impl NotarCert {
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
-        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
+        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
 
@@ -244,14 +244,14 @@ impl NotarFallbackCert {
             return Err(CertError::WrongVoteType);
         };
         let slot = votes[0].slot();
-        let block_hash = votes[0].block_hash().unwrap();
+        let block_hash = votes[0].block_hash().unwrap().clone();
 
         for vote in votes {
             if vote.slot() != slot {
                 return Err(CertError::SlotMismatch);
             } else if !vote.is_notar() && !vote.is_notar_fallback() {
                 return Err(CertError::WrongVoteType);
-            } else if vote.block_hash() != Some(block_hash) {
+            } else if vote.block_hash() != Some(&block_hash) {
                 return Err(CertError::BlockHashMismatch);
             }
         }
@@ -299,13 +299,14 @@ impl NotarFallbackCert {
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
 
-        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
+        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         let sig1_valid = self
             .agg_sig_notar
             .as_ref()
             .is_none_or(|s| s.verify(&vote_bytes, &pks));
 
-        let vote_bytes = VoteKind::NotarFallback(self.slot, self.block_hash).bytes_to_sign();
+        let vote_bytes =
+            VoteKind::NotarFallback(self.slot, self.block_hash.clone()).bytes_to_sign();
         let sig2_valid = self
             .agg_sig_notar_fallback
             .as_ref()
@@ -430,14 +431,14 @@ impl FastFinalCert {
             return Err(CertError::WrongVoteType);
         }
         let slot = votes[0].slot();
-        let block_hash = votes[0].block_hash().unwrap();
+        let block_hash = votes[0].block_hash().unwrap().clone();
 
         for vote in votes {
             if vote.slot() != slot {
                 return Err(CertError::SlotMismatch);
             } else if !vote.is_notar() {
                 return Err(CertError::WrongVoteType);
-            } else if vote.block_hash() != Some(block_hash) {
+            } else if vote.block_hash() != Some(&block_hash) {
                 return Err(CertError::BlockHashMismatch);
             }
         }
@@ -469,7 +470,7 @@ impl FastFinalCert {
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
-        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash).bytes_to_sign();
+        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
 
@@ -589,7 +590,7 @@ mod tests {
     fn create_votes(kind: VoteKind, sks: &[SecretKey]) -> Vec<Vote> {
         sks.iter()
             .enumerate()
-            .map(|(i, sk)| Vote::new(kind, sk, i as ValidatorId))
+            .map(|(i, sk)| Vote::new(kind.clone(), sk, i as ValidatorId))
             .collect()
     }
 

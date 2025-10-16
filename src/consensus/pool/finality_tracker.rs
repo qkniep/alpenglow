@@ -39,7 +39,7 @@ pub struct FinalityTracker {
 }
 
 /// Possible states a slot can be in regarding finality.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FinalizationStatus {
     /// Block with given hash is notarized, but slot is not yet (known to be) finalized.
     Notarized(BlockHash),
@@ -73,13 +73,13 @@ impl FinalityTracker {
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         assert!(block.0 > parent.0);
-        match self.parents.entry(block) {
+        match self.parents.entry(block.clone()) {
             Entry::Occupied(e) => {
                 assert!(e.get() == &parent);
                 return FinalizationEvent::default();
             }
             Entry::Vacant(e) => {
-                e.insert(parent);
+                e.insert(parent.clone());
             }
         }
 
@@ -109,7 +109,7 @@ impl FinalityTracker {
     pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: BlockHash) -> FinalizationEvent {
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Finalized(block_hash));
+            .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
         if let Some(status) = old {
             match status {
                 FinalizationStatus::Finalized(hash)
@@ -139,7 +139,7 @@ impl FinalityTracker {
     pub fn mark_notarized(&mut self, slot: Slot, block_hash: BlockHash) -> FinalizationEvent {
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Notarized(block_hash));
+            .insert(slot, FinalizationStatus::Notarized(block_hash.clone()));
         let Some(status) = old else {
             return FinalizationEvent::default();
         };
@@ -155,7 +155,7 @@ impl FinalityTracker {
             FinalizationStatus::FinalPendingNotar => {
                 let mut event = FinalizationEvent::default();
                 self.status
-                    .insert(slot, FinalizationStatus::Finalized(block_hash));
+                    .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
                 self.handle_finalized_block((slot, block_hash), &mut event);
                 event
             }
@@ -183,7 +183,7 @@ impl FinalityTracker {
             FinalizationStatus::Notarized(block_hash) => {
                 let mut event = FinalizationEvent::default();
                 self.status
-                    .insert(slot, FinalizationStatus::Finalized(block_hash));
+                    .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
                 self.handle_finalized_block((slot, block_hash), &mut event);
                 event
             }
@@ -209,11 +209,11 @@ impl FinalityTracker {
     /// - any implicitly skipped slots.
     fn handle_finalized_block(&mut self, finalized: BlockId, event: &mut FinalizationEvent) {
         let (slot, _) = finalized;
-        event.finalized = Some(finalized);
+        event.finalized = Some(finalized.clone());
         self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
 
-        if let Some(parent) = self.parents.get(&finalized) {
-            self.handle_implicitly_finalized(slot, *parent, event);
+        if let Some(parent) = self.parents.get(&finalized).cloned() {
+            self.handle_implicitly_finalized(slot, parent, event);
         }
     }
 
@@ -257,15 +257,16 @@ impl FinalityTracker {
         }
 
         // mark block as implicitly finalized
-        let (slot, block_hash) = implicitly_finalized;
-        let old = self
-            .status
-            .insert(slot, FinalizationStatus::ImplicitlyFinalized(block_hash));
+        let (slot, block_hash) = implicitly_finalized.clone();
+        let old = self.status.insert(
+            slot,
+            FinalizationStatus::ImplicitlyFinalized(block_hash.clone()),
+        );
         if let Some(status) = old {
             match status {
-                FinalizationStatus::Finalized(hash)
-                | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                    assert_eq!(hash, block_hash, "consensus safety violation");
+                FinalizationStatus::Finalized(ref hash)
+                | FinalizationStatus::ImplicitlyFinalized(ref hash) => {
+                    assert_eq!(*hash, block_hash, "consensus safety violation");
                     self.status.insert(slot, status);
                     return;
                 }
@@ -275,11 +276,13 @@ impl FinalityTracker {
                 }
             }
         }
-        event.implicitly_finalized.push(implicitly_finalized);
+        event
+            .implicitly_finalized
+            .push(implicitly_finalized.clone());
 
         // recurse through ancestors
-        if let Some(parent) = self.parents.get(&implicitly_finalized) {
-            self.handle_implicitly_finalized(implicitly_finalized.0, *parent, event);
+        if let Some(parent) = self.parents.get(&implicitly_finalized).cloned() {
+            self.handle_implicitly_finalized(implicitly_finalized.0, parent, event);
         }
     }
 }

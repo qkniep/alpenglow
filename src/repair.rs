@@ -140,33 +140,33 @@ where
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
         let response = match request.req_type {
-            RepairRequestType::LastSliceRoot(block_id) => {
+            RepairRequestType::LastSliceRoot(ref block_id) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(last_slice) = blockstore.get_last_slice_index(&block_id) else {
+                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
                     return Ok(());
                 };
-                let Some(root) = blockstore.get_slice_root(&block_id, last_slice) else {
+                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
                     return Ok(());
                 };
-                let Some(proof) = blockstore.create_double_merkle_proof(&block_id, last_slice)
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
                 else {
                     return Ok(());
                 };
-                RepairResponse::LastSliceRoot(request.req_type, last_slice, root, proof)
+                RepairResponse::LastSliceRoot(request.req_type, last_slice, root.clone(), proof)
             }
-            RepairRequestType::SliceRoot(block_id, slice) => {
+            RepairRequestType::SliceRoot(ref block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(root) = blockstore.get_slice_root(&block_id, slice) else {
+                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
                     return Ok(());
                 };
-                let Some(proof) = blockstore.create_double_merkle_proof(&block_id, slice) else {
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
                     return Ok(());
                 };
-                RepairResponse::SliceRoot(request.req_type, root, proof)
+                RepairResponse::SliceRoot(request.req_type, root.clone(), proof)
             }
-            RepairRequestType::Shred(block_id, slice, shred) => {
+            RepairRequestType::Shred(ref block_id, slice, shred) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(shred) = blockstore.get_shred(&block_id, slice, shred).cloned() else {
+                let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
                 RepairResponse::Shred(request.req_type, shred.into_shred())
@@ -262,7 +262,7 @@ where
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&mut self, block_id: BlockId) {
-        let (slot, block_hash) = block_id;
+        let (slot, ref block_hash) = block_id;
         let h = &hex::encode(block_hash)[..8];
         if self.blockstore.read().await.get_block(&block_id).is_some() {
             trace!("ignoring repair for block {h} in slot {slot}, already have the block");
@@ -292,7 +292,7 @@ where
         match response {
             RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
                 // check validity of response
-                let RepairRequestType::LastSliceRoot(block_id) = req_type else {
+                let RepairRequestType::LastSliceRoot(ref block_id) = req_type else {
                     warn!("repair response (LastSliceRoot) to mismatching request {req_type:?}");
                     return;
                 };
@@ -300,7 +300,7 @@ where
                 if !DoubleMerkleTree::check_proof_last(
                     &root,
                     last_slice.inner(),
-                    &block_hash,
+                    block_hash,
                     &proof,
                 ) {
                     warn!("repair response (LastSliceRoot) with invalid proof");
@@ -308,56 +308,57 @@ where
                 }
 
                 // store slice Merkle root
-                self.slice_roots.insert((block_id, last_slice), root);
+                self.slice_roots
+                    .insert((block_id.clone(), last_slice), root);
 
                 // issue next requests
                 // TODO: do not request last slice root again
                 // TODO: already requests shreds for last slice here
                 for slice in last_slice.until() {
-                    let req_type = RepairRequestType::SliceRoot(block_id, slice);
+                    let req_type = RepairRequestType::SliceRoot(block_id.clone(), slice);
                     self.send_request(req_type).await.unwrap();
                 }
             }
             RepairResponse::SliceRoot(req_type, root, proof) => {
                 // check validity of response
-                let RepairRequestType::SliceRoot(block_id, slice) = req_type else {
+                let RepairRequestType::SliceRoot(ref block_id, slice) = req_type else {
                     warn!("repair response (SliceRoot) to mismatching request {req_type:?}");
                     return;
                 };
                 let (_, block_hash) = block_id;
-                if !DoubleMerkleTree::check_proof(&root, slice.inner(), &block_hash, &proof) {
+                if !DoubleMerkleTree::check_proof(&root, slice.inner(), block_hash, &proof) {
                     warn!("repair response (SliceRoot) with invalid proof");
                     return;
                 }
 
                 // store slice Merkle root
-                self.slice_roots.insert((block_id, slice), root);
+                self.slice_roots.insert((block_id.clone(), slice), root);
 
                 // issue next requests
                 // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
                 for shred_index in ShredIndex::all() {
-                    let req = RepairRequestType::Shred(block_id, slice, shred_index);
+                    let req = RepairRequestType::Shred(block_id.clone(), slice, shred_index);
                     self.send_request(req).await.unwrap();
                 }
             }
             RepairResponse::Shred(req_type, shred) => {
                 // check validity of response
-                let RepairRequestType::Shred(block_id, slice, index) = req_type else {
+                let RepairRequestType::Shred(ref block_id, slice, index) = req_type else {
                     warn!("repair response (Shred) to mismatching request {req_type:?}");
                     return;
                 };
                 let (slot, block_hash) = block_id;
-                if shred.payload().header.slot != slot
+                if shred.payload().header.slot != *slot
                     || shred.payload().header.slice_index != slice
                     || shred.payload().shred_index != index
                 {
                     warn!("repair response (Shred) for mismatching shred index");
                     return;
                 }
-                let Some(&root) = self.slice_roots.get(&(block_id, slice)) else {
+                let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                if !shred.verify_path_only(&root) {
+                if !shred.verify_path_only(root) {
                     warn!("repair response (Shred) with invalid Merkle proof");
                     return;
                 }
@@ -370,11 +371,11 @@ where
                     .add_shred_from_repair(block_hash, shred)
                     .await;
                 if let Ok(Some(block_info)) = res {
-                    assert_eq!(block_info.hash, block_hash);
+                    assert_eq!(block_info.hash, *block_hash);
                     self.pool
                         .write()
                         .await
-                        .add_block((slot, block_info.hash), block_info.parent)
+                        .add_block((*slot, block_info.hash), block_info.parent)
                         .await;
                     debug!(
                         "successfully repaired block {} in slot {}",
@@ -553,18 +554,18 @@ mod tests {
         let block_to_repair = (slot, block_hash);
 
         // ask repair instance to repair this block
-        repair_channel.send(block_to_repair).await.unwrap();
+        repair_channel.send(block_to_repair.clone()).await.unwrap();
 
         // expect LastSliceRoot request first
         let msg = other_network_request.receive().await.unwrap();
-        let req_type = RepairRequestType::LastSliceRoot(block_to_repair);
+        let req_type = RepairRequestType::LastSliceRoot(block_to_repair.clone());
         assert_eq!(msg.req_type, req_type);
 
         // answer LastSliceRoot request
         let response = RepairResponse::LastSliceRoot(
             req_type,
             SliceIndex::new_unchecked(num_slices - 1),
-            shreds.last().unwrap()[0].merkle_root,
+            shreds.last().unwrap()[0].merkle_root.clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
         let port1 = localhost_ip_sockaddr(3);
@@ -576,7 +577,7 @@ mod tests {
             let msg = other_network_request.receive().await.unwrap();
 
             for slice in SliceIndex::all().take(num_slices) {
-                let req_type = RepairRequestType::SliceRoot(block_to_repair, slice);
+                let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
                 if msg.req_type == req_type {
                     slice_roots_requested.insert(slice);
                     break;
@@ -587,8 +588,8 @@ mod tests {
         // assert all other slice roots requested + answer the requests
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
-            let req_type = RepairRequestType::SliceRoot(block_to_repair, slice);
-            let root = shreds[slice.inner()][0].merkle_root;
+            let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
+            let root = shreds[slice.inner()][0].merkle_root.clone();
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
             other_network_request.send(&response, port1).await.unwrap();
@@ -598,7 +599,8 @@ mod tests {
             for _ in ShredIndex::all() {
                 let msg = other_network_request.receive().await.unwrap();
                 for shred_index in ShredIndex::all() {
-                    let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
+                    let req_type =
+                        RepairRequestType::Shred(block_to_repair.clone(), slice, shred_index);
                     if msg.req_type == req_type {
                         shreds_requested.insert(shred_index);
                         break;
@@ -611,7 +613,8 @@ mod tests {
             for (shred_index, shred) in slice_shreds.into_iter().take(TOTAL_SHREDS).enumerate() {
                 let shred_index = ShredIndex::new(shred_index).unwrap();
                 assert!(shreds_requested.contains(&shred_index));
-                let req_type = RepairRequestType::Shred(block_to_repair, slice, shred_index);
+                let req_type =
+                    RepairRequestType::Shred(block_to_repair.clone(), slice, shred_index);
                 let response = RepairResponse::Shred(req_type, shred.into_shred());
                 other_network_request.send(&response, port1).await.unwrap();
             }
@@ -637,7 +640,7 @@ mod tests {
         // create a block to repair
         let slot = Slot::genesis().next();
         let (block_hash, _, shreds) = create_random_shredded_block(slot, SLICES, &sk);
-        let block_to_repair = (slot, block_hash);
+        let block_to_repair = (slot, block_hash.clone());
 
         // ingest the block into blockstore
         for slice_shreds in shreds.clone() {
@@ -648,7 +651,7 @@ mod tests {
         }
         assert_eq!(
             blockstore.read().await.disseminated_block_hash(slot),
-            Some(block_hash)
+            Some(&block_hash)
         );
         assert!(
             blockstore
@@ -660,7 +663,7 @@ mod tests {
 
         // request last slice root to learn how many slices there are
         let request = RepairRequest {
-            req_type: RepairRequestType::LastSliceRoot(block_to_repair),
+            req_type: RepairRequestType::LastSliceRoot(block_to_repair.clone()),
             sender: 0,
         };
         let port1 = localhost_ip_sockaddr(2);
@@ -684,7 +687,7 @@ mod tests {
         // request slice roots
         for slice in SliceIndex::all().take(SLICES) {
             let request = RepairRequest {
-                req_type: RepairRequestType::SliceRoot(block_to_repair, slice),
+                req_type: RepairRequestType::SliceRoot(block_to_repair.clone(), slice),
                 sender: 0,
             };
             other_network.send(&request, port1).await.unwrap();
@@ -706,7 +709,7 @@ mod tests {
             // request slice shreds
             for shred_index in ShredIndex::all() {
                 let request = RepairRequest {
-                    req_type: RepairRequestType::Shred(block_to_repair, slice, shred_index),
+                    req_type: RepairRequestType::Shred(block_to_repair.clone(), slice, shred_index),
                     sender: 0,
                 };
                 other_network.send(&request, port1).await.unwrap();

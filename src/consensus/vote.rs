@@ -27,7 +27,7 @@ pub struct Vote {
 }
 
 /// Represents the type-specific vote payload as per the protocol.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VoteKind {
     /// A notarization vote for a given block hash in a given slot.
     Notar(Slot, BlockHash),
@@ -152,7 +152,7 @@ impl Vote {
     ///
     /// Returns `None` if the vote is a skip(-fallback) or finalization vote.
     #[must_use]
-    pub const fn block_hash(&self) -> Option<BlockHash> {
+    pub const fn block_hash(&self) -> Option<&BlockHash> {
         self.kind.block_hash()
     }
 
@@ -186,9 +186,9 @@ impl VoteKind {
     ///
     /// Returns `None` if the vote is a skip(-fallback) or finalization vote.
     #[must_use]
-    pub const fn block_hash(&self) -> Option<BlockHash> {
+    pub const fn block_hash(&self) -> Option<&BlockHash> {
         match self {
-            Self::Notar(_, hash) | Self::NotarFallback(_, hash) => Some(*hash),
+            Self::Notar(_, hash) | Self::NotarFallback(_, hash) => Some(hash),
             Self::Skip(_) | Self::SkipFallback(_) | Self::Final(_) => None,
         }
     }

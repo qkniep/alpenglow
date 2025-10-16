@@ -143,20 +143,23 @@ impl PoolImpl {
         // handle resulting state updates
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
-                let block_hash = cert.block_hash().unwrap();
+                let block_hash = cert.block_hash().cloned().unwrap();
+                let block_id = (slot, block_hash.clone());
                 info!(
                     "notarized(-fallback) block {} in slot {}",
-                    &hex::encode(block_hash)[..8],
+                    &hex::encode(&block_hash)[..8],
                     slot
                 );
                 if matches!(cert, Cert::Notar(_)) {
-                    let finalization_event = self.finality_tracker.mark_notarized(slot, block_hash);
+                    let finalization_event = self
+                        .finality_tracker
+                        .mark_notarized(slot, block_hash.clone());
                     self.handle_finalization(finalization_event).await;
                 }
 
                 // potentially notify child waiting for safe-to-notar
                 if let Some((child_slot, child_hash)) =
-                    self.s2n_waiting_parent_cert.remove(&(slot, block_hash))
+                    self.s2n_waiting_parent_cert.remove(&block_id)
                     && let Some(output) = self
                         .slot_state(child_slot)
                         .notify_parent_certified(child_hash)
@@ -172,9 +175,7 @@ impl PoolImpl {
                 }
 
                 // add block to parent-ready tracker, send any new parents to Votor.
-                let new_parents_ready = self
-                    .parent_ready_tracker
-                    .mark_notar_fallback((slot, block_hash));
+                let new_parents_ready = self.parent_ready_tracker.mark_notar_fallback(&block_id);
                 self.send_parent_ready_events(&new_parents_ready).await;
 
                 // repair this block, if necessary
@@ -187,8 +188,8 @@ impl PoolImpl {
             }
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
-                let hash = ff_cert.block_hash();
-                let finalization_event = self.finality_tracker.mark_fast_finalized(slot, *hash);
+                let hash = ff_cert.block_hash().clone();
+                let finalization_event = self.finality_tracker.mark_fast_finalized(slot, hash);
                 self.handle_finalization(finalization_event).await;
                 self.prune();
             }
@@ -312,13 +313,13 @@ impl PoolImpl {
     }
 
     /// Returns the hash of the notarized block for the given slot, if any.
-    pub fn get_notarized_block(&self, slot: Slot) -> Option<BlockHash> {
+    pub fn get_notarized_block(&self, slot: Slot) -> Option<&BlockHash> {
         self.slot_states.get(&slot).and_then(|state| {
             state
                 .certificates
                 .notar
                 .as_ref()
-                .map(|cert| *cert.block_hash())
+                .map(|cert| cert.block_hash())
         })
     }
 
@@ -349,7 +350,7 @@ impl PoolImpl {
     }
 
     async fn send_parent_ready_events(&self, parents: &[(Slot, BlockId)]) {
-        for &(slot, (parent_slot, parent_hash)) in parents {
+        for (slot, (parent_slot, parent_hash)) in parents.iter().cloned() {
             debug_assert!(slot.is_start_of_window());
             let event = VotorEvent::ParentReady {
                 slot,
@@ -389,7 +390,7 @@ impl Pool for PoolImpl {
             Cert::NotarFallback(_) => certs
                 .notar_fallback
                 .iter()
-                .any(|nf| nf.block_hash() == &cert.block_hash().unwrap()),
+                .any(|nf| nf.block_hash() == cert.block_hash().unwrap()),
             Cert::Skip(_) => certs.skip.is_some(),
             Cert::FastFinal(_) => certs.fast_finalize.is_some(),
             Cert::Final(_) => certs.finalize.is_some(),
@@ -452,19 +453,24 @@ impl Pool for PoolImpl {
     /// Ensures that the parent information is available for safe-to-notar checks.
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
         assert!(block_id.0 > parent_id.0);
-        let (slot, block_hash) = block_id;
-        let (parent_slot, parent_hash) = parent_id;
+        let (slot, block_hash) = &block_id;
+        let (parent_slot, parent_hash) = &parent_id;
 
-        let finalization_event = self.finality_tracker.add_parent(block_id, parent_id);
+        let finalization_event = self
+            .finality_tracker
+            .add_parent(block_id.clone(), parent_id.clone());
         let new_parents_ready = self
             .parent_ready_tracker
             .handle_finalization(finalization_event);
         self.send_parent_ready_events(&new_parents_ready).await;
 
-        self.slot_state(slot).notify_parent_known(block_hash);
-        if let Some(parent_state) = self.slot_states.get(&parent_slot)
-            && parent_state.is_notar_fallback(&parent_hash)
-            && let Some(output) = self.slot_state(slot).notify_parent_certified(block_hash)
+        self.slot_state(*slot)
+            .notify_parent_known(block_hash.clone());
+        if let Some(parent_state) = self.slot_states.get(parent_slot)
+            && parent_state.is_notar_fallback(parent_hash)
+            && let Some(output) = self
+                .slot_state(*slot)
+                .notify_parent_certified(block_hash.clone())
         {
             match output {
                 Either::Left(event) => {
@@ -476,8 +482,7 @@ impl Pool for PoolImpl {
             }
             return;
         }
-        self.s2n_waiting_parent_cert
-            .insert((parent_slot, parent_hash), (slot, block_hash));
+        self.s2n_waiting_parent_cert.insert(parent_id, block_id);
     }
 
     /// Triggers a recovery from a standstill.
@@ -974,10 +979,10 @@ mod tests {
         // all nodes vote to fast finalize 3 leader windows
         for slot in 0..3 * SLOTS_PER_WINDOW {
             let slot = Slot::new(slot);
-            let hash = [slot.inner() as u8; 32].into();
+            let hash: BlockHash = [slot.inner() as u8; 32].into();
             assert!(!pool.has_final_cert(slot));
             for v in 0..11 {
-                let vote = Vote::new_notar(slot, hash, &sks[v as usize], v);
+                let vote = Vote::new_notar(slot, hash.clone(), &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
             assert!(pool.has_final_cert(slot));
@@ -995,9 +1000,9 @@ mod tests {
         // NOT enough nodes vote to fast finalize next 10 slots
         for s in 1..=10 {
             let slot = Slot::new(last_slot.inner() + s);
-            let hash = [slot.inner() as u8; 32].into();
+            let hash: BlockHash = [slot.inner() as u8; 32].into();
             for v in 0..8 {
-                let vote = Vote::new_notar(slot, hash, &sks[v as usize], v);
+                let vote = Vote::new_notar(slot, hash.clone(), &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
             assert!(!pool.has_final_cert(slot));

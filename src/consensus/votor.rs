@@ -186,8 +186,8 @@ impl<A: All2All> Votor<A> {
                     match cert.as_ref() {
                         Cert::Notar(_) => {
                             self.block_notarized
-                                .insert(cert.slot(), cert.block_hash().unwrap());
-                            self.try_final(cert.slot(), cert.block_hash().unwrap())
+                                .insert(cert.slot(), cert.block_hash().cloned().unwrap());
+                            self.try_final(cert.slot(), cert.block_hash().cloned().unwrap())
                                 .await;
                         }
                         Cert::Final(_) | Cert::FastFinal(_) => {
@@ -284,10 +284,10 @@ impl<A: All2All> Votor<A> {
         } = block_info;
         let first_slot_in_window = slot.first_slot_in_window();
         if slot == first_slot_in_window {
-            let valid_parent = self
-                .parents_ready
-                .contains(&(slot, parent_slot, parent_hash));
-            let h = &hex::encode(parent_hash)[..8];
+            let valid_parent =
+                self.parents_ready
+                    .contains(&(slot, parent_slot, parent_hash.clone()));
+            let h = &hex::encode(&parent_hash)[..8];
             trace!(
                 "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
             );
@@ -300,10 +300,10 @@ impl<A: All2All> Votor<A> {
             return false;
         }
         debug!("voted notar for slot {slot}");
-        let vote = Vote::new_notar(slot, hash, &self.voting_key, self.validator_id);
+        let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_id);
         self.all2all.broadcast(&vote.into()).await.unwrap();
         self.voted.insert(slot);
-        self.voted_notar.insert(slot, hash);
+        self.voted_notar.insert(slot, hash.clone());
         self.pending_blocks.remove(&slot);
         self.try_final(slot, hash).await;
         true
@@ -521,7 +521,7 @@ mod tests {
             ConsensusMessage::Vote(v) => {
                 assert!(v.is_notar_fallback());
                 assert_eq!(v.slot(), slot);
-                assert_eq!(v.block_hash(), Some([1; 32].into()));
+                assert_eq!(v.block_hash(), Some(&[1; 32].into()));
             }
             m => panic!("other msg: {m:?}"),
         }

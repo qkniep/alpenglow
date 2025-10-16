@@ -313,14 +313,14 @@ impl BlockData {
         // reconstruct block header
         let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
         // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let mut parent = first_slice.parent.unwrap();
+        let mut parent = first_slice.parent.clone().unwrap();
         let mut parent_switched = false;
 
         let mut transactions = vec![];
         for (ind, slice) in &self.slices {
             // handle optimistic handover
             if !ind.is_first()
-                && let Some(new_parent) = slice.parent
+                && let Some(new_parent) = slice.parent.clone()
             {
                 if new_parent == parent {
                     warn!("parent switched to same value");
@@ -356,7 +356,7 @@ impl BlockData {
 
         let block = Block {
             slot: self.slot,
-            block_hash,
+            block_hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
             transactions,
@@ -405,7 +405,7 @@ mod tests {
             VotorEvent::Block {
                 slot: _,
                 block_info: BlockInfo { hash, parent: _ },
-            } => *hash,
+            } => hash.clone(),
             _ => panic!(),
         }
     }
@@ -454,7 +454,7 @@ mod tests {
             slot,
             block_info: BlockInfo {
                 hash,
-                parent: slices[0].parent.unwrap(),
+                parent: slices[0].parent.clone().unwrap(),
             },
         };
         assert_votor_events_match(events[1].clone(), block_event);
@@ -476,7 +476,7 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
-        slices[2].parent = slices[0].parent;
+        slices[2].parent = slices[0].parent.clone();
 
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];
@@ -502,8 +502,8 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
-        let parent = slices[0].parent.unwrap();
-        let slice_1_parent = (parent.0.next(), parent.1);
+        let parent = slices[0].parent.clone().unwrap();
+        let slice_1_parent = (parent.0.next(), parent.1.clone());
         assert!(slice_1_parent.0 < slot);
         let slice_2_parent = (parent.0.next().next(), parent.1);
         assert!(slice_2_parent.0 < slot);
@@ -534,10 +534,10 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
-        let parent = slices[0].parent.unwrap();
+        let parent = slices[0].parent.clone().unwrap();
         let slice_1_parent = (parent.0.next(), parent.1);
         assert!(slice_1_parent.0 < slot);
-        slices[1].parent = Some(slice_1_parent);
+        slices[1].parent = Some(slice_1_parent.clone());
 
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];

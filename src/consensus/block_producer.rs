@@ -175,21 +175,21 @@ where
         mut parent_ready_receiver: oneshot::Receiver<BlockId>,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
-        let (parent_slot, parent_hash) = parent_block_id;
-        assert_eq!(parent_slot, slot.prev());
+        let (parent_slot, parent_hash) = &parent_block_id;
+        assert_eq!(*parent_slot, slot.prev());
         assert!(slot.is_start_of_window());
         info!(
             "optimistically producing block in slot {} with parent {} in slot {}",
             slot,
             &hex::encode(parent_hash)[..8],
-            parent_slot,
+            *parent_slot,
         );
 
         // only start the DELTA_BLOCK timer once the ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
             let parent = if slice_index.is_first() {
-                Some(parent_block_id)
+                Some(parent_block_id.clone())
             } else {
                 None
             };
@@ -227,13 +227,13 @@ where
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash != parent_hash {
-                            assert_ne!(new_slot, parent_slot);
+                        if new_hash != *parent_hash {
+                            assert_ne!(new_slot, *parent_slot);
                             debug!(
                                 "changed parent from {} in slot {} to {} in slot {}",
                                 &hex::encode(parent_hash)[..8],
                                 parent_slot,
-                                &hex::encode(new_hash)[..8],
+                                &hex::encode(&new_hash)[..8],
                                 new_slot
                             );
                             payload.parent = Some((new_slot, new_hash));
@@ -253,13 +253,13 @@ where
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if is_last && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                if new_hash != parent_hash {
-                    assert_ne!(new_slot, parent_slot);
+                if new_hash != *parent_hash {
+                    assert_ne!(new_slot, *parent_slot);
                     debug!(
                         "changed parent from {} in slot {} to {} in slot {}",
                         &hex::encode(parent_hash)[..8],
                         parent_slot,
-                        &hex::encode(new_hash)[..8],
+                        &hex::encode(&new_hash)[..8],
                         new_slot
                     );
                     payload.parent = Some((new_slot, new_hash));
@@ -293,7 +293,7 @@ where
         parent_block_id: BlockId,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
-        let (parent_slot, parent_hash) = parent_block_id;
+        let (parent_slot, parent_hash) = &parent_block_id;
         info!(
             "producing block in slot {} with ready parent {} in slot {}",
             slot,
@@ -308,7 +308,7 @@ where
                 let time_for_slice = self.delta_first_slice;
                 let (payload, slice_duration_left) = produce_slice_payload(
                     &self.txs_receiver,
-                    Some(parent_block_id),
+                    Some(parent_block_id.clone()),
                     time_for_slice,
                 )
                 .await;
@@ -363,8 +363,8 @@ where
                 .await;
             if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
-                maybe_block_hash = Some(block_info.hash);
-                let block_id = (slot, block_info.hash);
+                maybe_block_hash = Some(block_info.hash.clone());
+                let block_id = (slot, block_info.hash.clone());
                 self.pool
                     .write()
                     .await
@@ -394,7 +394,7 @@ where
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = bincode::serde::encode_to_vec(parent, BINCODE_CONFIG)
+    let parent_encoded_len = bincode::serde::encode_to_vec(parent.clone(), BINCODE_CONFIG)
         .unwrap()
         .len();
 
@@ -492,7 +492,7 @@ async fn wait_for_first_slot(
                     if let Some(hash) = blockstore.read().await
                         .disseminated_block_hash(last_slot_in_prev_window)
                     {
-                        return Some((last_slot_in_prev_window, hash));
+                        return Some((last_slot_in_prev_window, hash.clone()));
                     }
                     if pool.read().await.finalized_slot() >= first_slot_in_window {
                         return None;
@@ -504,7 +504,7 @@ async fn wait_for_first_slot(
         } => {
             match res {
                 None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
+                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash.clone()), rx),
             }
         }
     }
@@ -534,7 +534,7 @@ mod tests {
 
         let parent = None;
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent, duration_left).await;
+            produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
@@ -542,7 +542,7 @@ mod tests {
 
         let parent = Some((Slot::genesis(), Hash::default().into()));
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent, duration_left).await;
+            produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 1 byte
@@ -567,7 +567,7 @@ mod tests {
 
         let parent = None;
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent, duration_left).await;
+            produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert!(maybe_duration > Duration::ZERO);
         assert_eq!(payload.parent, parent);
         assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
@@ -594,9 +594,10 @@ mod tests {
         let parent = (slot.prev(), Hash::default().into());
 
         let mut pool = MockPool::new();
+        let p = parent.clone();
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
-            .return_once(move |_slot| Either::Left(parent));
+            .return_once(move |_slot| Either::Left(p));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
         let pool = Arc::new(RwLock::new(pool));
 
@@ -615,7 +616,7 @@ mod tests {
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), Hash::default().into());
         let (tx, rx) = oneshot::channel();
-        tx.send(parent).unwrap();
+        tx.send(parent.clone()).unwrap();
 
         let mut pool = MockPool::new();
         pool.expect_wait_for_parent_ready()
@@ -691,10 +692,11 @@ mod tests {
             });
 
         let mut pool = MockPool::new();
+        let bi = block_info.clone();
         pool.expect_add_block()
             .returning(move |ret_block_id, ret_parent_block_id| {
-                assert_eq!(ret_block_id, (slot, block_info.hash));
-                assert_eq!(block_info.parent, ret_parent_block_id);
+                assert_eq!(ret_block_id, (slot, bi.hash.clone()));
+                assert_eq!(bi.parent, ret_parent_block_id);
                 Box::pin(async {})
             });
 
@@ -721,16 +723,16 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
-        let slot_hash = [1; 32].into();
+        let slot_hash: BlockHash = [1; 32].into();
         let old_parent = (slot.prev(), [2; 32].into());
         let new_parent = (slot.prev().prev(), [3; 32].into());
         let old_block_info = BlockInfo {
-            hash: slot_hash,
+            hash: slot_hash.clone(),
             parent: old_parent,
         };
         let new_block_info = BlockInfo {
             hash: slot_hash,
-            parent: new_parent,
+            parent: new_parent.clone(),
         };
 
         let (first_slice_finished_tx, first_slice_finished_rx) = oneshot::channel();
@@ -779,10 +781,11 @@ mod tests {
             });
 
         let mut pool = MockPool::new();
+        let nbi = new_block_info.clone();
         pool.expect_add_block()
             .returning(move |ret_block_id, ret_parent_block_id| {
-                assert_eq!(ret_block_id, (slot, new_block_info.hash));
-                assert_eq!(new_block_info.parent, ret_parent_block_id);
+                assert_eq!(ret_block_id, (slot, nbi.hash.clone()));
+                assert_eq!(nbi.parent, ret_parent_block_id);
                 Box::pin(async {})
             });
 
@@ -800,9 +803,10 @@ mod tests {
 
         let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
 
+        let np = new_parent.clone();
         tokio::spawn(async move {
             let () = first_slice_finished_rx.await.unwrap();
-            parent_ready_tx.send(new_parent).unwrap();
+            parent_ready_tx.send(np).unwrap();
             start_second_slice_tx.send(()).unwrap();
         });
 

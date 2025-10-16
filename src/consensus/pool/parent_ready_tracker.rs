@@ -36,8 +36,8 @@ impl ParentReadyTracker {
     ///
     /// Returns a list of any newly connected parents.
     /// All of these will have the given block ID as the parent.
-    pub fn mark_notar_fallback(&mut self, id: BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
-        let (slot, hash) = id;
+    pub fn mark_notar_fallback(&mut self, id: &BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
+        let (slot, hash) = id.clone();
         let state = self.slot_state(slot);
         if state.notar_fallbacks.contains(&hash) {
             return SmallVec::new();
@@ -49,8 +49,8 @@ impl ParentReadyTracker {
         for slot in slot.future_slots() {
             let state = self.slot_state(slot);
             if slot.is_start_of_window() {
-                state.add_to_ready(id);
-                newly_certified.push((slot, id));
+                state.add_to_ready(id.clone());
+                newly_certified.push((slot, id.clone()));
             }
             if !state.skip {
                 break;
@@ -77,8 +77,8 @@ impl ParentReadyTracker {
             let state = self.slot_state(slot);
             // add any notarized-fallback blocks from this slot
             if slot != marked_slot {
-                for nf in &state.notar_fallbacks {
-                    potential_parents.push((slot, *nf));
+                for nf in state.notar_fallbacks.clone() {
+                    potential_parents.push((slot, nf));
                 }
             }
             // stop as soon as we see any non-skipped slot
@@ -86,7 +86,7 @@ impl ParentReadyTracker {
                 break;
             }
             // if the slot is skipped, add its parents as well
-            potential_parents.extend_from_slice(state.ready_block_ids());
+            potential_parents.extend(state.ready_block_ids().iter().cloned());
         }
 
         // add these as valid parents to any skip-connected future windows
@@ -96,8 +96,8 @@ impl ParentReadyTracker {
             // add parents to this window
             if slot.is_start_of_window() {
                 for parent in &potential_parents {
-                    state.add_to_ready(*parent);
-                    newly_certified.push((slot, *parent));
+                    state.add_to_ready(parent.clone());
+                    newly_certified.push((slot, parent.clone()));
                 }
             }
             // stop as soon as we see any non-skipped slot
@@ -119,10 +119,10 @@ impl ParentReadyTracker {
         event: FinalizationEvent,
     ) -> SmallVec<[(Slot, BlockId); 1]> {
         let mut parents_ready = SmallVec::<[(Slot, BlockId); 1]>::new();
-        if let Some(finalized) = event.finalized {
+        if let Some(finalized) = &event.finalized {
             parents_ready.extend(self.mark_notar_fallback(finalized));
         }
-        for block_id in event.implicitly_finalized {
+        for block_id in &event.implicitly_finalized {
             parents_ready.extend(self.mark_notar_fallback(block_id));
         }
         for slot in event.implicitly_skipped {
@@ -131,7 +131,7 @@ impl ParentReadyTracker {
 
         // keep only highest slot ParentReady
         let maybe_parent = parents_ready.iter().max_by_key(|(slot, _)| slot);
-        maybe_parent.into_iter().copied().collect()
+        maybe_parent.into_iter().cloned().collect()
     }
 
     /// Returns list of all valid parents for the given slot, as of now.
@@ -189,7 +189,7 @@ mod tests {
             .take(2 * SLOTS_PER_WINDOW as usize)
         {
             let block = (s, [s.inner() as u8; 32].into());
-            let new_valid_parents = tracker.mark_notar_fallback(block);
+            let new_valid_parents = tracker.mark_notar_fallback(&block);
             if s == s.last_slot_in_window() {
                 assert!(new_valid_parents.contains(&(s.next(), block)));
             } else {
@@ -205,7 +205,7 @@ mod tests {
         for slot in genesis.0.slots_in_window() {
             let new_valid_parents = tracker.mark_skipped(slot);
             if slot == slot.last_slot_in_window() {
-                assert!(new_valid_parents.contains(&(slot.next(), genesis)));
+                assert!(new_valid_parents.contains(&(slot.next(), genesis.clone())));
             } else {
                 assert!(new_valid_parents.is_empty());
             }
@@ -218,12 +218,12 @@ mod tests {
         let slot = Slot::genesis().next();
         let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
-        assert!(tracker.mark_notar_fallback(block).is_empty());
+        assert!(tracker.mark_notar_fallback(&block).is_empty());
         for s in slot.slots_in_window() {
             let new_valid_parents = tracker.mark_skipped(s);
             if s == s.last_slot_in_window() {
-                assert!(new_valid_parents.contains(&(s.next(), block)));
-                assert!(new_valid_parents.contains(&(s.next(), genesis)));
+                assert!(new_valid_parents.contains(&(s.next(), block.clone())));
+                assert!(new_valid_parents.contains(&(s.next(), genesis.clone())));
             } else {
                 assert!(new_valid_parents.is_empty());
             }
@@ -240,7 +240,7 @@ mod tests {
         assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
-            tracker.mark_notar_fallback(block).to_vec(),
+            tracker.mark_notar_fallback(&block).to_vec(),
             vec![(Slot::new(4), block)]
         );
         assert_eq!(
@@ -256,12 +256,12 @@ mod tests {
         let block2 = (Slot::new(2), [2; 32].into());
         let block3 = (Slot::new(3), [3; 32].into());
         let mut tracker = ParentReadyTracker::default();
-        assert!(tracker.mark_notar_fallback(block2).is_empty());
+        assert!(tracker.mark_notar_fallback(&block2).is_empty());
         assert_eq!(
-            tracker.mark_notar_fallback(block3).to_vec(),
+            tracker.mark_notar_fallback(&block3).to_vec(),
             vec![(Slot::new(4), block3)]
         );
-        assert!(tracker.mark_notar_fallback(block1).is_empty());
+        assert!(tracker.mark_notar_fallback(&block1).is_empty());
     }
 
     #[test]
@@ -270,11 +270,11 @@ mod tests {
         let slot = Slot::genesis().next();
         let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
-        assert!(tracker.mark_notar_fallback(block).is_empty());
+        assert!(tracker.mark_notar_fallback(&block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
             tracker.mark_skipped(Slot::new(3)).to_vec(),
-            vec![(Slot::new(4), block)]
+            vec![(Slot::new(4), block.clone())]
         );
         assert!(tracker.mark_skipped(Slot::new(4)).is_empty());
         assert!(tracker.mark_skipped(Slot::new(5)).is_empty());
@@ -291,7 +291,7 @@ mod tests {
         let slot = Slot::genesis().next();
         let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
-        assert!(tracker.mark_notar_fallback(block).is_empty());
+        assert!(tracker.mark_notar_fallback(&block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
         assert_eq!(
             tracker.mark_skipped(Slot::new(3)).to_vec(),
@@ -359,13 +359,13 @@ mod tests {
         let block = (window2.first_slot_in_window(), [1; 32].into());
         let parent = (block.0.prev(), [2; 32].into());
         let event = FinalizationEvent {
-            finalized: Some(block),
-            implicitly_finalized: vec![parent],
+            finalized: Some(block.clone()),
+            implicitly_finalized: vec![parent.clone()],
             implicitly_skipped: vec![],
         };
         let parents = tracker.handle_finalization(event);
         assert_eq!(parents.len(), 1);
-        let parent_ready = parents[0];
+        let parent_ready = &parents[0];
         assert_eq!(parent_ready.0, block.0);
         assert_eq!(parent_ready.1, parent);
 
@@ -373,13 +373,13 @@ mod tests {
         let block = (window4.first_slot_in_window(), [3; 32].into());
         let parent = (window3.first_slot_in_window().prev(), [4; 32].into());
         let event = FinalizationEvent {
-            finalized: Some(block),
-            implicitly_finalized: vec![parent],
+            finalized: Some(block.clone()),
+            implicitly_finalized: vec![parent.clone()],
             implicitly_skipped: window3.slots_in_window().collect(),
         };
         let parents = tracker.handle_finalization(event);
         assert_eq!(parents.len(), 1);
-        let parent_ready = parents[0];
+        let parent_ready = &parents[0];
         assert_eq!(parent_ready.0, block.0);
         assert_eq!(parent_ready.1, parent);
 
@@ -388,13 +388,13 @@ mod tests {
         let parent = (block.0.prev(), [6; 32].into());
         let parent_parent = (parent.0.prev(), [7; 32].into());
         let event = FinalizationEvent {
-            finalized: Some(block),
-            implicitly_finalized: vec![parent, parent_parent],
+            finalized: Some(block.clone()),
+            implicitly_finalized: vec![parent.clone(), parent_parent.clone()],
             implicitly_skipped: vec![],
         };
         let parents = tracker.handle_finalization(event);
         assert_eq!(parents.len(), 1);
-        let parent_ready = parents[0];
+        let parent_ready = &parents[0];
         assert_eq!(parent_ready.0, parent.0);
         assert_eq!(parent_ready.1, parent_parent);
     }

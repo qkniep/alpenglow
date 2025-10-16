@@ -62,7 +62,7 @@ impl Slice {
     #[must_use]
     pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &ValidatedShred) -> Self {
         let header = any_shred.payload().header.clone();
-        let merkle_root = Some(any_shred.merkle_root);
+        let merkle_root = Some(any_shred.merkle_root.clone());
         Self::from_parts(header, payload, merkle_root)
     }
 

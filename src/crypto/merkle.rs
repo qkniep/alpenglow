@@ -114,7 +114,7 @@ impl MerkleProof for Vec<Hash> {}
 
 #[repr(transparent)]
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
 )]
 pub struct SliceRoot(Hash);
 impl MerkleLeaf for SliceRoot {}
@@ -139,7 +139,7 @@ impl AsRef<[Hash]> for SliceProof {
 
 #[repr(transparent)]
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
 )]
 pub struct DoubleMerkleRoot(Hash);
 impl MerkleRoot for DoubleMerkleRoot {}

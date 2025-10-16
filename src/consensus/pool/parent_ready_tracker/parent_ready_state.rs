@@ -60,7 +60,7 @@ impl ParentReadyState {
                 let sender = sender.take();
                 match sender {
                     None => (),
-                    Some(sender) => match sender.send(id) {
+                    Some(sender) => match sender.send(id.clone()) {
                         Ok(()) => (),
                         Err(id) => {
                             warn!("sending {id:?} failed, receiver deallocated");
@@ -95,7 +95,7 @@ impl ParentReadyState {
             IsReady::Ready(block_ids) => {
                 assert!(!block_ids.is_empty());
                 block_ids.sort();
-                Either::Left(block_ids[0])
+                Either::Left(block_ids[0].clone())
             }
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
@@ -117,7 +117,7 @@ mod tests {
         let mut state = ParentReadyState::default();
         assert_eq!(state.ready_block_ids().len(), 0);
         let block_id = (Slot::new(0), [1; 32].into());
-        state.add_to_ready(block_id);
+        state.add_to_ready(block_id.clone());
         let res = state.wait_for_parent_ready();
         let Either::Left(received_block_id) = res else {
             panic!("unexpected result {res:?}");
@@ -135,7 +135,7 @@ mod tests {
             panic!("unexpected result {res:?}");
         };
         let block_id = (Slot::new(0), [1; 32].into());
-        state.add_to_ready(block_id);
+        state.add_to_ready(block_id.clone());
         let received_block_id = rx.await.unwrap();
         assert_eq!(received_block_id, block_id);
         assert_eq!(state.ready_block_ids().len(), 1);
