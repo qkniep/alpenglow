@@ -97,12 +97,14 @@ const EMPTY_ROOTS: [Hash; MAX_MERKLE_TREE_HEIGHT] = [
     hex!("33ebfb34d3aa119cb665d564acdd77b318dc86aa6a97744edb3bc03e97d776ca"),
 ];
 
+///
 pub trait MerkleTreeType {
     type Leaf: AsRef<[u8]>;
     type Root: MerkleRoot;
     type Proof: MerkleProof;
 }
 
+///
 pub trait MerkleRoot: From<Hash> {
     fn to_hash(&self) -> Hash;
 }
@@ -113,6 +115,7 @@ impl MerkleRoot for Hash {
     }
 }
 
+///
 pub trait MerkleProof: AsRef<[Hash]> + From<Vec<Hash>> {}
 impl MerkleProof for Vec<Hash> {}
 
@@ -140,6 +143,7 @@ pub struct MerkleTree<T: MerkleTreeType> {
     nodes: Vec<Hash>,
     /// For each level, has the offset in `nodes` and the number of hashes on that level.
     levels: Vec<(u32, u32)>,
+    /// Marker for the type of the tree.
     _type: PhantomData<T>,
 }
 
@@ -208,8 +212,9 @@ impl<T: MerkleTreeType> MerkleTree<T> {
 
     /// Gives the root hash of the tree.
     #[must_use]
-    pub fn get_root(&self) -> Hash {
-        *self.nodes.last().expect("empty tree")
+    pub fn get_root(&self) -> T::Root {
+        let root_hash = *self.nodes.last().expect("empty tree");
+        root_hash.into()
     }
 
     /// Gives the height of the tree.
@@ -255,7 +260,7 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     /// to the given `hash` at the given `index` in the tree corresponding to
     /// the given `root`.
     #[must_use]
-    pub fn check_hash_proof(hash: Hash, index: usize, root: &T::Root, proof: &T::Proof) -> bool {
+    fn check_hash_proof(hash: Hash, index: usize, root: &T::Root, proof: &T::Proof) -> bool {
         let mut i = index;
         let mut node = hash;
         for h in proof.as_ref() {
@@ -286,12 +291,7 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    pub fn check_hash_proof_last(
-        hash: Hash,
-        index: usize,
-        root: &T::Root,
-        proof: &T::Proof,
-    ) -> bool {
+    fn check_hash_proof_last(hash: Hash, index: usize, root: &T::Root, proof: &T::Proof) -> bool {
         assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
         let mut i = index;
         let mut node = hash;
