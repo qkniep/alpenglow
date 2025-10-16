@@ -26,9 +26,8 @@
 //! - Decaying acceptance (with 3.0 max samples)
 //! - Turbine
 //!
-//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`],
-//! [`RUN_CRASH_ROTOR_TESTS`], and [`RUN_BYZANTINE_ROTOR_TESTS`]
-//! control which tests to run.
+//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`], and
+//! [`RUN_ROTOR_ROBUSTNESS_TESTS`] control which tests to run.
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
@@ -36,6 +35,7 @@ mod alpenglow;
 mod discrete_event_simulator;
 mod pyjama;
 mod quick_release;
+mod quorum_robustness;
 mod rotor;
 mod ryse;
 
@@ -62,19 +62,22 @@ use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
-use crate::pyjama::{PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams};
+use crate::pyjama::{
+    PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
+};
 use crate::quick_release::{
     QuickReleaseInstanceBuilder, QuickReleaseLatencySimulation, QuickReleaseParams,
 };
 use crate::rotor::{
-    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
+    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
 };
-use crate::ryse::{RyseInstanceBuilder, RyseLatencySimulation, RyseParameters};
+use crate::ryse::{
+    RyseInstanceBuilder, RyseLatencySimulation, RyseParameters, run_ryse_robustness_test,
+};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
-const RUN_CRASH_ROTOR_TESTS: bool = false;
-const RUN_BYZANTINE_ROTOR_TESTS: bool = false;
+const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
@@ -114,6 +117,11 @@ fn main() -> Result<()> {
     crate::ryse::run_robustness_tests()?;
     crate::pyjama::run_robustness_tests()?;
 
+    for k in [64, 128, 256, 512] {
+        run_ryse_robustness_test(k);
+        run_pyjama_robustness_test(k);
+    }
+
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
         let filename = PathBuf::from("data")
@@ -138,7 +146,7 @@ fn main() -> Result<()> {
         let _ = File::create(filename)?;
     }
 
-    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
+    if RUN_ROTOR_ROBUSTNESS_TESTS {
         // create saftey evaluation file
         let filename = PathBuf::from("data")
             .join("output")
@@ -549,35 +557,9 @@ fn run_tests<
         }
     }
 
-    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
-        // TODO: clean up code
-        let filename = PathBuf::from("data")
-            .join("output")
-            .join("simulations")
-            .join("rotor_robustness")
-            .join("rotor_robustness")
-            .with_extension("csv");
-        let file = File::options().append(true).open(filename)?;
-        let mut writer = csv::Writer::from_writer(file);
-
-        if RUN_CRASH_ROTOR_TESTS {
-            // Rotor robustness experiments (Crash + Byz., 40%)
-            for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} robustness test (crash=0.4, n={n}, k={k})");
-                let tester =
-                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-                tester.run(test_name, 0.4, &mut writer);
-            }
-        }
-
-        if RUN_BYZANTINE_ROTOR_TESTS {
-            // Rotor robustness experiments (Byzantine only, 20%)
-            for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} robustness test (byz=0.2, n={n}, k={k})");
-                let tester =
-                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-                tester.run(test_name, 0.2, &mut writer);
-            }
+    if RUN_ROTOR_ROBUSTNESS_TESTS {
+        for &(n, k) in &SHRED_COMBINATIONS {
+            run_rotor_robustness_test(n, k);
         }
     }
 
