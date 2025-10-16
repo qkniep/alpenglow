@@ -13,8 +13,9 @@ use thiserror::Error;
 
 use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
+use crate::crypto::Hash;
+use crate::crypto::merkle::DoubleMerkleTree;
 use crate::crypto::signature::PublicKey;
-use crate::crypto::{Hash, MerkleTree};
 use crate::network::BINCODE_CONFIG;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
@@ -152,7 +153,7 @@ pub struct BlockData {
     /// Index of the slice marked as last, if any.
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
-    pub(super) double_merkle_tree: Option<MerkleTree>,
+    pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
     /// Cache of Merkle roots for which the leader signature has been verified.
     pub(super) merkle_root_cache: BTreeMap<SliceIndex, Hash>,
 }
@@ -305,9 +306,8 @@ impl BlockData {
         let merkle_roots = self
             .slices
             .values()
-            .map(|s| s.merkle_root.as_ref().unwrap())
-            .collect::<Vec<_>>();
-        let tree = MerkleTree::new(&merkle_roots);
+            .map(|s| s.merkle_root.as_ref().unwrap());
+        let tree = DoubleMerkleTree::new_from_iter(merkle_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
 

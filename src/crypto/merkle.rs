@@ -15,6 +15,8 @@
 //! - rainbow tables / pre-calculation attacks
 //! - ambiguity between leaf and inner nodes with unknown tree height
 
+use std::marker::PhantomData;
+
 use hex_literal::hex;
 use static_assertions::const_assert;
 
@@ -95,22 +97,47 @@ const EMPTY_ROOTS: [Hash; MAX_MERKLE_TREE_HEIGHT] = [
     hex!("33ebfb34d3aa119cb665d564acdd77b318dc86aa6a97744edb3bc03e97d776ca"),
 ];
 
+pub trait MerkleTreeType {
+    type Leaf: AsRef<[u8]>;
+    type Root;
+    type Proof;
+}
+
+pub type SliceMerkleTree = MerkleTree<SliceTreeType>;
+pub struct SliceTreeType;
+
+impl MerkleTreeType for SliceTreeType {
+    type Leaf = Vec<u8>;
+    type Root = Hash;
+    type Proof = Vec<Hash>;
+}
+
+pub type DoubleMerkleTree = MerkleTree<DoubleMerkleTreeType>;
+pub struct DoubleMerkleTreeType;
+
+impl MerkleTreeType for DoubleMerkleTreeType {
+    type Leaf = Hash;
+    type Root = Hash;
+    type Proof = Vec<Hash>;
+}
+
 /// Implementation of a Merkle tree.
-pub struct MerkleTree {
+pub struct MerkleTree<T: MerkleTreeType> {
     /// All hashes in the tree, leaf hashes and inner nodes.
     nodes: Vec<Hash>,
     /// For each level, has the offset in `nodes` and the number of hashes on that level.
     levels: Vec<(u32, u32)>,
+    _type: PhantomData<T>,
 }
 
-impl MerkleTree {
+impl<T: MerkleTreeType> MerkleTree<T> {
     /// Creates a new Merkle tree from the given data for each leaf.
     ///
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
     /// If you want to create a tree with more than half of the leaves empty,
     /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new(data: &[impl AsRef<[u8]>]) -> Self {
-        Self::new_from_iter(data.iter().map(|leaf| leaf.as_ref()))
+    pub fn new(leaves: &[T::Leaf]) -> Self {
+        Self::new_from_iter(leaves.iter())
     }
 
     /// Creates a new Merkle tree from the given data for each leaf.
@@ -118,13 +145,16 @@ impl MerkleTree {
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
     /// If you want to create a tree with more than half of the leaves empty,
     /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a [u8]>) -> Self {
+    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a T::Leaf>) -> Self
+    where
+        <T as MerkleTreeType>::Leaf: 'a,
+    {
         let mut nodes = Vec::new();
         let mut levels = Vec::new();
 
         // calculate leaf hashes
         for leaf in data {
-            let leaf_hash = hash_leaf(leaf);
+            let leaf_hash = hash_leaf(leaf.as_ref());
             nodes.push(leaf_hash);
         }
         levels.push((0, nodes.len().try_into().expect("too many leaves")));
@@ -156,7 +186,11 @@ impl MerkleTree {
             levels.push((left as u32, len as u32));
         }
 
-        Self { nodes, levels }
+        Self {
+            nodes,
+            levels,
+            _type: PhantomData,
+        }
     }
 
     /// Gives the root hash of the tree.
@@ -273,15 +307,15 @@ mod tests {
 
     #[test]
     fn basic() {
-        let data = [b"hello", b"world"];
-        let tree = MerkleTree::new(&data);
+        let data = [b"hello".to_vec(), b"world".to_vec()];
+        let tree = SliceMerkleTree::new(&data);
         assert_eq!(tree.nodes.len(), 3);
     }
 
     #[test]
     fn two_leaves() {
-        let data = [b"hello", b"world"];
-        let tree = MerkleTree::new(&data);
+        let data = [b"hello".to_vec(), b"world".to_vec()];
+        let tree = SliceMerkleTree::new(&data);
 
         // calculate expected root hash manually
         let leaf1 = hash_leaf(b"hello");
@@ -294,12 +328,12 @@ mod tests {
     #[test]
     fn empty_trees() {
         // one empty leaf
-        let data = [b""];
-        let tree1 = MerkleTree::new(&data);
+        let data = [vec![]];
+        let tree1 = SliceMerkleTree::new(&data);
 
         // two empty leaves
-        let data = [b"", b""];
-        let tree2 = MerkleTree::new(&data);
+        let data = [vec![], vec![]];
+        let tree2 = SliceMerkleTree::new(&data);
 
         // these should have different roots
         assert_ne!(tree1.get_root(), tree2.get_root());
@@ -307,28 +341,33 @@ mod tests {
 
     #[test]
     fn proofs() {
-        let data = [&b"hello"[..], &b"world"[..], &b"data"[..], &b"test"[..]];
-        let tree = MerkleTree::new(&data);
+        let data = [
+            b"hello".to_vec(),
+            b"world".to_vec(),
+            b"data".to_vec(),
+            b"test".to_vec(),
+        ];
+        let tree = SliceMerkleTree::new(&data);
         let root = tree.get_root();
 
         // proof and verify all leaves
         let proof = tree.create_proof(0);
-        assert!(MerkleTree::check_proof(b"hello", 0, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[0], 0, root, &proof));
         let proof = tree.create_proof(1);
-        assert!(MerkleTree::check_proof(b"world", 1, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[1], 1, root, &proof));
         let proof = tree.create_proof(2);
-        assert!(MerkleTree::check_proof(b"data", 2, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[2], 2, root, &proof));
         let proof = tree.create_proof(3);
-        assert!(MerkleTree::check_proof(b"test", 3, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[3], 3, root, &proof));
     }
 
     #[test]
     fn three_leaves() {
-        let data1 = [b"a", b"b", b"c"];
-        let tree1 = MerkleTree::new(&data1);
+        let data1 = [b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+        let tree1 = SliceMerkleTree::new(&data1);
 
-        let data2 = [&b"a"[..], &b"b"[..], &b"c"[..], &[]];
-        let tree2 = MerkleTree::new(&data2);
+        let data2 = [b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), vec![]];
+        let tree2 = SliceMerkleTree::new(&data2);
 
         // missing leaves should be equivalent to empty leaves
         assert_eq!(tree1.get_root(), tree2.get_root());
@@ -336,13 +375,13 @@ mod tests {
 
     #[test]
     fn non_power_of_two() {
-        let data1 = vec![b"hello"; 33];
-        let tree1 = MerkleTree::new(&data1);
+        let data1 = vec![b"hello".to_vec(); 33];
+        let tree1 = SliceMerkleTree::new(&data1);
 
-        let mut data2 = vec![&b"hello"[..]; 33];
-        let empty_slice: &[u8] = &[];
+        let mut data2 = vec![b"hello".to_vec(); 33];
+        let empty_slice = vec![];
         data2.extend_from_slice(vec![empty_slice; 31].as_slice());
-        let tree2 = MerkleTree::new(&data2);
+        let tree2 = SliceMerkleTree::new(data2.as_slice());
 
         // missing leaves should be equivalent to empty leaves
         assert_eq!(tree1.get_root(), tree2.get_root());
@@ -350,15 +389,19 @@ mod tests {
 
     #[test]
     fn proof_last() {
-        let data = vec![b"hello"; 33];
-        let tree = MerkleTree::new(&data);
+        let data = vec![b"hello".to_vec(); 33];
+        let tree = SliceMerkleTree::new(&data);
         let root = tree.get_root();
 
         let proof = tree.create_proof(31);
-        assert!(!MerkleTree::check_proof_last(b"hello", 31, root, &proof));
+        assert!(!SliceMerkleTree::check_proof_last(
+            b"hello", 31, root, &proof
+        ));
 
         let proof = tree.create_proof(32);
-        assert!(MerkleTree::check_proof_last(b"hello", 32, root, &proof));
+        assert!(SliceMerkleTree::check_proof_last(
+            b"hello", 32, root, &proof
+        ));
     }
 
     #[test]
@@ -379,15 +422,15 @@ mod tests {
                 data.push(leaf_data);
             }
 
-            let tree = MerkleTree::new(&data);
+            let tree = SliceMerkleTree::new_from_iter(data.iter());
             let root = tree.get_root();
             for _ in 0..QUERIES_PER_TREE {
                 let index = rng.random_range(0..num_data);
                 let proof = tree.create_proof(index);
                 let leaf = &data[index];
-                assert!(MerkleTree::check_proof(leaf, index, root, &proof));
+                assert!(SliceMerkleTree::check_proof(leaf, index, root, &proof));
                 if index == num_data - 1 {
-                    assert!(MerkleTree::check_proof_last(leaf, index, root, &proof));
+                    assert!(SliceMerkleTree::check_proof_last(leaf, index, root, &proof));
                 }
             }
         }

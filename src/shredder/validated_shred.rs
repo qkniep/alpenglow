@@ -1,8 +1,9 @@
 use std::collections::btree_map::Entry;
 use std::ops::{Deref, DerefMut};
 
+use crate::crypto::Hash;
+use crate::crypto::merkle::SliceMerkleTree;
 use crate::crypto::signature::PublicKey;
-use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 
@@ -36,7 +37,7 @@ impl ValidatedShred {
         cached_merkle_root: Entry<SliceIndex, Hash>,
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
-        if !MerkleTree::check_proof(
+        if !SliceMerkleTree::check_proof(
             &shred.payload().data,
             *shred.payload().shred_index,
             shred.merkle_root,
