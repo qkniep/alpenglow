@@ -15,7 +15,7 @@ use alpenglow::disseminator::rotor::SamplingStrategy;
 use rand::prelude::*;
 
 pub use self::latency::{LatencyEvent, RotorLatencySimulation};
-pub use self::robustness::RotorRobustnessTest;
+pub use self::robustness::run_rotor_robustness_test;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Rotor protocol.
