@@ -15,10 +15,14 @@
 //! Instead, it specifically modifies Alpenglow's Rotor block dissemination protocol.
 //! In Ryse, each relay would release shreds from all leaders simultaneously.
 
+mod hybrid_latency;
 mod latency;
 mod parameters;
 mod robustness;
 
+pub use self::hybrid_latency::{
+    HybridLatencySimInstanceBuilder, HybridLatencySimParams, HybridRyseLatencySimulation,
+};
 pub use self::latency::{LatencySimInstanceBuilder, LatencySimParams, RyseLatencySimulation};
 pub use self::parameters::{RyseInstanceBuilder, RyseParameters};
 pub use self::robustness::run_robustness_tests;
