@@ -30,6 +30,7 @@ use rand::prelude::*;
 use crate::disseminator::turbine::DEFAULT_FANOUT;
 use crate::{Stake, ValidatorId, ValidatorInfo};
 
+/// Sampling strategies involving rejection sampling may panic after rejecting this many samples.
 const MAX_TRIES_PER_SAMPLE: usize = 100_000;
 
 /// An abstraction for randomly sampling validators based on some distribution.
@@ -63,6 +64,11 @@ pub trait SamplingStrategy {
     /// Panics if any of the `k` calls to [`SamplingStrategy::sample`] panics.
     fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         (0..k).map(|_| self.sample(rng)).collect()
+    }
+
+    /// Returns a printable name of the sampling strategy.
+    fn name() -> &'static str {
+        std::any::type_name::<Self>()
     }
 }
 
@@ -205,6 +211,10 @@ impl SamplingStrategy for AllSameSampler {
     fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
         &self.0
     }
+
+    fn name() -> &'static str {
+        "all_same"
+    }
 }
 
 /// A basic sampler that picks all validators with equal probability.
@@ -230,6 +240,10 @@ impl SamplingStrategy for UniformSampler {
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
+    }
+
+    fn name() -> &'static str {
+        "uniform"
     }
 }
 
@@ -263,6 +277,10 @@ impl SamplingStrategy for StakeWeightedSampler {
     fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
+    }
+
+    fn name() -> &'static str {
+        "stake_weighted"
     }
 }
 
@@ -329,6 +347,10 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
         let samples = (0..k).map(|_| self.sample(rng)).collect();
         self.reset();
         samples
+    }
+
+    fn name() -> &'static str {
+        "decaying_acceptance"
     }
 }
 
@@ -441,6 +463,10 @@ impl SamplingStrategy for TurbineSampler {
         let index = self.sample(rng) as usize;
         &self.stake_weighted.validators[index]
     }
+
+    fn name() -> &'static str {
+        "turbine"
+    }
 }
 
 /// A sampler that samples proportional to stake with reduced variance.
@@ -540,6 +566,10 @@ impl SamplingStrategy for PartitionSampler {
             samples.push(validators[i]);
         }
         samples
+    }
+
+    fn name() -> &'static str {
+        "partition"
     }
 }
 
@@ -646,6 +676,16 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
             validators.extend_from_slice(&additional_samples);
         }
         validators
+    }
+
+    fn name() -> &'static str {
+        if F::name() == "stake_weighted" {
+            "fa1_iid"
+        } else if F::name() == "partition" {
+            "fa1_partition"
+        } else {
+            "fa1"
+        }
     }
 }
 
@@ -775,6 +815,10 @@ impl SamplingStrategy for FaitAccompli2Sampler {
         }
 
         validators
+    }
+
+    fn name() -> &'static str {
+        "fa2"
     }
 }
 
