@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::merkle::DoubleMerkleTree;
+use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
@@ -73,9 +73,9 @@ pub struct RepairRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RepairResponse {
     /// Response with the last slice's Merkle root hash, plus corresponding proof.
-    LastSliceRoot(RepairRequestType, SliceIndex, Hash, Vec<Hash>),
+    LastSliceRoot(RepairRequestType, SliceIndex, SliceRoot, DoubleMerkleProof),
     /// Response with the Merkle root hash of a specific slice, plus corresponding proof.
-    SliceRoot(RepairRequestType, Hash, Vec<Hash>),
+    SliceRoot(RepairRequestType, SliceRoot, DoubleMerkleProof),
     /// Response with a specific shred.
     Shred(RepairRequestType, Shred),
 }
@@ -142,13 +142,13 @@ where
         let response = match request.req_type {
             RepairRequestType::LastSliceRoot(block_id) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
+                let Some(last_slice) = blockstore.get_last_slice_index(&block_id) else {
                     return Ok(());
                 };
-                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
+                let Some(root) = blockstore.get_slice_root(&block_id, last_slice) else {
                     return Ok(());
                 };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
+                let Some(proof) = blockstore.create_double_merkle_proof(&block_id, last_slice)
                 else {
                     return Ok(());
                 };
@@ -156,17 +156,17 @@ where
             }
             RepairRequestType::SliceRoot(block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
+                let Some(root) = blockstore.get_slice_root(&block_id, slice) else {
                     return Ok(());
                 };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
+                let Some(proof) = blockstore.create_double_merkle_proof(&block_id, slice) else {
                     return Ok(());
                 };
                 RepairResponse::SliceRoot(request.req_type, root, proof)
             }
             RepairRequestType::Shred(block_id, slice, shred) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
+                let Some(shred) = blockstore.get_shred(&block_id, slice, shred).cloned() else {
                     return Ok(());
                 };
                 RepairResponse::Shred(request.req_type, shred.into_shred())
@@ -192,7 +192,7 @@ where
 pub struct Repair<N: Network> {
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
-    slice_roots: BTreeMap<(BlockId, SliceIndex), Hash>,
+    slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
     request_timeouts: BinaryHeap<(Instant, Hash)>,
     network: N,
@@ -264,7 +264,7 @@ where
     pub async fn repair_block(&mut self, block_id: BlockId) {
         let (slot, block_hash) = block_id;
         let h = &hex::encode(block_hash)[..8];
-        if self.blockstore.read().await.get_block(block_id).is_some() {
+        if self.blockstore.read().await.get_block(&block_id).is_some() {
             trace!("ignoring repair for block {h} in slot {slot}, already have the block");
             return;
         }
@@ -619,7 +619,13 @@ mod tests {
 
         // after some time block should be repaired
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(blockstore.read().await.get_block(block_to_repair).is_some());
+        assert!(
+            blockstore
+                .read()
+                .await
+                .get_block(&block_to_repair)
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -644,7 +650,13 @@ mod tests {
             blockstore.read().await.disseminated_block_hash(slot),
             Some(block_hash)
         );
-        assert!(blockstore.read().await.get_block(block_to_repair).is_some());
+        assert!(
+            blockstore
+                .read()
+                .await
+                .get_block(&block_to_repair)
+                .is_some()
+        );
 
         // request last slice root to learn how many slices there are
         let request = RepairRequest {
@@ -665,7 +677,7 @@ mod tests {
         let correct_proof = blockstore
             .read()
             .await
-            .create_double_merkle_proof(block_to_repair, last_slice)
+            .create_double_merkle_proof(&block_to_repair, last_slice)
             .unwrap();
         assert_eq!(proof, correct_proof);
 
@@ -687,7 +699,7 @@ mod tests {
             let correct_proof = blockstore
                 .read()
                 .await
-                .create_double_merkle_proof(block_to_repair, slice)
+                .create_double_merkle_proof(&block_to_repair, slice)
                 .unwrap();
             assert_eq!(proof, correct_proof);
 

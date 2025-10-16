@@ -13,8 +13,7 @@ use thiserror::Error;
 
 use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
-use crate::crypto::Hash;
-use crate::crypto::merkle::DoubleMerkleTree;
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
 use crate::network::BINCODE_CONFIG;
 use crate::shredder::{
@@ -54,7 +53,7 @@ pub struct SlotBlockData {
     /// Spot for storing the block that was received via block dissemination.
     pub(super) disseminated: BlockData,
     /// Spot for storing blocks that might later be received via repair.
-    pub(super) repaired: BTreeMap<Hash, BlockData>,
+    pub(super) repaired: BTreeMap<BlockHash, BlockData>,
     /// Tracks whether we observed the leader misbehaving.
     /// Once misbehavior is observed, we stop accepting additional [`Shred`]s through dissemination.
     leader_misbehaved: bool,
@@ -99,7 +98,7 @@ impl SlotBlockData {
     /// Performs the necessary validity checks, all but leader equivocation.
     pub fn add_shred_from_repair(
         &mut self,
-        hash: Hash,
+        hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
@@ -145,7 +144,7 @@ pub struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
     /// Potentially completely restored block.
-    pub(super) completed: Option<(Hash, Block)>,
+    pub(super) completed: Option<(BlockHash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
     pub(super) shreds: BTreeMap<SliceIndex, [Option<ValidatedShred>; TOTAL_SHREDS]>,
     /// Any already reconstructed slices of this block.
@@ -155,7 +154,7 @@ pub struct BlockData {
     /// Double merkle tree of this block, only known if block has been reconstructed.
     pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
     /// Cache of Merkle roots for which the leader signature has been verified.
-    pub(super) merkle_root_cache: BTreeMap<SliceIndex, Hash>,
+    pub(super) merkle_root_cache: BTreeMap<SliceIndex, SliceRoot>,
 }
 
 impl BlockData {
@@ -401,7 +400,7 @@ mod tests {
         (events, Ok(()))
     }
 
-    fn get_block_hash_from_votor_event(event: &VotorEvent) -> Hash {
+    fn get_block_hash_from_votor_event(event: &VotorEvent) -> BlockHash {
         match event {
             VotorEvent::Block {
                 slot: _,
@@ -552,12 +551,12 @@ mod tests {
             VotorEvent::FirstShred(s) => assert_eq!(slot, s),
             _ => panic!(),
         }
-        match events[1] {
+        match &events[1] {
             VotorEvent::Block {
                 slot: ret_slot,
                 block_info,
             } => {
-                assert_eq!(ret_slot, slot);
+                assert_eq!(*ret_slot, slot);
                 assert_eq!(block_info.parent, slice_1_parent);
             }
             _ => panic!(),

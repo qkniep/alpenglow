@@ -7,6 +7,7 @@ use rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::Hash;
+use crate::crypto::merkle::{BlockHash, SliceRoot};
 use crate::network::BINCODE_CONFIG;
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
@@ -26,10 +27,10 @@ pub struct Slice {
     /// Indicates whether this is the last slice in the slot.
     pub is_last: bool,
     /// Merkle root hash over all shreds in this slice.
-    pub merkle_root: Option<Hash>,
+    pub merkle_root: Option<SliceRoot>,
     /// If first slice in the block or parent changed due to optimistic handover,
     /// then indicates which block is the parent of the block this slice is part of.
-    pub parent: Option<(Slot, Hash)>,
+    pub parent: Option<(Slot, BlockHash)>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
@@ -39,7 +40,7 @@ impl Slice {
     pub(crate) fn from_parts(
         header: SliceHeader,
         payload: SlicePayload,
-        merkle_root: Option<[u8; 32]>,
+        merkle_root: Option<SliceRoot>,
     ) -> Self {
         let SliceHeader {
             slot,
@@ -104,12 +105,12 @@ pub(crate) struct SliceHeader {
 /// This is what actually gets "shredded" into different [`Shred`]s.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
-    pub(crate) parent: Option<(Slot, Hash)>,
+    pub(crate) parent: Option<(Slot, BlockHash)>,
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
-    pub(crate) fn new(parent: Option<(Slot, Hash)>, data: Vec<u8>) -> Self {
+    pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
     }
 }

@@ -1,8 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::crypto::merkle::SliceMerkleTree;
-use alpenglow::crypto::{Hash, IndividualSignature, Signature, aggsig, hash, signature};
+use alpenglow::crypto::merkle::{SliceMerkleTree, SliceProof};
+use alpenglow::crypto::{IndividualSignature, Signature, aggsig, hash, signature};
 use alpenglow::shredder::{MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE};
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
@@ -67,7 +67,7 @@ fn merkle_verify<const N: usize>(bencher: divan::Bencher) {
             (tree, leaves[0].clone(), 0, proof)
         })
         .bench_values(
-            |(tree, data, index, proof): (SliceMerkleTree, Vec<u8>, usize, Vec<Hash>)| {
+            |(tree, data, index, proof): (SliceMerkleTree, Vec<u8>, usize, SliceProof)| {
                 SliceMerkleTree::check_proof(&data, index, &tree.get_root(), &proof)
             },
         );

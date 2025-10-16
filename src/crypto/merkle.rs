@@ -17,7 +17,9 @@
 
 use std::marker::PhantomData;
 
+use derive_more::{From, Into};
 use hex_literal::hex;
+use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 
 use super::Hash;
@@ -110,9 +112,59 @@ impl MerkleLeaf for Vec<u8> {}
 impl MerkleRoot for Hash {}
 impl MerkleProof for Vec<Hash> {}
 
+#[repr(transparent)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+)]
+pub struct SliceRoot(Hash);
+impl MerkleLeaf for SliceRoot {}
+impl MerkleRoot for SliceRoot {}
+
+impl AsRef<[u8]> for SliceRoot {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+pub struct SliceProof(Vec<Hash>);
+impl MerkleProof for SliceProof {}
+
+impl AsRef<[Hash]> for SliceProof {
+    fn as_ref(&self) -> &[Hash] {
+        self.0.as_ref()
+    }
+}
+
+#[repr(transparent)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+)]
+pub struct DoubleMerkleRoot(Hash);
+impl MerkleRoot for DoubleMerkleRoot {}
+
+impl AsRef<[u8]> for DoubleMerkleRoot {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+pub struct DoubleMerkleProof(Vec<Hash>);
+impl MerkleProof for DoubleMerkleProof {}
+pub type BlockHash = DoubleMerkleRoot;
+
+impl AsRef<[Hash]> for DoubleMerkleProof {
+    fn as_ref(&self) -> &[Hash] {
+        self.0.as_ref()
+    }
+}
+
 pub type PlainMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
-pub type SliceMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
-pub type DoubleMerkleTree = MerkleTree<Hash, Hash, Vec<Hash>>;
+pub type SliceMerkleTree = MerkleTree<Vec<u8>, SliceRoot, SliceProof>;
+pub type DoubleMerkleTree = MerkleTree<SliceRoot, DoubleMerkleRoot, DoubleMerkleProof>;
 
 /// Implementation of a Merkle tree.
 pub struct MerkleTree<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> {

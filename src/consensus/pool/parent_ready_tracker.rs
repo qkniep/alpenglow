@@ -169,7 +169,7 @@ impl Default for ParentReadyTracker {
     fn default() -> Self {
         let mut map = HashMap::new();
         let mut genesis_parent_state = ParentReadyState::default();
-        genesis_parent_state.notar_fallbacks = SmallVec::from([Hash::default()]);
+        genesis_parent_state.notar_fallbacks = SmallVec::from([Hash::default().into()]);
         map.insert(Slot::genesis(), genesis_parent_state);
         Self(map)
     }
@@ -188,7 +188,7 @@ mod tests {
             .future_slots()
             .take(2 * SLOTS_PER_WINDOW as usize)
         {
-            let block = (s, [s.inner() as u8; 32]);
+            let block = (s, [s.inner() as u8; 32].into());
             let new_valid_parents = tracker.mark_notar_fallback(block);
             if s == s.last_slot_in_window() {
                 assert!(new_valid_parents.contains(&(s.next(), block)));
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn genesis() {
-        let genesis = (Slot::genesis(), Hash::default());
+        let genesis = (Slot::genesis(), Hash::default().into());
         let mut tracker = ParentReadyTracker::default();
         for slot in genesis.0.slots_in_window() {
             let new_valid_parents = tracker.mark_skipped(slot);
@@ -214,9 +214,9 @@ mod tests {
 
     #[test]
     fn skips() {
-        let genesis = (Slot::genesis(), Hash::default());
+        let genesis = (Slot::genesis(), Hash::default().into());
         let slot = Slot::genesis().next();
-        let block = (slot, [1; 32]);
+        let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(block).is_empty());
         for s in slot.slots_in_window() {
@@ -232,9 +232,9 @@ mod tests {
 
     #[test]
     fn out_of_order_skips() {
-        let genesis = (Slot::genesis(), Hash::default());
+        let genesis = (Slot::genesis(), Hash::default().into());
         let slot = Slot::genesis().next();
-        let block = (slot, [1; 32]);
+        let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
         assert_eq!(slot.slots_in_window().count(), 4);
         assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
@@ -252,9 +252,9 @@ mod tests {
     #[test]
     fn out_of_order_notars() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
-        let block1 = (Slot::new(1), [1; 32]);
-        let block2 = (Slot::new(2), [2; 32]);
-        let block3 = (Slot::new(3), [3; 32]);
+        let block1 = (Slot::new(1), [1; 32].into());
+        let block2 = (Slot::new(2), [2; 32].into());
+        let block3 = (Slot::new(3), [3; 32].into());
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(block2).is_empty());
         assert_eq!(
@@ -268,7 +268,7 @@ mod tests {
     fn no_double_counting_skip_chain() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
-        let block = (slot, [1; 32]);
+        let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
@@ -289,7 +289,7 @@ mod tests {
     fn no_double_counting_notar_and_skip() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
-        let block = (slot, [1; 32]);
+        let block = (slot, [1; 32].into());
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
@@ -300,12 +300,13 @@ mod tests {
         // notably this does not re-issue a ParentReady for `block`
         assert_eq!(
             tracker.mark_skipped(Slot::new(1)).to_vec(),
-            vec![(Slot::new(4), (Slot::genesis(), Hash::default()))]
+            vec![(Slot::new(4), (Slot::genesis(), Hash::default().into()))]
         );
     }
 
     #[test]
     fn wait_for_parent_ready() {
+        let genesis = (Slot::genesis(), Hash::default().into());
         let mut windows = Slot::windows();
         let window1 = windows.next().unwrap();
         let window2 = windows.next().unwrap();
@@ -325,8 +326,7 @@ mod tests {
         let Either::Left((slot, hash)) = res else {
             panic!("unexpected result {res:?}");
         };
-        assert_eq!(slot, Slot::genesis());
-        assert_eq!(hash, Hash::default());
+        assert_eq!((slot, hash), genesis);
 
         // parent should not yet be ready
         let res = tracker.wait_for_parent_ready(window3);
@@ -343,7 +343,7 @@ mod tests {
         }
 
         // now we should be notified of genesis as valid parent
-        assert_eq!(rx.try_recv(), Ok((Slot::genesis(), Hash::default())));
+        assert_eq!(rx.try_recv(), Ok(genesis));
     }
 
     #[test]
@@ -356,8 +356,8 @@ mod tests {
         let mut tracker = ParentReadyTracker::default();
 
         // basic case where finalized slot is first in its window
-        let block = (window2.first_slot_in_window(), [1; 32]);
-        let parent = (block.0.prev(), [2; 32]);
+        let block = (window2.first_slot_in_window(), [1; 32].into());
+        let parent = (block.0.prev(), [2; 32].into());
         let event = FinalizationEvent {
             finalized: Some(block),
             implicitly_finalized: vec![parent],
@@ -370,8 +370,8 @@ mod tests {
         assert_eq!(parent_ready.1, parent);
 
         // case where an entire window is skipped between parent and finalized block
-        let block = (window4.first_slot_in_window(), [3; 32]);
-        let parent = (window3.first_slot_in_window().prev(), [4; 32]);
+        let block = (window4.first_slot_in_window(), [3; 32].into());
+        let parent = (window3.first_slot_in_window().prev(), [4; 32].into());
         let event = FinalizationEvent {
             finalized: Some(block),
             implicitly_finalized: vec![parent],
@@ -384,9 +384,9 @@ mod tests {
         assert_eq!(parent_ready.1, parent);
 
         // case where finalized slot is NOT first in its window
-        let block = (window5.first_slot_in_window().next(), [5; 32]);
-        let parent = (block.0.prev(), [6; 32]);
-        let parent_parent = (parent.0.prev(), [7; 32]);
+        let block = (window5.first_slot_in_window().next(), [5; 32].into());
+        let parent = (block.0.prev(), [6; 32].into());
+        let parent_parent = (parent.0.prev(), [7; 32].into());
         let event = FinalizationEvent {
             finalized: Some(block),
             implicitly_finalized: vec![parent, parent_parent],

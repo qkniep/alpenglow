@@ -28,7 +28,7 @@ use self::slot_state::SlotState;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, Vote};
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
-use crate::crypto::Hash;
+use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
@@ -80,7 +80,7 @@ pub trait Pool {
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
     async fn recover_from_standstill(&self);
     fn finalized_slot(&self) -> Slot;
-    fn parents_ready(&self, slot: Slot) -> &[(Slot, Hash)];
+    fn parents_ready(&self, slot: Slot) -> &[BlockId];
     fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>>;
 }
 
@@ -97,14 +97,14 @@ pub struct PoolImpl {
     /// Keeps track of which slots are finalized.
     finality_tracker: FinalityTracker,
     /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
-    s2n_waiting_parent_cert: BTreeMap<(Slot, Hash), (Slot, Hash)>,
+    s2n_waiting_parent_cert: BTreeMap<BlockId, BlockId>,
 
     /// Information about all active validators.
     epoch_info: Arc<EpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
     /// Channel for sending repair requests to the repair loop.
-    repair_channel: Sender<(Slot, Hash)>,
+    repair_channel: Sender<BlockId>,
 }
 
 impl PoolImpl {
@@ -114,7 +114,7 @@ impl PoolImpl {
     pub fn new(
         epoch_info: Arc<EpochInfo>,
         votor_event_channel: Sender<VotorEvent>,
-        repair_channel: Sender<(Slot, Hash)>,
+        repair_channel: Sender<BlockId>,
     ) -> Self {
         Self {
             slot_states: BTreeMap::new(),
@@ -298,7 +298,7 @@ impl PoolImpl {
     /// This requires that the parent is at least notarized-fallback.
     /// Also, if the parent is in a slot before `slot-1`, then all slots in
     /// `parent+1..slot-1` (inclusive) must be skip-certified.
-    pub fn is_parent_ready(&self, slot: Slot, parent: (Slot, Hash)) -> bool {
+    pub fn is_parent_ready(&self, slot: Slot, parent: BlockId) -> bool {
         self.parent_ready_tracker
             .parents_ready(slot)
             .contains(&parent)
@@ -312,7 +312,7 @@ impl PoolImpl {
     }
 
     /// Returns the hash of the notarized block for the given slot, if any.
-    pub fn get_notarized_block(&self, slot: Slot) -> Option<Hash> {
+    pub fn get_notarized_block(&self, slot: Slot) -> Option<BlockHash> {
         self.slot_states.get(&slot).and_then(|state| {
             state
                 .certificates
@@ -513,7 +513,7 @@ impl Pool for PoolImpl {
     }
 
     /// Returns all possible parents for the given slot that are ready.
-    fn parents_ready(&self, slot: Slot) -> &[(Slot, Hash)] {
+    fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.parent_ready_tracker.parents_ready(slot)
     }
 
@@ -529,6 +529,7 @@ mod tests {
     use super::*;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::VoteKind;
+    use crate::crypto::Hash;
     use crate::crypto::aggsig::SecretKey;
     use crate::test_utils::generate_validators;
     use crate::types::SLOTS_PER_WINDOW;
@@ -541,7 +542,7 @@ mod tests {
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
 
         let wrong_sk = SecretKey::new(&mut rand::rng());
-        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &wrong_sk, 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &wrong_sk, 0);
         assert_eq!(
             pool.add_vote(vote).await,
             Err(AddVoteError::InvalidSignature)
@@ -558,7 +559,7 @@ mod tests {
         // all nodes notarize block in slot 0
         assert!(!pool.has_notar_cert(Slot::new(0)));
         for v in 0..11 {
-            let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.has_notar_cert(Slot::new(0)));
@@ -566,7 +567,7 @@ mod tests {
         // just enough nodes notarize block in slot 1
         assert!(!pool.has_notar_cert(Slot::new(1)));
         for v in 0..7 {
-            let vote = Vote::new_notar(Slot::new(1), Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(1), Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.has_notar_cert(Slot::new(1)));
@@ -574,7 +575,7 @@ mod tests {
         // just NOT enough nodes notarize block in slot 2
         assert!(!pool.has_notar_cert(Slot::new(2)));
         for v in 0..6 {
-            let vote = Vote::new_notar(Slot::new(2), Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(2), Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(!pool.has_notar_cert(Slot::new(2)));
@@ -622,7 +623,7 @@ mod tests {
         // just enough nodes vote notar, this is NOT enough on its own to finalize
         let slot1 = Slot::genesis().next();
         for v in 0..7 {
-            let vote = Vote::new_notar(slot1, [1; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot1, [1; 32].into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(!pool.has_final_cert(slot1));
@@ -647,7 +648,7 @@ mod tests {
 
         // just enough nodes vote notar, NOW slot 2 should be finalized
         for v in 0..7 {
-            let vote = Vote::new_notar(slot2, [2; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot2, [2; 32].into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.has_final_cert(slot2));
@@ -656,7 +657,7 @@ mod tests {
         // just NOT enough nodes vote notar + final on slot 3
         let slot3 = slot2.next();
         for v in 0..6 {
-            let vote = Vote::new_notar(slot3, [3; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot3, [3; 32].into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
             let vote = Vote::new_final(slot3, &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
@@ -675,7 +676,7 @@ mod tests {
         // all nodes vote notarize on slot 0
         assert!(!pool.has_final_cert(Slot::new(0)));
         for v in 0..11 {
-            let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.has_final_cert(Slot::new(0)));
@@ -684,7 +685,7 @@ mod tests {
         // just enough nodes to fast finalize slot 1
         assert!(!pool.has_final_cert(Slot::new(1)));
         for v in 0..9 {
-            let vote = Vote::new_notar(Slot::new(1), Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(1), Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(pool.has_final_cert(Slot::new(1)));
@@ -693,7 +694,7 @@ mod tests {
         // just NOT enough nodes to fast finalize slot 2
         assert!(!pool.has_final_cert(Slot::new(2)));
         for v in 0..8 {
-            let vote = Vote::new_notar(Slot::new(2), Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(Slot::new(2), Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert!(!pool.has_final_cert(Slot::new(2)));
@@ -710,13 +711,14 @@ mod tests {
         let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
         for slot in window.iter() {
             for v in 0..7 {
-                let vote = Vote::new_notar(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
+                let vote =
+                    Vote::new_notar(*slot, [slot.inner() as u8; 32].into(), &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
         let slot = *window.last().unwrap();
         let next = slot.next();
-        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32])));
+        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32].into())));
     }
 
     #[tokio::test]
@@ -729,20 +731,25 @@ mod tests {
         // receive mixed notar & notar-fallback votes
         let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
         for slot in window.iter() {
-            assert!(!pool.is_parent_ready(slot.next(), (*slot, [slot.inner() as u8; 32])));
+            assert!(!pool.is_parent_ready(slot.next(), (*slot, [slot.inner() as u8; 32].into())));
             for v in 0..4 {
-                let vote = Vote::new_notar(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
+                let vote =
+                    Vote::new_notar(*slot, [slot.inner() as u8; 32].into(), &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
             for v in 4..7 {
-                let vote =
-                    Vote::new_notar_fallback(*slot, [slot.inner() as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar_fallback(
+                    *slot,
+                    [slot.inner() as u8; 32].into(),
+                    &sks[v as usize],
+                    v,
+                );
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
         let slot = *window.last().unwrap();
         let next = slot.next();
-        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32])));
+        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32].into())));
     }
 
     #[tokio::test]
@@ -771,12 +778,12 @@ mod tests {
         // then see notarization votes for slot 1
         let slot_1 = Slot::new(1);
         for v in 0..7 {
-            let vote = Vote::new_notar(slot_1, [1; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot_1, [1; 32].into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
         // branch can only be certified once we saw votes other slots in window
-        assert!(pool.is_parent_ready(next, (slot_1, [1; 32])));
+        assert!(pool.is_parent_ready(next, (slot_1, [1; 32].into())));
         // no other blocks are valid parents
         assert_eq!(pool.parents_ready(next).len(), 1);
     }
@@ -808,13 +815,13 @@ mod tests {
         let slot_1 = Slot::new(1);
         let mut votes = Vec::new();
         for v in 0..7 {
-            votes.push(Vote::new_notar(slot_1, [1; 32], &sks[v as usize], v));
+            votes.push(Vote::new_notar(slot_1, [1; 32].into(), &sks[v as usize], v));
         }
         let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
-        assert!(pool.is_parent_ready(next, (slot_1, [1; 32])));
+        assert!(pool.is_parent_ready(next, (slot_1, [1; 32].into())));
     }
 
     #[tokio::test]
@@ -827,7 +834,12 @@ mod tests {
         // notarize all slots of first window
         for slot in 0..SLOTS_PER_WINDOW {
             for v in 0..7 {
-                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(
+                    Slot::new(slot),
+                    [slot as u8; 32].into(),
+                    &sks[v as usize],
+                    v,
+                );
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -836,7 +848,7 @@ mod tests {
             Slot::new(SLOTS_PER_WINDOW),
             (
                 Slot::new(SLOTS_PER_WINDOW - 1),
-                [(SLOTS_PER_WINDOW - 1) as u8; 32]
+                [(SLOTS_PER_WINDOW - 1) as u8; 32].into()
             )
         ));
     }
@@ -851,7 +863,12 @@ mod tests {
         // notarize all slots but last one
         for slot in 0..SLOTS_PER_WINDOW - 1 {
             for v in 0..7 {
-                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(
+                    Slot::new(slot),
+                    [slot as u8; 32].into(),
+                    &sks[v as usize],
+                    v,
+                );
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -866,7 +883,7 @@ mod tests {
             Slot::new(SLOTS_PER_WINDOW),
             (
                 Slot::new(SLOTS_PER_WINDOW - 2),
-                [(SLOTS_PER_WINDOW - 2) as u8; 32]
+                [(SLOTS_PER_WINDOW - 2) as u8; 32].into()
             )
         ));
     }
@@ -881,7 +898,12 @@ mod tests {
         // notarize all slots but last two
         for slot in 0..SLOTS_PER_WINDOW - 2 {
             for v in 0..7 {
-                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(
+                    Slot::new(slot),
+                    [slot as u8; 32].into(),
+                    &sks[v as usize],
+                    v,
+                );
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -900,7 +922,7 @@ mod tests {
             Slot::new(SLOTS_PER_WINDOW),
             (
                 Slot::new(SLOTS_PER_WINDOW - 3),
-                [(SLOTS_PER_WINDOW - 3) as u8; 32]
+                [(SLOTS_PER_WINDOW - 3) as u8; 32].into()
             )
         ));
     }
@@ -915,7 +937,12 @@ mod tests {
         // notarize all slots in first window
         for slot in 0..SLOTS_PER_WINDOW {
             for v in 0..7 {
-                let vote = Vote::new_notar(Slot::new(slot), [slot as u8; 32], &sks[v as usize], v);
+                let vote = Vote::new_notar(
+                    Slot::new(slot),
+                    [slot as u8; 32].into(),
+                    &sks[v as usize],
+                    v,
+                );
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -932,7 +959,7 @@ mod tests {
             Slot::new(2 * SLOTS_PER_WINDOW),
             (
                 Slot::new(SLOTS_PER_WINDOW - 1),
-                [(SLOTS_PER_WINDOW - 1) as u8; 32]
+                [(SLOTS_PER_WINDOW - 1) as u8; 32].into()
             )
         ));
     }
@@ -947,7 +974,7 @@ mod tests {
         // all nodes vote to fast finalize 3 leader windows
         for slot in 0..3 * SLOTS_PER_WINDOW {
             let slot = Slot::new(slot);
-            let hash = [slot.inner() as u8; 32];
+            let hash = [slot.inner() as u8; 32].into();
             assert!(!pool.has_final_cert(slot));
             for v in 0..11 {
                 let vote = Vote::new_notar(slot, hash, &sks[v as usize], v);
@@ -968,7 +995,7 @@ mod tests {
         // NOT enough nodes vote to fast finalize next 10 slots
         for s in 1..=10 {
             let slot = Slot::new(last_slot.inner() + s);
-            let hash = [slot.inner() as u8; 32];
+            let hash = [slot.inner() as u8; 32].into();
             for v in 0..8 {
                 let vote = Vote::new_notar(slot, hash, &sks[v as usize], v);
                 assert_eq!(pool.add_vote(vote).await, Ok(()));
@@ -986,7 +1013,7 @@ mod tests {
         // add one more vote each to finalize next 10 slots
         for s in 1..=10 {
             let slot = Slot::new(last_slot.inner() + s);
-            let hash = [slot.inner() as u8; 32];
+            let hash = [slot.inner() as u8; 32].into();
             let vote = Vote::new_notar(slot, hash, &sks[8], 8);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
             assert!(pool.has_final_cert(slot));
@@ -1010,7 +1037,7 @@ mod tests {
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
 
         // insert a notar vote from validator 0
-        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[0], 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &sks[0], 0);
         assert_eq!(pool.add_vote(vote).await, Ok(()));
 
         // insert a skip vote from validator 1
@@ -1018,7 +1045,7 @@ mod tests {
         assert_eq!(pool.add_vote(vote).await, Ok(()));
 
         // inserting same votes again should fail
-        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sks[0], 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &sks[0], 0);
         assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
         let vote = Vote::new_skip(Slot::new(0), &sks[1], 1);
         assert_eq!(pool.add_vote(vote).await, Err(AddVoteError::Duplicate));
@@ -1035,7 +1062,12 @@ mod tests {
         let mut votes = Vec::new();
         let first_slot = Slot::genesis().next();
         for v in 0..11 {
-            votes.push(Vote::new_notar(first_slot, [1; 32], &sks[v as usize], v));
+            votes.push(Vote::new_notar(
+                first_slot,
+                [1; 32].into(),
+                &sks[v as usize],
+                v,
+            ));
         }
         let notar_cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
@@ -1070,7 +1102,7 @@ mod tests {
         // all nodes vote finalize last slot of 3rd leader windows
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         for v in 0..11 {
-            let vote = Vote::new_notar(slot, Hash::default(), &sks[v as usize], v);
+            let vote = Vote::new_notar(slot, Hash::default().into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
         assert_eq!(pool.finalized_slot(), slot);
@@ -1108,7 +1140,12 @@ mod tests {
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         let mut votes = Vec::new();
         for v in 0..11 {
-            votes.push(Vote::new_notar(slot, Hash::default(), &sks[v as usize], v));
+            votes.push(Vote::new_notar(
+                slot,
+                Hash::default().into(),
+                &sks[v as usize],
+                v,
+            ));
         }
         let ff_cert = FastFinalCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert_eq!(
@@ -1152,7 +1189,7 @@ mod tests {
         // all nodes vote for first slot (it's fast finalized)
         let slot1 = Slot::genesis().next();
         for v in 0..11 {
-            let vote = Vote::new_notar(slot1, [1; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot1, [1; 32].into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
@@ -1165,7 +1202,7 @@ mod tests {
 
         // we also vote for next slot, see no other votes
         let slot3 = slot2.next();
-        let vote = Vote::new_notar(slot3, [3; 32], &sks[0], 0);
+        let vote = Vote::new_notar(slot3, [3; 32].into(), &sks[0], 0);
         assert_eq!(pool.add_vote(vote).await, Ok(()));
 
         // initiate standstill
@@ -1222,7 +1259,7 @@ mod tests {
         let slot0 = slot1.prev();
         let slot2 = slot1.next();
         for v in 0..11 {
-            let vote = Vote::new_notar(slot2, [2; 32], &sks[v as usize], v);
+            let vote = Vote::new_notar(slot2, [2; 32].into(), &sks[v as usize], v);
             assert_eq!(pool.add_vote(vote).await, Ok(()));
         }
 
@@ -1239,8 +1276,10 @@ mod tests {
         );
 
         // add its ancestors
-        pool.add_block((slot2, [2; 32]), (slot1, [1; 32])).await;
-        pool.add_block((slot1, [1; 32]), (slot0, [0; 32])).await;
+        pool.add_block((slot2, [2; 32].into()), (slot1, [1; 32].into()))
+            .await;
+        pool.add_block((slot1, [1; 32].into()), (slot0, [0; 32].into()))
+            .await;
 
         // should emit ParentReady as a result
         let Ok(event) = votor_rx.try_recv() else {
@@ -1254,7 +1293,7 @@ mod tests {
             } => {
                 assert_eq!(slot, slot1);
                 assert_eq!(parent_slot, slot0);
-                assert_eq!(parent_hash, [0; 32]);
+                assert_eq!(parent_hash, [0; 32].into());
             }
             _ => unreachable!("unexpected event {event:?}"),
         }

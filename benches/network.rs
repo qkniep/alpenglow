@@ -24,7 +24,7 @@ fn serialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            let vote = Vote::new_notar(Slot::new(0), hash.into(), &sk, 0);
             ConsensusMessage::Vote(vote)
         })
         .bench_values(|msg: ConsensusMessage| bincode::serde::encode_to_vec(msg, BINCODE_CONFIG));
@@ -39,7 +39,7 @@ fn deserialize_vote(bencher: divan::Bencher) {
             let mut hash = Hash::default();
             rng.fill_bytes(&mut hash);
             let sk = aggsig::SecretKey::new(&mut rng);
-            let vote = Vote::new_notar(Slot::new(0), hash, &sk, 0);
+            let vote = Vote::new_notar(Slot::new(0), hash.into(), &sk, 0);
             let msg = ConsensusMessage::Vote(vote);
             bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap()
         })

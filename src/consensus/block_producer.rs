@@ -17,6 +17,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
+use crate::crypto::merkle::BlockHash;
 use crate::crypto::{Hash, signature};
 use crate::network::{BINCODE_CONFIG, Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
@@ -132,7 +133,7 @@ where
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
                         // genesis block is already produced so skip it
-                        (first_slot_in_window, Hash::default())
+                        (first_slot_in_window, Hash::default().into())
                     } else {
                         self.produce_block_parent_ready(first_slot_in_window, parent)
                             .await?
@@ -344,7 +345,7 @@ where
         &self,
         header: SliceHeader,
         payload: SlicePayload,
-    ) -> Result<Option<Hash>> {
+    ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
@@ -459,7 +460,7 @@ async fn wait_for_first_slot(
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
     if first_slot_in_window.is_genesis_window() {
-        return SlotReady::Ready((Slot::genesis(), Hash::default()));
+        return SlotReady::Ready((Slot::genesis(), Hash::default().into()));
     }
 
     // if already have parent ready, return it, otherwise get a channel to await on
@@ -539,7 +540,7 @@ mod tests {
         // bin encoding an empty Vec takes 1 byte
         assert_eq!(payload.data.len(), 1);
 
-        let parent = Some((Slot::genesis(), Hash::default()));
+        let parent = Some((Slot::genesis(), Hash::default().into()));
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
@@ -590,7 +591,7 @@ mod tests {
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default());
+        let parent = (slot.prev(), Hash::default().into());
 
         let mut pool = MockPool::new();
         pool.expect_wait_for_parent_ready()
@@ -612,7 +613,7 @@ mod tests {
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default());
+        let parent = (slot.prev(), Hash::default().into());
         let (tx, rx) = oneshot::channel();
         tx.send(parent).unwrap();
 
@@ -665,8 +666,8 @@ mod tests {
     async fn verify_produce_block_parent_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let block_info = BlockInfo {
-            hash: [1; 32],
-            parent: (slot.prev(), [2; 32]),
+            hash: [1; 32].into(),
+            parent: (slot.prev(), [2; 32].into()),
         };
 
         // Handles TOTAL_SHRED number of calls.
@@ -679,11 +680,15 @@ mod tests {
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
+        let bi = block_info.clone();
         blockstore
             .expect_add_shred_from_disseminator()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(Some(block_info)) }));
+            .returning(move |_| {
+                let bi = bi.clone();
+                Box::pin(async move { Ok(Some(bi)) })
+            });
 
         let mut pool = MockPool::new();
         pool.expect_add_block()
@@ -716,9 +721,9 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
-        let slot_hash = [1; 32];
-        let old_parent = (slot.prev(), [2; 32]);
-        let new_parent = (slot.prev().prev(), [3; 32]);
+        let slot_hash = [1; 32].into();
+        let old_parent = (slot.prev(), [2; 32].into());
+        let new_parent = (slot.prev().prev(), [3; 32].into());
         let old_block_info = BlockInfo {
             hash: slot_hash,
             parent: old_parent,
@@ -759,15 +764,17 @@ mod tests {
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
+        let nbi = new_block_info.clone();
         blockstore
             .expect_add_shred_from_disseminator()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
-                Box::pin(async move {
+                let nbi = nbi.clone();
+                Box::pin(async {
                     // final shred of second slice
                     // block is constructed with the new parent
-                    Ok(Some(new_block_info))
+                    Ok(Some(nbi))
                 })
             });
 
