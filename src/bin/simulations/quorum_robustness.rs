@@ -44,7 +44,7 @@ pub struct AdversaryStrength {
 
 /// Test harness for quorum robustness testing.
 pub struct QuorumRobustnessTest<S: SamplingStrategy> {
-    samplers: RwLock<Vec<S>>,
+    samplers: Vec<S>,
     quorum_samplers: Vec<usize>,
     quorum_sizes: Vec<usize>,
     attacks: Vec<QuorumAttack>,
@@ -68,7 +68,6 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         attacks: Vec<QuorumAttack>,
     ) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let samplers = RwLock::new(samplers);
         let tests = RwLock::new(0);
         let failures = RwLock::new(vec![0; attacks.len()]);
 
@@ -341,7 +340,6 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     ) -> (usize, bool) {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         let mut tests = 0;
-        let samplers = &self.samplers.read().unwrap();
         for _ in 0..iterations {
             tests += 1;
             let corrupted = self
@@ -350,7 +348,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 .copied()
                 .enumerate()
                 .map(|(quorum_index, quorum_size)| {
-                    let sampler = &samplers[self.quorum_samplers[quorum_index]];
+                    let sampler = &self.samplers[self.quorum_samplers[quorum_index]];
                     let sampled = sampler.sample_multiple(quorum_size, &mut rng);
                     let byzantine_samples =
                         sampled.iter().filter(|v| byzantine[**v as usize]).count();
