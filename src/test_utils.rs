@@ -101,12 +101,9 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         } else {
             None
         };
+        let is_last = slice_index == final_slice_index;
+        let header = SliceHeader::new(slot, slice_index, is_last);
         let payload = create_random_slice_payload_valid_txs(parent);
-        let header = SliceHeader {
-            slot,
-            slice_index,
-            is_last: slice_index == final_slice_index,
-        };
         slices.push(Slice::from_parts(header, payload, None));
     }
     slices

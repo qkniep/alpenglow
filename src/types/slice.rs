@@ -99,6 +99,16 @@ pub(crate) struct SliceHeader {
     pub(crate) is_last: bool,
 }
 
+impl SliceHeader {
+    pub(crate) fn new(slot: Slot, slice_index: SliceIndex, is_last: bool) -> Self {
+        Self {
+            slot,
+            slice_index,
+            is_last,
+        }
+    }
+}
+
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
 /// This is what actually gets "shredded" into different [`Shred`]s.
@@ -174,11 +184,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 //
 // XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
+    let header = SliceHeader::new(Slot::new(0), SliceIndex::first(), true);
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
-    let header = SliceHeader {
-        slot: Slot::new(0),
-        slice_index: SliceIndex::first(),
-        is_last: true,
-    };
     Slice::from_parts(header, payload, None)
 }
