@@ -25,4 +25,4 @@ pub use self::hybrid_latency::{
 };
 pub use self::latency::{LatencySimInstanceBuilder, LatencySimParams, RyseLatencySimulation};
 pub use self::parameters::{RyseInstanceBuilder, RyseParameters};
-pub use self::robustness::run_robustness_tests;
+pub use self::robustness::{run_robustness_tests, run_ryse_robustness_test};
