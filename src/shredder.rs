@@ -133,7 +133,7 @@ impl Shred {
             // FIXME: allocation
             &self.payload().data.to_vec(),
             *self.payload().shred_index,
-            self.merkle_root,
+            &self.merkle_root,
             &self.merkle_path,
         )
     }

@@ -408,7 +408,7 @@ mod tests {
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
-        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, root, &proof));
+        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
 
         Ok(())
     }

@@ -300,7 +300,7 @@ where
                 if !DoubleMerkleTree::check_proof_last(
                     &root,
                     last_slice.inner(),
-                    block_hash,
+                    &block_hash,
                     &proof,
                 ) {
                     warn!("repair response (LastSliceRoot) with invalid proof");
@@ -325,7 +325,7 @@ where
                     return;
                 };
                 let (_, block_hash) = block_id;
-                if !DoubleMerkleTree::check_proof(&root, slice.inner(), block_hash, &proof) {
+                if !DoubleMerkleTree::check_proof(&root, slice.inner(), &block_hash, &proof) {
                     warn!("repair response (SliceRoot) with invalid proof");
                     return;
                 }

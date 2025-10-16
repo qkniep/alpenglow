@@ -41,7 +41,7 @@ impl ValidatedShred {
             // FIXME: allocation
             &shred.payload().data.to_vec(),
             *shred.payload().shred_index,
-            shred.merkle_root,
+            &shred.merkle_root,
             &shred.merkle_path,
         ) {
             return Err(ShredVerifyError::InvalidProof);

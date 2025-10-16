@@ -68,7 +68,7 @@ fn merkle_verify<const N: usize>(bencher: divan::Bencher) {
         })
         .bench_values(
             |(tree, data, index, proof): (SliceMerkleTree, Vec<u8>, usize, Vec<Hash>)| {
-                SliceMerkleTree::check_proof(&data, index, tree.get_root(), &proof)
+                SliceMerkleTree::check_proof(&data, index, &tree.get_root(), &proof)
             },
         );
 }

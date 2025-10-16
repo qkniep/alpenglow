@@ -99,9 +99,22 @@ const EMPTY_ROOTS: [Hash; MAX_MERKLE_TREE_HEIGHT] = [
 
 pub trait MerkleTreeType {
     type Leaf: AsRef<[u8]>;
-    type Root;
-    type Proof;
+    type Root: MerkleRoot;
+    type Proof: MerkleProof;
 }
+
+pub trait MerkleRoot: From<Hash> {
+    fn to_hash(&self) -> Hash;
+}
+
+impl MerkleRoot for Hash {
+    fn to_hash(&self) -> Hash {
+        *self
+    }
+}
+
+pub trait MerkleProof: AsRef<[Hash]> + From<Vec<Hash>> {}
+impl MerkleProof for Vec<Hash> {}
 
 pub type SliceMerkleTree = MerkleTree<SliceTreeType>;
 pub struct SliceTreeType;
@@ -208,7 +221,7 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     ///
     /// The proof is the Merkle path from the leaf to the root.
     #[must_use]
-    pub fn create_proof(&self, index: usize) -> Vec<Hash> {
+    pub fn create_proof(&self, index: usize) -> T::Proof {
         assert!(index < 1 << self.height());
         assert!(index < self.levels[0].1 as usize);
 
@@ -223,7 +236,7 @@ impl<T: MerkleTreeType> MerkleTree<T> {
             }
             i /= 2;
         }
-        proof
+        proof.into()
     }
 
     /// Checks a Merkle path against a leaf's data.
@@ -231,7 +244,7 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     /// Returns `true` iff `proof` is a valid Merkle path for a leaf containing
     /// `data` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
-    pub fn check_proof(data: &T::Leaf, index: usize, root: Hash, proof: &[Hash]) -> bool {
+    pub fn check_proof(data: &T::Leaf, index: usize, root: &T::Root, proof: &T::Proof) -> bool {
         let hash = Self::hash_leaf(data);
         Self::check_hash_proof(hash, index, root, proof)
     }
@@ -242,24 +255,29 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     /// to the given `hash` at the given `index` in the tree corresponding to
     /// the given `root`.
     #[must_use]
-    pub fn check_hash_proof(hash: Hash, index: usize, root: Hash, proof: &[Hash]) -> bool {
+    pub fn check_hash_proof(hash: Hash, index: usize, root: &T::Root, proof: &T::Proof) -> bool {
         let mut i = index;
         let mut node = hash;
-        for h in proof {
+        for h in proof.as_ref() {
             node = match i % 2 {
                 0 => Self::hash_pair(node, *h),
                 _ => Self::hash_pair(*h, node),
             };
             i /= 2;
         }
-        node == root
+        node == root.to_hash()
     }
 
     /// Checks a Merkle path proves the given leaf's data is last in the tree.
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    pub fn check_proof_last(leaf: &T::Leaf, index: usize, root: Hash, proof: &[Hash]) -> bool {
+    pub fn check_proof_last(
+        leaf: &T::Leaf,
+        index: usize,
+        root: &T::Root,
+        proof: &T::Proof,
+    ) -> bool {
         let hash = Self::hash_leaf(leaf);
         Self::check_hash_proof_last(hash, index, root, proof)
     }
@@ -268,18 +286,23 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    pub fn check_hash_proof_last(hash: Hash, index: usize, root: Hash, proof: &[Hash]) -> bool {
-        assert!(proof.len() <= EMPTY_ROOTS.len());
+    pub fn check_hash_proof_last(
+        hash: Hash,
+        index: usize,
+        root: &T::Root,
+        proof: &T::Proof,
+    ) -> bool {
+        assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
         let mut i = index;
         let mut node = hash;
-        for (height, h) in proof.iter().enumerate() {
+        for (height, h) in proof.as_ref().iter().enumerate() {
             node = match i % 2 {
                 0 => Self::hash_pair(node, EMPTY_ROOTS[height]),
                 _ => Self::hash_pair(*h, node),
             };
             i /= 2;
         }
-        node == root
+        node == root.to_hash()
     }
 
     /// Hashes some leaf data with a label into a leaf node.
@@ -353,13 +376,13 @@ mod tests {
 
         // proof and verify all leaves
         let proof = tree.create_proof(0);
-        assert!(SliceMerkleTree::check_proof(&data[0], 0, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[0], 0, &root, &proof));
         let proof = tree.create_proof(1);
-        assert!(SliceMerkleTree::check_proof(&data[1], 1, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[1], 1, &root, &proof));
         let proof = tree.create_proof(2);
-        assert!(SliceMerkleTree::check_proof(&data[2], 2, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[2], 2, &root, &proof));
         let proof = tree.create_proof(3);
-        assert!(SliceMerkleTree::check_proof(&data[3], 3, root, &proof));
+        assert!(SliceMerkleTree::check_proof(&data[3], 3, &root, &proof));
     }
 
     #[test]
@@ -396,12 +419,12 @@ mod tests {
 
         let proof = tree.create_proof(31);
         assert!(!SliceMerkleTree::check_proof_last(
-            &data[31], 31, root, &proof
+            &data[31], 31, &root, &proof
         ));
 
         let proof = tree.create_proof(32);
         assert!(SliceMerkleTree::check_proof_last(
-            &data[32], 32, root, &proof
+            &data[32], 32, &root, &proof
         ));
     }
 
@@ -429,9 +452,11 @@ mod tests {
                 let index = rng.random_range(0..num_data);
                 let proof = tree.create_proof(index);
                 let leaf = &data[index];
-                assert!(SliceMerkleTree::check_proof(leaf, index, root, &proof));
+                assert!(SliceMerkleTree::check_proof(leaf, index, &root, &proof));
                 if index == num_data - 1 {
-                    assert!(SliceMerkleTree::check_proof_last(leaf, index, root, &proof));
+                    assert!(SliceMerkleTree::check_proof_last(
+                        leaf, index, &root, &proof
+                    ));
                 }
             }
         }
