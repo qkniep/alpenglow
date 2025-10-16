@@ -38,7 +38,8 @@ impl ValidatedShred {
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
         if !SliceMerkleTree::check_proof(
-            &shred.payload().data,
+            // FIXME: allocation
+            &shred.payload().data.to_vec(),
             *shred.payload().shred_index,
             shred.merkle_root,
             &shred.merkle_path,

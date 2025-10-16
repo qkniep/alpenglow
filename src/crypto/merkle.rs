@@ -154,7 +154,7 @@ impl<T: MerkleTreeType> MerkleTree<T> {
 
         // calculate leaf hashes
         for leaf in data {
-            let leaf_hash = hash_leaf(leaf.as_ref());
+            let leaf_hash = Self::hash_leaf(leaf);
             nodes.push(leaf_hash);
         }
         levels.push((0, nodes.len().try_into().expect("too many leaves")));
@@ -170,11 +170,11 @@ impl<T: MerkleTreeType> MerkleTree<T> {
                 if i == right {
                     break;
                 } else if i + 1 == right {
-                    let inner_node = hash_pair(nodes[i], EMPTY_ROOTS[h]);
+                    let inner_node = Self::hash_pair(nodes[i], EMPTY_ROOTS[h]);
                     nodes.push(inner_node);
                     break;
                 } else {
-                    let inner_node = hash_pair(nodes[i], nodes[i + 1]);
+                    let inner_node = Self::hash_pair(nodes[i], nodes[i + 1]);
                     nodes.push(inner_node);
                 }
             }
@@ -231,8 +231,8 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     /// Returns `true` iff `proof` is a valid Merkle path for a leaf containing
     /// `data` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
-    pub fn check_proof(data: &[u8], index: usize, root: Hash, proof: &[Hash]) -> bool {
-        let hash = hash_leaf(data);
+    pub fn check_proof(data: &T::Leaf, index: usize, root: Hash, proof: &[Hash]) -> bool {
+        let hash = Self::hash_leaf(data);
         Self::check_hash_proof(hash, index, root, proof)
     }
 
@@ -247,8 +247,8 @@ impl<T: MerkleTreeType> MerkleTree<T> {
         let mut node = hash;
         for h in proof {
             node = match i % 2 {
-                0 => hash_pair(node, *h),
-                _ => hash_pair(*h, node),
+                0 => Self::hash_pair(node, *h),
+                _ => Self::hash_pair(*h, node),
             };
             i /= 2;
         }
@@ -259,8 +259,8 @@ impl<T: MerkleTreeType> MerkleTree<T> {
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    pub fn check_proof_last(data: &[u8], index: usize, root: Hash, proof: &[Hash]) -> bool {
-        let hash = hash_leaf(data);
+    pub fn check_proof_last(leaf: &T::Leaf, index: usize, root: Hash, proof: &[Hash]) -> bool {
+        let hash = Self::hash_leaf(leaf);
         Self::check_hash_proof_last(hash, index, root, proof)
     }
 
@@ -274,29 +274,30 @@ impl<T: MerkleTreeType> MerkleTree<T> {
         let mut node = hash;
         for (height, h) in proof.iter().enumerate() {
             node = match i % 2 {
-                0 => hash_pair(node, EMPTY_ROOTS[height]),
-                _ => hash_pair(*h, node),
+                0 => Self::hash_pair(node, EMPTY_ROOTS[height]),
+                _ => Self::hash_pair(*h, node),
             };
             i /= 2;
         }
         node == root
     }
-}
 
-/// Hashes some leaf data with a label into a leaf node.
-///
-/// The label prevents the possibility to claim an intermediate node was a leaf.
-/// It also makes the Merkle tree more robust against pre-calculation attacks.
-fn hash_leaf(data: &[u8]) -> Hash {
-    hash_all(&[&LEAF_LABEL, data])
-}
+    /// Hashes some leaf data with a label into a leaf node.
+    ///
+    /// The label prevents the possibility to claim an intermediate node was a leaf.
+    /// It also makes the Merkle tree more robust against pre-calculation attacks.
+    fn hash_leaf(leaf: &T::Leaf) -> Hash {
+        let data: &[u8] = leaf.as_ref();
+        hash_all(&[&LEAF_LABEL, data])
+    }
 
-/// Hashes a pair of child hashes with labels into a parent (non-leaf) node.
-///
-/// The labels prevent the possibility to claim an intermediate node was a leaf.
-/// They also make the Merkle tree more robust against pre-calculation attacks.
-fn hash_pair(left: Hash, right: Hash) -> Hash {
-    hash_all(&[&LEFT_LABEL, &left, &RIGHT_LABEL, &right])
+    /// Hashes a pair of child hashes with labels into a parent (non-leaf) node.
+    ///
+    /// The labels prevent the possibility to claim an intermediate node was a leaf.
+    /// They also make the Merkle tree more robust against pre-calculation attacks.
+    fn hash_pair(left: Hash, right: Hash) -> Hash {
+        hash_all(&[&LEFT_LABEL, &left, &RIGHT_LABEL, &right])
+    }
 }
 
 #[cfg(test)]
@@ -318,9 +319,9 @@ mod tests {
         let tree = SliceMerkleTree::new(&data);
 
         // calculate expected root hash manually
-        let leaf1 = hash_leaf(b"hello");
-        let leaf2 = hash_leaf(b"world");
-        let expected_root = hash_pair(leaf1, leaf2);
+        let leaf1 = SliceMerkleTree::hash_leaf(&data[0]);
+        let leaf2 = SliceMerkleTree::hash_leaf(&data[1]);
+        let expected_root = SliceMerkleTree::hash_pair(leaf1, leaf2);
 
         assert_eq!(tree.get_root(), expected_root);
     }
@@ -395,12 +396,12 @@ mod tests {
 
         let proof = tree.create_proof(31);
         assert!(!SliceMerkleTree::check_proof_last(
-            b"hello", 31, root, &proof
+            &data[31], 31, root, &proof
         ));
 
         let proof = tree.create_proof(32);
         assert!(SliceMerkleTree::check_proof_last(
-            b"hello", 32, root, &proof
+            &data[32], 32, root, &proof
         ));
     }
 
