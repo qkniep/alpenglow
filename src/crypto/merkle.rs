@@ -213,7 +213,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         assert!(index < 1 << self.height());
         assert!(index < self.levels[0].1 as usize);
 
-        let mut proof = Vec::new();
+        let mut proof = Vec::with_capacity(self.height());
         let mut i = index;
 
         for (h, (offset, len)) in self.levels.iter().enumerate().take(self.height()) {
