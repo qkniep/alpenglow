@@ -288,6 +288,7 @@ pub fn validators_from_validator_data(
 /// The input `hubs` contains a list of (city, fraction of total stake).
 /// Each city has to be in the ping dataset, i.e. supported by [`coordinates_for_city`].
 /// Outputs a stake distribution in the same data format as [`VALIDATOR_DATA`].
+#[must_use]
 pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     let mut validators = Vec::new();
     for (city, frac_stake) in hubs {

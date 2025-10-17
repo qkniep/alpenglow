@@ -199,8 +199,8 @@ where
         Self {
             epoch_info,
             blockstore,
-            block_producer,
             pool,
+            block_producer,
             all2all,
             disseminator,
             cancel_token,

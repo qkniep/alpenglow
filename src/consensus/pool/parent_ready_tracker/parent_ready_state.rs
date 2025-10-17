@@ -71,7 +71,7 @@ impl ParentReadyState {
             }
             IsReady::Ready(ready_ids) => {
                 assert!(!ready_ids.contains(&id));
-                ready_ids.push(id)
+                ready_ids.push(id);
             }
         }
     }
