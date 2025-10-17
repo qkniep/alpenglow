@@ -72,25 +72,6 @@ impl Display for SliceIndex {
     }
 }
 
-impl<'de> SchemaRead<'de> for SliceIndex {
-    type Dst = Self;
-
-    fn read(
-        reader: &mut wincode::io::Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> wincode::ReadResult<()> {
-        unsafe {
-            reader.read_t(dst)?;
-            if dst.assume_init_ref().0 >= MAX_SLICES_PER_BLOCK {
-                // FIXME: replace this arbitrary error type
-                Err(wincode::ReadError::InvalidCharLead(0))
-            } else {
-                Ok(())
-            }
-        }
-    }
-}
-
 impl<'de> Deserialize<'de> for SliceIndex {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -119,6 +100,25 @@ impl<'de> Visitor<'de> for SliceIndexVisitor {
         SliceIndex::new(v as usize).ok_or(de::Error::custom(
             "input {v} is not in the range [0:{MAX_SLICES_PER_BLOCK})",
         ))
+    }
+}
+
+impl<'de> SchemaRead<'de> for SliceIndex {
+    type Dst = Self;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        unsafe {
+            reader.read_t(dst)?;
+            if dst.assume_init_ref().0 >= MAX_SLICES_PER_BLOCK {
+                // FIXME: replace this arbitrary error type
+                Err(wincode::ReadError::InvalidCharLead(0))
+            } else {
+                Ok(())
+            }
+        }
     }
 }
 
