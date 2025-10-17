@@ -26,12 +26,13 @@ use serde::{Deserialize, Serialize};
 pub use self::all2all::All2All;
 pub use self::consensus::Alpenglow;
 pub use self::consensus::votor::VotorEvent;
-use self::crypto::{Hash, aggsig, signature};
+use self::crypto::{aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;
 pub use self::validator::Validator;
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
+use crate::crypto::merkle::BlockHash;
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
 use crate::disseminator::rotor::StakeWeightedSampler;
@@ -44,7 +45,7 @@ pub type ValidatorId = u64;
 /// Validator stake type.
 pub type Stake = u64;
 /// Block identifier type.
-pub type BlockId = (Slot, Hash);
+pub type BlockId = (Slot, BlockHash);
 
 const MAX_TRANSACTION_SIZE: usize = 512;
 
@@ -54,9 +55,9 @@ const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     slot: Slot,
-    block_hash: Hash,
+    block_hash: BlockHash,
     parent: Slot,
-    parent_hash: Hash,
+    parent_hash: BlockHash,
     transactions: Vec<Transaction>,
 }
 

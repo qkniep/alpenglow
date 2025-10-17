@@ -23,6 +23,7 @@ clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 csv = "1"
 ctr = "0.10.0-rc.1"
+derive_more = { version = "2", features = ["as_ref", "from", "into"] }
 ed25519-consensus = "2"
 either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
