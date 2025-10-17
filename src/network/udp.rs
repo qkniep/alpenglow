@@ -39,7 +39,7 @@ impl<S, R> UdpNetwork<S, R> {
     /// Panics if the UDP `port` is already in use.
     #[must_use]
     pub fn new(port: u16) -> Self {
-        let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
+        let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
         let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
         Self {
             socket,

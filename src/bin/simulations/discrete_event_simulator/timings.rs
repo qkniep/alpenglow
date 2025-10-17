@@ -45,27 +45,27 @@ impl SimTime {
     }
 
     /// Returns the exact number of nanoseconds the [`SimTime`] represents.
-    pub const fn nanos(&self) -> Option<u64> {
-        match *self {
+    pub const fn nanos(self) -> Option<u64> {
+        match self {
             Self::NEVER => None,
             Self(t) => Some(t),
         }
     }
 
     /// Converts the [`SimTime`] to (fractional) microseconds.
-    pub fn as_micros(&self) -> f64 {
+    pub fn as_micros(self) -> f64 {
         self.nanos()
             .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e3)
     }
 
     /// Converts the [`SimTime`] to (fractional) milliseconds.
-    pub fn as_millis(&self) -> f64 {
+    pub fn as_millis(self) -> f64 {
         self.nanos()
             .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e6)
     }
 
     /// Converts the [`SimTime`] to (fractional) seconds.
-    pub fn as_secs(&self) -> f64 {
+    pub fn as_secs(self) -> f64 {
         self.nanos()
             .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e9)
     }
@@ -142,7 +142,7 @@ impl<E: Event> Timings<E> {
 
     /// Returns the timing vector for the given event.
     pub fn get(&self, event: E) -> Option<&[SimTime]> {
-        self.event_timings.get(&event).map(|v| v.as_slice())
+        self.event_timings.get(&event).map(Vec::as_slice)
     }
 
     /// Iterates over timing vectors for all events.
@@ -201,7 +201,7 @@ impl<P: Protocol> TimingStats<P> {
                 stage
                     .events(params)
                     .into_iter()
-                    .filter(|event| event.should_track_stats())
+                    .filter(Event::should_track_stats)
                     .map(|event| (event.name(), event))
             })
             .collect::<Vec<_>>();
@@ -212,7 +212,7 @@ impl<P: Protocol> TimingStats<P> {
             .map(|(name, _event)| name.to_string())
             .collect::<Vec<_>>();
         let column_str = columns.join(",");
-        writeln!(writer, "percentile,{}", column_str)?;
+        writeln!(writer, "percentile,{column_str}")?;
 
         // write data rows
         for percentile in 1..=100 {

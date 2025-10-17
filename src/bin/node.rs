@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
 
     // start the node with the provided config
-    let node = create_node(config)?;
+    let node = create_node(config);
     let cancel_token = node.get_cancel_token();
     let node_task = tokio::spawn(node.run().in_span(root_span));
 
@@ -115,7 +115,7 @@ type Node = Alpenglow<
     UdpNetwork<Transaction, Transaction>,
 >;
 
-fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
+fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
     let epoch_info = Arc::new(EpochInfo::new(config.id, config.gossip.clone()));
     let start_port = config.port;
@@ -126,7 +126,7 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     let repair_network = UdpNetwork::new(start_port + 2);
     let repair_request_network = UdpNetwork::new(start_port + 3);
     let txs_receiver = UdpNetwork::new(start_port + 4);
-    Ok(Alpenglow::new(
+    Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
@@ -135,7 +135,7 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
         repair_request_network,
         epoch_info,
         txs_receiver,
-    ))
+    )
 }
 
 async fn create_node_configs(

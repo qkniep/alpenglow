@@ -125,10 +125,10 @@ impl Event for LatencyEvent {
     fn name(&self) -> String {
         match self {
             Self::BlockSent => "block_sent".to_owned(),
-            Self::Direct(slice) => format!("direct_{}", slice),
+            Self::Direct(slice) => format!("direct_{slice}"),
             Self::StartForwarding(_) => "start_forwarding".to_owned(),
             Self::FirstShredInSlice(_) => "first_shred_in_slice".to_owned(),
-            Self::Rotor(slice) => format!("rotor_{}", slice),
+            Self::Rotor(slice) => format!("rotor_{slice}"),
             Self::FirstShred => "first_shred".to_owned(),
             Self::Block => "block".to_owned(),
             Self::LocalNotar => "local_notar".to_owned(),

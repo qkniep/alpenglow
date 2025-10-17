@@ -27,6 +27,7 @@ use self::parent_ready_tracker::ParentReadyTracker;
 use self::slot_state::SlotState;
 use super::votor::VotorEvent;
 use super::{Cert, EpochInfo, Vote};
+use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::{BlockHash, MerkleRoot};
 use crate::types::SLOTS_PER_EPOCH;
@@ -299,10 +300,10 @@ impl PoolImpl {
     /// This requires that the parent is at least notarized-fallback.
     /// Also, if the parent is in a slot before `slot-1`, then all slots in
     /// `parent+1..slot-1` (inclusive) must be skip-certified.
-    pub fn is_parent_ready(&self, slot: Slot, parent: BlockId) -> bool {
+    pub fn is_parent_ready(&self, slot: Slot, parent: &BlockId) -> bool {
         self.parent_ready_tracker
             .parents_ready(slot)
-            .contains(&parent)
+            .contains(parent)
     }
 
     /// Returns `true` iff the pool contains a notar(-fallback) certificate for the slot.
@@ -314,13 +315,9 @@ impl PoolImpl {
 
     /// Returns the hash of the notarized block for the given slot, if any.
     pub fn get_notarized_block(&self, slot: Slot) -> Option<&BlockHash> {
-        self.slot_states.get(&slot).and_then(|state| {
-            state
-                .certificates
-                .notar
-                .as_ref()
-                .map(|cert| cert.block_hash())
-        })
+        self.slot_states
+            .get(&slot)
+            .and_then(|state| state.certificates.notar.as_ref().map(NotarCert::block_hash))
     }
 
     /// Returns `true` iff the pool contains a (fast) finalization certificate for the slot.
@@ -723,7 +720,7 @@ mod tests {
         }
         let slot = *window.last().unwrap();
         let next = slot.next();
-        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32].into())));
+        assert!(pool.is_parent_ready(next, &(slot, [next.inner() as u8 - 1; 32].into())));
     }
 
     #[tokio::test]
@@ -736,7 +733,7 @@ mod tests {
         // receive mixed notar & notar-fallback votes
         let window = Slot::new(0).slots_in_window().collect::<Vec<_>>();
         for slot in window.iter() {
-            assert!(!pool.is_parent_ready(slot.next(), (*slot, [slot.inner() as u8; 32].into())));
+            assert!(!pool.is_parent_ready(slot.next(), &(*slot, [slot.inner() as u8; 32].into())));
             for v in 0..4 {
                 let vote =
                     Vote::new_notar(*slot, [slot.inner() as u8; 32].into(), &sks[v as usize], v);
@@ -754,7 +751,7 @@ mod tests {
         }
         let slot = *window.last().unwrap();
         let next = slot.next();
-        assert!(pool.is_parent_ready(next, (slot, [next.inner() as u8 - 1; 32].into())));
+        assert!(pool.is_parent_ready(next, &(slot, [next.inner() as u8 - 1; 32].into())));
     }
 
     #[tokio::test]
@@ -788,7 +785,7 @@ mod tests {
         }
 
         // branch can only be certified once we saw votes other slots in window
-        assert!(pool.is_parent_ready(next, (slot_1, [1; 32].into())));
+        assert!(pool.is_parent_ready(next, &(slot_1, [1; 32].into())));
         // no other blocks are valid parents
         assert_eq!(pool.parents_ready(next).len(), 1);
     }
@@ -826,7 +823,7 @@ mod tests {
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
-        assert!(pool.is_parent_ready(next, (slot_1, [1; 32].into())));
+        assert!(pool.is_parent_ready(next, &(slot_1, [1; 32].into())));
     }
 
     #[tokio::test]
@@ -851,7 +848,7 @@ mod tests {
 
         assert!(pool.is_parent_ready(
             Slot::new(SLOTS_PER_WINDOW),
-            (
+            &(
                 Slot::new(SLOTS_PER_WINDOW - 1),
                 [(SLOTS_PER_WINDOW - 1) as u8; 32].into()
             )
@@ -886,7 +883,7 @@ mod tests {
 
         assert!(pool.is_parent_ready(
             Slot::new(SLOTS_PER_WINDOW),
-            (
+            &(
                 Slot::new(SLOTS_PER_WINDOW - 2),
                 [(SLOTS_PER_WINDOW - 2) as u8; 32].into()
             )
@@ -925,7 +922,7 @@ mod tests {
 
         assert!(pool.is_parent_ready(
             Slot::new(SLOTS_PER_WINDOW),
-            (
+            &(
                 Slot::new(SLOTS_PER_WINDOW - 3),
                 [(SLOTS_PER_WINDOW - 3) as u8; 32].into()
             )
@@ -962,7 +959,7 @@ mod tests {
 
         assert!(pool.is_parent_ready(
             Slot::new(2 * SLOTS_PER_WINDOW),
-            (
+            &(
                 Slot::new(SLOTS_PER_WINDOW - 1),
                 [(SLOTS_PER_WINDOW - 1) as u8; 32].into()
             )

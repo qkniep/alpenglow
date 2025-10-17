@@ -18,6 +18,7 @@ use std::sync::RwLock;
 
 use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, SamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
+use color_eyre::Result;
 use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -92,7 +93,11 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Returns the failure probability for the strongest adversary strategy.
     ///
     /// Results are written as a single line into `csv_file`.
-    pub fn run(&self, adversary_strength: AdversaryStrength, csv_file: &mut csv::Writer<File>) {
+    pub fn run(
+        &self,
+        adversary_strength: AdversaryStrength,
+        csv_file: &mut csv::Writer<File>,
+    ) -> Result<()> {
         let mut attack_probs = vec![0.0; self.attacks.len()];
 
         // try three different adversary strategies
@@ -141,8 +146,10 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         for attack_prob in &attack_probs {
             row.push(attack_prob.log2().to_string());
         }
-        csv_file.write_record(&row).unwrap();
-        csv_file.flush().unwrap();
+        csv_file.write_record(&row)?;
+        csv_file.flush()?;
+
+        Ok(())
     }
 
     fn run_small(
@@ -307,7 +314,8 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                     let val_stake = self.validators[*id as usize].stake as f64;
                     if corrupted[*id as usize] {
                         continue;
-                    } else if corrupted_stake + (*stake as f64)
+                    }
+                    if corrupted_stake + (*stake as f64)
                         < stake_per_bin * byzantine_bins
                         // && val_stake < stake_per_bin
                         && total_corrupted_stake + val_stake < self.total_stake as f64 * adversary_strength.byzantine

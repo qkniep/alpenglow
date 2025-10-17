@@ -6,7 +6,7 @@ use crate::crypto::signature::PublicKey;
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 
-/// Different errors returned from [`ValidatedShred::new`].
+/// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
 pub enum ShredVerifyError {
     /// The shred contained an invalid Merkle proof.
@@ -20,7 +20,7 @@ pub enum ShredVerifyError {
 
 /// A verified wrapper around a [`Shred`].
 ///
-/// It uses the new type pattern to encode verification in the type system.  
+/// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
 #[derive(Clone, Debug)]
 #[repr(transparent)]
@@ -31,6 +31,10 @@ impl ValidatedShred {
     ///
     /// `cached_merkle_root`: Refers to Merkle root of the slice, if known from earlier shred.
     /// It is used to potentially skip expensive signature verification or detect equivocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShredVerifyError`] if the [`Shred`] does not pass all verification checks.
     pub fn try_new(
         shred: Shred,
         cached_merkle_root: Entry<SliceIndex, SliceRoot>,

@@ -139,7 +139,7 @@ impl Machine {
 
         // open UDP sockets
         for node in 0..NODES_PER_MACHINE {
-            let port = BASE_PORT + node as u16;
+            let port = BASE_PORT + u16::try_from(node).unwrap();
             let addr = format!("0.0.0.0:{port}");
             let socket = Arc::new(UdpSocket::bind(&addr).await?);
             sockets.push(socket.clone());
@@ -154,7 +154,8 @@ impl Machine {
                 for id in 0..MACHINES {
                     for d_port in 0..NODES_PER_MACHINE {
                         let ip = get_machine_ip(self.id, id);
-                        let rcv_addr = format!("{}:{}", ip, BASE_PORT + d_port as u16);
+                        let port = BASE_PORT + u16::try_from(d_port).unwrap();
+                        let rcv_addr = format!("{ip}:{port}");
                         let time = OffsetDateTime::now_utc();
                         let timestamp_nanos = time.unix_timestamp_nanos();
                         let msg = Message::Ping(PingMsg {
@@ -239,7 +240,7 @@ impl Machine {
                             for _ in 0..100 {
                                 for id in 0..MACHINES {
                                     for d_port in 0..NODES_PER_MACHINE {
-                                        let port = BASE_PORT + d_port as u16;
+                                        let port = BASE_PORT + u16::try_from(d_port).unwrap();
                                         let ip = get_machine_ip(self_id, id);
                                         let rcv_addr = format!("{ip}:{port}");
                                         let time = OffsetDateTime::now_utc();
@@ -302,7 +303,7 @@ impl Machine {
 
                         for id in 0..MACHINES {
                             for d_port in 0..NODES_PER_MACHINE {
-                                let port = BASE_PORT + d_port as u16;
+                                let port = BASE_PORT + u16::try_from(d_port).unwrap();
                                 let ip = get_machine_ip(self_id, id);
                                 let rcv_addr = format!("{ip}:{port}");
                                 debug!("sending block to {rcv_addr}");

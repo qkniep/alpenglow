@@ -238,10 +238,9 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
                     let inner_node = Self::hash_pair(nodes[i], EMPTY_ROOTS[h]);
                     nodes.push(inner_node);
                     break;
-                } else {
-                    let inner_node = Self::hash_pair(nodes[i], nodes[i + 1]);
-                    nodes.push(inner_node);
                 }
+                let inner_node = Self::hash_pair(nodes[i], nodes[i + 1]);
+                nodes.push(inner_node);
             }
 
             len = len.div_ceil(2);

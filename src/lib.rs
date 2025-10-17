@@ -55,7 +55,7 @@ const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     slot: Slot,
-    block_hash: BlockHash,
+    hash: BlockHash,
     parent: Slot,
     parent_hash: BlockHash,
     transactions: Vec<Transaction>,
@@ -123,6 +123,7 @@ impl Networks {
 ///
 /// This code lives here to enable sharing between different testing and benchmarking.
 /// It should not be used in production code.
+#[must_use]
 pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
     let networks = (0..count).map(|_| Networks::new()).collect::<Vec<_>>();

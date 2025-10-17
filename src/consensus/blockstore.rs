@@ -32,7 +32,7 @@ pub struct BlockInfo {
 impl From<&Block> for BlockInfo {
     fn from(block: &Block) -> Self {
         BlockInfo {
-            hash: block.block_hash.clone(),
+            hash: block.hash.clone(),
             parent: (block.parent, block.parent_hash.clone()),
         }
     }
