@@ -100,15 +100,21 @@ const EMPTY_ROOTS: [Hash; MAX_MERKLE_TREE_HEIGHT] = [
 /// Marker trait for the leaf nodes of a Merkle tree.
 pub trait MerkleLeaf: AsRef<[u8]> {}
 
-/// Marker trait for the root of a Merkle tree.
-pub trait MerkleRoot: From<Hash> + Into<Hash> + Clone {}
+/// Trait for the root of a Merkle tree.
+pub trait MerkleRoot: From<Hash> {
+    fn as_hash(&self) -> &Hash;
+}
 
 /// Marker trait for the proof of a Merkle tree.
 pub trait MerkleProof: AsRef<[Hash]> + From<Vec<Hash>> {}
 
 impl MerkleLeaf for Vec<u8> {}
 impl MerkleLeaf for Hash {}
-impl MerkleRoot for Hash {}
+impl MerkleRoot for Hash {
+    fn as_hash(&self) -> &Hash {
+        self
+    }
+}
 impl MerkleProof for Vec<Hash> {}
 
 /// A plain Merkle tree over arbitrary bytes.
@@ -260,7 +266,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
             };
             i /= 2;
         }
-        node == root.clone().into()
+        node == *root.as_hash()
     }
 
     /// Checks a Merkle path proves the given leaf's data is last in the tree.
@@ -287,7 +293,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
             };
             i /= 2;
         }
-        node == root.clone().into()
+        node == *root.as_hash()
     }
 
     /// Hashes some leaf data with a label into a leaf node.
