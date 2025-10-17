@@ -1,8 +1,8 @@
 use std::collections::btree_map::Entry;
 use std::ops::{Deref, DerefMut};
 
+use crate::crypto::merkle::{SliceMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
-use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 
@@ -33,13 +33,14 @@ impl ValidatedShred {
     /// It is used to potentially skip expensive signature verification or detect equivocation.
     pub fn try_new(
         shred: Shred,
-        cached_merkle_root: Entry<SliceIndex, Hash>,
+        cached_merkle_root: Entry<SliceIndex, SliceRoot>,
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
-        if !MerkleTree::check_proof(
-            &shred.payload().data,
+        if !SliceMerkleTree::check_proof(
+            // FIXME: allocation
+            &shred.payload().data.to_vec(),
             *shred.payload().shred_index,
-            shred.merkle_root,
+            &shred.merkle_root,
             &shred.merkle_path,
         ) {
             return Err(ShredVerifyError::InvalidProof);
@@ -50,15 +51,15 @@ impl ValidatedShred {
                 if entry.get() == &shred.merkle_root {
                     return Ok(Self(shred));
                 }
-                if shred.merkle_root_sig.verify(&shred.merkle_root, pk) {
+                if shred.merkle_root_sig.verify(shred.merkle_root.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             Entry::Vacant(entry) => {
-                if shred.merkle_root_sig.verify(&shred.merkle_root, pk) {
-                    entry.insert(shred.merkle_root);
+                if shred.merkle_root_sig.verify(shred.merkle_root.as_ref(), pk) {
+                    entry.insert(shred.merkle_root.clone());
                     Ok(Self(shred))
                 } else {
                     Err(ShredVerifyError::InvalidSignature)

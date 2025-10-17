@@ -8,7 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::aggsig::{PublicKey, SecretKey};
-use crate::crypto::{Hash, IndividualSignature, Signable};
+use crate::crypto::merkle::BlockHash;
+use crate::crypto::{IndividualSignature, Signable};
 use crate::network::BINCODE_CONFIG;
 use crate::{Slot, ValidatorId};
 
@@ -26,12 +27,12 @@ pub struct Vote {
 }
 
 /// Represents the type-specific vote payload as per the protocol.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VoteKind {
     /// A notarization vote for a given block hash in a given slot.
-    Notar(Slot, Hash),
+    Notar(Slot, BlockHash),
     /// A notar-fallback vote for a given block hash in a given slot.
-    NotarFallback(Slot, Hash),
+    NotarFallback(Slot, BlockHash),
     /// A skip vote for a given slot.
     Skip(Slot),
     /// A fast finalization vote for a given slot.
@@ -51,7 +52,12 @@ impl Vote {
     /// Creates a new notarization vote.
     /// That is, a vote corresponding to the [`VoteKind::Notar`] variant.
     #[must_use]
-    pub fn new_notar(slot: Slot, block_hash: Hash, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new_notar(
+        slot: Slot,
+        block_hash: BlockHash,
+        sk: &SecretKey,
+        signer: ValidatorId,
+    ) -> Self {
         let kind = VoteKind::Notar(slot, block_hash);
         Self::new(kind, sk, signer)
     }
@@ -61,7 +67,7 @@ impl Vote {
     #[must_use]
     pub fn new_notar_fallback(
         slot: Slot,
-        block_hash: Hash,
+        block_hash: BlockHash,
         sk: &SecretKey,
         signer: ValidatorId,
     ) -> Self {
@@ -146,7 +152,7 @@ impl Vote {
     ///
     /// Returns `None` if the vote is a skip(-fallback) or finalization vote.
     #[must_use]
-    pub const fn block_hash(&self) -> Option<Hash> {
+    pub const fn block_hash(&self) -> Option<&BlockHash> {
         self.kind.block_hash()
     }
 
@@ -180,9 +186,9 @@ impl VoteKind {
     ///
     /// Returns `None` if the vote is a skip(-fallback) or finalization vote.
     #[must_use]
-    pub const fn block_hash(&self) -> Option<Hash> {
+    pub const fn block_hash(&self) -> Option<&BlockHash> {
         match self {
-            Self::Notar(_, hash) | Self::NotarFallback(_, hash) => Some(*hash),
+            Self::Notar(_, hash) | Self::NotarFallback(_, hash) => Some(hash),
             Self::Skip(_) | Self::SkipFallback(_) | Self::Final(_) => None,
         }
     }
@@ -197,17 +203,18 @@ impl Signable for VoteKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::Hash;
 
     #[test]
     fn basic() {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
-        let vote = Vote::new_notar(Slot::new(0), Hash::default(), &sk, 0);
+        let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &sk, 0);
         assert!(vote.is_notar());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_notar_fallback(Slot::new(0), Hash::default(), &sk, 0);
+        let vote = Vote::new_notar_fallback(Slot::new(0), Hash::default().into(), &sk, 0);
         assert!(vote.is_notar_fallback());
         assert!(vote.check_sig(&pk));
 
