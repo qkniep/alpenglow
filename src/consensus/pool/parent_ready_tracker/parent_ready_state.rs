@@ -7,7 +7,7 @@ use smallvec::{SmallVec, smallvec};
 use tokio::sync::oneshot;
 
 use crate::BlockId;
-use crate::crypto::Hash;
+use crate::crypto::merkle::BlockHash;
 
 /// Tracks the status of whether an individual slot has a parent ready.
 enum IsReady {
@@ -39,7 +39,7 @@ pub(super) struct ParentReadyState {
     /// We can potentially have multiple notar fallbacks per slot,
     /// but we optimize for the common case where there will only be one.
     // XXX: consider making this field private
-    pub(super) notar_fallbacks: SmallVec<[Hash; 1]>,
+    pub(super) notar_fallbacks: SmallVec<[BlockHash; 1]>,
     /// Current status of the parent-ready condition for this slot.
     // NOTE: Do not make this field more visible.
     // Updating it must sometimes produce additional actions.
@@ -60,7 +60,7 @@ impl ParentReadyState {
                 let sender = sender.take();
                 match sender {
                     None => (),
-                    Some(sender) => match sender.send(id) {
+                    Some(sender) => match sender.send(id.clone()) {
                         Ok(()) => (),
                         Err(id) => {
                             warn!("sending {id:?} failed, receiver deallocated");
@@ -95,7 +95,7 @@ impl ParentReadyState {
             IsReady::Ready(block_ids) => {
                 assert!(!block_ids.is_empty());
                 block_ids.sort();
-                Either::Left(block_ids[0])
+                Either::Left(block_ids[0].clone())
             }
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
@@ -116,8 +116,8 @@ mod tests {
     fn wait_for_parent_ready_no_blocking() {
         let mut state = ParentReadyState::default();
         assert_eq!(state.ready_block_ids().len(), 0);
-        let block_id = (Slot::new(0), [1; 32]);
-        state.add_to_ready(block_id);
+        let block_id = (Slot::new(0), [1; 32].into());
+        state.add_to_ready(block_id.clone());
         let res = state.wait_for_parent_ready();
         let Either::Left(received_block_id) = res else {
             panic!("unexpected result {res:?}");
@@ -134,8 +134,8 @@ mod tests {
         let Either::Right(rx) = res else {
             panic!("unexpected result {res:?}");
         };
-        let block_id = (Slot::new(0), [1; 32]);
-        state.add_to_ready(block_id);
+        let block_id = (Slot::new(0), [1; 32].into());
+        state.add_to_ready(block_id.clone());
         let received_block_id = rx.await.unwrap();
         assert_eq!(received_block_id, block_id);
         assert_eq!(state.ready_block_ids().len(), 1);

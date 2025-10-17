@@ -13,8 +13,8 @@ use thiserror::Error;
 
 use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
-use crate::crypto::{Hash, MerkleTree};
 use crate::network::BINCODE_CONFIG;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
@@ -53,7 +53,7 @@ pub struct SlotBlockData {
     /// Spot for storing the block that was received via block dissemination.
     pub(super) disseminated: BlockData,
     /// Spot for storing blocks that might later be received via repair.
-    pub(super) repaired: BTreeMap<Hash, BlockData>,
+    pub(super) repaired: BTreeMap<BlockHash, BlockData>,
     /// Tracks whether we observed the leader misbehaving.
     /// Once misbehavior is observed, we stop accepting additional [`Shred`]s through dissemination.
     leader_misbehaved: bool,
@@ -98,7 +98,7 @@ impl SlotBlockData {
     /// Performs the necessary validity checks, all but leader equivocation.
     pub fn add_shred_from_repair(
         &mut self,
-        hash: Hash,
+        hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
     ) -> Result<Option<VotorEvent>, AddShredError> {
@@ -144,7 +144,7 @@ pub struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
     /// Potentially completely restored block.
-    pub(super) completed: Option<(Hash, Block)>,
+    pub(super) completed: Option<(BlockHash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
     pub(super) shreds: BTreeMap<SliceIndex, [Option<ValidatedShred>; TOTAL_SHREDS]>,
     /// Any already reconstructed slices of this block.
@@ -152,9 +152,9 @@ pub struct BlockData {
     /// Index of the slice marked as last, if any.
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
-    pub(super) double_merkle_tree: Option<MerkleTree>,
+    pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
     /// Cache of Merkle roots for which the leader signature has been verified.
-    pub(super) merkle_root_cache: BTreeMap<SliceIndex, Hash>,
+    pub(super) merkle_root_cache: BTreeMap<SliceIndex, SliceRoot>,
 }
 
 impl BlockData {
@@ -305,23 +305,22 @@ impl BlockData {
         let merkle_roots = self
             .slices
             .values()
-            .map(|s| s.merkle_root.as_ref().unwrap())
-            .collect::<Vec<_>>();
-        let tree = MerkleTree::new(&merkle_roots);
+            .map(|s| s.merkle_root.as_ref().unwrap());
+        let tree = DoubleMerkleTree::new(merkle_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
         let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
         // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let mut parent = first_slice.parent.unwrap();
+        let mut parent = first_slice.parent.clone().unwrap();
         let mut parent_switched = false;
 
         let mut transactions = vec![];
         for (ind, slice) in &self.slices {
             // handle optimistic handover
             if !ind.is_first()
-                && let Some(new_parent) = slice.parent
+                && let Some(new_parent) = slice.parent.clone()
             {
                 if new_parent == parent {
                     warn!("parent switched to same value");
@@ -357,7 +356,7 @@ impl BlockData {
 
         let block = Block {
             slot: self.slot,
-            block_hash,
+            block_hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
             transactions,
@@ -401,12 +400,12 @@ mod tests {
         (events, Ok(()))
     }
 
-    fn get_block_hash_from_votor_event(event: &VotorEvent) -> Hash {
+    fn get_block_hash_from_votor_event(event: &VotorEvent) -> BlockHash {
         match event {
             VotorEvent::Block {
                 slot: _,
                 block_info: BlockInfo { hash, parent: _ },
-            } => *hash,
+            } => hash.clone(),
             _ => panic!(),
         }
     }
@@ -455,7 +454,7 @@ mod tests {
             slot,
             block_info: BlockInfo {
                 hash,
-                parent: slices[0].parent.unwrap(),
+                parent: slices[0].parent.clone().unwrap(),
             },
         };
         assert_votor_events_match(events[1].clone(), block_event);
@@ -477,7 +476,7 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
-        slices[2].parent = slices[0].parent;
+        slices[2].parent = slices[0].parent.clone();
 
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];
@@ -503,8 +502,8 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
-        let parent = slices[0].parent.unwrap();
-        let slice_1_parent = (parent.0.next(), parent.1);
+        let parent = slices[0].parent.clone().unwrap();
+        let slice_1_parent = (parent.0.next(), parent.1.clone());
         assert!(slice_1_parent.0 < slot);
         let slice_2_parent = (parent.0.next().next(), parent.1);
         assert!(slice_2_parent.0 < slot);
@@ -535,10 +534,10 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
         let mut slices = create_random_block(slot, 3);
-        let parent = slices[0].parent.unwrap();
+        let parent = slices[0].parent.clone().unwrap();
         let slice_1_parent = (parent.0.next(), parent.1);
         assert!(slice_1_parent.0 < slot);
-        slices[1].parent = Some(slice_1_parent);
+        slices[1].parent = Some(slice_1_parent.clone());
 
         let mut block_data = BlockData::new(slot);
         let mut events = vec![];
@@ -552,12 +551,12 @@ mod tests {
             VotorEvent::FirstShred(s) => assert_eq!(slot, s),
             _ => panic!(),
         }
-        match events[1] {
+        match &events[1] {
             VotorEvent::Block {
                 slot: ret_slot,
                 block_info,
             } => {
-                assert_eq!(ret_slot, slot);
+                assert_eq!(*ret_slot, slot);
                 assert_eq!(block_info.parent, slice_1_parent);
             }
             _ => panic!(),
