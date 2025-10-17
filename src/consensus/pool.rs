@@ -176,7 +176,7 @@ impl PoolImpl {
 
                 // add block to parent-ready tracker, send any new parents to Votor.
                 let new_parents_ready = self.parent_ready_tracker.mark_notar_fallback(&block_id);
-                self.send_parent_ready_events(&new_parents_ready).await;
+                self.send_parent_ready_events(new_parents_ready).await;
 
                 // repair this block, if necessary
                 self.repair_channel.send((slot, block_hash)).await.unwrap();
@@ -184,7 +184,7 @@ impl PoolImpl {
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
                 let new_parents_ready = self.parent_ready_tracker.mark_skipped(slot);
-                self.send_parent_ready_events(&new_parents_ready).await;
+                self.send_parent_ready_events(new_parents_ready).await;
             }
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
@@ -346,11 +346,11 @@ impl PoolImpl {
 
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
-        self.send_parent_ready_events(&new_parents_ready).await;
+        self.send_parent_ready_events(new_parents_ready).await;
     }
 
-    async fn send_parent_ready_events(&self, parents: &[(Slot, BlockId)]) {
-        for (slot, (parent_slot, parent_hash)) in parents.iter().cloned() {
+    async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
+        for (slot, (parent_slot, parent_hash)) in parents {
             debug_assert!(slot.is_start_of_window());
             let event = VotorEvent::ParentReady {
                 slot,
@@ -462,7 +462,7 @@ impl Pool for PoolImpl {
         let new_parents_ready = self
             .parent_ready_tracker
             .handle_finalization(finalization_event);
-        self.send_parent_ready_events(&new_parents_ready).await;
+        self.send_parent_ready_events(new_parents_ready).await;
 
         self.slot_state(*slot)
             .notify_parent_known(block_hash.clone());
