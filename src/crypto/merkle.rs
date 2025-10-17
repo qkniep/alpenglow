@@ -149,16 +149,23 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     where
         Leaf: 'a,
     {
-        let mut nodes = Vec::new();
-        let mut levels = Vec::new();
-
         // calculate leaf hashes
-        for leaf in data {
-            let leaf_hash = Self::hash_leaf(leaf);
-            nodes.push(leaf_hash);
-        }
-        levels.push((0, nodes.len().try_into().expect("too many leaves")));
+        let mut nodes = data
+            .into_iter()
+            .map(|leaf| Self::hash_leaf(leaf))
+            .collect::<Vec<Hash>>();
         assert!(!nodes.is_empty());
+
+        // reserve enough space for inner nodes
+        let mut num_inner_nodes = 1;
+        for i in 1..=nodes.len().ilog2() {
+            num_inner_nodes += nodes.len().div_ceil(1 << i);
+        }
+        nodes.reserve(num_inner_nodes);
+
+        // prepare levels index with correct size
+        let mut levels = Vec::with_capacity(nodes.len().ilog2() as usize + 1);
+        levels.push((0, nodes.len().try_into().expect("too many leaves")));
 
         // calculate inner nodes
         let mut left = 0;
