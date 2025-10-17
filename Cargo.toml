@@ -13,7 +13,6 @@ publish = false
 
 [dependencies]
 aes = { version = "0.9.0-rc.1", features = ["hazmat", "zeroize"] }
-anyhow = "1"
 async-trait = "0.1"
 bincode = { version = "2", features = ["serde"] }
 bitvec = { version = "1", features = ["serde"] }

@@ -40,7 +40,6 @@ name = "alpenglow"
 version = "0.1.0"
 dependencies = [
  "aes",
- "anyhow",
  "async-trait",
  "bincode",
  "bitvec",
