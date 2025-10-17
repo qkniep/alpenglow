@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
+use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, MerkleRoot, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
@@ -263,7 +263,7 @@ where
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&mut self, block_id: BlockId) {
         let (slot, ref block_hash) = block_id;
-        let h = &hex::encode(block_hash)[..8];
+        let h = &hex::encode(block_hash.as_hash())[..8];
         if self.blockstore.read().await.get_block(&block_id).is_some() {
             trace!("ignoring repair for block {h} in slot {slot}, already have the block");
             return;
@@ -379,7 +379,7 @@ where
                         .await;
                     debug!(
                         "successfully repaired block {} in slot {}",
-                        &hex::encode(block_hash)[..8],
+                        &hex::encode(block_hash.as_hash())[..8],
                         slot
                     );
                 }

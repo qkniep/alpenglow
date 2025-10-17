@@ -17,7 +17,7 @@ use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
-use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, MerkleRoot, SliceRoot};
 use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
@@ -119,9 +119,9 @@ impl BlockstoreImpl {
                 self.votor_channel.send(event).await.unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
-                    &hex::encode(block_info.hash.clone())[..8],
+                    &hex::encode(block_info.hash.as_hash())[..8],
                     slot,
-                    &hex::encode(block_info.parent.1.clone())[..8],
+                    &hex::encode(block_info.parent.1.as_hash())[..8],
                     block_info.parent.0,
                 );
 
@@ -414,7 +414,7 @@ mod tests {
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
-        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
+        assert!(DoubleMerkleTree::check_proof(slice_hash, 0, &root, &proof));
 
         Ok(())
     }

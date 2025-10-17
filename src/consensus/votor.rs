@@ -23,7 +23,7 @@ use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::merkle::BlockHash;
+use crate::crypto::merkle::{BlockHash, MerkleRoot};
 use crate::{All2All, Slot, ValidatorId};
 
 /// Events that Votor is interested in.
@@ -161,7 +161,7 @@ impl<A: All2All> Votor<A> {
                     parent_slot,
                     parent_hash,
                 } => {
-                    let h = &hex::encode(&parent_hash)[..8];
+                    let h = &hex::encode(parent_hash.as_hash())[..8];
                     trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
                     self.parents_ready.insert((slot, parent_slot, parent_hash));
                     self.check_pending_blocks().await;
@@ -213,7 +213,7 @@ impl<A: All2All> Votor<A> {
                 }
                 VotorEvent::Block { slot, block_info } => {
                     if self.voted.contains(&slot) {
-                        let h = &hex::encode(block_info.hash)[..8];
+                        let h = &hex::encode(block_info.hash.as_hash())[..8];
                         warn!("not voting for block {h} in slot {slot}, already voted");
                         continue;
                     }
@@ -287,7 +287,7 @@ impl<A: All2All> Votor<A> {
             let valid_parent =
                 self.parents_ready
                     .contains(&(slot, parent_slot, parent_hash.clone()));
-            let h = &hex::encode(&parent_hash)[..8];
+            let h = &hex::encode(parent_hash.as_hash())[..8];
             trace!(
                 "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
             );
