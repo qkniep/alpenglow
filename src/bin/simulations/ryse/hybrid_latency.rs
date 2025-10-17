@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Simulated latency test for Ryse, the MCP protocol.
+//! Simulated latency test for Hybrid Ryse, the MCP protocol.
 //!
 //! So far, this test can only simulate the happy path.
 
@@ -27,18 +27,18 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 /// Size (in bytes) assumed per certificate in the simulation.
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
-/// Marker type for the Ryse latency simulation.
-pub struct RyseLatencySimulation<P: SamplingStrategy, R: SamplingStrategy> {
-    _proposer_sampler: PhantomData<P>,
+/// Marker type for the Hybrid Ryse latency simulation.
+pub struct HybridRyseLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
+    _proposer_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<P: SamplingStrategy, R: SamplingStrategy> Protocol for RyseLatencySimulation<P, R> {
+impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for HybridRyseLatencySimulation<L, R> {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
-    type Params = LatencySimParams;
-    type Instance = LatencySimInstance;
-    type Builder = LatencySimInstanceBuilder<P, R>;
+    type Params = HybridLatencySimParams;
+    type Instance = HybridLatencySimInstance;
+    type Builder = HybridLatencySimInstanceBuilder<L, R>;
 }
 
 /// The sequential stages of the latency test.
@@ -54,7 +54,7 @@ pub enum LatencyTestStage {
 
 impl Stage for LatencyTestStage {
     type Event = LatencyEvent;
-    type Params = LatencySimParams;
+    type Params = HybridLatencySimParams;
 
     fn first() -> Self {
         Self::Direct
@@ -71,7 +71,7 @@ impl Stage for LatencyTestStage {
         }
     }
 
-    fn events(&self, params: &LatencySimParams) -> Vec<LatencyEvent> {
+    fn events(&self, params: &HybridLatencySimParams) -> Vec<LatencyEvent> {
         match self {
             Self::Direct => {
                 let mut events = Vec::with_capacity(params.ryse_params.num_slices as usize + 1);
@@ -119,8 +119,8 @@ pub enum LatencyEvent {
 }
 
 impl Event for LatencyEvent {
-    type Params = LatencySimParams;
-    type Instance = LatencySimInstance;
+    type Params = HybridLatencySimParams;
+    type Instance = HybridLatencySimInstance;
 
     fn name(&self) -> String {
         match self {
@@ -153,7 +153,7 @@ impl Event for LatencyEvent {
         }
     }
 
-    fn dependencies(&self, params: &LatencySimParams) -> Vec<Self> {
+    fn dependencies(&self, params: &HybridLatencySimParams) -> Vec<Self> {
         match self {
             Self::BlockSent => vec![],
             Self::Direct(slice) => {
@@ -188,7 +188,7 @@ impl Event for LatencyEvent {
         &self,
         start_time: SimTime,
         dependency_timings: &[&[SimTime]],
-        instance: &LatencySimInstance,
+        instance: &HybridLatencySimInstance,
         resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {
@@ -336,13 +336,13 @@ impl Event for LatencyEvent {
 
 /// Parameters for the Ryse latency simulation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct LatencySimParams {
+pub struct HybridLatencySimParams {
     ryse_params: RyseParameters,
     num_slots_per_window: usize,
     num_slots: usize,
 }
 
-impl LatencySimParams {
+impl HybridLatencySimParams {
     /// Creates a parameter set for the Ryse latency simulation.
     pub fn new(ryse_params: RyseParameters, num_slots_per_window: usize, num_slots: usize) -> Self {
         Self {
@@ -354,14 +354,14 @@ impl LatencySimParams {
 }
 
 /// A builder for Ryse latency simulation instances.
-pub struct LatencySimInstanceBuilder<P: SamplingStrategy, R: SamplingStrategy> {
+pub struct HybridLatencySimInstanceBuilder<P: SamplingStrategy, R: SamplingStrategy> {
     ryse_builder: RyseInstanceBuilder<P, R>,
-    params: LatencySimParams,
+    params: HybridLatencySimParams,
 }
 
-impl<P: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<P, R> {
+impl<P: SamplingStrategy, R: SamplingStrategy> HybridLatencySimInstanceBuilder<P, R> {
     /// Creates a new builder instance from a builder for Rotor instances.
-    pub fn new(ryse_builder: RyseInstanceBuilder<P, R>, params: LatencySimParams) -> Self {
+    pub fn new(ryse_builder: RyseInstanceBuilder<P, R>, params: HybridLatencySimParams) -> Self {
         Self {
             ryse_builder,
             params,
@@ -369,15 +369,15 @@ impl<P: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<P, R> {
     }
 }
 
-impl<P: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBuilder<P, R> {
-    type Params = LatencySimParams;
-    type Instance = LatencySimInstance;
+impl<P: SamplingStrategy, R: SamplingStrategy> Builder for HybridLatencySimInstanceBuilder<P, R> {
+    type Params = HybridLatencySimParams;
+    type Instance = HybridLatencySimInstance;
 
-    fn build(&self, rng: &mut impl Rng) -> LatencySimInstance {
+    fn build(&self, rng: &mut impl Rng) -> HybridLatencySimInstance {
         let ryse_instances = (0..self.params.num_slots)
             .map(|_| self.ryse_builder.build(rng))
             .collect();
-        LatencySimInstance {
+        HybridLatencySimInstance {
             ryse_instances,
             params: self.params.clone(),
         }
@@ -391,7 +391,7 @@ impl<P: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
 /// A specific instance of the Ryse latency simulation.
 ///
 /// Contains one instance of the Ryse protocol, [`RyseInstance`], per slot.
-pub struct LatencySimInstance {
+pub struct HybridLatencySimInstance {
     ryse_instances: Vec<RyseInstance>,
-    params: LatencySimParams,
+    params: HybridLatencySimParams,
 }
