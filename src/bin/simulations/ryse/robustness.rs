@@ -6,7 +6,7 @@
 //! Currently, this just runs some static calculations on the set of parameters.
 //!
 //! In the future, this would also simulate attack scenarios for a specific stake distribution.
-//! This is analogous to what is done for Rotor in [`crate::rotor::robustness`];
+//! This is analogous to what is done for Rotor in [`crate::rotor::RotorRobustnessTest`];
 
 use std::fs::File;
 
