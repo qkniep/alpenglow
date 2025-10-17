@@ -111,8 +111,22 @@ impl MerkleLeaf for Hash {}
 impl MerkleRoot for Hash {}
 impl MerkleProof for Vec<Hash> {}
 
+/// A plain Merkle tree over arbitrary bytes.
+///
+/// Usually, you want the additional type-safety of not using these basic types.
+/// For this implement [`MerkleLeaf`], [`MerkleRoot`] and [`MerkleProof`] on your own types.
 pub type PlainMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
+
+/// Per-slice Merkle tree for use in Rotor.
+///
+/// The leaves of this tree are shreds within a single slice of a block.
+/// The root of this tree is signed by the leader and included in each shred, together with a proof.
 pub type SliceMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
+
+/// Alpenglow's double-Merkle tree.
+///
+/// The leaves of this tree are roots of per-slice Merkle trees.
+/// The root of this tree represents the block hash.
 pub type DoubleMerkleTree = MerkleTree<Hash, Hash, Vec<Hash>>;
 
 /// Implementation of a Merkle tree.
