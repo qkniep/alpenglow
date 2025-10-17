@@ -35,8 +35,9 @@ use self::reed_solomon::{
 };
 pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
+use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
-use crate::crypto::{Hash, MerkleTree, hash};
+use crate::crypto::{MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
 use crate::types::{Slice, SliceHeader};
 
@@ -112,9 +113,9 @@ pub enum ShredPayloadType {
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     pub(crate) payload_type: ShredPayloadType,
-    pub(crate) merkle_root: Hash,
+    pub(crate) merkle_root: SliceRoot,
     merkle_root_sig: Signature,
-    merkle_path: Vec<Hash>,
+    merkle_path: SliceProof,
 }
 
 impl Shred {
@@ -124,14 +125,15 @@ impl Shred {
     ///
     /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
     #[must_use]
-    pub fn verify_path_only(&self, root: &Hash) -> bool {
+    pub fn verify_path_only(&self, root: &SliceRoot) -> bool {
         if &self.merkle_root != root {
             return false;
         }
-        MerkleTree::check_proof(
-            &self.payload().data,
+        SliceMerkleTree::check_proof(
+            // FIXME: allocation
+            &self.payload().data.to_vec(),
             *self.payload().shred_index,
-            self.merkle_root,
+            &self.merkle_root,
             &self.merkle_path,
         )
     }
@@ -266,7 +268,7 @@ impl Shredder for RegularShredder {
         let slice = Slice::from_shreds(payload.into(), any_shred);
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root;
+        let merkle_root = any_shred.merkle_root.clone();
         let (header, payload) = slice.clone().deconstruct();
         let raw_shreds = reed_solomon_shred(payload.into(), Self::CODING_OUTPUT_SHREDS)?;
         let tree = build_merkle_tree(&raw_shreds);
@@ -310,7 +312,7 @@ impl Shredder for CodingOnlyShredder {
         let slice = Slice::from_shreds(payload.into(), any_shred);
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root;
+        let merkle_root = any_shred.merkle_root.clone();
         let (header, payload) = slice.clone().deconstruct();
         let mut raw_shreds = reed_solomon_shred(payload.into(), Self::CODING_OUTPUT_SHREDS)?;
         raw_shreds.data = vec![];
@@ -377,7 +379,7 @@ impl Shredder for PetsShredder {
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root;
+        let merkle_root = any_shred.merkle_root.clone();
         let header = any_shred.payload().header.clone();
         let mut raw_shreds = reed_solomon_shred(buffer.clone(), Self::CODING_OUTPUT_SHREDS)?;
         raw_shreds.data.pop();
@@ -454,7 +456,7 @@ impl Shredder for AontShredder {
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root;
+        let merkle_root = any_shred.merkle_root.clone();
         let header = any_shred.payload().header.clone();
         let raw_shreds = reed_solomon_shred(buffer.clone(), Self::CODING_OUTPUT_SHREDS)?;
         let tree = build_merkle_tree(&raw_shreds);
@@ -496,9 +498,9 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(&merkle_root);
+    let merkle_root_sig = sk.sign(merkle_root.as_ref());
 
-    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (Vec<[u8; 32]>, ShredPayload) {
+    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
             header: header.clone(),
@@ -531,7 +533,7 @@ fn data_and_coding_to_output_shreds(
         .map(|(merkle_path, payload)| {
             ValidatedShred::new_validated(Shred {
                 payload_type: payload,
-                merkle_root,
+                merkle_root: merkle_root.clone(),
                 merkle_root_sig,
                 merkle_path,
             })
@@ -551,10 +553,10 @@ fn data_and_coding_to_output_shreds(
 fn create_output_shreds_for_other_leader(
     header: SliceHeader,
     raw_shreds: RawShreds,
-    tree: MerkleTree,
+    tree: SliceMerkleTree,
     leader_signature: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
-    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (Vec<[u8; 32]>, ShredPayload) {
+    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
             header: header.clone(),
@@ -583,12 +585,12 @@ fn create_output_shreds_for_other_leader(
             let (merkle_path, payload) = convert(shred_index, c);
             (merkle_path, ShredPayloadType::Coding(payload))
         });
-    let merkle_root = tree.get_root();
+    let merkle_root = tree.get_root().clone();
     data.chain(coding)
         .map(|(merkle_path, payload)| {
             ValidatedShred::new_validated(Shred {
                 payload_type: payload,
-                merkle_root,
+                merkle_root: merkle_root.clone(),
                 merkle_root_sig: leader_signature,
                 merkle_path,
             })
@@ -599,14 +601,10 @@ fn create_output_shreds_for_other_leader(
 }
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
-fn build_merkle_tree(raw_shreds: &RawShreds) -> MerkleTree {
+fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
     // zero-allocation chaining of slices
-    let leaves = raw_shreds
-        .data
-        .iter()
-        .chain(&raw_shreds.coding)
-        .map(Vec::as_slice);
-    MerkleTree::new_from_iter(leaves)
+    let leaves = raw_shreds.data.iter().chain(&raw_shreds.coding);
+    MerkleTree::new(leaves)
 }
 
 #[cfg(test)]
@@ -636,7 +634,7 @@ mod tests {
         // restore from all shreds
         let all = into_array(&shreds);
         let (slice_restored, _) = RegularShredder::deshred(&all)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore only from data shreds
@@ -690,7 +688,7 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = CodingOnlyShredder::deshred(&input)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
@@ -732,7 +730,7 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = AontShredder::deshred(&input)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds
@@ -781,7 +779,7 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = PetsShredder::deshred(&input)?;
-        slice.merkle_root = slice_restored.merkle_root;
+        slice.merkle_root = slice_restored.merkle_root.clone();
         assert_eq!(slice_restored, slice);
 
         // restore from just enough shreds

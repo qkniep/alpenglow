@@ -1,9 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::crypto::{
-    Hash, IndividualSignature, MerkleTree, Signature, aggsig, hash, signature,
-};
+use alpenglow::crypto::merkle::{SliceMerkleTree, SliceProof};
+use alpenglow::crypto::{IndividualSignature, Signature, aggsig, hash, signature};
 use alpenglow::shredder::{MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE};
 use divan::counter::{BytesCount, ItemsCount};
 use rand::RngCore;
@@ -34,7 +33,7 @@ fn merkle_tree<const N: usize>(bencher: divan::Bencher) {
             leaves
         })
         .bench_values(|leaves: Vec<Vec<u8>>| {
-            let _ = MerkleTree::new(&leaves);
+            let _ = SliceMerkleTree::new(&leaves);
         });
 }
 
@@ -48,9 +47,9 @@ fn merkle_proof<const N: usize>(bencher: divan::Bencher) {
             for leaf in &mut leaves {
                 rng.fill_bytes(leaf);
             }
-            MerkleTree::new(&leaves)
+            SliceMerkleTree::new(&leaves)
         })
-        .bench_values(|tree: MerkleTree| tree.create_proof(0));
+        .bench_values(|tree: SliceMerkleTree| tree.create_proof(0));
 }
 
 #[divan::bench(consts = [64, 512, 1024])]
@@ -63,13 +62,13 @@ fn merkle_verify<const N: usize>(bencher: divan::Bencher) {
             for leaf in &mut leaves {
                 rng.fill_bytes(leaf);
             }
-            let tree = MerkleTree::new(&leaves);
+            let tree = SliceMerkleTree::new(&leaves);
             let proof = tree.create_proof(0);
             (tree, leaves[0].clone(), 0, proof)
         })
         .bench_values(
-            |(tree, data, index, proof): (MerkleTree, Vec<u8>, usize, Vec<Hash>)| {
-                MerkleTree::check_proof(&data, index, tree.get_root(), &proof)
+            |(tree, data, index, proof): (SliceMerkleTree, Vec<u8>, usize, SliceProof)| {
+                SliceMerkleTree::check_proof(&data, index, &tree.get_root(), &proof)
             },
         );
 }
