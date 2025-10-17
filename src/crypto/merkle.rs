@@ -130,22 +130,22 @@ pub type SliceMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
 pub type DoubleMerkleTree = MerkleTree<Hash, Hash, Vec<Hash>>;
 
 /// Implementation of a Merkle tree.
-pub struct MerkleTree<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> {
+pub struct MerkleTree<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> {
     /// All hashes in the tree, leaf hashes and inner nodes.
     nodes: Vec<Hash>,
     /// For each level, has the offset in `nodes` and the number of hashes on that level.
     levels: Vec<(u32, u32)>,
     /// Marker for the type of the tree.
-    _type: PhantomData<(L, R, P)>,
+    _type: PhantomData<(Leaf, Root, Proof)>,
 }
 
-impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
+impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Root, Proof> {
     /// Creates a new Merkle tree from the given data for each leaf.
     ///
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
     /// If you want to create a tree with more than half of the leaves empty,
     /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new(leaves: &[L]) -> Self {
+    pub fn new(leaves: &[Leaf]) -> Self {
         Self::new_from_iter(leaves.iter())
     }
 
@@ -154,9 +154,9 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
     /// If you want to create a tree with more than half of the leaves empty,
     /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a L>) -> Self
+    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a Leaf>) -> Self
     where
-        L: 'a,
+        Leaf: 'a,
     {
         let mut nodes = Vec::new();
         let mut levels = Vec::new();
@@ -204,7 +204,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
 
     /// Gives the root hash of the tree.
     #[must_use]
-    pub fn get_root(&self) -> R {
+    pub fn get_root(&self) -> Root {
         let root_hash = *self.nodes.last().expect("empty tree");
         root_hash.into()
     }
@@ -218,7 +218,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     ///
     /// The proof is the Merkle path from the leaf to the root.
     #[must_use]
-    pub fn create_proof(&self, index: usize) -> P {
+    pub fn create_proof(&self, index: usize) -> Proof {
         assert!(index < 1 << self.height());
         assert!(index < self.levels[0].1 as usize);
 
@@ -241,7 +241,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     /// Returns `true` iff `proof` is a valid Merkle path for a leaf containing
     /// `data` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
-    pub fn check_proof(data: &L, index: usize, root: &R, proof: &P) -> bool {
+    pub fn check_proof(data: &Leaf, index: usize, root: &Root, proof: &Proof) -> bool {
         let hash = Self::hash_leaf(data);
         Self::check_hash_proof(hash, index, root, proof)
     }
@@ -252,7 +252,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     /// to the given `hash` at the given `index` in the tree corresponding to
     /// the given `root`.
     #[must_use]
-    fn check_hash_proof(hash: Hash, index: usize, root: &R, proof: &P) -> bool {
+    fn check_hash_proof(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
         let mut i = index;
         let mut node = hash;
         for h in proof.as_ref() {
@@ -269,7 +269,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    pub fn check_proof_last(leaf: &L, index: usize, root: &R, proof: &P) -> bool {
+    pub fn check_proof_last(leaf: &Leaf, index: usize, root: &Root, proof: &Proof) -> bool {
         let hash = Self::hash_leaf(leaf);
         Self::check_hash_proof_last(hash, index, root, proof)
     }
@@ -278,7 +278,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    fn check_hash_proof_last(hash: Hash, index: usize, root: &R, proof: &P) -> bool {
+    fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
         assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
         let mut i = index;
         let mut node = hash;
@@ -296,7 +296,7 @@ impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     ///
     /// The label prevents the possibility to claim an intermediate node was a leaf.
     /// It also makes the Merkle tree more robust against pre-calculation attacks.
-    fn hash_leaf(leaf: &L) -> Hash {
+    fn hash_leaf(leaf: &Leaf) -> Hash {
         let data: &[u8] = leaf.as_ref();
         hash_all(&[&LEAF_LABEL, data])
     }
