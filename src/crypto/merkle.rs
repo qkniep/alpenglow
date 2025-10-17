@@ -102,14 +102,21 @@ const EMPTY_ROOTS: [Hash; MAX_MERKLE_TREE_HEIGHT] = [
 /// Marker trait for the leaf nodes of a Merkle tree.
 pub trait MerkleLeaf: AsRef<[u8]> {}
 
-/// Marker trait for the root of a Merkle tree.
-pub trait MerkleRoot: From<Hash> + Into<Hash> + Clone {}
+/// Trait for the root of a Merkle tree.
+pub trait MerkleRoot: From<Hash> {
+    fn as_hash(&self) -> &Hash;
+}
 
 /// Marker trait for the proof of a Merkle tree.
 pub trait MerkleProof: AsRef<[Hash]> + From<Vec<Hash>> {}
 
 impl MerkleLeaf for Vec<u8> {}
-impl MerkleRoot for Hash {}
+impl MerkleLeaf for Hash {}
+impl MerkleRoot for Hash {
+    fn as_hash(&self) -> &Hash {
+        self
+    }
+}
 impl MerkleProof for Vec<Hash> {}
 
 #[repr(transparent)]
@@ -162,49 +169,61 @@ impl AsRef<[Hash]> for DoubleMerkleProof {
     }
 }
 
+/// A plain Merkle tree over arbitrary bytes.
+///
+/// Usually, you want the additional type-safety of not using these basic types.
+/// For this implement [`MerkleLeaf`], [`MerkleRoot`] and [`MerkleProof`] on your own types.
 pub type PlainMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
-pub type SliceMerkleTree = MerkleTree<Vec<u8>, SliceRoot, SliceProof>;
-pub type DoubleMerkleTree = MerkleTree<SliceRoot, DoubleMerkleRoot, DoubleMerkleProof>;
+
+/// Per-slice Merkle tree for use in Rotor.
+///
+/// The leaves of this tree are shreds within a single slice of a block.
+/// The root of this tree is signed by the leader and included in each shred, together with a proof.
+pub type SliceMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
+
+/// Alpenglow's double-Merkle tree.
+///
+/// The leaves of this tree are roots of per-slice Merkle trees.
+/// The root of this tree represents the block hash.
+pub type DoubleMerkleTree = MerkleTree<Hash, Hash, Vec<Hash>>;
 
 /// Implementation of a Merkle tree.
-pub struct MerkleTree<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> {
+pub struct MerkleTree<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> {
     /// All hashes in the tree, leaf hashes and inner nodes.
     nodes: Vec<Hash>,
     /// For each level, has the offset in `nodes` and the number of hashes on that level.
     levels: Vec<(u32, u32)>,
     /// Marker for the type of the tree.
-    _type: PhantomData<(L, R, P)>,
+    _type: PhantomData<(Leaf, Root, Proof)>,
 }
 
-impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
+impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Root, Proof> {
     /// Creates a new Merkle tree from the given data for each leaf.
     ///
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
     /// If you want to create a tree with more than half of the leaves empty,
     /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new(leaves: &[L]) -> Self {
-        Self::new_from_iter(leaves.iter())
-    }
-
-    /// Creates a new Merkle tree from the given data for each leaf.
-    ///
-    /// This will always create a perfect binary tree (filling with empty leaves as necessary).
-    /// If you want to create a tree with more than half of the leaves empty,
-    /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a L>) -> Self
+    pub fn new<'a>(data: impl IntoIterator<Item = &'a Leaf>) -> Self
     where
-        L: 'a,
+        Leaf: 'a,
     {
-        let mut nodes = Vec::new();
-        let mut levels = Vec::new();
-
         // calculate leaf hashes
-        for leaf in data {
-            let leaf_hash = Self::hash_leaf(leaf);
-            nodes.push(leaf_hash);
-        }
-        levels.push((0, nodes.len().try_into().expect("too many leaves")));
+        let mut nodes = data
+            .into_iter()
+            .map(|leaf| Self::hash_leaf(leaf))
+            .collect::<Vec<Hash>>();
         assert!(!nodes.is_empty());
+
+        // reserve enough space for inner nodes
+        let mut num_inner_nodes = 1;
+        for i in 1..=nodes.len().ilog2() {
+            num_inner_nodes += nodes.len().div_ceil(1 << i);
+        }
+        nodes.reserve(num_inner_nodes);
+
+        // prepare levels index with correct size
+        let mut levels = Vec::with_capacity(nodes.len().ilog2() as usize + 1);
+        levels.push((0, nodes.len().try_into().expect("too many leaves")));
 
         // calculate inner nodes
         let mut left = 0;
@@ -241,7 +260,7 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
 
     /// Gives the root hash of the tree.
     #[must_use]
-    pub fn get_root(&self) -> R {
+    pub fn get_root(&self) -> Root {
         let root_hash = *self.nodes.last().expect("empty tree");
         root_hash.into()
     }
@@ -255,11 +274,11 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     ///
     /// The proof is the Merkle path from the leaf to the root.
     #[must_use]
-    pub fn create_proof(&self, index: usize) -> P {
+    pub fn create_proof(&self, index: usize) -> Proof {
         assert!(index < 1 << self.height());
         assert!(index < self.levels[0].1 as usize);
 
-        let mut proof = Vec::new();
+        let mut proof = Vec::with_capacity(self.height());
         let mut i = index;
 
         for (h, (offset, len)) in self.levels.iter().enumerate().take(self.height()) {
@@ -278,7 +297,7 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     /// Returns `true` iff `proof` is a valid Merkle path for a leaf containing
     /// `data` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
-    pub fn check_proof(data: &L, index: usize, root: &R, proof: &P) -> bool {
+    pub fn check_proof(data: &Leaf, index: usize, root: &Root, proof: &Proof) -> bool {
         let hash = Self::hash_leaf(data);
         Self::check_hash_proof(hash, index, root, proof)
     }
@@ -289,7 +308,7 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     /// to the given `hash` at the given `index` in the tree corresponding to
     /// the given `root`.
     #[must_use]
-    fn check_hash_proof(hash: Hash, index: usize, root: &R, proof: &P) -> bool {
+    fn check_hash_proof(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
         let mut i = index;
         let mut node = hash;
         for h in proof.as_ref() {
@@ -299,14 +318,14 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
             };
             i /= 2;
         }
-        node == root.clone().into()
+        node == *root.as_hash()
     }
 
     /// Checks a Merkle path proves the given leaf's data is last in the tree.
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    pub fn check_proof_last(leaf: &L, index: usize, root: &R, proof: &P) -> bool {
+    pub fn check_proof_last(leaf: &Leaf, index: usize, root: &Root, proof: &Proof) -> bool {
         let hash = Self::hash_leaf(leaf);
         Self::check_hash_proof_last(hash, index, root, proof)
     }
@@ -315,7 +334,7 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     ///
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
-    fn check_hash_proof_last(hash: Hash, index: usize, root: &R, proof: &P) -> bool {
+    fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
         assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
         let mut i = index;
         let mut node = hash;
@@ -326,14 +345,14 @@ impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
             };
             i /= 2;
         }
-        node == root.clone().into()
+        node == *root.as_hash()
     }
 
     /// Hashes some leaf data with a label into a leaf node.
     ///
     /// The label prevents the possibility to claim an intermediate node was a leaf.
     /// It also makes the Merkle tree more robust against pre-calculation attacks.
-    fn hash_leaf(leaf: &L) -> Hash {
+    fn hash_leaf(leaf: &Leaf) -> Hash {
         let data: &[u8] = leaf.as_ref();
         hash_all(&[&LEAF_LABEL, data])
     }
@@ -470,7 +489,7 @@ mod tests {
                 data.push(leaf_data);
             }
 
-            let tree = PlainMerkleTree::new_from_iter(data.iter());
+            let tree = PlainMerkleTree::new(data.iter());
             let root = tree.get_root();
             for _ in 0..QUERIES_PER_TREE {
                 let index = rng.random_range(0..num_data);
