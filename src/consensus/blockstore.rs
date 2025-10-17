@@ -106,17 +106,13 @@ impl BlockstoreImpl {
     }
 
     async fn send_votor_event(&self, event: VotorEvent) -> Option<BlockInfo> {
-        match event {
+        match &event {
             VotorEvent::FirstShred(_) => {
                 self.votor_channel.send(event).await.unwrap();
                 None
             }
-            VotorEvent::Block {
-                slot,
-                ref block_info,
-            } => {
+            VotorEvent::Block { slot, block_info } => {
                 let block_info = block_info.clone();
-                self.votor_channel.send(event).await.unwrap();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     &hex::encode(block_info.hash.as_hash())[..8],
@@ -124,6 +120,7 @@ impl BlockstoreImpl {
                     &hex::encode(block_info.parent.1.as_hash())[..8],
                     block_info.parent.0,
                 );
+                self.votor_channel.send(event).await.unwrap();
 
                 Some(block_info)
             }

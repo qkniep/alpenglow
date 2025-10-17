@@ -263,9 +263,9 @@ impl FinalityTracker {
             FinalizationStatus::ImplicitlyFinalized(block_hash.clone()),
         );
         if let Some(status) = old {
-            match status {
-                FinalizationStatus::Finalized(ref hash)
-                | FinalizationStatus::ImplicitlyFinalized(ref hash) => {
+            match &status {
+                FinalizationStatus::Finalized(hash)
+                | FinalizationStatus::ImplicitlyFinalized(hash) => {
                     assert_eq!(*hash, block_hash, "consensus safety violation");
                     self.status.insert(slot, status);
                     return;

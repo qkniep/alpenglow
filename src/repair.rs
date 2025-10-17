@@ -139,8 +139,8 @@ where
     /// Otherwise, the correct response is sent back to the sender of the request.
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
-        let response = match request.req_type {
-            RepairRequestType::LastSliceRoot(ref block_id) => {
+        let response = match &request.req_type {
+            RepairRequestType::LastSliceRoot(block_id) => {
                 let blockstore = self.blockstore.read().await;
                 let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
                     return Ok(());
@@ -154,19 +154,19 @@ where
                 };
                 RepairResponse::LastSliceRoot(request.req_type, last_slice, root.clone(), proof)
             }
-            RepairRequestType::SliceRoot(ref block_id, slice) => {
+            RepairRequestType::SliceRoot(block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(root) = blockstore.get_slice_root(block_id, slice) else {
+                let Some(root) = blockstore.get_slice_root(block_id, *slice) else {
                     return Ok(());
                 };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, slice) else {
+                let Some(proof) = blockstore.create_double_merkle_proof(block_id, *slice) else {
                     return Ok(());
                 };
                 RepairResponse::SliceRoot(request.req_type, root.clone(), proof)
             }
-            RepairRequestType::Shred(ref block_id, slice, shred) => {
+            RepairRequestType::Shred(block_id, slice, shred) => {
                 let blockstore = self.blockstore.read().await;
-                let Some(shred) = blockstore.get_shred(block_id, slice, shred).cloned() else {
+                let Some(shred) = blockstore.get_shred(block_id, *slice, *shred).cloned() else {
                     return Ok(());
                 };
                 RepairResponse::Shred(request.req_type, shred.into_shred())
@@ -262,7 +262,7 @@ where
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&mut self, block_id: BlockId) {
-        let (slot, ref block_hash) = block_id;
+        let (slot, block_hash) = &block_id;
         let h = &hex::encode(block_hash.as_hash())[..8];
         if self.blockstore.read().await.get_block(&block_id).is_some() {
             trace!("ignoring repair for block {h} in slot {slot}, already have the block");
@@ -292,7 +292,7 @@ where
         match response {
             RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
                 // check validity of response
-                let RepairRequestType::LastSliceRoot(ref block_id) = req_type else {
+                let RepairRequestType::LastSliceRoot(block_id) = &req_type else {
                     warn!("repair response (LastSliceRoot) to mismatching request {req_type:?}");
                     return;
                 };
