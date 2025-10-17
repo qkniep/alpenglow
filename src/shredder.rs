@@ -130,8 +130,7 @@ impl Shred {
             return false;
         }
         SliceMerkleTree::check_proof(
-            // FIXME: allocation
-            &self.payload().data.to_vec(),
+            &self.payload().data,
             *self.payload().shred_index,
             &self.merkle_root,
             &self.merkle_path,

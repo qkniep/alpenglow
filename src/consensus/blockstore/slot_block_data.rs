@@ -15,7 +15,6 @@ use super::BlockInfo;
 use crate::consensus::votor::VotorEvent;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
-use crate::crypto::{Hash, MerkleTree};
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
@@ -307,7 +306,7 @@ impl BlockData {
             .values()
             .map(|s| s.merkle_root.as_ref().unwrap());
         let tree = DoubleMerkleTree::new(merkle_roots);
-        let block_hash = tree.get_root();
+        let block_hash = tree.get_root().clone();
         self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
@@ -346,7 +345,7 @@ impl BlockData {
 
         let block = Block {
             _slot: self.slot,
-            block_hash,
+            block_hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
             _transactions: transactions,

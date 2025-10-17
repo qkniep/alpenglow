@@ -24,7 +24,7 @@ fn generate_vote() -> Vote {
     let mut hash = Hash::default();
     rng.fill_bytes(&mut hash);
     let sk = aggsig::SecretKey::new(&mut rng);
-    Vote::new_notar(Slot::new(0), hash, &sk, 0)
+    Vote::new_notar(Slot::new(0), hash.into(), &sk, 0)
 }
 
 #[divan::bench]
@@ -57,7 +57,7 @@ fn generate_cert() -> Cert {
     let votes = sks
         .iter()
         .enumerate()
-        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash, sk, v as ValidatorId))
+        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash.into(), sk, v as ValidatorId))
         .collect::<Vec<_>>();
     let notar_cert = NotarCert::try_new(&votes, &val_info).unwrap();
     Cert::Notar(notar_cert)
