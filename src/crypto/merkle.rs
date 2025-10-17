@@ -145,16 +145,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
     /// If you want to create a tree with more than half of the leaves empty,
     /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new(leaves: &[Leaf]) -> Self {
-        Self::new_from_iter(leaves.iter())
-    }
-
-    /// Creates a new Merkle tree from the given data for each leaf.
-    ///
-    /// This will always create a perfect binary tree (filling with empty leaves as necessary).
-    /// If you want to create a tree with more than half of the leaves empty,
-    /// you have to explicitly pass in empty leaves as part of `data`.
-    pub fn new_from_iter<'a>(data: impl IntoIterator<Item = &'a Leaf>) -> Self
+    pub fn new<'a>(data: impl IntoIterator<Item = &'a Leaf>) -> Self
     where
         Leaf: 'a,
     {
@@ -433,7 +424,7 @@ mod tests {
                 data.push(leaf_data);
             }
 
-            let tree = PlainMerkleTree::new_from_iter(data.iter());
+            let tree = PlainMerkleTree::new(data.iter());
             let root = tree.get_root();
             for _ in 0..QUERIES_PER_TREE {
                 let index = rng.random_range(0..num_data);

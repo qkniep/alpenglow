@@ -604,7 +604,7 @@ fn create_output_shreds_for_other_leader(
 fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
     // zero-allocation chaining of slices
     let leaves = raw_shreds.data.iter().chain(&raw_shreds.coding);
-    MerkleTree::new_from_iter(leaves)
+    MerkleTree::new(leaves)
 }
 
 #[cfg(test)]
