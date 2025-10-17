@@ -337,8 +337,9 @@ mod tests {
 
     use super::*;
     use crate::ValidatorInfo;
+    use crate::crypto::aggsig;
+    use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::crypto::{MerkleTree, aggsig};
     use crate::network::dontcare_sockaddr;
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::test_utils::{create_random_block, create_random_shredded_block};
@@ -407,7 +408,7 @@ mod tests {
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
-        assert!(MerkleTree::check_proof(&slice_hash, 0, root, &proof));
+        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
 
         Ok(())
     }
@@ -453,7 +454,7 @@ mod tests {
 
         // calculate block hash
         let merkle_roots = vec![slice0_shreds[0].merkle_root, slice1_shreds[0].merkle_root];
-        let tree = MerkleTree::new(&merkle_roots);
+        let tree = DoubleMerkleTree::new(&merkle_roots);
         let block_hash = tree.get_root();
 
         // first slice is not enough

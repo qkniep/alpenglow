@@ -35,6 +35,7 @@ use self::reed_solomon::{
 };
 pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
+use crate::crypto::merkle::SliceMerkleTree;
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{Hash, MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
@@ -128,10 +129,11 @@ impl Shred {
         if &self.merkle_root != root {
             return false;
         }
-        MerkleTree::check_proof(
-            &self.payload().data,
+        SliceMerkleTree::check_proof(
+            // FIXME: allocation
+            &self.payload().data.to_vec(),
             *self.payload().shred_index,
-            self.merkle_root,
+            &self.merkle_root,
             &self.merkle_path,
         )
     }
@@ -551,7 +553,7 @@ fn data_and_coding_to_output_shreds(
 fn create_output_shreds_for_other_leader(
     header: SliceHeader,
     raw_shreds: RawShreds,
-    tree: MerkleTree,
+    tree: SliceMerkleTree,
     leader_signature: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (Vec<[u8; 32]>, ShredPayload) {
@@ -599,14 +601,10 @@ fn create_output_shreds_for_other_leader(
 }
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
-fn build_merkle_tree(raw_shreds: &RawShreds) -> MerkleTree {
+fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
     // zero-allocation chaining of slices
-    let leaves = raw_shreds
-        .data
-        .iter()
-        .chain(&raw_shreds.coding)
-        .map(Vec::as_slice);
-    MerkleTree::new_from_iter(leaves)
+    let leaves = raw_shreds.data.iter().chain(&raw_shreds.coding);
+    MerkleTree::new(leaves)
 }
 
 #[cfg(test)]

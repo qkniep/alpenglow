@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::{Hash, MerkleTree, hash};
+use crate::crypto::merkle::DoubleMerkleTree;
+use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
 use crate::shredder::{Shred, ShredIndex};
@@ -296,7 +297,12 @@ where
                     return;
                 };
                 let (_, block_hash) = block_id;
-                if !MerkleTree::check_proof_last(&root, last_slice.inner(), block_hash, &proof) {
+                if !DoubleMerkleTree::check_proof_last(
+                    &root,
+                    last_slice.inner(),
+                    &block_hash,
+                    &proof,
+                ) {
                     warn!("repair response (LastSliceRoot) with invalid proof");
                     return;
                 }
@@ -319,7 +325,7 @@ where
                     return;
                 };
                 let (_, block_hash) = block_id;
-                if !MerkleTree::check_proof(&root, slice.inner(), block_hash, &proof) {
+                if !DoubleMerkleTree::check_proof(&root, slice.inner(), &block_hash, &proof) {
                     warn!("repair response (SliceRoot) with invalid proof");
                     return;
                 }

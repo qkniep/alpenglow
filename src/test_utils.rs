@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::{Hash, MerkleTree, signature};
+use crate::crypto::merkle::DoubleMerkleTree;
+use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
@@ -76,7 +77,7 @@ pub fn create_random_shredded_block(
     slot: Slot,
     num_slices: usize,
     sk: &signature::SecretKey,
-) -> (Hash, MerkleTree, Vec<Vec<ValidatedShred>>) {
+) -> (Hash, DoubleMerkleTree, Vec<Vec<ValidatedShred>>) {
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
         shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap().to_vec());
@@ -85,7 +86,7 @@ pub fn create_random_shredded_block(
         .iter()
         .map(|slice_shreds| slice_shreds[0].merkle_root)
         .collect::<Vec<_>>();
-    let tree = MerkleTree::new(&merkle_roots);
+    let tree = DoubleMerkleTree::new(&merkle_roots);
     let block_hash = tree.get_root();
     (block_hash, tree, shreds)
 }
