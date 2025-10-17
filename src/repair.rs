@@ -368,7 +368,7 @@ where
                     .blockstore
                     .write()
                     .await
-                    .add_shred_from_repair(block_hash, shred)
+                    .add_shred_from_repair(block_hash.clone(), shred)
                     .await;
                 if let Ok(Some(block_info)) = res {
                     assert_eq!(block_info.hash, *block_hash);

@@ -50,7 +50,7 @@ pub trait Blockstore {
     ) -> Result<Option<BlockInfo>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
-        hash: &BlockHash,
+        hash: BlockHash,
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
     #[allow(clippy::needless_lifetimes)]
@@ -245,14 +245,14 @@ impl Blockstore for BlockstoreImpl {
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
         &mut self,
-        hash: &BlockHash,
+        hash: BlockHash,
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         match self
             .slot_data_mut(slot)
-            .add_shred_from_repair(hash.clone(), shred, leader_pk)?
+            .add_shred_from_repair(hash, shred, leader_pk)?
         {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
@@ -466,7 +466,7 @@ mod tests {
         // first slice is not enough
         for shred in slice0_shreds.into_iter().take(DATA_SHREDS) {
             blockstore
-                .add_shred_from_repair(&block_hash, shred.into_shred())
+                .add_shred_from_repair(block_hash.clone(), shred.into_shred())
                 .await?;
         }
         assert!(blockstore.get_block(&(slot, block_hash.clone())).is_none());
@@ -474,7 +474,7 @@ mod tests {
         // after second slice we should have the block
         for shred in slice1_shreds.into_iter().take(DATA_SHREDS) {
             blockstore
-                .add_shred_from_repair(&block_hash, shred.into_shred())
+                .add_shred_from_repair(block_hash.clone(), shred.into_shred())
                 .await?;
         }
         assert!(blockstore.get_block(&(slot, block_hash)).is_some());
