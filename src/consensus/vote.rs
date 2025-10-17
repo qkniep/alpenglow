@@ -5,12 +5,11 @@
 //!
 //!
 
-use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::aggsig::{PublicKey, SecretKey};
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::{IndividualSignature, Signable};
-use crate::network::BINCODE_CONFIG;
 use crate::{Slot, ValidatorId};
 
 /// A signed vote used in consensus.
@@ -19,7 +18,7 @@ use crate::{Slot, ValidatorId};
 /// allowing type-specific data to be authenticated and verified.
 ///
 /// This struct is produced by signing the bytes of a `VoteKind` instance.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Vote {
     kind: VoteKind,
     sig: IndividualSignature,
@@ -27,7 +26,7 @@ pub struct Vote {
 }
 
 /// Represents the type-specific vote payload as per the protocol.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum VoteKind {
     /// A notarization vote for a given block hash in a given slot.
     Notar(Slot, BlockHash),
@@ -196,7 +195,7 @@ impl VoteKind {
 
 impl Signable for VoteKind {
     fn bytes_to_sign(&self) -> Vec<u8> {
-        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).expect("serialization should not panic")
+        wincode::serialize(self).expect("serialization should not panic")
     }
 }
 
