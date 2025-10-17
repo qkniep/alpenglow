@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fmt::Display;
+use std::mem::MaybeUninit;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
@@ -13,10 +14,7 @@ pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 /// Slice index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= MAX_SLICES_PER_BLOCK.
-// FIXME: custom `SchemaRead` implementation needed
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaRead, SchemaWrite,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
 pub struct SliceIndex(usize);
 
 impl SliceIndex {
@@ -74,6 +72,25 @@ impl Display for SliceIndex {
     }
 }
 
+impl<'de> SchemaRead<'de> for SliceIndex {
+    type Dst = Self;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        unsafe {
+            reader.read_t(dst)?;
+            if dst.assume_init_ref().0 >= MAX_SLICES_PER_BLOCK {
+                // FIXME: replace this arbitrary error type
+                Err(wincode::ReadError::InvalidCharLead(0))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for SliceIndex {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -110,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slice_index_valid_deserialization() {
+    fn valid_serde() {
         let vs = [0, 1, MAX_SLICES_PER_BLOCK - 10, MAX_SLICES_PER_BLOCK - 1];
         let vs = vs.into_iter().map(|v| v.to_string());
         for v in vs {
@@ -119,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_index_invalid_deserialization() {
+    fn invalid_serde() {
         let vs = [
             (-1).to_string(),
             i64::MIN.to_string().to_string(),
@@ -131,6 +148,26 @@ mod tests {
         ];
         for v in vs {
             serde_json::from_str::<SliceIndex>(&v).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn valid_wincode() {
+        let vs = [0, 1, MAX_SLICES_PER_BLOCK - 10, MAX_SLICES_PER_BLOCK - 1];
+        let vs = vs.iter().map(wincode::serialize);
+        for res in vs {
+            let v = res.unwrap();
+            wincode::deserialize::<SliceIndex>(&v).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_wincode() {
+        let vs = [MAX_SLICES_PER_BLOCK, MAX_SLICES_PER_BLOCK + 1, usize::MAX];
+        let vs = vs.iter().map(wincode::serialize);
+        for res in vs {
+            let v = res.unwrap();
+            wincode::deserialize::<SliceIndex>(&v).unwrap_err();
         }
     }
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fmt::Display;
+use std::mem::MaybeUninit;
 use std::ops::Deref;
 
 use serde::de::{self, Visitor};
@@ -12,11 +13,8 @@ use crate::shredder::TOTAL_SHREDS;
 
 /// Shred index type.
 ///
-/// Using strong type to enforce certain constraints, e.g. it is never >= TOTAL_SHREDS.
-// FIXME: custom `SchemaRead` implementation needed
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaRead, SchemaWrite,
-)]
+/// Using strong type to enforce certain constraints, e.g. it is never >= [`TOTAL_SHREDS`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
 pub struct ShredIndex(usize);
 
 impl ShredIndex {
@@ -77,12 +75,31 @@ impl<'de> Visitor<'de> for ShredIndexVisitor {
     }
 }
 
+impl<'de> SchemaRead<'de> for ShredIndex {
+    type Dst = Self;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        unsafe {
+            reader.read_t(dst)?;
+            if dst.assume_init_ref().0 >= TOTAL_SHREDS {
+                // FIXME: replace this arbitrary error type
+                Err(wincode::ReadError::InvalidCharLead(0))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn shred_index_valid_deserialization() {
+    fn valid_serde() {
         let vs = [0, 1, TOTAL_SHREDS - 10, TOTAL_SHREDS - 1];
         let vs = vs.into_iter().map(|v| v.to_string());
         for v in vs {
@@ -91,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn shred_index_invalid_deserialization() {
+    fn invalid_serde() {
         let vs = [
             (-1).to_string(),
             i64::MIN.to_string(),
@@ -103,6 +120,26 @@ mod tests {
         ];
         for v in vs {
             serde_json::from_str::<ShredIndex>(&v).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn valid_wincode() {
+        let vs = [0, 1, TOTAL_SHREDS - 10, TOTAL_SHREDS - 1];
+        let vs = vs.iter().map(wincode::serialize);
+        for res in vs {
+            let v = res.unwrap();
+            wincode::deserialize::<ShredIndex>(&v).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_wincode() {
+        let vs = [TOTAL_SHREDS, TOTAL_SHREDS + 1, usize::MAX];
+        let vs = vs.iter().map(wincode::serialize);
+        for res in vs {
+            let v = res.unwrap();
+            wincode::deserialize::<ShredIndex>(&v).unwrap_err();
         }
     }
 }

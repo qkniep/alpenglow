@@ -161,7 +161,6 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let ptr = payload.as_mut_ptr() as *mut u8;
     std::mem::forget(payload); // prevent dropping uninitialized memory
     let payload: Vec<u8> = unsafe { Vec::from_raw_parts(ptr, len, cap) };
-    // FIXME: handle `MaybeUninit`
     payload.into()
 }
 
