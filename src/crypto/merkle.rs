@@ -107,6 +107,7 @@ pub trait MerkleRoot: From<Hash> + Into<Hash> + Clone {}
 pub trait MerkleProof: AsRef<[Hash]> + From<Vec<Hash>> {}
 
 impl MerkleLeaf for Vec<u8> {}
+impl MerkleLeaf for Hash {}
 impl MerkleRoot for Hash {}
 impl MerkleProof for Vec<Hash> {}
 
@@ -115,7 +116,7 @@ pub type SliceMerkleTree = MerkleTree<Vec<u8>, Hash, Vec<Hash>>;
 pub type DoubleMerkleTree = MerkleTree<Hash, Hash, Vec<Hash>>;
 
 /// Implementation of a Merkle tree.
-pub struct MerkleTree<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> {
+pub struct MerkleTree<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> {
     /// All hashes in the tree, leaf hashes and inner nodes.
     nodes: Vec<Hash>,
     /// For each level, has the offset in `nodes` and the number of hashes on that level.
@@ -124,7 +125,7 @@ pub struct MerkleTree<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> {
     _type: PhantomData<(L, R, P)>,
 }
 
-impl<L: AsRef<[u8]>, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
+impl<L: MerkleLeaf, R: MerkleRoot, P: MerkleProof> MerkleTree<L, R, P> {
     /// Creates a new Merkle tree from the given data for each leaf.
     ///
     /// This will always create a perfect binary tree (filling with empty leaves as necessary).
