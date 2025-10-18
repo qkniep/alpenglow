@@ -28,7 +28,6 @@ impl EpochInfo {
     }
 
     /// Gives the validator info for the leader for the given slot.
-    // TODO: actual stake-based pseudorandom leader schedule
     #[must_use]
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot.inner() / SLOTS_PER_WINDOW;
