@@ -2,6 +2,7 @@
 name = "alpenglow"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.90"
 authors = ["Quentin Kniep <quentin@anza.xyz>"]
 description = "Reference research implementation of the Alpenglow consensus protocol."
 license = "Apache-2.0"

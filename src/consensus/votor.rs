@@ -250,11 +250,10 @@ impl<A: All2All> Votor<A> {
     /// Panics if `slot` is not the first slot of a window.
     fn set_timeouts(&self, slot: Slot) {
         assert!(slot.is_start_of_window());
-        // TODO: set timeouts only once?
 
         trace!(
-            "setting timeouts for slots {:?}",
-            slot.slots_in_window().collect::<Vec<_>>()
+            "setting timeouts for slots {slot}-{}",
+            slot.last_slot_in_window()
         );
         let sender = self.event_sender.clone();
         tokio::spawn(async move {

@@ -107,7 +107,6 @@ pub trait Stage: Clone + Copy + Debug + Eq + Hash {
 }
 
 /// Matrix-based discrete-event simulation engine.
-// TODO: maybe generalize into a trait and then implement event queue-based engine as well
 pub struct SimulationEngine<P: Protocol> {
     builder: P::Builder,
     environment: SimulationEnvironment,

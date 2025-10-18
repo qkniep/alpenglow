@@ -43,9 +43,6 @@ impl Eq for SimulatedPacket {}
 ///
 /// It stores virtual latencies for all links between any pair of nodes.
 /// Messages sent by nodes into the network core are then delayed accordingly.
-///
-/// # Examples
-// TODO: add examples
 pub struct SimulatedNetworkCore {
     /// Map from node ID to channel for delivering packets.
     nodes: Arc<RwLock<HashMap<ValidatorId, mpsc::Sender<SimulatedPacket>>>>,
