@@ -38,9 +38,15 @@ impl SimTime {
     }
 
     /// Constructs a new [`SimTime`] from the given number of seconds.
+    ///
+    /// The time is rounded to the nearest nanosecond.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `time_secs` is negative.
     pub const fn from_secs(time_secs: f64) -> Self {
-        // TODO: correctly round once stable in const
-        let time_ns = (time_secs * 1e9) as u64;
+        assert!(time_secs >= 0.0);
+        let time_ns = (time_secs * 1e9).round() as u64;
         Self::new(time_ns)
     }
 

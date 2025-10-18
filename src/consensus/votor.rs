@@ -250,7 +250,6 @@ impl<A: All2All> Votor<A> {
     /// Panics if `slot` is not the first slot of a window.
     fn set_timeouts(&self, slot: Slot) {
         assert!(slot.is_start_of_window());
-        // TODO: set timeouts only once?
 
         trace!(
             "setting timeouts for slots {slot}-{}",
