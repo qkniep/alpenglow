@@ -141,7 +141,7 @@ impl Event for LatencyEvent {
         match self {
             Self::Propose => {
                 let mut timings = vec![start_time; environment.num_validators()];
-                for &proposer in instance.proposers.iter() {
+                for &proposer in &instance.proposers {
                     let block_bytes = instance.params.num_slices as usize
                         * instance.params.num_relays as usize
                         * MAX_DATA_PER_SHRED;
@@ -195,9 +195,9 @@ impl Event for LatencyEvent {
                 // TODO: find better way of integrating sub-protocol
                 let slices_required = 3;
                 let rotor_params = RotorParams {
-                    num_data_shreds: DATA_SHREDS,
-                    num_shreds: TOTAL_SHREDS,
-                    num_slices: slices_required,
+                    data_shreds: DATA_SHREDS,
+                    shreds: TOTAL_SHREDS,
+                    slices: slices_required,
                 };
                 let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
                     StakeWeightedSampler::new(environment.validators.clone()),

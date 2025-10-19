@@ -39,7 +39,6 @@ use crate::ValidatorId;
 use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 /// A simulated network interface for local testing and simulations.
-// TODO: add examples
 pub struct SimulatedNetwork<S, R> {
     /// ID of the validator this network interface belongs to.
     id: ValidatorId,
@@ -63,7 +62,7 @@ impl<S, R> SimulatedNetwork<S, R> {
 
     async fn send_serialized(&self, bytes: Vec<u8>, addr: SocketAddr) -> std::io::Result<()> {
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let validator_id = addr.port() as ValidatorId;
+        let validator_id = addr.port().into();
         self.send_byte_vec(bytes, validator_id).await?;
         Ok(())
     }

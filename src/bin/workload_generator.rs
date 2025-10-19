@@ -77,8 +77,7 @@ fn main() -> Result<()> {
             let total_data = bytes_per_tx as f64 * txs_sent as f64 / 1e6;
             let data_rate = total_data / elapsed * 8.0;
             info!(
-                "sent {} txs (TPS: {:.1}) | data: {:.1} MB ({:.1} Mb/s)",
-                txs_sent, tps, total_data, data_rate
+                "sent {txs_sent} txs (TPS: {tps:.1}) | data: {total_data:.1} MB ({data_rate:.1} Mb/s)",
             );
         }
     }
