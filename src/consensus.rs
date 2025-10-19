@@ -52,7 +52,7 @@ use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
-const DELTA: Duration = Duration::from_millis(250);
+pub const DELTA: Duration = Duration::from_millis(250);
 /// Time the leader has for producing and sending the block.
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the first slice.

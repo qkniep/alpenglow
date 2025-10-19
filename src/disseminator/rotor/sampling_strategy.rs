@@ -419,9 +419,6 @@ impl PartitionSampler {
 }
 
 impl SamplingStrategy for PartitionSampler {
-    // TODO: this is just a bad placeholder and should probably not be unimplemented
-    //       for this sampler, maybe we should have two different types:
-    //       `IIDSamplingStrategy` and `SamplingStrategy`
     fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
@@ -467,8 +464,6 @@ impl FaitAccompli1Sampler<PartitionSampler> {
     /// Creates a new FA1-F sampler with a variance-reducing partition fallback sampler.
     ///
     /// See [`PartitionSampler`] for more details.
-    // TODO: how to handle initializing fallback sampler?
-    //       support running sample_multiple(...) on different k?
     #[must_use]
     pub fn new_with_partition_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
@@ -499,8 +494,6 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
     /// Creates a new FA1-F sampler with an IID stake-weighted fallback sampler.
     ///
     /// See [`StakeWeightedSampler`] for more details.
-    // TODO: how to handle initializing fallback sampler?
-    //       support running sample_multiple(...) on different k?
     #[must_use]
     pub fn new_with_stake_weighted_fallback(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
@@ -527,9 +520,6 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
 }
 
 impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
-    // TODO: this is just a bad placeholder and should probably not be unimplemented
-    //       for this sampler, maybe we should have two different types:
-    //       `IIDSamplingStrategy` and `SamplingStrategy`
     fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
@@ -587,7 +577,6 @@ impl FaitAccompli2Sampler {
     /// This is instantiated for a fixed number of samples `k`.
     /// To this end, the FA1 and FA2 pre-processing steps are applied,
     /// and also a stake-weighted IID fallback sampler is generated.
-    // TODO: support running sample_multiple(...) on different k?
     pub fn new(validators: Vec<ValidatorInfo>, k: u64) -> Self {
         // FA1 step
         let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
@@ -656,9 +645,6 @@ impl FaitAccompli2Sampler {
 }
 
 impl SamplingStrategy for FaitAccompli2Sampler {
-    // TODO: this is just a bad placeholder and should probably not be unimplemented
-    //       for this sampler, maybe we should have two different types:
-    //       `IIDSamplingStrategy` and `SamplingStrategy`
     fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
