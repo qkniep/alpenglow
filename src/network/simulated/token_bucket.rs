@@ -4,9 +4,6 @@
 use tokio::time::{Duration, Instant, sleep};
 
 /// Token bucket for rate limiting.
-///
-/// # Examples
-// TODO: add examples
 pub struct TokenBucket {
     /// Current number of tokens in the bucket.
     bucket: usize,

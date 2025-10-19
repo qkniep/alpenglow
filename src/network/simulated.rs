@@ -39,7 +39,6 @@ use crate::ValidatorId;
 use crate::network::{BINCODE_CONFIG, MTU_BYTES};
 
 /// A simulated network interface for local testing and simulations.
-// TODO: add examples
 pub struct SimulatedNetwork<S, R> {
     /// ID of the validator this network interface belongs to.
     id: ValidatorId,

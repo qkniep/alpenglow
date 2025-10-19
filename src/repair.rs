@@ -18,7 +18,7 @@ use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::consensus::{Blockstore, EpochInfo, Pool};
+use crate::consensus::{Blockstore, DELTA, EpochInfo, Pool};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, MerkleRoot, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -30,8 +30,7 @@ use crate::{BlockId, ValidatorId};
 /// Maximum time to wait for a response to a repair request.
 ///
 /// After a request times out we retry it from another node.
-// TODO: make this tighter (can probably be close to `2 * DELTA`)
-const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
+const REPAIR_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
 
 /// Different types of [`RepairRequest`] messages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
