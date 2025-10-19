@@ -26,7 +26,7 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     byzantine: 0.18,
 };
 
-pub fn run_robustness_tests() -> Result<()> {
+pub fn run_robustness_tests() {
     PyjamaParameters::new(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
@@ -39,11 +39,9 @@ pub fn run_robustness_tests() -> Result<()> {
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-
-    Ok(())
 }
 
-pub fn run_pyjama_robustness_test(total_shreds: u64) {
+pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 1);
@@ -130,5 +128,5 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) {
     let file = File::create(path).unwrap();
     let mut csv_file = csv::Writer::from_writer(file);
 
-    test.run(adversary_strength, &mut csv_file);
+    test.run(adversary_strength, &mut csv_file)
 }

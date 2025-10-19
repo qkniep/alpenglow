@@ -96,7 +96,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
     ///
     /// Writes the results to the given CSV file.
     /// This is only meaningful after `run_multiple` has been called.
-    pub fn evaluate_supported(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
+    pub fn evaluate_supported(&self, test_name: &str, csv_file: &Arc<Mutex<csv::Writer<File>>>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let seconds =
             (8 * MAX_DATA_PER_SHRED as u64 * leader_workload) as f64 / self.leader_bandwidth as f64;

@@ -11,12 +11,12 @@ use crate::shredder::TOTAL_SHREDS;
 
 /// Shred index type.
 ///
-/// Using strong type to enforce certain constraints, e.g. it is never >= TOTAL_SHREDS.
+/// Using strong type to enforce certain constraints, e.g. it is never >= [`TOTAL_SHREDS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct ShredIndex(usize);
 
 impl ShredIndex {
-    /// Creates a new [`ShredIndex`].
+    /// Creates a new shred index.
     pub fn new(index: usize) -> Option<Self> {
         if index >= TOTAL_SHREDS {
             None
@@ -25,7 +25,7 @@ impl ShredIndex {
         }
     }
 
-    /// Returns an iterator that iterates over all the valid ShredIndexes.
+    /// Returns an iterator that iterates over all the valid shred indices.
     pub(crate) fn all() -> impl Iterator<Item = Self> {
         (0..TOTAL_SHREDS).map(Self)
     }

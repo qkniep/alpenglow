@@ -11,12 +11,12 @@ pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 
 /// Slice index type.
 ///
-/// Using strong type to enforce certain constraints, e.g. it is never >= MAX_SLICES_PER_BLOCK.
+/// Using strong type to enforce certain constraints, e.g. it is never >= [`MAX_SLICES_PER_BLOCK`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct SliceIndex(usize);
 
 impl SliceIndex {
-    /// Creates a new SliceIndex for testing purposes.
+    /// Creates a new slice index for testing purposes.
     ///
     /// Panics if `index` is not in the valid range.
     #[cfg(test)]
@@ -24,7 +24,7 @@ impl SliceIndex {
         Self::new(index).unwrap()
     }
 
-    /// Creates a new SliceIndex.
+    /// Creates a new slice index.
     fn new(index: usize) -> Option<Self> {
         if index >= MAX_SLICES_PER_BLOCK {
             None
@@ -38,28 +38,28 @@ impl SliceIndex {
         self.0
     }
 
-    /// Returns the first, i.e. smallest, `SliceIndex`.
+    /// Returns the first, i.e. smallest, slice index.
     pub(crate) fn first() -> Self {
         Self(0)
     }
 
-    /// Returns `true` if self is the first, i.e. smallest, `SliceIndex`.
-    pub(crate) fn is_first(&self) -> bool {
+    /// Returns `true` if `self` is the first, i.e. smallest, slice index.
+    pub(crate) fn is_first(self) -> bool {
         self.0 == 0
     }
 
-    /// Returns `true` if self is the max possible, i.e. `MAX_SLICES_PER_BLOCK - 1`, SliceIndex.
-    pub(crate) fn is_max(&self) -> bool {
+    /// Returns `true` if `self` is the max possible slice index, i.e. `MAX_SLICES_PER_BLOCK - 1`.
+    pub(crate) fn is_max(self) -> bool {
         self.0 == MAX_SLICES_PER_BLOCK - 1
     }
 
-    /// Returns an iterator that iterates over all the valid SliceIndexes.
+    /// Returns an iterator that iterates over all the valid slice indices.
     pub(crate) fn all() -> impl Iterator<Item = Self> {
         (0..MAX_SLICES_PER_BLOCK).map(Self)
     }
 
-    /// Returns an iterator that iterates over SliceIndexes starting from the first to self inclusive.
-    pub(crate) fn until(&self) -> impl Iterator<Item = Self> {
+    /// Returns an iterator that iterates over slice indices starting from the first to self inclusive.
+    pub(crate) fn until(self) -> impl Iterator<Item = Self> {
         (0..=self.0).map(Self)
     }
 }
