@@ -619,9 +619,10 @@ impl FaitAccompli2Sampler {
                 v
             })
             .collect();
-        let fallback_sampler = match r == 0.0 {
-            true => StakeWeightedSampler::new(validators.clone()),
-            false => StakeWeightedSampler::new(new_stake_distribution),
+        let fallback_sampler = if r == 0.0 {
+            StakeWeightedSampler::new(validators.clone())
+        } else {
+            StakeWeightedSampler::new(new_stake_distribution)
         };
 
         Self {

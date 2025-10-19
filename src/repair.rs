@@ -246,7 +246,7 @@ where
                     self.repair_block(block_id).await;
                 }
                 // handle next request timeout
-                _ = tokio::time::sleep(sleep_duration) => {
+                () = tokio::time::sleep(sleep_duration) => {
                     let Some((_, hash)) = self.request_timeouts.pop() else {
                         continue;
                     };

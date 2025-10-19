@@ -284,7 +284,7 @@ impl SlotState {
                     votor_events.push(VotorEvent::SafeToNotar(slot, block_hash.clone()));
                 }
                 SafeToNotarStatus::MissingBlock => {
-                    blocks_to_repair.push((slot, block_hash.clone()))
+                    blocks_to_repair.push((slot, block_hash.clone()));
                 }
                 SafeToNotarStatus::AwaitingVotes => {}
             }
@@ -365,7 +365,7 @@ impl SlotState {
             }
             match self.check_safe_to_notar(&hash) {
                 SafeToNotarStatus::SafeToNotar => {
-                    votor_events.push(VotorEvent::SafeToNotar(slot, hash))
+                    votor_events.push(VotorEvent::SafeToNotar(slot, hash));
                 }
                 SafeToNotarStatus::MissingBlock => blocks_to_repair.push((slot, hash)),
                 SafeToNotarStatus::AwaitingVotes => {}

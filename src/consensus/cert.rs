@@ -242,7 +242,7 @@ impl NotarFallbackCert {
     pub fn try_new(votes: &[Vote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         if !votes[0].is_notar() && !votes[0].is_notar_fallback() {
             return Err(CertError::WrongVoteType);
-        };
+        }
         let slot = votes[0].slot();
         let block_hash = votes[0].block_hash().unwrap().clone();
 

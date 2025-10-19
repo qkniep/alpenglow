@@ -123,7 +123,7 @@ impl FinalityTracker {
                 FinalizationStatus::FinalPendingNotar => {}
                 FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
             }
-        };
+        }
 
         let mut event = FinalizationEvent::default();
         self.handle_finalized_block((slot, block_hash), &mut event);
