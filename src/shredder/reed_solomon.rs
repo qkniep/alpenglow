@@ -12,12 +12,14 @@ use super::{
 };
 use crate::shredder::ValidatedShred;
 
+/// Errors that may be returned by [`reed_solomon_shred()`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
     #[error("too much data for slice")]
     TooMuchData,
 }
 
+/// Errors that may be returned by [`reed_solomon_deshred()`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonDeshredError {
     #[error("not enough shreds to reconstruct")]
@@ -36,7 +38,18 @@ pub(super) struct RawShreds {
     pub(super) coding: Vec<Vec<u8>>,
 }
 
-/// Splits the given slice into `num_data` data shreds, then generates `num_coding` additional Reed-Solomon coding shreds.
+/// Reed-Solomon encodes the `payload` into [`RawShreds`].
+///
+/// For this, it splits the given slice into [`DATA_SHREDS`] data shreds.
+/// Then, it generates and adds `num_coding` additional Reed-Solomon coding shreds.
+///
+/// First, however, padding is added to the payload to make it a multiple of `2 * DATA_SHREDS`.
+/// Bit padding of one 1bit and as many 0 bits as needed is added.
+/// In the byte representation this looks like `[0x80, 0x00, ..., 0x00]`.
+///
+/// Errors
+///
+/// If the provided payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
 pub(super) fn reed_solomon_shred(
     mut payload: Vec<u8>,
     num_coding: usize,
@@ -60,10 +73,13 @@ pub(super) fn reed_solomon_shred(
 
 /// Reconstructs the raw data from the given shreds.
 ///
+/// Removes the padding before returning the data.
+/// See [`reed_solomon_shred()`] for details on the padding scheme.
+///
 /// Errors
 ///
-/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns `Err(ReedSolomonDeshredError::NotEnoughShreds)`.
-/// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns `Err(ReedSolomonDeshredError::TooMuchData)`.
+/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns [`ReedSolomonDeshredError::NotEnoughShreds`].
+/// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
 pub(super) fn reed_solomon_deshred(
     shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     num_coding: usize,
