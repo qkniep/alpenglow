@@ -90,6 +90,7 @@ impl From<ReedSolomonDeshredError> for DeshredError {
         match err {
             ReedSolomonDeshredError::TooMuchData => Self::TooMuchData,
             ReedSolomonDeshredError::NotEnoughShreds => Self::NotEnoughShreds,
+            ReedSolomonDeshredError::InvalidPadding => Self::BadEncoding,
         }
     }
 }

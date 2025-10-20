@@ -12,18 +12,22 @@ use super::{
 };
 use crate::shredder::ValidatedShred;
 
+/// Errors that may be returned by [`reed_solomon_shred()`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
     #[error("too much data for slice")]
     TooMuchData,
 }
 
+/// Errors that may be returned by [`reed_solomon_deshred()`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonDeshredError {
     #[error("not enough shreds to reconstruct")]
     NotEnoughShreds,
     #[error("too much data for slice")]
     TooMuchData,
+    #[error("invalid padding detected")]
+    InvalidPadding,
 }
 
 /// The data and coding shreds returned from [`reed_solomon_shred()`] on success.
@@ -34,7 +38,18 @@ pub(super) struct RawShreds {
     pub(super) coding: Vec<Vec<u8>>,
 }
 
-/// Splits the given slice into `num_data` data shreds, then generates `num_coding` additional Reed-Solomon coding shreds.
+/// Reed-Solomon encodes the `payload` into [`RawShreds`].
+///
+/// For this, it splits the given slice into [`DATA_SHREDS`] data shreds.
+/// Then, it generates and adds `num_coding` additional Reed-Solomon coding shreds.
+///
+/// First, however, padding is added to the payload to make it a multiple of `2 * DATA_SHREDS`.
+/// Bit padding of one 1bit and as many 0 bits as needed is added.
+/// In the byte representation this looks like `[0x80, 0x00, ..., 0x00]`.
+///
+/// Errors
+///
+/// If the provided payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
 pub(super) fn reed_solomon_shred(
     mut payload: Vec<u8>,
     num_coding: usize,
@@ -45,10 +60,9 @@ pub(super) fn reed_solomon_shred(
     }
 
     // add padding
-    // TODO: use a padding scheme that can support larger slices
-    let padding_bytes = u8::try_from(2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS))
-        .expect("cannot fit number of padding bytes in u8");
-    payload.resize(payload.len() + padding_bytes as usize, padding_bytes);
+    let padding_bytes = 2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS);
+    payload.push(0x80);
+    payload.resize(payload.len() + padding_bytes.saturating_sub(1), 0);
     assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
 
     let shred_bytes = payload.len().div_ceil(DATA_SHREDS);
@@ -59,10 +73,13 @@ pub(super) fn reed_solomon_shred(
 
 /// Reconstructs the raw data from the given shreds.
 ///
+/// Removes the padding before returning the data.
+/// See [`reed_solomon_shred()`] for details on the padding scheme.
+///
 /// Errors
 ///
-/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns `Err(ReedSolomonDeshredError::NotEnoughShreds)`.
-/// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns `Err(ReedSolomonDeshredError::TooMuchData)`.
+/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns [`ReedSolomonDeshredError::NotEnoughShreds`].
+/// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
 pub(super) fn reed_solomon_deshred(
     shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
     num_coding: usize,
@@ -111,7 +128,15 @@ pub(super) fn reed_solomon_deshred(
     }
 
     // remove padding
-    let padding_bytes = restored_payload[restored_payload.len() - 1] as usize;
+    let padding_bytes = restored_payload
+        .iter()
+        .rev()
+        .take_while(|b| **b == 0)
+        .count()
+        + 1;
+    if restored_payload[restored_payload.len() - padding_bytes] != 0x80 {
+        return Err(ReedSolomonDeshredError::InvalidPadding);
+    }
     restored_payload.truncate(restored_payload.len().saturating_sub(padding_bytes));
 
     Ok(restored_payload)
