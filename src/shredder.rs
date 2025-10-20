@@ -90,6 +90,7 @@ impl From<ReedSolomonDeshredError> for DeshredError {
         match err {
             ReedSolomonDeshredError::TooMuchData => Self::TooMuchData,
             ReedSolomonDeshredError::NotEnoughShreds => Self::NotEnoughShreds,
+            ReedSolomonDeshredError::InvalidPadding => Self::BadEncoding,
         }
     }
 }
@@ -211,7 +212,7 @@ pub trait Shredder {
 
     /// Puts the given shreds back together into a complete slice.
     ///
-    /// Additionally, outputs all `TOTAL_SHREDS` reconstructed shreds.
+    /// Additionally, outputs all [`TOTAL_SHREDS`] reconstructed shreds.
     /// This includes all (potentially data and coding) shreds sent originally.
     ///
     /// # Errors
@@ -235,7 +236,8 @@ pub trait Shredder {
     }
 
     /// The core deshreding implementation that the actual shredders provide.
-    /// NOTE: this is not part of the public API, normally, [`deshred()`] should be used.
+    ///
+    /// NOTE: this is not part of the public API, normally, [`Shredder::deshred()`] should be used.
     fn deshred_validated_shreds(
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;

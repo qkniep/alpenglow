@@ -18,7 +18,7 @@ use crate::shredder::TOTAL_SHREDS;
 pub struct ShredIndex(usize);
 
 impl ShredIndex {
-    /// Creates a new [`ShredIndex`].
+    /// Creates a new shred index.
     pub fn new(index: usize) -> Option<Self> {
         if index >= TOTAL_SHREDS {
             None
@@ -27,7 +27,7 @@ impl ShredIndex {
         }
     }
 
-    /// Returns an iterator that iterates over all the valid ShredIndexes.
+    /// Returns an iterator that iterates over all the valid shred indices.
     pub(crate) fn all() -> impl Iterator<Item = Self> {
         (0..TOTAL_SHREDS).map(Self)
     }

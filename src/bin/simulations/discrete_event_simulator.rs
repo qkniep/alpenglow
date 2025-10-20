@@ -107,7 +107,6 @@ pub trait Stage: Clone + Copy + Debug + Eq + Hash {
 }
 
 /// Matrix-based discrete-event simulation engine.
-// TODO: maybe generalize into a trait and then implement event queue-based engine as well
 pub struct SimulationEngine<P: Protocol> {
     builder: P::Builder,
     environment: SimulationEnvironment,
@@ -177,7 +176,7 @@ impl<P: Protocol> SimulationEngine<P> {
     }
 
     /// References the timing stats.
-    pub fn stats<'a>(&'a self) -> RwLockReadGuard<'a, TimingStats<P>> {
+    pub fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
         self.stats.read().unwrap()
     }
 }
@@ -387,7 +386,7 @@ pub fn broadcast_stake_threshold(
         // find time the stake threshold is first reached
         arrival_timings.sort_unstable();
         let mut stake_so_far = 0;
-        for (arrival_timing, sender) in arrival_timings.into_iter() {
+        for (arrival_timing, sender) in arrival_timings {
             *recipient_timing = arrival_timing;
             stake_so_far += environment.validators[sender].stake;
             if stake_so_far as f64 >= threshold * environment.total_stake as f64 {

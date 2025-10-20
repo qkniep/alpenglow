@@ -345,7 +345,7 @@ impl BlockData {
 
         let block = Block {
             _slot: self.slot,
-            block_hash: block_hash.clone(),
+            hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
             _transactions: transactions,

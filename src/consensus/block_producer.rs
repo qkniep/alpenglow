@@ -225,7 +225,9 @@ where
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash != *parent_hash {
+                        if new_hash == *parent_hash {
+                            debug!("parent is ready, continuing with same parent");
+                        } else {
                             assert_ne!(new_slot, *parent_slot);
                             debug!(
                                 "changed parent from {} in slot {} to {} in slot {}",
@@ -235,14 +237,11 @@ where
                                 new_slot
                             );
                             payload.parent = Some((new_slot, new_hash));
-                        } else {
-                            debug!("parent is ready, continuing with same parent");
                         }
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
-                        let elapsed = Instant::now() - start;
-                        let duration = self.delta_block.saturating_sub(elapsed);
+                        let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
                   }
                 }
@@ -324,12 +323,11 @@ where
                 is_last,
             };
 
-            match self.shred_and_disseminate(header, payload).await? {
-                Some(block_hash) => return Ok((slot, block_hash)),
-                None => {
-                    assert!(!new_duration_left.is_zero());
-                    duration_left = new_duration_left;
-                }
+            if let Some(block_hash) = self.shred_and_disseminate(header, payload).await? {
+                return Ok((slot, block_hash));
+            } else {
+                assert!(!new_duration_left.is_zero());
+                duration_left = new_duration_left;
             }
         }
         unreachable!()
@@ -402,7 +400,7 @@ where
     let mut txs = Vec::new();
 
     let ret = loop {
-        let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
+        let sleep_duration = duration_left.saturating_sub(start_time.elapsed());
         let res = tokio::select! {
             () = tokio::time::sleep(sleep_duration) => {
                 break Duration::ZERO;
