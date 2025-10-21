@@ -167,11 +167,8 @@ impl SlotState {
             VoteKind::NotarFallback(_, _) => {
                 let block_hash = vote.block_hash().unwrap().clone();
                 let outputs = self.count_notar_fallback_stake(&block_hash, voter_stake);
-                assert!(
-                    self.votes.notar_fallback[v]
-                        .insert(block_hash, vote)
-                        .is_none()
-                );
+                let res = self.votes.notar_fallback[v].insert(block_hash, vote);
+                assert!(res.is_none());
                 outputs
             }
             VoteKind::Skip(_) => {
