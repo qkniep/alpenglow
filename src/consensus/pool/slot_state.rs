@@ -51,7 +51,7 @@ pub struct SlotVotes {
     /// Notarization votes for all validators (indexed by `ValidatorId`).
     pub(super) notar: Vec<Option<(BlockHash, Vote)>>,
     /// Notar-fallback votes for all validators (indexed by `ValidatorId`).
-    pub(super) notar_fallback: Vec<Vec<(BlockHash, Vote)>>,
+    pub(super) notar_fallback: Vec<BTreeMap<BlockHash, Vote>>,
     /// Skip votes for all validators (indexed by `ValidatorId`).
     pub(super) skip: Vec<Option<Vote>>,
     /// Skip-fallback votes for all validators (indexed by `ValidatorId`).
@@ -167,7 +167,8 @@ impl SlotState {
             VoteKind::NotarFallback(_, _) => {
                 let block_hash = vote.block_hash().unwrap().clone();
                 let outputs = self.count_notar_fallback_stake(&block_hash, voter_stake);
-                self.votes.notar_fallback[v].push((block_hash, vote));
+                let res = self.votes.notar_fallback[v].insert(block_hash, vote);
+                assert!(res.is_none());
                 outputs
             }
             VoteKind::Skip(_) => {
@@ -459,9 +460,9 @@ impl SlotState {
         let v = vote.signer() as usize;
         match vote.kind() {
             VoteKind::Notar(_, _) => self.votes.notar[v].is_some(),
-            VoteKind::NotarFallback(_, _) => self.votes.notar_fallback[v]
-                .iter()
-                .any(|(hash, _)| hash == vote.block_hash().unwrap()),
+            VoteKind::NotarFallback(_, block_hash) => {
+                self.votes.notar_fallback[v].contains_key(block_hash)
+            }
             VoteKind::Skip(_) | VoteKind::SkipFallback(_) => {
                 self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some()
             }
@@ -520,7 +521,7 @@ impl SlotVotes {
     pub fn new(num_validators: usize) -> Self {
         Self {
             notar: vec![None; num_validators],
-            notar_fallback: vec![Vec::new(); num_validators],
+            notar_fallback: vec![BTreeMap::new(); num_validators],
             skip: vec![None; num_validators],
             skip_fallback: vec![None; num_validators],
             finalize: vec![None; num_validators],
@@ -542,9 +543,7 @@ impl SlotVotes {
     pub fn notar_fallback_votes(&self, block_hash: &BlockHash) -> Vec<Vote> {
         self.notar_fallback
             .iter()
-            .flatten()
-            .filter(|(h, _)| *h == *block_hash)
-            .map(|(_, s)| s.clone())
+            .filter_map(|m| m.get(block_hash).cloned())
             .collect()
     }
 
