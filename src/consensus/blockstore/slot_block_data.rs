@@ -260,7 +260,8 @@ impl BlockData {
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
         let (reconstructed_slice, reconstructed_shreds) =
-            match RegularShredder::deshred(slice_shreds) {
+            // PERF: new shredder all the time!
+            match RegularShredder::default().deshred(slice_shreds) {
                 Ok(output) => output,
                 Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
                 rest => {
@@ -386,7 +387,7 @@ mod tests {
         sk: &SecretKey,
     ) -> (Vec<VotorEvent>, Result<(), AddShredError>) {
         let pk = sk.to_pk();
-        let shreds = RegularShredder::shred(slice, sk).unwrap();
+        let shreds = RegularShredder::default().shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
             match block_data.add_shred(shred.into_shred(), pk) {
@@ -419,7 +420,8 @@ mod tests {
         // manage to construct block from just enough shreds
         let slices = create_random_block(slot, 1);
         let mut block_data = BlockData::new(slot);
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk).unwrap();
+        let mut shredder = RegularShredder::default();
+        let shreds = shredder.shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             if let Some(event) = block_data.add_shred(shred.into_shred(), pk).unwrap() {

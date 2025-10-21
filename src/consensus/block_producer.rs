@@ -348,7 +348,9 @@ where
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
         let mut maybe_block_hash = None;
-        let shreds = RegularShredder::shred(slice, &self.secret_key)
+        // PERF: new shredder every time!
+        let shreds = RegularShredder::default()
+            .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
             self.disseminator.send(&s).await?;

@@ -58,7 +58,8 @@ fn serialize_slice(bencher: divan::Bencher) {
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
             let sk = signature::SecretKey::new(&mut rng);
-            RegularShredder::shred(slice, &sk)
+            RegularShredder::default()
+                .shred(slice, &sk)
                 .unwrap()
                 .into_iter()
                 .map(|v| v.into_shred())
@@ -80,7 +81,8 @@ fn serialize_slice_into(bencher: divan::Bencher) {
             let mut rng = rand::rng();
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let sk = signature::SecretKey::new(&mut rng);
-            let shreds = RegularShredder::shred(slice, &sk)
+            let shreds = RegularShredder::default()
+                .shred(slice, &sk)
                 .unwrap()
                 .into_iter()
                 .map(|v| v.into_shred())
@@ -105,7 +107,7 @@ fn deserialize_slice(bencher: divan::Bencher) {
             let mut rng = rand::rng();
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let sk = signature::SecretKey::new(&mut rng);
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let shreds = RegularShredder::default().shred(slice, &sk).unwrap();
             let mut serialized = Vec::new();
             for shred in shreds {
                 let bytes =
