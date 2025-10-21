@@ -273,7 +273,7 @@ impl PoolImpl {
             if let Some((_, vote)) = &slot_state.votes.notar[own_id as usize] {
                 votes.push(vote.clone());
             }
-            for (_, vote) in &slot_state.votes.notar_fallback[own_id as usize] {
+            for vote in slot_state.votes.notar_fallback[own_id as usize].values() {
                 votes.push(vote.clone());
             }
             if let Some(vote) = &slot_state.votes.skip[own_id as usize] {
