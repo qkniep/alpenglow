@@ -162,6 +162,7 @@ mod tests {
         let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
+        let mut shredder = RegularShredder::default();
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -174,7 +175,7 @@ mod tests {
                 is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
-            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
@@ -219,6 +220,7 @@ mod tests {
         let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
         // create a full block (1024 slices)
+        let mut shredder = RegularShredder::default();
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -231,7 +233,7 @@ mod tests {
                 is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
-            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
@@ -276,6 +278,7 @@ mod tests {
         let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(1).await;
 
         // create a full block (1024 slices)
+        let mut shredder = RegularShredder::default();
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -288,7 +291,7 @@ mod tests {
                 is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
-            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 

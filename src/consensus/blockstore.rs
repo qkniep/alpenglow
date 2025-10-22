@@ -427,14 +427,14 @@ mod tests {
         let slices = create_random_block(slot, 2);
 
         // first slice is not enough
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
         }
         assert!(blockstore.disseminated_block_hash(slot).is_none());
 
         // after second slice we should have the block
-        let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
         }
@@ -451,9 +451,10 @@ mod tests {
         assert!(blockstore.slot_data(slot).is_none());
 
         // generate and shred two slices
+        let mut shredder = RegularShredder::default();
         let slices = create_random_block(slot, 2);
-        let slice0_shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
-        let slice1_shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
+        let slice0_shreds = shredder.shred(slices[0].clone(), &sk)?;
+        let slice1_shreds = shredder.shred(slices[1].clone(), &sk)?;
 
         // calculate block hash
         let merkle_roots = vec![
@@ -493,7 +494,7 @@ mod tests {
         let slices = create_random_block(slot, 1);
 
         // insert shreds in reverse order
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().rev() {
             add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
         }
@@ -504,6 +505,8 @@ mod tests {
 
     #[tokio::test]
     async fn just_enough_shreds() -> Result<()> {
+        let mut shredder = RegularShredder::default();
+
         let slot = Slot::genesis().next();
         let (tx, _rx) = mpsc::channel(100);
         let (sk, mut blockstore) = test_setup(tx);
@@ -514,7 +517,7 @@ mod tests {
         assert_eq!(blockstore.stored_slices_for_slot(slot), 0);
 
         // insert just enough shreds to reconstruct slice 0 (from beginning)
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let shreds = shredder.shred(slices[0].clone(), &sk)?;
         for shred in shreds.into_iter().take(DATA_SHREDS) {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
@@ -523,7 +526,7 @@ mod tests {
         assert_eq!(blockstore.stored_slices_for_slot(slot), 1);
 
         // insert just enough shreds to reconstruct slice 1 (from end)
-        let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
+        let shreds = shredder.shred(slices[1].clone(), &sk)?;
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             blockstore
                 .add_shred_from_disseminator(shred.into_shred())
@@ -532,7 +535,7 @@ mod tests {
         assert_eq!(blockstore.stored_slices_for_slot(slot), 2);
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
-        let shreds = RegularShredder::shred(slices[2].clone(), &sk)?;
+        let shreds = shredder.shred(slices[2].clone(), &sk)?;
         for shred in shreds
             .into_iter()
             .skip((TOTAL_SHREDS - DATA_SHREDS) / 2)
@@ -545,7 +548,7 @@ mod tests {
         assert_eq!(blockstore.stored_slices_for_slot(slot), 3);
 
         // insert just enough shreds to reconstruct slice 3 (split)
-        let shreds = RegularShredder::shred(slices[3].clone(), &sk)?;
+        let shreds = shredder.shred(slices[3].clone(), &sk)?;
         for (_, shred) in shreds
             .into_iter()
             .enumerate()
@@ -574,7 +577,7 @@ mod tests {
         let slices = create_random_block(slot, 2);
 
         // second slice alone is not enough
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
         }
@@ -584,7 +587,7 @@ mod tests {
         assert_eq!(blockstore.stored_shreds_for_slot(slot), TOTAL_SHREDS);
 
         // after also also inserting first slice we should have the block
-        let shreds = RegularShredder::shred(slices[1].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[1].clone(), &sk)?;
         for shred in shreds {
             add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
         }
@@ -604,7 +607,7 @@ mod tests {
         let slices = create_random_block(slot, 1);
 
         // inserting single shred should not throw errors
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[0].clone(), &sk)?;
         let res = blockstore
             .add_shred_from_disseminator(shreds[0].clone().into_shred())
             .await;
@@ -630,7 +633,7 @@ mod tests {
         let slices = create_random_block(slot, 1);
 
         // insert shreds with wrong Merkle root
-        let shreds = RegularShredder::shred(slices[0].clone(), &sk)?;
+        let shreds = RegularShredder::default().shred(slices[0].clone(), &sk)?;
         for shred in shreds {
             let mut shred = shred.into_shred();
             shred.merkle_root = Hash::default().into();
@@ -656,10 +659,11 @@ mod tests {
         let block2 = create_random_block(block2_slot, 1);
 
         // insert shreds
+        let mut shredder = RegularShredder::default();
         let mut shreds = vec![];
-        shreds.extend(RegularShredder::shred(block0[0].clone(), &sk)?);
-        shreds.extend(RegularShredder::shred(block1[0].clone(), &sk)?);
-        shreds.extend(RegularShredder::shred(block2[0].clone(), &sk)?);
+        shreds.extend(shredder.shred(block0[0].clone(), &sk)?);
+        shreds.extend(shredder.shred(block1[0].clone(), &sk)?);
+        shreds.extend(shredder.shred(block2[0].clone(), &sk)?);
         for shred in shreds {
             add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
         }

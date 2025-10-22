@@ -44,19 +44,16 @@ mod tests {
 
     #[test]
     fn validity_tests() {
+        let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
 
         // there are data shreds in coding shred positions in the array
-        let shreds = RegularShredder::shred(slice.clone(), &sk)
-            .unwrap()
-            .map(Some);
+        let shreds = shredder.shred(slice.clone(), &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, 1, TOTAL_SHREDS - 1).is_none());
 
         // there are coding shreds in data shred positions in the array
-        let shreds = RegularShredder::shred(slice.clone(), &sk)
-            .unwrap()
-            .map(Some);
+        let shreds = shredder.shred(slice.clone(), &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, TOTAL_SHREDS - 1, 1).is_none());
     }
 }

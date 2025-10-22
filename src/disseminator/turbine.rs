@@ -337,7 +337,7 @@ mod tests {
         let (sks, mut validators) = create_validator_info(10);
         let mut disseminators = create_turbine_instances(&mut validators).await;
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::default().shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
         let mut tasks = Vec::new();

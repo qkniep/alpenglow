@@ -78,9 +78,10 @@ pub fn create_random_shredded_block(
     num_slices: usize,
     sk: &signature::SecretKey,
 ) -> (BlockHash, DoubleMerkleTree, Vec<Vec<ValidatedShred>>) {
+    let mut shredder = RegularShredder::default();
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap().to_vec());
+        shreds.push(shredder.shred(slice.clone(), sk).unwrap().to_vec());
     }
     let merkle_roots = shreds
         .iter()
