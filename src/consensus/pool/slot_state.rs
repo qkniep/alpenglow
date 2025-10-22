@@ -158,16 +158,14 @@ impl SlotState {
         let v = voter as usize;
 
         let (certs_created, mut votor_events, mut blocks_to_repair) = match vote.kind() {
-            VoteKind::Notar(_, _) => {
-                let block_hash = vote.block_hash().unwrap().clone();
-                let outputs = self.count_notar_stake(slot, &block_hash, voter_stake);
-                self.votes.notar[v] = Some((block_hash, vote));
+            VoteKind::Notar(_, block_hash) => {
+                let outputs = self.count_notar_stake(slot, block_hash, voter_stake);
+                self.votes.notar[v] = Some((block_hash.clone(), vote));
                 outputs
             }
-            VoteKind::NotarFallback(_, _) => {
-                let block_hash = vote.block_hash().unwrap().clone();
-                let outputs = self.count_notar_fallback_stake(&block_hash, voter_stake);
-                let res = self.votes.notar_fallback[v].insert(block_hash, vote);
+            VoteKind::NotarFallback(_, block_hash) => {
+                let outputs = self.count_notar_fallback_stake(block_hash, voter_stake);
+                let res = self.votes.notar_fallback[v].insert(block_hash.clone(), vote);
                 assert!(res.is_none());
                 outputs
             }
@@ -413,8 +411,7 @@ impl SlotState {
         let voter = vote.signer();
         let v = voter as usize;
         match vote.kind() {
-            VoteKind::Notar(_, _) => {
-                let block_hash = vote.block_hash().unwrap();
+            VoteKind::Notar(_, block_hash) => {
                 if self.votes.skip[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
