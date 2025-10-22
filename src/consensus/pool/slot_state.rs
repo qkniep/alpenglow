@@ -8,6 +8,7 @@
 //! - [`SlotVotedStake`] for all running stake totals in a single slot.
 //! - [`SlotCertificates`] for all certificates in a single slot.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -190,7 +191,7 @@ impl SlotState {
                 if self.sent_safe_to_notar.contains(&hash) {
                     continue;
                 }
-                match self.check_safe_to_notar(&hash) {
+                match self.check_safe_to_notar(hash.clone()) {
                     SafeToNotarStatus::SafeToNotar => {
                         votor_events.push(VotorEvent::SafeToNotar(slot, hash));
                     }
@@ -226,7 +227,7 @@ impl SlotState {
         if self.sent_safe_to_notar.contains(&hash) {
             return None;
         }
-        match self.check_safe_to_notar(&hash) {
+        match self.check_safe_to_notar(hash.clone()) {
             SafeToNotarStatus::SafeToNotar => {
                 Some(Either::Left(VotorEvent::SafeToNotar(self.slot, hash)))
             }
@@ -278,7 +279,7 @@ impl SlotState {
 
         // check quorums
         if !self.sent_safe_to_notar.contains(block_hash) {
-            match self.check_safe_to_notar(block_hash) {
+            match self.check_safe_to_notar(block_hash.clone()) {
                 SafeToNotarStatus::SafeToNotar => {
                     votor_events.push(VotorEvent::SafeToNotar(slot, block_hash.clone()));
                 }
@@ -362,7 +363,7 @@ impl SlotState {
             if self.sent_safe_to_notar.contains(&hash) {
                 continue;
             }
-            match self.check_safe_to_notar(&hash) {
+            match self.check_safe_to_notar(hash.clone()) {
                 SafeToNotarStatus::SafeToNotar => {
                     votor_events.push(VotorEvent::SafeToNotar(slot, hash));
                 }
@@ -467,38 +468,52 @@ impl SlotState {
         }
     }
 
-    fn check_safe_to_notar(&mut self, block_hash: &BlockHash) -> SafeToNotarStatus {
+    fn check_safe_to_notar(&mut self, block_hash: BlockHash) -> SafeToNotarStatus {
         // check general voted stake conditions
-        let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
+        let notar_stake = *self.voted_stakes.notar.get(&block_hash).unwrap_or(&0);
         let skip_stake = self.voted_stakes.skip;
         if !self.is_weakest_quorum(notar_stake) {
             return SafeToNotarStatus::AwaitingVotes;
         }
         if !self.is_weak_quorum(notar_stake) && !self.is_quorum(notar_stake + skip_stake) {
-            self.pending_safe_to_notar.insert(block_hash.clone());
+            self.pending_safe_to_notar.insert(block_hash);
             return SafeToNotarStatus::AwaitingVotes;
         }
 
         // check parent condition
-        if !self.parents.contains_key(block_hash) {
-            return SafeToNotarStatus::MissingBlock;
-        } else if *self.parents.get(block_hash).unwrap() != ParentStatus::Certified {
-            return SafeToNotarStatus::AwaitingVotes;
+        match self.parents.entry(block_hash.clone()) {
+            Entry::Vacant(_) => return SafeToNotarStatus::MissingBlock,
+            Entry::Occupied(entry) => {
+                if entry.get() != &ParentStatus::Certified {
+                    return SafeToNotarStatus::AwaitingVotes;
+                }
+            }
         }
 
         // check own vote
         let own_id = self.epoch_info.own_id;
         let skip = &self.votes.skip[own_id as usize];
         let notar = &self.votes.notar[own_id as usize];
-        if skip.is_some() || notar.is_some() && &notar.as_ref().unwrap().0 != block_hash {
-            self.sent_safe_to_notar.insert(block_hash.clone());
-            self.pending_safe_to_notar.remove(block_hash);
-            SafeToNotarStatus::SafeToNotar
-        } else {
-            if skip.is_none() && notar.is_none() {
-                self.pending_safe_to_notar.insert(block_hash.clone());
+
+        match (skip, notar) {
+            (Some(_), _) => {
+                self.sent_safe_to_notar.insert(block_hash.clone());
+                self.pending_safe_to_notar.remove(&block_hash);
+                SafeToNotarStatus::SafeToNotar
             }
-            SafeToNotarStatus::AwaitingVotes
+            (_, Some((n, _))) => {
+                if n != &block_hash {
+                    self.sent_safe_to_notar.insert(block_hash.clone());
+                    self.pending_safe_to_notar.remove(&block_hash);
+                    SafeToNotarStatus::SafeToNotar
+                } else {
+                    SafeToNotarStatus::AwaitingVotes
+                }
+            }
+            (None, None) => {
+                self.pending_safe_to_notar.insert(block_hash.clone());
+                SafeToNotarStatus::AwaitingVotes
+            }
         }
     }
 
