@@ -121,15 +121,15 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<Vec<u8>> for SlicePayload {
-    fn from(payload: Vec<u8>) -> Self {
+impl From<&Vec<u8>> for SlicePayload {
+    fn from(payload: &Vec<u8>) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
             "payload.len()={} {MAX_DATA_PER_SLICE}",
             payload.len()
         );
         let (ret, bytes): (SlicePayload, usize) =
-            bincode::serde::decode_from_slice(&payload, BINCODE_CONFIG).unwrap();
+            bincode::serde::decode_from_slice(payload, BINCODE_CONFIG).unwrap();
         assert_eq!(payload.len(), bytes);
         ret
     }
@@ -165,7 +165,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     rng.fill_bytes(&mut data);
     bincode::serde::encode_into_slice(data, &mut payload[used..], BINCODE_CONFIG).unwrap();
 
-    payload.into()
+    (&payload).into()
 }
 
 /// Creates a [`Slice`] with a random payload of desired size.

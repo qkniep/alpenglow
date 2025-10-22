@@ -51,7 +51,7 @@ pub(super) struct RawShreds {
 ///
 /// If the provided payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
 pub(super) fn reed_solomon_shred(
-    mut payload: Vec<u8>,
+    payload: &Vec<u8>,
     num_coding: usize,
 ) -> Result<RawShreds, ReedSolomonShredError> {
     assert!(num_coding <= TOTAL_SHREDS);
@@ -61,12 +61,26 @@ pub(super) fn reed_solomon_shred(
 
     // add padding
     let padding_bytes = 2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS);
-    payload.push(0x80);
-    payload.resize(payload.len() + padding_bytes.saturating_sub(1), 0);
-    assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
+    let shred_bytes = (payload.len() + padding_bytes).div_ceil(DATA_SHREDS);
+    assert!(shred_bytes >= 2 * DATA_SHREDS);
 
-    let shred_bytes = payload.len().div_ceil(DATA_SHREDS);
-    let data = payload.chunks(shred_bytes).map(<[u8]>::to_vec).collect();
+    let mut last_chunks = Vec::with_capacity(shred_bytes);
+    last_chunks.extend_from_slice(&payload[payload.len() - (shred_bytes - padding_bytes)..]);
+    last_chunks.push(0x80);
+    last_chunks.resize(shred_bytes, 0);
+
+    // payload.push(0x80);
+    // payload.resize(payload.len() + padding_bytes.saturating_sub(1), 0);
+    // assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
+
+    // let shred_bytes = (payload.len() + padding_bytes).div_ceil(DATA_SHREDS);
+    // let data = payload.chunks(shred_bytes).map(<[u8]>::to_vec).collect();
+    let mut data = Vec::with_capacity(DATA_SHREDS);
+    payload
+        .chunks(shred_bytes)
+        .take_while(|chunk| chunk.len() == shred_bytes)
+        .chain(std::iter::once(last_chunks.as_slice()))
+        .for_each(|chunk| data.push(chunk.to_vec()));
     let coding = rs::encode(DATA_SHREDS, num_coding, &data).unwrap();
     Ok(RawShreds { data, coding })
 }
@@ -190,7 +204,7 @@ mod tests {
     #[test]
     fn shred_too_much_data() {
         let payload = vec![0; MAX_DATA_PER_SLICE + 1];
-        let res = reed_solomon_shred(payload, TOTAL_SHREDS - DATA_SHREDS);
+        let res = reed_solomon_shred(&payload, TOTAL_SHREDS - DATA_SHREDS);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonShredError::TooMuchData);
     }
@@ -198,8 +212,7 @@ mod tests {
     #[test]
     fn deshred_not_enough_shreds() {
         let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
-        let shreds =
-            reed_solomon_shred(payload.clone().into(), TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let shreds = reed_solomon_shred(&payload.into(), TOTAL_SHREDS - DATA_SHREDS).unwrap();
         let sk = SecretKey::new(&mut rand::rng());
         let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
         for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
@@ -211,7 +224,7 @@ mod tests {
     }
 
     fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
-        let shreds = reed_solomon_shred(payload.clone(), TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let shreds = reed_solomon_shred(&payload, TOTAL_SHREDS - DATA_SHREDS).unwrap();
         let shreds = take_and_map_enough_shreds(header, shreds);
         let restored = reed_solomon_deshred(&shreds, DATA_SHREDS).unwrap();
         assert_eq!(restored, payload);
