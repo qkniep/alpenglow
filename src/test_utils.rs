@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
@@ -12,20 +12,20 @@ use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
 use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
+use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
     BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Ping;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Pong;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum PingOrPong {
     Ping,
     Pong,
@@ -174,11 +174,9 @@ fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayloa
     let mut data = vec![0; MAX_TRANSACTION_SIZE];
     rand::rng().fill_bytes(&mut data);
     let tx = Transaction(data);
-    let tx =
-        bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG).expect("serialization should not panic");
-    let txs = vec![tx; 63];
-    let txs =
-        bincode::serde::encode_to_vec(txs, BINCODE_CONFIG).expect("serialization should not panic");
+    let tx = wincode::serialize(&tx).expect("serialization should not panic");
+    let txs = vec![tx; 61];
+    let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);

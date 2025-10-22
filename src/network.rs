@@ -43,8 +43,6 @@ use crate::shredder::Shred;
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
 
-pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
-
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
