@@ -497,21 +497,21 @@ impl SlotState {
 
         match (skip, notar) {
             (Some(_), _) => {
-                self.sent_safe_to_notar.insert(block_hash.clone());
                 self.pending_safe_to_notar.remove(&block_hash);
+                self.sent_safe_to_notar.insert(block_hash);
                 SafeToNotarStatus::SafeToNotar
             }
             (_, Some((n, _))) => {
                 if n != &block_hash {
-                    self.sent_safe_to_notar.insert(block_hash.clone());
                     self.pending_safe_to_notar.remove(&block_hash);
+                    self.sent_safe_to_notar.insert(block_hash);
                     SafeToNotarStatus::SafeToNotar
                 } else {
                     SafeToNotarStatus::AwaitingVotes
                 }
             }
             (None, None) => {
-                self.pending_safe_to_notar.insert(block_hash.clone());
+                self.pending_safe_to_notar.insert(block_hash);
                 SafeToNotarStatus::AwaitingVotes
             }
         }
