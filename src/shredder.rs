@@ -423,7 +423,7 @@ impl Shredder for PetsShredder {
 
         // decrypt slice
         let tail = buffer.split_off(buffer.len() - 16);
-        let iv = Array::from([0u8; 16]);
+        let iv = Array::from([0; 16]);
         let key = Array::try_from(tail.as_slice()).expect("tail should have correct length");
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
@@ -472,7 +472,7 @@ impl Shredder for AontShredder {
         let mut rng = rng();
         let mut key = Array::from([0; 16]);
         rng.fill_bytes(&mut key);
-        let iv = Array::from([0u8; 16]);
+        let iv = Array::from([0; 16]);
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut payload);
@@ -512,7 +512,7 @@ impl Shredder for AontShredder {
         let tail = buffer.split_off(buffer.len() - 16);
         let hash = hash(&buffer);
 
-        let iv = Array::from([0u8; 16]);
+        let iv = Array::from([0; 16]);
         let mut key = Array::try_from(tail.as_slice()).unwrap();
         for i in 0..16 {
             key[i] ^= hash[i];
