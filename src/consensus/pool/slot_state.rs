@@ -547,8 +547,7 @@ impl SlotVotes {
             .iter()
             .filter_map(|vote| {
                 vote.as_ref()
-                    .map(|vote| (vote.block_hash().unwrap() == block_hash).then_some(vote))
-                    .flatten()
+                    .and_then(|vote| (vote.block_hash().unwrap() == block_hash).then_some(vote))
             })
             .cloned()
             .collect()
