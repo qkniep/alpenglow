@@ -85,6 +85,15 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
+
+    /// Extracts the [`SliceHeader`] from a [`Slice`].
+    pub(crate) fn to_header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
 }
 
 /// Struct to hold all the header payload of a [`Slice`].
@@ -112,6 +121,10 @@ pub(crate) struct SlicePayload {
 impl SlicePayload {
     pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
+    }
+
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).unwrap()
     }
 }
 
