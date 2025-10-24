@@ -85,11 +85,20 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
+
+    /// Extracts the [`SliceHeader`] from a [`Slice`].
+    pub(crate) fn to_header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
 }
 
 /// Struct to hold all the header payload of a [`Slice`].
 ///
-/// This is included in each [`Shred`] after shredding.
+/// This information is included in each shred after shredding.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
@@ -102,7 +111,7 @@ pub(crate) struct SliceHeader {
 
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
-/// This is what actually gets "shredded" into different [`Shred`]s.
+/// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SlicePayload {
     pub(crate) parent: Option<(Slot, BlockHash)>,
@@ -110,8 +119,14 @@ pub(crate) struct SlicePayload {
 }
 
 impl SlicePayload {
+    /// Constructs a new [`SlicePayload`] from its component parts.
     pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
+    }
+
+    /// Serializes the payload into bytes.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).unwrap()
     }
 }
 
@@ -121,15 +136,15 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<Vec<u8>> for SlicePayload {
-    fn from(payload: Vec<u8>) -> Self {
+impl From<&Vec<u8>> for SlicePayload {
+    fn from(payload: &Vec<u8>) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
             "payload.len()={} {MAX_DATA_PER_SLICE}",
             payload.len()
         );
         let (ret, bytes): (SlicePayload, usize) =
-            bincode::serde::decode_from_slice(&payload, BINCODE_CONFIG).unwrap();
+            bincode::serde::decode_from_slice(payload, BINCODE_CONFIG).unwrap();
         assert_eq!(payload.len(), bytes);
         ret
     }
@@ -165,7 +180,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     rng.fill_bytes(&mut data);
     bincode::serde::encode_into_slice(data, &mut payload[used..], BINCODE_CONFIG).unwrap();
 
-    payload.into()
+    (&payload).into()
 }
 
 /// Creates a [`Slice`] with a random payload of desired size.
