@@ -33,6 +33,7 @@ futures = "0.3"
 geo = "0.31"
 hex = "0.4"
 hex-literal = "1"
+hotpath = { version = "0.5", optional = true }
 log = "0.4"
 logforth = { version = "0.28", features = ["append-fastrace", "starter-log"] }
 mockall = "0.13"
@@ -57,6 +58,13 @@ toml = "0.9"
 
 [dev-dependencies]
 divan = "0.1"
+
+[features]
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath-alloc-bytes-total = ["hotpath/hotpath-alloc-bytes-total"]
+hotpath-alloc-count-total = ["hotpath/hotpath-alloc-count-total"]
+hotpath-alloc-self = ["hotpath/hotpath-alloc-self"]
+hotpath-off = ["hotpath/hotpath-off"]
 
 [lints.clippy]
 cast_possible_truncation = "allow"
