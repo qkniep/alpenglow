@@ -50,7 +50,7 @@ pub struct SlotState {
 // PERF: replace storing Votes (50% size overhead) with storing only signatures?
 pub struct SlotVotes {
     /// Notarization votes for all validators (indexed by `ValidatorId`).
-    pub(super) notar: Vec<Option<(BlockHash, Vote)>>,
+    pub(super) notar: Vec<Option<Vote>>,
     /// Notar-fallback votes for all validators (indexed by `ValidatorId`).
     pub(super) notar_fallback: Vec<BTreeMap<BlockHash, Vote>>,
     /// Skip votes for all validators (indexed by `ValidatorId`).
@@ -161,7 +161,7 @@ impl SlotState {
         let (certs_created, mut votor_events, mut blocks_to_repair) = match vote.kind() {
             VoteKind::Notar(_, block_hash) => {
                 let outputs = self.count_notar_stake(slot, block_hash, voter_stake);
-                self.votes.notar[v] = Some((block_hash.clone(), vote));
+                self.votes.notar[v] = Some(vote);
                 outputs
             }
             VoteKind::NotarFallback(_, block_hash) => {
@@ -416,8 +416,8 @@ impl SlotState {
                 if self.votes.skip[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
-                if let Some((old_hash, _)) = &self.votes.notar[v]
-                    && block_hash != old_hash
+                if let Some(notar_vote) = &self.votes.notar[v]
+                    && block_hash != notar_vote.block_hash().unwrap()
                 {
                     return Some(SlashableOffence::NotarDifferentHash(voter, slot));
                 }
@@ -501,8 +501,8 @@ impl SlotState {
                 self.sent_safe_to_notar.insert(block_hash);
                 SafeToNotarStatus::SafeToNotar
             }
-            (_, Some((n, _))) => {
-                if n != &block_hash {
+            (_, Some(n)) => {
+                if n.block_hash().unwrap() != &block_hash {
                     self.pending_safe_to_notar.remove(&block_hash);
                     self.sent_safe_to_notar.insert(block_hash);
                     SafeToNotarStatus::SafeToNotar
@@ -545,8 +545,11 @@ impl SlotVotes {
     pub fn notar_votes(&self, block_hash: &BlockHash) -> Vec<Vote> {
         self.notar
             .iter()
-            .filter(|o| o.is_some() && &o.as_ref().unwrap().0 == block_hash)
-            .map(|o| o.as_ref().unwrap().1.clone())
+            .filter_map(|vote| {
+                vote.as_ref()
+                    .and_then(|vote| (vote.block_hash().unwrap() == block_hash).then_some(vote))
+            })
+            .cloned()
             .collect()
     }
 

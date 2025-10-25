@@ -86,11 +86,20 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
+
+    /// Extracts the [`SliceHeader`] from a [`Slice`].
+    pub(crate) fn to_header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
 }
 
 /// Struct to hold all the header payload of a [`Slice`].
 ///
-/// This is included in each [`crate::shredder::Shred`] after shredding.
+/// This information is included in each shred after shredding.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
@@ -103,7 +112,7 @@ pub(crate) struct SliceHeader {
 
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
-/// This is what actually gets "shredded" into different [`crate::shredder::Shred`]s.
+/// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
     pub(crate) parent: Option<(Slot, BlockHash)>,
@@ -111,8 +120,14 @@ pub(crate) struct SlicePayload {
 }
 
 impl SlicePayload {
+    /// Constructs a new [`SlicePayload`] from its component parts.
     pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
+    }
+
+    /// Serializes the payload into bytes.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).unwrap()
     }
 }
 
@@ -122,14 +137,14 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<Vec<u8>> for SlicePayload {
-    fn from(payload: Vec<u8>) -> Self {
+impl From<&Vec<u8>> for SlicePayload {
+    fn from(payload: &Vec<u8>) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
             "payload.len()={} {MAX_DATA_PER_SLICE}",
             payload.len()
         );
-        wincode::deserialize(&payload).unwrap()
+        wincode::deserialize(payload).unwrap()
     }
 }
 
@@ -161,7 +176,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let ptr = payload.as_mut_ptr() as *mut u8;
     std::mem::forget(payload); // prevent dropping uninitialized memory
     let payload: Vec<u8> = unsafe { Vec::from_raw_parts(ptr, len, cap) };
-    payload.into()
+    (&payload).into()
 }
 
 /// Creates a [`Slice`] with a random payload of desired size.
