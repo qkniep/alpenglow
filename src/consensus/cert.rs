@@ -5,8 +5,8 @@
 //!
 //!
 
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::Vote;
 use super::vote::VoteKind;
@@ -26,7 +26,7 @@ pub enum CertError {
 }
 
 /// Certificate types used for the consensus protocol.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum Cert {
     Notar(NotarCert),
     NotarFallback(NotarFallbackCert),
@@ -151,7 +151,7 @@ impl Cert {
 }
 
 /// A notarization certificate is an aggregate of a quorum of notar votes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NotarCert {
     slot: Slot,
     block_hash: BlockHash,
@@ -222,7 +222,7 @@ impl NotarCert {
 }
 
 /// A notar-fallback certificate is an aggregate of a quorum of notar(-fallback) votes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NotarFallbackCert {
     slot: Slot,
     block_hash: BlockHash,
@@ -322,7 +322,7 @@ impl NotarFallbackCert {
 }
 
 /// A skip certificate is an aggregate of a quorum of skip(-fallback) votes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SkipCert {
     slot: Slot,
     agg_sig_skip: Option<AggregateSignature>,
@@ -410,7 +410,7 @@ impl SkipCert {
 }
 
 /// A fast finalization certificate is an aggregate of a strong quorun of notar votes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct FastFinalCert {
     slot: Slot,
     block_hash: BlockHash,
@@ -481,7 +481,7 @@ impl FastFinalCert {
 }
 
 /// A finalization certificate is an aggregate of a quorum of finalization votes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct FinalCert {
     slot: Slot,
     agg_sig: AggregateSignature,

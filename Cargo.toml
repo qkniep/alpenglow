@@ -15,10 +15,8 @@ publish = false
 [dependencies]
 aes = { version = "0.9.0-rc.1", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
-bincode = { version = "2", features = ["serde"] }
 bitvec = { version = "1", features = ["serde"] }
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
-bytes = { version = "1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3"
@@ -54,6 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
+wincode = { version = "0.1", features = ["derive"] }
 
 [dev-dependencies]
 divan = "0.1"

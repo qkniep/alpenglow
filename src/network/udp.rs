@@ -12,12 +12,11 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tokio::net::UdpSocket;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::MTU_BYTES;
-use crate::network::{BINCODE_CONFIG, Network};
+use crate::network::Network;
 
 /// Number of bytes used as buffer for any incoming packet.
 ///
@@ -70,8 +69,8 @@ impl<S, R> UdpNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for UdpNetwork<S, R>
 where
-    S: Serialize + Send + Sync,
-    R: DeserializeOwned + Send + Sync,
+    S: SchemaWrite<Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -81,7 +80,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = &bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = &wincode::serialize(msg).unwrap();
         let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
@@ -90,28 +89,21 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = &bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = &wincode::serialize(msg).unwrap();
         self.send_serialized(bytes, addr).await
     }
 
     async fn receive(&self) -> std::io::Result<R> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
-            let bytes_recved = self.socket.recv(&mut buf).await?;
-            let (msg, bytes_used) = match bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG) {
+            let _bytes_recved = self.socket.recv(&mut buf).await?;
+            let msg = match wincode::deserialize(&buf) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("deserializing failed with {err:?}");
                     continue;
                 }
             };
-            if bytes_used != bytes_recved {
-                warn!(
-                    "deserialization used {bytes_used} bytes; expected to use {}",
-                    buf.len()
-                );
-                continue;
-            }
             return Ok(msg);
         }
     }
