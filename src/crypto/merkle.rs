@@ -42,22 +42,14 @@ const RIGHT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE RIGHT-NODE";
 
 /// Pre-calculated empty roots for up to `2 ^ MAX_MERKLE_TREE_HEIGHT` leaves.
 ///
-/// For each given `height` these are calculated as `empty_root_fast(height)` below,
-/// which is much faster than but equivalent to the straightforward `empty_root(height)`.
-/// ```rust
+/// These are calculated by running `cargo test -- empty_roots --no-capture`,
+/// which is much faster than but equivalent to this straightforward snippet:
+/// ```no_run
 /// use alpenglow::crypto::hash::Hash;
-/// use alpenglow::crypto::merkle::{MerkleTree, PlainMerkleTree};
+/// use alpenglow::crypto::merkle::{MAX_MERKLE_TREE_HEIGHT, PlainMerkleTree};
 ///
-/// fn empty_root_fast(height: usize) -> Hash {
-///     let mut node = PlainMerkleTree::hash_leaf(&[]);
-///     for _ in 0..height {
-///         node = PlainMerkleTree::hash_pair(node, node);
-///     }
-///     println!("{}", hex::encode(node));
-/// }
-///
-/// fn empty_root(height: usize) -> Hash {
-///     let data = vec![[]; 1 << height];
+/// for height in 0..MAX_MERKLE_TREE_HEIGHT {
+///     let data = vec![vec![]; 1 << height];
 ///     let tree = PlainMerkleTree::new(&data);
 ///     println!("{}", hex::encode(tree.get_root()));
 /// }
@@ -501,6 +493,18 @@ mod tests {
                     ));
                 }
             }
+        }
+    }
+
+    // NOTE: This is used for calculating `EMPTY_ROOTS`.
+    #[test]
+    fn empty_roots() {
+        for height in 0..MAX_MERKLE_TREE_HEIGHT {
+            let mut node = PlainMerkleTree::hash_leaf(&vec![]);
+            for _ in 0..height {
+                node = PlainMerkleTree::hash_pair(node, node);
+            }
+            println!("{}", hex::encode(node));
         }
     }
 }
