@@ -201,11 +201,7 @@ pub fn validators_from_validator_data(
 ) {
     let mut validators = Vec::new();
     for v in validator_data {
-        if !(v.is_active && v.delinquent == Some(false)) {
-            continue;
-        }
-        let stake = v.active_stake.unwrap_or(0);
-        if stake > 0 {
+        if let Some(stake) = v.active_stake() {
             let id = validators.len() as ValidatorId;
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
@@ -227,10 +223,9 @@ pub fn validators_from_validator_data(
     let mut validators_with_ping_data = Vec::new();
     let mut stake_with_ping_server = 0;
     for v in validator_data {
-        let stake = v.active_stake.unwrap_or(0);
-        if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
+        let Some(stake) = v.active_stake() else {
             continue;
-        }
+        };
         let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
             continue;
         };
