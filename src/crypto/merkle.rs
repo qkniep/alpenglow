@@ -46,19 +46,19 @@ const RIGHT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE RIGHT-NODE";
 /// which is much faster than but equivalent to the straightforward `empty_root(height)`.
 /// ```rust
 /// use alpenglow::crypto::hash::Hash;
-/// use alpenglow::crypto::merkle::MerkleTree;
+/// use alpenglow::crypto::merkle::{MerkleTree, PlainMerkleTree};
 ///
 /// fn empty_root_fast(height: usize) -> Hash {
-///     let mut node = hash_leaf(&[]);
+///     let mut node = PlainMerkleTree::hash_leaf(&[]);
 ///     for _ in 0..height {
-///         node = hash_pair(node, node);
+///         node = PlainMerkleTree::hash_pair(node, node);
 ///     }
 ///     println!("{}", hex::encode(node));
 /// }
 ///
 /// fn empty_root(height: usize) -> Hash {
 ///     let data = vec![[]; 1 << height];
-///     let tree = MerkleTree::new(&data);
+///     let tree = PlainMerkleTree::new(&data);
 ///     println!("{}", hex::encode(tree.get_root()));
 /// }
 /// ```
