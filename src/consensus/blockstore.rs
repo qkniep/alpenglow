@@ -88,7 +88,7 @@ pub struct BlockstoreImpl {
 impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
-    /// Blockstore will send the following `VotorEvent`s to the provided `votor_channel`:
+    /// Blockstore will send the following [`VotorEvent`]s to the provided `votor_channel`:
     /// - [`VotorEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`VotorEvent::Block`] for any reconstructed block
@@ -132,7 +132,7 @@ impl BlockstoreImpl {
     ///
     /// Considers both, the disseminated block and any repaired blocks.
     ///
-    /// Returns `None` if blockstore does not know about this block yet.
+    /// Returns [`None`] if blockstore does not know about this block yet.
     fn get_block_data(&self, block_id: &BlockId) -> Option<&BlockData> {
         let (slot, hash) = block_id;
         let slot_data = self.slot_data(*slot)?;

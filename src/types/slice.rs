@@ -150,7 +150,7 @@ impl From<&[u8]> for SlicePayload {
     }
 }
 
-/// Creates a [`SlicePayload`] with a random payload of desired size.
+/// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
@@ -165,7 +165,9 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let used = bincode::serde::encode_into_slice(parent, &mut payload, BINCODE_CONFIG).unwrap();
     let left = desired_size.checked_sub(used).unwrap();
 
-    // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`.  If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.  Otherwise, it takes number of non-zero bytes minus 1.
+    // HACK: Figure out how big the data should be so that its bincode encoded size is `left`.
+    // If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.
+    // Otherwise, it takes number of non-zero bytes minus 1.
     let highest_byte = highest_non_zero_byte(desired_size);
     let size = if highest_byte == 1 {
         left.checked_sub(highest_byte).unwrap()
@@ -183,7 +185,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     payload.as_slice().into()
 }
 
-/// Creates a [`Slice`] with a random payload of desired size.
+/// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.

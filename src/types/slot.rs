@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Defines the [`Slot`] type.
+
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
@@ -39,8 +41,7 @@ impl Slot {
         (0..).step_by(SLOTS_PER_WINDOW as usize).map(Self)
     }
 
-    /// Returns a double-ended iterator that yields all the slots in the
-    /// window `self` is in.
+    /// Returns a double-ended iterator that yields all the slots in the window `self` is in.
     pub fn slots_in_window(self) -> impl DoubleEndedIterator<Item = Slot> {
         let start = self.first_slot_in_window();
         (start.0..start.0 + SLOTS_PER_WINDOW).map(Self)
