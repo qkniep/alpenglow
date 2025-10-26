@@ -263,7 +263,7 @@ impl Shredder for RegularShredder {
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let shreds = shreds.to_shreds();
         let payload_bytes = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
-        let payload = SlicePayload::from(&payload_bytes);
+        let payload = SlicePayload::from(payload_bytes.as_slice());
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
@@ -308,7 +308,7 @@ impl Shredder for CodingOnlyShredder {
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let shreds = shreds.to_shreds();
         let payload_bytes = reed_solomon_deshred(shreds, Self::CODING_OUTPUT_SHREDS)?;
-        let payload = SlicePayload::from(&payload_bytes);
+        let payload = SlicePayload::from(payload_bytes.as_slice());
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
@@ -398,7 +398,7 @@ impl Shredder for PetsShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(&buffer);
+        let payload = SlicePayload::from(buffer.as_slice());
         let slice = Slice::from_shreds(payload, any_shred);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
@@ -480,7 +480,7 @@ impl Shredder for AontShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        let payload: SlicePayload = (&buffer).into();
+        let payload = SlicePayload::from(buffer.as_slice());
         let slice = Slice::from_shreds(payload, any_shred);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)

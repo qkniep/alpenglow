@@ -137,8 +137,8 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<&Vec<u8>> for SlicePayload {
-    fn from(payload: &Vec<u8>) -> Self {
+impl From<&[u8]> for SlicePayload {
+    fn from(payload: &[u8]) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
             "payload.len()={} {MAX_DATA_PER_SLICE}",
@@ -168,7 +168,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
-    used += wincode::serialize_into(&data, &mut payload[used..]).unwrap();
+    used += wincode::serialize_into(data, &mut payload[used..]).unwrap();
     assert_eq!(used, desired_size);
 
     let len = payload.len();
@@ -176,7 +176,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let ptr = payload.as_mut_ptr() as *mut u8;
     std::mem::forget(payload); // prevent dropping uninitialized memory
     let payload: Vec<u8> = unsafe { Vec::from_raw_parts(ptr, len, cap) };
-    (&payload).into()
+    payload.as_slice().into()
 }
 
 /// Creates a [`Slice`] with a random payload of desired size.
