@@ -127,7 +127,7 @@ impl<P: Protocol> SimulationEngine<P> {
 
     /// Runs the simulation `iterations` times.
     ///
-    /// Samples a new `Instance` from the `Builder` for each iteration.
+    /// Samples a new [`Protocol::Instance`] from the [`Protocol::Builder`] for each iteration.
     pub fn run_many_sequential(&self, iterations: u64) {
         let mut rng = rand::rng();
         let mut timings = Timings::default();
@@ -188,7 +188,7 @@ where
 {
     /// Runs the simulation `iterations` times in parallel.
     ///
-    /// Samples a new `Instance` from the `Builder` for each iteration.
+    /// Samples a new [`Protocol::Instance`] from the [`Protocol::Builder`] for each iteration.
     /// Uses the [`rayon`] crate for the thread pool.
     pub fn run_many_parallel(&self, iterations: u64) {
         (0..iterations).into_par_iter().for_each(|_| {
@@ -286,7 +286,7 @@ impl SimulationEnvironment {
 /// # Panics
 ///
 /// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
+/// - Panics if not all rows have same length.
 pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     assert!(!rows.is_empty());
     let mut result = rows[0].to_vec();
@@ -309,7 +309,7 @@ pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
 /// # Panics
 ///
 /// - Panics if `rows` is empty.
-/// - Panics if any row does not have the same length as the first row.
+/// - Panics if not all rows have same length.
 pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     assert!(!rows.is_empty());
     let mut result = rows[0].to_vec();
