@@ -1,6 +1,11 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implements the [`ParentReadyState`] data structure.
+//!
+//! It holds the necessary state for a given slot to track the parent-ready condition.
+//! This is used by the [`super::ParentReadyTracker`].
+
 use either::Either;
 use log::warn;
 use smallvec::{SmallVec, smallvec};
@@ -10,7 +15,7 @@ use crate::BlockId;
 use crate::crypto::Hash;
 use crate::crypto::merkle::BlockHash;
 
-/// Tracks the status of whether an individual slot has a parent ready.
+/// Status of whether an individual slot has a parent ready.
 enum IsReady {
     /// Do not have a parent ready for this slot yet.
     ///
