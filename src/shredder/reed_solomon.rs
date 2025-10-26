@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Implements Reed-Solomon shreding and deshreding.
+//!
+//! This is a low-level module that is used in various shredder implementations.
+//! It is mostly a wrapper around the [`reed_solomon_simd`] crate.
 
 use reed_solomon_simd as rs;
 use thiserror::Error;
@@ -12,14 +15,14 @@ use super::{
 };
 use crate::shredder::ValidatedShred;
 
-/// Errors that may be returned by [`reed_solomon_shred()`].
+/// Errors that may be returned by [`reed_solomon_shred`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
     #[error("too much data for slice")]
     TooMuchData,
 }
 
-/// Errors that may be returned by [`reed_solomon_deshred()`].
+/// Errors that may be returned by [`reed_solomon_deshred`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonDeshredError {
     #[error("not enough shreds to reconstruct")]
@@ -30,7 +33,7 @@ pub(super) enum ReedSolomonDeshredError {
     InvalidPadding,
 }
 
-/// The data and coding shreds returned from [`reed_solomon_shred()`] on success.
+/// The data and coding shreds returned from [`reed_solomon_shred`] on success.
 pub(super) struct RawShreds {
     /// A list of data shreds.
     pub(super) data: Vec<Vec<u8>>,
@@ -89,7 +92,7 @@ pub(super) fn reed_solomon_shred(
 ///
 /// Errors
 ///
-/// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns [`ReedSolomonDeshredError::NotEnoughShreds`].
+/// If fewer than [`DATA_SHREDS`] elements in `shreds` are [`Some`] then returns [`ReedSolomonDeshredError::NotEnoughShreds`].
 /// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
 pub(super) fn reed_solomon_deshred(
     shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
