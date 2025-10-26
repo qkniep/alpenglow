@@ -192,7 +192,7 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
 fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayload {
     // HACK: manually picked number of maximally sized transactions that fit in the slice
     // without going over the [`MAX_DATA_PER_SLICE`] limit.
-    const NUM_TXS_PER_SLICE: usize = 63;
+    const NUM_TXS_PER_SLICE: usize = 61;
 
     let mut data = vec![0; MAX_TRANSACTION_SIZE];
     rand::rng().fill_bytes(&mut data);
