@@ -331,9 +331,7 @@ pub fn broadcast_first_arrival_or_dep(
     message_size: usize,
 ) -> Vec<SimTime> {
     let mut timings = start_times.to_vec();
-
-    let send_time_iter = broadcast(start_times, resources, environment, message_size);
-    let start_send_times = send_time_iter.collect::<Vec<_>>();
+    let start_send_times = broadcast(start_times, resources, environment, message_size);
 
     for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
         // calculate first message arrival time
@@ -343,8 +341,8 @@ pub fn broadcast_first_arrival_or_dep(
             .map(|(sender, start_send)| {
                 let sender = sender as ValidatorId;
                 let prop_delay = environment.propagation_delay(sender, recipient as ValidatorId);
-                let tx_delay =
-                    environment.transmission_delay((recipient + 1) * message_size, sender);
+                let tx_offset_bytes = (recipient + 1) * message_size;
+                let tx_delay = environment.transmission_delay(tx_offset_bytes, sender);
                 *start_send + prop_delay + tx_delay
             })
             .min()
@@ -365,9 +363,7 @@ pub fn broadcast_stake_threshold(
     threshold: f64,
 ) -> Vec<SimTime> {
     let mut timings = start_times.to_vec();
-
-    let send_time_iter = broadcast(start_times, resources, environment, message_size);
-    let start_send_times = send_time_iter.collect::<Vec<_>>();
+    let start_send_times = broadcast(start_times, resources, environment, message_size);
 
     for (recipient, recipient_timing) in timings.iter_mut().enumerate() {
         // calculate message arrival timings
@@ -375,10 +371,10 @@ pub fn broadcast_stake_threshold(
             .iter()
             .enumerate()
             .map(|(sender, start_send)| {
-                let prop_delay =
-                    environment.propagation_delay(sender as ValidatorId, recipient as ValidatorId);
-                let tx_delay = environment
-                    .transmission_delay((recipient + 1) * message_size, sender as ValidatorId);
+                let sender = sender as ValidatorId;
+                let prop_delay = environment.propagation_delay(sender, recipient as ValidatorId);
+                let tx_offset_bytes = (recipient + 1) * message_size;
+                let tx_delay = environment.transmission_delay(tx_offset_bytes, sender);
                 (*start_send + prop_delay + tx_delay, sender)
             })
             .collect::<Vec<_>>();
@@ -388,12 +384,13 @@ pub fn broadcast_stake_threshold(
         let mut stake_so_far = 0;
         for (arrival_timing, sender) in arrival_timings {
             *recipient_timing = arrival_timing;
-            stake_so_far += environment.validators[sender].stake;
+            stake_so_far += environment.validators[sender as usize].stake;
             if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
                 break;
             }
         }
     }
+
     timings
 }
 
@@ -402,27 +399,29 @@ pub fn broadcast(
     resources: &mut Resources,
     environment: &SimulationEnvironment,
     message_size: usize,
-) -> impl Iterator<Item = SimTime> {
-    // reserve the network resource
+) -> Vec<SimTime> {
+    // determine the start time for sending messages
+    let res = &*resources;
+    let send_times = start_times
+        .iter()
+        .enumerate()
+        .map(|(sender, sender_timing)| {
+            res.network
+                .time_next_free_after(sender as ValidatorId, *sender_timing)
+        })
+        .collect();
+
+    // reserve the network resource for the full broadcast
     for (sender, &start_time) in start_times.iter().enumerate() {
         let sender = sender as ValidatorId;
-        let total_tx_time =
-            environment.transmission_delay(environment.num_validators() * message_size, sender);
+        let total_bytes = environment.num_validators() * message_size;
+        let total_tx_time = environment.transmission_delay(total_bytes, sender);
         resources
             .network
             .schedule(sender, start_time, total_tx_time);
     }
 
-    // determine the start time for sending messages
-    let resources = &*resources;
-    start_times
-        .iter()
-        .enumerate()
-        .map(|(sender, sender_timing)| {
-            resources
-                .network
-                .time_next_free_after(sender as ValidatorId, *sender_timing)
-        })
+    send_times
 }
 
 #[cfg(test)]
@@ -591,5 +590,37 @@ mod tests {
                 assert!(delta < CUSTOM_EPSILON);
             }
         }
+    }
+
+    #[test]
+    fn start_broadcast() {
+        const MESSAGE_BYTES: usize = 100;
+
+        let (_, vals_with_ping) = validators_from_validator_data(&VALIDATOR_DATA);
+        let num_val = vals_with_ping.len();
+        let start_times = vec![SimTime::new(0); num_val];
+        let mut resources = Resources::new(num_val);
+        let environment = SimulationEnvironment::from_validators_with_ping_data(&vals_with_ping);
+
+        // without bandwidth limits, all broadcasts start at time 0
+        let send_times = broadcast(&start_times, &mut resources, &environment, MESSAGE_BYTES);
+        assert_eq!(send_times, vec![SimTime::new(0); num_val]);
+        let send_times = broadcast(&start_times, &mut resources, &environment, MESSAGE_BYTES);
+        assert_eq!(send_times, vec![SimTime::new(0); num_val]);
+
+        // set bandwidth limits to 1 msg/sec for simplicity
+        let bandwidths = vec![8 * MESSAGE_BYTES as u64; num_val];
+        let environment = environment.with_bandwidths(8 * MESSAGE_BYTES as u64, bandwidths);
+
+        // first broadcast starts at time 0
+        let send_times = broadcast(&start_times, &mut resources, &environment, MESSAGE_BYTES);
+        assert_eq!(send_times, vec![SimTime::new(0); num_val]);
+
+        // with bandwidth limits, second broadcast should start after transmission delay
+        let send_times = broadcast(&start_times, &mut resources, &environment, MESSAGE_BYTES);
+        assert_eq!(
+            send_times,
+            vec![SimTime::from_secs(num_val as f64); num_val]
+        );
     }
 }
