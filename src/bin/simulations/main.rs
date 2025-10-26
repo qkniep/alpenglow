@@ -31,6 +31,8 @@
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+
 mod alpenglow;
 mod discrete_event_simulator;
 mod pyjama;
