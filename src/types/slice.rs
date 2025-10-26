@@ -127,7 +127,7 @@ impl SlicePayload {
 
     /// Serializes the payload into bytes.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        bincode::serde::encode_to_vec(self, BINCODE_CONFIG).unwrap()
+        wincode::serialize(self).unwrap()
     }
 }
 
@@ -168,7 +168,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
-    used += wincode::serialize_into(data, &mut payload[used..]).unwrap();
+    used += wincode::serialize_into(&data, &mut payload[used..]).unwrap();
     assert_eq!(used, desired_size);
 
     let len = payload.len();
