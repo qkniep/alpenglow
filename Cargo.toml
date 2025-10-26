@@ -64,6 +64,10 @@ cast_possible_truncation = "allow"
 [profile.release]
 debug = true
 overflow-checks = true
+lto = true
+
+[profile.bench]
+lto = true
 
 [[bench]]
 name = "crypto"
