@@ -278,7 +278,7 @@ impl SimulationEnvironment {
     }
 }
 
-/// Calculates the row-wise minimum.
+/// Calculates the column-wise minimum.
 ///
 /// Requires that all rows have the same non-zero length.
 /// Returns a vector of the same length, containing the minimum over all rows in each column.
@@ -301,7 +301,7 @@ pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     result
 }
 
-/// Calculates the row-wise maximum.
+/// Calculates the column-wise maximum.
 ///
 /// Requires that all rows have the same non-zero length.
 /// Returns a vector of the same length, containing the maximum over all rows in each column.
