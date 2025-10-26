@@ -14,7 +14,7 @@
 //!
 //! let mut stakes = Vec::new();
 //! for validator in VALIDATOR_DATA.iter() {
-//!     if validator.is_active && validator.delinquent == Some(false) {
+//!     if validator.is_active && validator.delinquent == false {
 //!         stakes.push(validator.active_stake.unwrap());
 //!     }
 //! }
@@ -65,7 +65,7 @@ pub struct ValidatorData {
     authorized_withdrawer_score: i8,
     commission: Option<u8>,
     data_center_concentration_score: i8,
-    delinquent: Option<bool>,
+    delinquent: bool,
     published_information_score: i8,
     root_distance_score: i8,
     security_report_score: i8,
@@ -95,7 +95,7 @@ pub struct ValidatorData {
 impl ValidatorData {
     /// Returns the active stake of a validator, if it has non-zero active stake.
     pub fn active_stake(&self) -> Option<Stake> {
-        if !self.is_active && self.delinquent != Some(false) {
+        if !self.is_active || self.delinquent {
             return None;
         }
         self.active_stake.filter(|stake| *stake > 0)
@@ -120,7 +120,7 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
                 name: Some(v.name),
                 is_active: true,
                 active_stake: Some((v.stake.round() * 100.0) as Stake),
-                delinquent: Some(false),
+                delinquent: false,
                 ip: v.ip.unwrap_or_else(|| v.address.clone()),
                 data_center_key: Some(format!(
                     "{}-{}-{}",
@@ -293,7 +293,7 @@ pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
             validators.push(ValidatorData {
                 is_active: true,
                 active_stake: Some(stake),
-                delinquent: Some(false),
+                delinquent: false,
                 latitude: Some(lat.to_string()),
                 longitude: Some(lon.to_string()),
                 ..Default::default()
