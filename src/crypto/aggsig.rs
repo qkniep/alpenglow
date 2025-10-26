@@ -93,8 +93,8 @@ impl<'de> SchemaRead<'de> for IndividualSignature {
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let sig_bytes = reader.read_borrowed(96)?;
-        // FIXME: unwrap
-        let sig = BlstSignature::deserialize(sig_bytes).unwrap();
+        let sig = BlstSignature::deserialize(sig_bytes)
+            .map_err(|_| wincode::ReadError::Custom("invalid BLS encoding"))?;
         dst.write(IndividualSignature(sig));
         wincode::ReadResult::Ok(())
     }
@@ -131,9 +131,10 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
         let sig_bytes = reader.read_borrowed(96)?;
         let num_bits = <usize>::get(reader)?;
         let bitmask_raw_vec = <Vec<usize>>::get(reader)?;
-        // FIXME: unwrap
-        let sig = BlstSignature::from_bytes(sig_bytes).unwrap();
-        let mut bitmask = BitVec::try_from_vec(bitmask_raw_vec).unwrap();
+        let sig = BlstSignature::from_bytes(sig_bytes)
+            .map_err(|_| wincode::ReadError::Custom("invalid BLS encoding"))?;
+        let mut bitmask = BitVec::try_from_vec(bitmask_raw_vec)
+            .map_err(|_| wincode::ReadError::Custom("invalid bitmap"))?;
         unsafe {
             bitmask.set_len(num_bits);
         }

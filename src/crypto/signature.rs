@@ -44,7 +44,6 @@ impl<'de> SchemaRead<'de> for Signature {
             reader.read_t(&mut sig_bytes)?;
             ed25519_consensus::Signature::from(sig_bytes.assume_init())
         };
-        // FIXME: unwrap
         dst.write(Signature(sig));
         wincode::ReadResult::Ok(())
     }
