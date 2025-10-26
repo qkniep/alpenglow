@@ -1,3 +1,8 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Defines the [`ValidatedShred`] type.
+
 use std::collections::btree_map::Entry;
 use std::ops::{Deref, DerefMut};
 

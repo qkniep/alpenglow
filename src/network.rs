@@ -4,7 +4,9 @@
 //! An abstraction layer for networking.
 //!
 //! The [`Network`] trait provides a common interface for networking operations.
-//! Messages are abstracted as [`NetworkMessage`], instead of e.g. raw bytes.
+//! When implementing [`Network`], the implementor determines the types:
+//! - [`Network::Send`]: The type of messages to be sent.
+//! - [`Network::Recv`]: The type of messages to be received.
 //!
 //! Specific implementations for different underlying network stacks are provided:
 //! - [`UdpNetwork`] abstracts a simple UDP socket

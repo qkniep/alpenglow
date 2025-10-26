@@ -7,8 +7,8 @@
 //! - Latency simulation for block dissemination via Rotor.
 //! - Robustness simulation against liveness and safety failures.
 
-mod latency;
-mod robustness;
+pub mod latency;
+pub mod robustness;
 
 use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
