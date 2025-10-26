@@ -278,10 +278,10 @@ impl SimulationEnvironment {
     }
 }
 
-/// Returns the minimum of each column over the given rows.
+/// Calculates the row-wise minimum.
 ///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the minimum in each column.
+/// Requires that all rows have the same non-zero length.
+/// Returns a vector of the same length, containing the minimum over all rows in each column.
 ///
 /// # Panics
 ///
@@ -301,10 +301,10 @@ pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     result
 }
 
-/// Returns the maximum of each column over the given rows.
+/// Calculates the row-wise maximum.
 ///
-/// Requires that all rows have the same length.
-/// Outputs a vector of the same length, containing the maximum in each column.
+/// Requires that all rows have the same non-zero length.
+/// Returns a vector of the same length, containing the maximum over all rows in each column.
 ///
 /// # Panics
 ///
@@ -324,6 +324,15 @@ pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     result
 }
 
+/// Simulates a round of broadcast of proofs that an event has occurred.
+///
+/// The `start_times` vector indicates when each validator locally triggers the event.
+/// We then use [`broadcast`] to simulate broadcasting the proofs as soon as possible.
+/// Each validator actually triggers the event at the earlier of two times:
+/// - The time at which the validator locally triggers the event.
+/// - The time at which the validator received the first proof message.
+///
+/// Returns the time at which each validator triggers the event.
 pub fn broadcast_first_arrival_or_dep(
     start_times: &[SimTime],
     resources: &mut Resources,
@@ -357,6 +366,12 @@ pub fn broadcast_first_arrival_or_dep(
     timings
 }
 
+/// Simulates a round of broadcast, where votes from `threshold` fraction of stake must be seen.
+///
+/// The `start_times` vector indicates when each validator locally triggers the vote.
+/// We then use [`broadcast`] to simulate broadcasting the vote message as soon as possible.
+///
+/// Returns the time at which each validator saw the required threshold of vote messages.
 pub fn broadcast_stake_threshold(
     start_times: &[SimTime],
     resources: &mut Resources,
@@ -397,6 +412,14 @@ pub fn broadcast_stake_threshold(
     timings
 }
 
+/// Simulates a round of broadcast.
+///
+/// The `start_times` vector indicates when each validator has met conditions for sending.
+/// Every validator sends a message of `message_size` bytes to every other validator.
+/// The message is sent out as soon as the network resource is free after that.
+/// Updates the network resource for each validator, reserving the time used for the broadcast.
+///
+/// Returns an iterator over the times at which each validator will start sending the messages.
 pub fn broadcast(
     start_times: &[SimTime],
     resources: &mut Resources,
@@ -433,10 +456,12 @@ mod tests {
 
     use super::*;
 
+    // test constants
     const TIME_PER_EVENT: SimTime = SimTime::from_secs(60.0);
     const NUM_EVENTS: u64 = 20;
     const NUM_SIMULATION_ITERATIONS: u64 = 100;
 
+    // simple test protocol
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     struct TestEvent(u64);
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
