@@ -115,7 +115,9 @@ pub(crate) struct SliceHeader {
 /// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
+    /// Same as [`Slice::parent`].
     pub(crate) parent: Option<(Slot, BlockHash)>,
+    /// Same as [`Slice::data`].
     pub(crate) data: Vec<u8>,
 }
 
@@ -148,7 +150,7 @@ impl From<&[u8]> for SlicePayload {
     }
 }
 
-/// Creates a [`SlicePayload`] with a random payload of desired size.
+/// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
@@ -179,7 +181,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     payload.as_slice().into()
 }
 
-/// Creates a [`Slice`] with a random payload of desired size.
+/// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.

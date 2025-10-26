@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Defines the [`ShredIndex`] type.
+
 use std::fmt::Display;
 use std::mem::MaybeUninit;
 use std::ops::Deref;

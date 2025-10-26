@@ -32,7 +32,7 @@ use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 /// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`Votor`].
+    /// This is not the same as the voting secret key, which is held by [`super::Votor`].
     secret_key: signature::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
@@ -50,10 +50,10 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
 
-    /// Should be set to `DELTA_BLOCK` in production.
+    /// Should be set to [`super::DELTA_BLOCK`] in production.
     /// Stored as a field to aid in testing.
     delta_block: Duration,
-    /// Should be set to `DELTA_FIRST_SLICE` in production.
+    /// Should be set to [`super::DELTA_FIRST_SLICE`] in production.
     /// Stored as a field to aid in testing.
     delta_first_slice: Duration,
 }

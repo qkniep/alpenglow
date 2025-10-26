@@ -5,6 +5,8 @@
 //!
 //! Research reference implementation of the Alpenglow consensus protocol.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+
 pub mod all2all;
 pub mod consensus;
 pub mod crypto;
