@@ -59,9 +59,12 @@ impl ParentReadyState {
     ///
     /// Returns `true` iff this slot was not already skip-certified.
     pub(super) fn mark_skip(&mut self) -> bool {
-        let was_skipped = self.skip;
-        self.skip = true;
-        !was_skipped
+        if self.skip {
+            false
+        } else {
+            self.skip = true;
+            true
+        }
     }
 
     /// Returns `true` iff this slot is skip-certified.
@@ -73,9 +76,12 @@ impl ParentReadyState {
     ///
     /// Returns `true` iff this block was not already marked as notarized-fallback.
     pub(super) fn mark_notar_fallback(&mut self, hash: BlockHash) -> bool {
-        let was_certified = self.notar_fallbacks.contains(&hash);
-        self.notar_fallbacks.push(hash);
-        !was_certified
+        if self.notar_fallbacks.contains(&hash) {
+            false
+        } else {
+            self.notar_fallbacks.push(hash);
+            true
+        }
     }
 
     /// Returns an iterator over the notarized-fallback block hashes for this slot.
