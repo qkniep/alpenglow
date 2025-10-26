@@ -15,7 +15,7 @@
 //! - [`Shred`] is a single part of the block that fits into a UDP datagram,
 //!   that also contains the slice header, Merkle path and leader signature.
 //!
-//! It also uses the [`Slice`] struct defined in the [`crate::slice`] module.
+//! It also uses the [`Slice`] struct defined in the [`crate::types::slice`] module.
 
 mod reed_solomon;
 mod shred_index;
@@ -122,7 +122,7 @@ pub struct Shred {
 impl Shred {
     /// Verifies only the Merkle proof of this shred.
     ///
-    /// For full verification, see [`ValidatedShred::new`].
+    /// For full verification, see [`ValidatedShred::try_new`].
     ///
     /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
     #[must_use]
@@ -194,10 +194,10 @@ pub trait Shredder {
     /// However, this can be less if the specfic shredder adds some overhead.
     const MAX_DATA_SIZE: usize;
 
-    /// When [`shred()`] is called, how many data shreds will be produced.
+    /// When [`Shredder::shred`] is called, how many data shreds will be produced.
     const DATA_OUTPUT_SHREDS: usize;
 
-    /// When [`shred()`] is called, how many coding shreds will be produced.
+    /// When [`Shredder::shred`] is called, how many coding shreds will be produced.
     const CODING_OUTPUT_SHREDS: usize;
 
     /// Splits the given slice into [`TOTAL_SHREDS`] shreds, which depending on
@@ -337,7 +337,7 @@ impl Shredder for CodingOnlyShredder {
 
 /// A shredder that uses the PETS all-or-nothing construction.
 ///
-/// It outputs `DATA_SHREDS-1` encrypted data shreds and
+/// It outputs `DATA_SHREDS - 1` encrypted data shreds and
 /// `TOTAL_SHREDS - DATA_SHREDS + 1` coding shreds.
 ///
 /// See also: <https://arxiv.org/abs/2502.02774>
