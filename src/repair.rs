@@ -44,7 +44,7 @@ pub enum RepairRequestType {
 }
 
 impl RepairRequestType {
-    /// Digests the [`RepairRequestType`] into a [`Hash`].
+    /// Digests the [`RepairRequestType`] into a [`crate::crypto::Hash`].
     fn hash(&self) -> Hash {
         let repair = RepairRequest {
             req_type: self.clone(),
