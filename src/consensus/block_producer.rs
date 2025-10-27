@@ -390,12 +390,10 @@ where
     let start_time = Instant::now();
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = wincode::serialize(&parent).unwrap().len();
-
+    // reserve space for parent and 8 bytes to encode number of txs
+    let parent_encoded_len = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len)
-        .unwrap()
-        .checked_sub(8)
+        .checked_sub(parent_encoded_len + 8)
         .unwrap();
     let mut txs = Vec::new();
 
