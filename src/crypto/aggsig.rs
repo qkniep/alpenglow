@@ -202,16 +202,13 @@ impl SchemaWrite for AggregateSignature {
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         writer.write_exact(&src.sig.serialize())?;
-        // SAFETY: Calls to `write_t` are always safe for primitive integer types.
-        unsafe {
-            writer.write_t(&src.bitmask.as_bitslice().len())?;
-            let data = src.bitmask.as_bitslice().domain();
-            writer.write_t(&data.len())?;
-            for elem in data {
-                writer.write_t(&elem)?;
-            }
-            Ok(())
+        <usize as SchemaWrite>::write(writer, &src.bitmask.as_bitslice().len())?;
+        let data = src.bitmask.as_bitslice().domain();
+        <usize as SchemaWrite>::write(writer, &data.len())?;
+        for elem in data {
+            <usize as SchemaWrite>::write(writer, &elem)?;
         }
+        Ok(())
     }
 }
 
