@@ -18,11 +18,11 @@
 //!
 //! # Examples
 //!
-//! ```
-//! use alpenglow::network::{NetworkMessage};
+//! ```rust
 //! use alpenglow::all2all::All2All;
+//! use alpenglow::consensus::ConsensusMessage;
 //!
-//! async fn broadcast_all(msgs: &[NetworkMessage], all2all: impl All2All) -> Result<(), NetworkSendError> {
+//! async fn broadcast_all(msgs: &[ConsensusMessage], all2all: impl All2All) -> std::io::Result<()> {
 //!     for msg in msgs {
 //!         all2all.broadcast(msg).await?;
 //!     }
