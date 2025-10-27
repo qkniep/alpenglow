@@ -10,14 +10,12 @@
 //! # Examples
 //!
 //! ```
-//! use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
+//! use alpenglow::network::simulated::stake_distribution::{VALIDATOR_DATA, ValidatorData};
 //!
-//! let mut stakes = Vec::new();
-//! for validator in VALIDATOR_DATA.iter() {
-//!     if validator.is_active && validator.delinquent == false {
-//!         stakes.push(validator.active_stake.unwrap());
-//!     }
-//! }
+//! let mut stakes = VALIDATOR_DATA
+//!     .iter()
+//!     .filter_map(ValidatorData::active_stake)
+//!     .collect::<Vec<_>>();
 //! ```
 
 use std::collections::HashSet;
