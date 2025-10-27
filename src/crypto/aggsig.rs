@@ -177,14 +177,11 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
         }
         let mut bitmask =
             BitVec::try_from_vec(bitmask_raw_vec).expect("bitmask vector should never be too big");
-        // SAFETY: We just built `bitmask` from a fully allocated `Vec`.
-        // Also, we just checked that `num_bits` is not too big.
-        unsafe {
-            // the `BitVec` is now initialized with some `usize` elements
-            // setting the length ensures that only the intended number of bits are used
-            // the last bits in the underlying storage will be ignored by `BitVec`
-            bitmask.set_len(num_bits);
-        }
+
+        // the `BitVec` is now initialized with some `usize` elements
+        // we only want to use the first `num_bits` bits, as this is the intended length
+        // some last bits may be uninitialized and will be ignored by `BitVec`
+        bitmask.truncate(num_bits);
 
         dst.write(AggregateSignature { sig, bitmask });
         wincode::ReadResult::Ok(())
