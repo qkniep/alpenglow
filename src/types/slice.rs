@@ -176,7 +176,8 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     let len = payload.len();
     let cap = payload.capacity();
     let ptr = payload.as_mut_ptr() as *mut u8;
-    std::mem::forget(payload); // prevent dropping uninitialized memory
+    // prevent dropping uninitialized memory
+    std::mem::forget(payload);
     let payload: Vec<u8> = unsafe { Vec::from_raw_parts(ptr, len, cap) };
     payload.as_slice().into()
 }
