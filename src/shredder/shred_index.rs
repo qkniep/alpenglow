@@ -16,8 +16,8 @@ use crate::shredder::TOTAL_SHREDS;
 /// Shred index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= [`TOTAL_SHREDS`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
 #[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
 pub struct ShredIndex(usize);
 
 impl ShredIndex {
