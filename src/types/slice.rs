@@ -6,10 +6,10 @@
 use rand::{RngCore, rng};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::Slot;
 use crate::crypto::merkle::{BlockHash, SliceRoot};
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
+use crate::{BlockId, Slot};
 
 /// A slice is the unit of data between block and shred.
 ///
@@ -155,11 +155,10 @@ impl From<&[u8]> for SlicePayload {
 // XXX: This is only used in test and benchmarking code.
 // Ensure it is only compiled when we are testing or benchmarking.
 pub(crate) fn create_slice_payload_with_invalid_txs(
-    parent: Option<(Slot, BlockHash)>,
+    parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let parent_bytes =
-        <Option<(Slot, BlockHash)> as wincode::SchemaWrite>::size_of(&parent).unwrap();
+    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
     // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
     let data_len_bytes = 8;
 
