@@ -113,7 +113,7 @@ impl<'de> SchemaRead<'de> for SliceIndex {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        // SAFETY: Any read of `std::mem::size_of(dst)` bytes correctly initializes `dst`.
+        // SAFETY: Any read of `std::mem::size_of(usize)` bytes correctly initializes `usize`.
         unsafe {
             reader.read_t(dst)?;
             if dst.assume_init_ref().0 >= MAX_SLICES_PER_BLOCK {
