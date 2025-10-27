@@ -55,6 +55,7 @@ pub type Stake = u64;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
+/// Maximum number of bytes a transaction payload can contain.
 const MAX_TRANSACTION_SIZE: usize = 512;
 
 /// Parsed block with information about parent and transactions as payload.
@@ -71,7 +72,7 @@ pub struct Block {
 
 /// Dummy transaction containing payload bytes.
 ///
-/// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
+/// A transaction cannot hold more than [`MAX_TRANSACTION_SIZE`] payload bytes.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Transaction(pub Vec<u8>);
 
