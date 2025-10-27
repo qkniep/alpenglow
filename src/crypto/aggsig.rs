@@ -193,6 +193,7 @@ impl SchemaWrite for AggregateSignature {
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
         let bitslice_num_elements = src.bitmask.as_bitslice().len();
+        // sig + num_bits + num_usizes + usize_len * num_usizes
         Ok(UNCOMPRESSED_SIG_SIZE + 8 + 8 + 8 * bitslice_num_elements)
     }
 
