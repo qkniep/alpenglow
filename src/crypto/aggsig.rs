@@ -159,7 +159,7 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
         })?;
 
         // map bitmask
-        if bitmask_raw_vec.len() > MAX_SIGNERS / usize::BITS as usize {
+        if bitmask_raw_vec.len() > MAX_SIGNERS.div_ceil(usize::BITS as usize) {
             warn!(
                 "bitmask too long: {} bits > {} max signers",
                 bitmask_raw_vec.len() * usize::BITS as usize,
@@ -180,6 +180,9 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
         // SAFETY: We just built `bitmask` from a fully allocated `Vec`.
         // Also, we just checked that `num_bits` is not too big.
         unsafe {
+            // the `BitVec` is now initialized with some `usize` elements
+            // setting the length ensures that only the intended number of bits are used
+            // the last bits in the underlying storage will be ignored by `BitVec`
             bitmask.set_len(num_bits);
         }
 
