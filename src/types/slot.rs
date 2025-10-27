@@ -18,6 +18,7 @@ pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, SchemaRead, SchemaWrite)]
+#[repr(transparent)]
 pub struct Slot(u64);
 
 impl Slot {

@@ -17,6 +17,7 @@ pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= [`MAX_SLICES_PER_BLOCK`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
+#[repr(transparent)]
 pub struct SliceIndex(usize);
 
 impl SliceIndex {
@@ -112,11 +113,11 @@ impl<'de> SchemaRead<'de> for SliceIndex {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
+        // SAFETY: Any read of `std::mem::size_of(dst)` bytes correctly initializes `dst`.
         unsafe {
             reader.read_t(dst)?;
             if dst.assume_init_ref().0 >= MAX_SLICES_PER_BLOCK {
-                // FIXME: replace this arbitrary error type
-                Err(wincode::ReadError::InvalidCharLead(0))
+                Err(wincode::ReadError::Custom("slice index out of bounds"))
             } else {
                 Ok(())
             }

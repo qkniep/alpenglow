@@ -17,6 +17,7 @@ use crate::shredder::TOTAL_SHREDS;
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= [`TOTAL_SHREDS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
+#[repr(transparent)]
 pub struct ShredIndex(usize);
 
 impl ShredIndex {
@@ -84,6 +85,7 @@ impl<'de> SchemaRead<'de> for ShredIndex {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
+        // SAFETY: Any read of `std::mem::size_of(dst)` bytes correctly initializes `dst`.
         unsafe {
             reader.read_t(dst)?;
             if dst.assume_init_ref().0 >= TOTAL_SHREDS {
