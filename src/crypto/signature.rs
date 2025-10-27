@@ -7,13 +7,11 @@
 //! [RFC 8032](https://tools.ietf.org/html/rfc8032).
 //! Specifically, this is a wrapper around the [`ed25519_consensus`] crate.
 
-use std::mem::MaybeUninit;
-
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
 use static_assertions::const_assert_eq;
-use wincode::{SchemaRead, SchemaWrite};
+use wincode::{SchemaRead, SchemaWrite, containers::Pod};
 
 /// Size of an ed25519 signature.
 const SIGNATURE_SIZE: usize = 64;
@@ -37,38 +35,8 @@ pub struct PublicKey(VerificationKey);
 /// A digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
-#[derive(Clone, Copy, Debug)]
-pub struct Signature(ed25519_consensus::Signature);
-
-impl<'de> SchemaRead<'de> for Signature {
-    type Dst = Signature;
-
-    fn read(
-        reader: &mut wincode::io::Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> wincode::ReadResult<()> {
-        let mut sig_bytes: [MaybeUninit<u8>; SIGNATURE_SIZE] =
-            [MaybeUninit::uninit(); SIGNATURE_SIZE];
-        reader.read_exact(&mut sig_bytes)?;
-        // SAFETY: If `read_exact` above succeeded, `sig_bytes` is fully initialized.
-        let sig_bytes: [u8; SIGNATURE_SIZE] = unsafe { std::mem::transmute(sig_bytes) };
-        let sig = ed25519_consensus::Signature::from(sig_bytes);
-        dst.write(Signature(sig));
-        wincode::ReadResult::Ok(())
-    }
-}
-
-impl SchemaWrite for Signature {
-    type Src = Signature;
-
-    fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
-        Ok(SIGNATURE_SIZE)
-    }
-
-    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        Ok(writer.write_exact(&src.0.to_bytes())?)
-    }
-}
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
+pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.
