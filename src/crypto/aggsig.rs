@@ -127,7 +127,7 @@ impl SchemaWrite for IndividualSignature {
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        unsafe { Ok(writer.write_t(&src.0.serialize())?) }
+        Ok(writer.write_exact(&src.0.serialize())?)
     }
 }
 
