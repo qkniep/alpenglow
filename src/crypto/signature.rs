@@ -47,11 +47,12 @@ impl<'de> SchemaRead<'de> for Signature {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let mut sig_bytes: MaybeUninit<[u8; SIGNATURE_SIZE]> = MaybeUninit::uninit();
-        let sig = unsafe {
-            reader.read_t(&mut sig_bytes)?;
-            ed25519_consensus::Signature::from(sig_bytes.assume_init())
-        };
+        let mut sig_bytes: [MaybeUninit<u8>; SIGNATURE_SIZE] =
+            [MaybeUninit::uninit(); SIGNATURE_SIZE];
+        reader.read_exact(&mut sig_bytes)?;
+        // SAFETY: If `read_exact` above succeeded, `sig_bytes` is fully initialized.
+        let sig_bytes: [u8; SIGNATURE_SIZE] = unsafe { std::mem::transmute(sig_bytes) };
+        let sig = ed25519_consensus::Signature::from(sig_bytes);
         dst.write(Signature(sig));
         wincode::ReadResult::Ok(())
     }
