@@ -160,9 +160,19 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
 
         // map bitmask
         if bitmask_raw_vec.len() > MAX_SIGNERS / usize::BITS as usize {
+            warn!(
+                "bitmask too long: {} bits > {} max signers",
+                bitmask_raw_vec.len() * usize::BITS as usize,
+                MAX_SIGNERS
+            );
             return Err(wincode::ReadError::Custom("bitmask too long"));
         }
         if num_bits > usize::BITS as usize * bitmask_raw_vec.len() {
+            warn!(
+                "want to use too many bits: {} bits > {} bits allocated",
+                num_bits,
+                bitmask_raw_vec.len() * usize::BITS as usize,
+            );
             return Err(wincode::ReadError::Custom("want to use too many bits"));
         }
         let mut bitmask =
