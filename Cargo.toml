@@ -64,6 +64,12 @@ cast_possible_truncation = "allow"
 [profile.release]
 debug = true
 overflow-checks = true
+codegen-units = 1
+lto = true
+
+[profile.bench]
+codegen-units = 1
+lto = true
 
 [[bench]]
 name = "crypto"
