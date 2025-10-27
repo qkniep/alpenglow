@@ -306,7 +306,7 @@ impl BlockData {
             .values()
             .map(|s| s.merkle_root.as_ref().unwrap());
         let tree = DoubleMerkleTree::new(merkle_roots);
-        let block_hash = tree.get_root().clone();
+        let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
