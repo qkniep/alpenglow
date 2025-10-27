@@ -12,7 +12,15 @@ use std::mem::MaybeUninit;
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
+use static_assertions::const_assert_eq;
 use wincode::{SchemaRead, SchemaWrite};
+
+/// Size of an ed25519 signature.
+const SIGNATURE_SIZE: usize = 64;
+const_assert_eq!(
+    SIGNATURE_SIZE,
+    std::mem::size_of::<ed25519_consensus::Signature>()
+);
 
 /// A secret key for the digital signature scheme.
 ///
@@ -39,7 +47,7 @@ impl<'de> SchemaRead<'de> for Signature {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let mut sig_bytes: MaybeUninit<[u8; 64]> = MaybeUninit::uninit();
+        let mut sig_bytes: MaybeUninit<[u8; SIGNATURE_SIZE]> = MaybeUninit::uninit();
         let sig = unsafe {
             reader.read_t(&mut sig_bytes)?;
             ed25519_consensus::Signature::from(sig_bytes.assume_init())
@@ -53,7 +61,7 @@ impl SchemaWrite for Signature {
     type Src = Signature;
 
     fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
-        Ok(64)
+        Ok(SIGNATURE_SIZE)
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
