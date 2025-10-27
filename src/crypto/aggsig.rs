@@ -4,7 +4,7 @@
 //! Implementation of an aggregate signature scheme.
 //!
 //! This uses the [`blst`] implementation of BLS signatures.
-//! Specifically, it uses the BLS12-381 G2 (min sig) signature scheme.
+//! Specifically, it uses the BLS12-381 G1 (min sig) signature scheme.
 //!
 //! # Examples
 //!
@@ -33,13 +33,30 @@ use blst::min_sig::{
     AggregateSignature as BlstAggSig, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey,
     Signature as BlstSignature,
 };
+use log::warn;
 use rand::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
+use static_assertions::const_assert_eq;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ValidatorId;
 
-const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+/// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
+const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+
+/// Size of an uncompressed BLS signature (in the `min_sig` scheme).
+///
+/// We deal with uncompressed signatures everywhere.
+/// This way signatures are twice as big as if we used compressed signatures.
+/// However, we save the time of uncompressing the signature before verifying.
+const UNCOMPRESSED_SIG_SIZE: usize = 96;
+const_assert_eq!(
+    UNCOMPRESSED_SIG_SIZE,
+    std::mem::size_of::<blst::blst_p1_affine>()
+);
+
+/// Maximum number of signers that can be aggregated into an aggregate signature.
+const MAX_SIGNERS: usize = 2048;
 
 /// A secret key for the aggregate signature scheme.
 ///
@@ -92,9 +109,11 @@ impl<'de> SchemaRead<'de> for IndividualSignature {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let sig_bytes = reader.read_borrowed(96)?;
-        let sig = BlstSignature::deserialize(sig_bytes)
-            .map_err(|_| wincode::ReadError::Custom("invalid BLS encoding"))?;
+        let sig_bytes = reader.read_borrowed(UNCOMPRESSED_SIG_SIZE)?;
+        let sig = BlstSignature::deserialize(sig_bytes).map_err(|e| {
+            warn!("encountered invalid BLS sig: {e:?}");
+            wincode::ReadError::Custom("invalid BLS encoding")
+        })?;
         dst.write(IndividualSignature(sig));
         wincode::ReadResult::Ok(())
     }
@@ -104,7 +123,7 @@ impl SchemaWrite for IndividualSignature {
     type Src = IndividualSignature;
 
     fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
-        Ok(96)
+        Ok(UNCOMPRESSED_SIG_SIZE)
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
@@ -128,16 +147,27 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let sig_bytes = reader.read_borrowed(96)?;
+        // read raw data
+        let sig_bytes = reader.read_borrowed(UNCOMPRESSED_SIG_SIZE)?;
         let num_bits = <usize>::get(reader)?;
         let bitmask_raw_vec = <Vec<usize>>::get(reader)?;
-        let sig = BlstSignature::from_bytes(sig_bytes)
-            .map_err(|_| wincode::ReadError::Custom("invalid BLS encoding"))?;
-        let mut bitmask = BitVec::try_from_vec(bitmask_raw_vec)
-            .map_err(|_| wincode::ReadError::Custom("invalid bitmap"))?;
+
+        // map BLS signature
+        let sig = BlstSignature::from_bytes(sig_bytes).map_err(|e| {
+            warn!("encountered invalid BLS sig: {e:?}");
+            wincode::ReadError::Custom("invalid BLS encoding")
+        })?;
+
+        // map bitmask
+        if bitmask_raw_vec.len() > MAX_SIGNERS / usize::BITS as usize || num_bits > MAX_SIGNERS {
+            return Err(wincode::ReadError::Custom("bitmask too long"));
+        }
+        let mut bitmask =
+            BitVec::try_from_vec(bitmask_raw_vec).expect("bitmask vector should never be too big");
         unsafe {
             bitmask.set_len(num_bits);
         }
+
         dst.write(AggregateSignature { sig, bitmask });
         wincode::ReadResult::Ok(())
     }
@@ -147,8 +177,9 @@ impl SchemaWrite for AggregateSignature {
     type Src = AggregateSignature;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        // PERF: allocation
         let data = src.bitmask.as_bitslice().domain().collect::<Vec<usize>>();
-        Ok(96 + 8 + <Vec<usize> as wincode::SchemaWrite>::size_of(&data)?)
+        Ok(UNCOMPRESSED_SIG_SIZE + 8 + <Vec<usize> as wincode::SchemaWrite>::size_of(&data)?)
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
