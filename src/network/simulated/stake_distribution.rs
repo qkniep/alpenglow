@@ -63,7 +63,7 @@ pub struct ValidatorData {
     authorized_withdrawer_score: i8,
     commission: Option<u8>,
     data_center_concentration_score: i8,
-    delinquent: Option<bool>,
+    delinquent: bool,
     published_information_score: i8,
     root_distance_score: i8,
     security_report_score: i8,
@@ -93,7 +93,7 @@ pub struct ValidatorData {
 impl ValidatorData {
     /// Returns the active stake of a validator, if it has non-zero active stake.
     pub fn active_stake(&self) -> Option<Stake> {
-        if !self.is_active && self.delinquent != Some(false) {
+        if !self.is_active || self.delinquent {
             return None;
         }
         self.active_stake.filter(|stake| *stake > 0)
@@ -118,7 +118,7 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
                 name: Some(v.name),
                 is_active: true,
                 active_stake: Some((v.stake.round() * 100.0) as Stake),
-                delinquent: Some(false),
+                delinquent: false,
                 ip: v.ip.unwrap_or_else(|| v.address.clone()),
                 data_center_key: Some(format!(
                     "{}-{}-{}",
@@ -199,11 +199,7 @@ pub fn validators_from_validator_data(
 ) {
     let mut validators = Vec::new();
     for v in validator_data {
-        if !(v.is_active && v.delinquent == Some(false)) {
-            continue;
-        }
-        let stake = v.active_stake.unwrap_or(0);
-        if stake > 0 {
+        if let Some(stake) = v.active_stake() {
             let id = validators.len() as ValidatorId;
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
@@ -225,10 +221,9 @@ pub fn validators_from_validator_data(
     let mut validators_with_ping_data = Vec::new();
     let mut stake_with_ping_server = 0;
     for v in validator_data {
-        let stake = v.active_stake.unwrap_or(0);
-        if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
+        let Some(stake) = v.active_stake() else {
             continue;
-        }
+        };
         let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
             continue;
         };
@@ -296,7 +291,7 @@ pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
             validators.push(ValidatorData {
                 is_active: true,
                 active_stake: Some(stake),
-                delinquent: Some(false),
+                delinquent: false,
                 latitude: Some(lat.to_string()),
                 longitude: Some(lon.to_string()),
                 ..Default::default()
