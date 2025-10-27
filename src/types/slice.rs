@@ -160,6 +160,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 ) -> SlicePayload {
     let parent_bytes =
         <Option<(Slot, BlockHash)> as wincode::SchemaWrite>::size_of(&parent).unwrap();
+    // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
     let data_len_bytes = 8;
 
     let size = desired_size

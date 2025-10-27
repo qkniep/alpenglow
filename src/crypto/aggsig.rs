@@ -192,14 +192,14 @@ impl SchemaWrite for AggregateSignature {
     type Src = AggregateSignature;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        // PERF: allocation
-        let data = src.bitmask.as_bitslice().domain().collect::<Vec<usize>>();
-        Ok(UNCOMPRESSED_SIG_SIZE + 8 + <Vec<usize> as wincode::SchemaWrite>::size_of(&data)?)
+        let bitslice_num_elements = src.bitmask.as_bitslice().len();
+        Ok(UNCOMPRESSED_SIG_SIZE + 8 + 8 + 8 * bitslice_num_elements)
     }
 
     fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        writer.write_exact(&src.sig.serialize())?;
+        // SAFETY: Calls to `write_t` are always safe for primitive integer types.
         unsafe {
-            writer.write_t(&src.sig.serialize())?;
             writer.write_t(&src.bitmask.as_bitslice().len())?;
             let data = src.bitmask.as_bitslice().domain();
             writer.write_t(&data.len())?;
