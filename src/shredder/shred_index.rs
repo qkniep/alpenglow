@@ -87,8 +87,7 @@ impl<'de> SchemaRead<'de> for ShredIndex {
         unsafe {
             reader.read_t(dst)?;
             if dst.assume_init_ref().0 >= TOTAL_SHREDS {
-                // FIXME: replace this arbitrary error type
-                Err(wincode::ReadError::InvalidCharLead(0))
+                Err(wincode::ReadError::Custom("shred index out of bounds"))
             } else {
                 Ok(())
             }
