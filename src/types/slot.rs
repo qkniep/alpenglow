@@ -5,7 +5,7 @@
 
 use std::fmt::Display;
 
-use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Number of slots in each leader window.
 // NOTE: this is public to support testing and one additional function.
@@ -17,7 +17,8 @@ pub const SLOTS_PER_WINDOW: u64 = 4;
 pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, SchemaRead, SchemaWrite)]
 pub struct Slot(u64);
 
 impl Slot {

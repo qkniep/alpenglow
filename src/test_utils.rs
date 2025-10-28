@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
@@ -14,7 +14,7 @@ use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
 use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
+use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
@@ -22,15 +22,15 @@ use crate::{
 };
 
 /// A simple ping network message.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Ping;
 
 /// A simple pong network message.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Pong;
 
 /// A simple network message that can be either a ping or a pong.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum PingOrPong {
     Ping,
     Pong,
@@ -192,16 +192,14 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
 fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayload {
     // HACK: manually picked number of maximally sized transactions that fit in the slice
     // without going over the [`MAX_DATA_PER_SLICE`] limit.
-    const NUM_TXS_PER_SLICE: usize = 63;
+    const NUM_TXS_PER_SLICE: usize = 61;
 
     let mut data = vec![0; MAX_TRANSACTION_SIZE];
     rand::rng().fill_bytes(&mut data);
     let tx = Transaction(data);
-    let tx =
-        bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG).expect("serialization should not panic");
+    let tx = wincode::serialize(&tx).expect("serialization should not panic");
     let txs = vec![tx; NUM_TXS_PER_SLICE];
-    let txs =
-        bincode::serde::encode_to_vec(txs, BINCODE_CONFIG).expect("serialization should not panic");
+    let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);

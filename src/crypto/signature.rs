@@ -10,6 +10,16 @@
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
+use static_assertions::const_assert_eq;
+use wincode::containers::Pod;
+use wincode::{SchemaRead, SchemaWrite};
+
+/// Size of an ed25519 signature.
+const SIGNATURE_SIZE: usize = 64;
+const_assert_eq!(
+    SIGNATURE_SIZE,
+    std::mem::size_of::<ed25519_consensus::Signature>()
+);
 
 /// A secret key for the digital signature scheme.
 ///
@@ -26,8 +36,8 @@ pub struct PublicKey(VerificationKey);
 /// A digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Signature(ed25519_consensus::Signature);
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
+pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.

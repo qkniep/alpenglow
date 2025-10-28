@@ -19,8 +19,8 @@ use std::marker::PhantomData;
 
 use derive_more::{From, Into};
 use hex_literal::hex;
-use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::Hash;
 use super::hash::hash_all;
@@ -112,7 +112,7 @@ impl MerkleProof for Vec<Hash> {}
 
 #[repr(transparent)]
 #[derive(
-    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
 )]
 pub struct SliceRoot(Hash);
 impl MerkleRoot for SliceRoot {
@@ -128,7 +128,7 @@ impl AsRef<[u8]> for SliceRoot {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Debug, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct SliceProof(Vec<Hash>);
 impl MerkleProof for SliceProof {}
 
@@ -140,7 +140,7 @@ impl AsRef<[Hash]> for SliceProof {
 
 #[repr(transparent)]
 #[derive(
-    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
 )]
 pub struct DoubleMerkleRoot(Hash);
 impl MerkleRoot for DoubleMerkleRoot {
@@ -150,7 +150,7 @@ impl MerkleRoot for DoubleMerkleRoot {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Debug, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct DoubleMerkleProof(Vec<Hash>);
 impl MerkleProof for DoubleMerkleProof {}
 pub type BlockHash = DoubleMerkleRoot;

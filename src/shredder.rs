@@ -26,8 +26,8 @@ use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
 use ctr::Ctr64LE;
 use rand::{RngCore, rng};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use wincode::{SchemaRead, SchemaWrite};
 
 use self::reed_solomon::{
     RawShreds, ReedSolomonDeshredError, ReedSolomonShredError, reed_solomon_deshred,
@@ -53,6 +53,7 @@ pub const MAX_DATA_PER_SHRED: usize = 1024;
 /// Maximum number of bytes an entire slice can hold, incl. padding.
 pub const MAX_DATA_PER_SLICE_AFTER_PADDING: usize = DATA_SHREDS * MAX_DATA_PER_SHRED;
 /// Maximum number of payload bytes a slice can hold.
+/// Our padding scheme requires that you leave at least one byte of padding.
 pub const MAX_DATA_PER_SLICE: usize = MAX_DATA_PER_SLICE_AFTER_PADDING - 1;
 
 /// Errors that may occur during shredding.
@@ -103,7 +104,7 @@ impl From<ReedSolomonShredError> for DeshredError {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
     Coding(ShredPayload),
@@ -111,7 +112,7 @@ pub enum ShredPayloadType {
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     pub(crate) payload_type: ShredPayloadType,
     pub(crate) merkle_root: SliceRoot,
@@ -131,8 +132,7 @@ impl Shred {
             return false;
         }
         SliceMerkleTree::check_proof(
-            // FIXME: allocation
-            &self.payload().data.to_vec(),
+            &self.payload().data,
             *self.payload().shred_index,
             &self.merkle_root,
             &self.merkle_path,
@@ -165,14 +165,14 @@ impl Shred {
 }
 
 /// Base payload of a shred, regardless of its type.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct ShredPayload {
     /// Slice header replicated in each shred.
     pub(crate) header: SliceHeader,
     /// Index of this shred within the slice.
     pub(crate) shred_index: ShredIndex,
     /// Raw payload bytes of this shred, part of the erasure-coded slice payload.
-    pub(crate) data: bytes::Bytes,
+    pub(crate) data: Vec<u8>,
 }
 
 impl ShredPayload {
@@ -511,7 +511,7 @@ fn data_and_coding_to_output_shreds(
         let payload = ShredPayload {
             header: header.clone(),
             shred_index,
-            data: data.into(),
+            data,
         };
         (merkle_path, payload)
     };
@@ -567,7 +567,7 @@ fn create_output_shreds_for_other_leader(
         let payload = ShredPayload {
             header: header.clone(),
             shred_index,
-            data: data.into(),
+            data,
         };
         (merkle_path, payload)
     };

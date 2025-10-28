@@ -27,8 +27,8 @@ pub enum ShredVerifyError {
 ///
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
-#[derive(Clone, Debug)]
 #[repr(transparent)]
+#[derive(Clone, Debug)]
 pub struct ValidatedShred(Shred);
 
 impl ValidatedShred {
@@ -46,8 +46,7 @@ impl ValidatedShred {
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
         if !SliceMerkleTree::check_proof(
-            // FIXME: allocation
-            &shred.payload().data.to_vec(),
+            &shred.payload().data,
             *shred.payload().shred_index,
             &shred.merkle_root,
             &shred.merkle_path,

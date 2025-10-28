@@ -4,7 +4,7 @@
 //! Implementation of an aggregate signature scheme.
 //!
 //! This uses the [`blst`] implementation of BLS signatures.
-//! Specifically, it uses the BLS12-381 G2 (min sig) signature scheme.
+//! Specifically, it uses the BLS12-381 G1 (min sig) signature scheme.
 //!
 //! # Examples
 //!
@@ -25,18 +25,38 @@
 //! assert!(aggsig.verify(msg, &[pk1, pk2]));
 //! ```
 
+use std::mem::MaybeUninit;
+
 use bitvec::vec::BitVec;
 use blst::BLST_ERROR;
 use blst::min_sig::{
     AggregateSignature as BlstAggSig, PublicKey as BlstPublicKey, SecretKey as BlstSecretKey,
     Signature as BlstSignature,
 };
+use log::warn;
 use rand::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
+use static_assertions::const_assert_eq;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ValidatorId;
 
-const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+/// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
+const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+
+/// Size of an uncompressed BLS signature (in the `min_sig` scheme).
+///
+/// We deal with uncompressed signatures everywhere.
+/// This way signatures are twice as big as if we used compressed signatures.
+/// However, we save the time of uncompressing the signature before verifying.
+const UNCOMPRESSED_SIG_SIZE: usize = 96;
+const_assert_eq!(
+    UNCOMPRESSED_SIG_SIZE,
+    std::mem::size_of::<blst::blst_p1_affine>()
+);
+
+/// Maximum number of signers that can be aggregated into an aggregate signature.
+const MAX_SIGNERS: usize = 2048;
 
 /// A secret key for the aggregate signature scheme.
 ///
@@ -76,19 +96,117 @@ impl PublicKey {
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
 //
-// NOTE: Deriving PartialEq and Eq to support testing.
+// NOTE: Deriving `PartialEq` and `Eq` to support testing.
 // It only makes sense beccause the underlying signature scheme happens to be deterministic and unique.
-// Revaluate if we change the signature scheme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// Reevaluate if we change the signature scheme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndividualSignature(BlstSignature);
+
+impl<'de> SchemaRead<'de> for IndividualSignature {
+    type Dst = IndividualSignature;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let sig_bytes = reader.read_borrowed(UNCOMPRESSED_SIG_SIZE)?;
+        let sig = BlstSignature::deserialize(sig_bytes).map_err(|e| {
+            warn!("encountered invalid BLS sig: {e:?}");
+            wincode::ReadError::Custom("invalid BLS encoding")
+        })?;
+        dst.write(IndividualSignature(sig));
+        wincode::ReadResult::Ok(())
+    }
+}
+
+impl SchemaWrite for IndividualSignature {
+    type Src = IndividualSignature;
+
+    fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
+        Ok(UNCOMPRESSED_SIG_SIZE)
+    }
+
+    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        Ok(writer.write_exact(&src.0.serialize())?)
+    }
+}
 
 /// An aggregated signature that contains a bitmask of signers.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateSignature {
     sig: BlstSignature,
     bitmask: BitVec,
+}
+
+impl<'de> SchemaRead<'de> for AggregateSignature {
+    type Dst = AggregateSignature;
+
+    fn read(
+        reader: &mut wincode::io::Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        // read raw data
+        let sig_bytes = reader.read_borrowed(UNCOMPRESSED_SIG_SIZE)?;
+        let num_bits = <usize>::get(reader)?;
+        let bitmask_raw_vec = <Vec<usize>>::get(reader)?;
+
+        // map BLS signature
+        let sig = BlstSignature::from_bytes(sig_bytes).map_err(|e| {
+            warn!("encountered invalid BLS sig: {e:?}");
+            wincode::ReadError::Custom("invalid BLS encoding")
+        })?;
+
+        // map bitmask
+        if bitmask_raw_vec.len() > MAX_SIGNERS.div_ceil(usize::BITS as usize) {
+            warn!(
+                "bitmask too long: {} bits > {} max signers",
+                bitmask_raw_vec.len() * usize::BITS as usize,
+                MAX_SIGNERS
+            );
+            return Err(wincode::ReadError::Custom("bitmask too long"));
+        }
+        if num_bits > usize::BITS as usize * bitmask_raw_vec.len() {
+            warn!(
+                "want to use too many bits: {} bits > {} bits allocated",
+                num_bits,
+                bitmask_raw_vec.len() * usize::BITS as usize,
+            );
+            return Err(wincode::ReadError::Custom("want to use too many bits"));
+        }
+        let mut bitmask =
+            BitVec::try_from_vec(bitmask_raw_vec).expect("bitmask vector should never be too big");
+
+        // the `BitVec` is now initialized with some `usize` elements
+        // we only want to use the first `num_bits` bits, as this is the intended length
+        // some last bits may be uninitialized and will be ignored by `BitVec`
+        bitmask.truncate(num_bits);
+
+        dst.write(AggregateSignature { sig, bitmask });
+        wincode::ReadResult::Ok(())
+    }
+}
+
+impl SchemaWrite for AggregateSignature {
+    type Src = AggregateSignature;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        let bitslice_num_elements = src.bitmask.as_bitslice().len();
+        // sig + num_bits + num_usizes + usize_len * num_usizes
+        Ok(UNCOMPRESSED_SIG_SIZE + 8 + 8 + 8 * bitslice_num_elements)
+    }
+
+    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        writer.write_exact(&src.sig.serialize())?;
+        <usize as SchemaWrite>::write(writer, &src.bitmask.as_bitslice().len())?;
+        let data = src.bitmask.as_bitslice().domain();
+        <usize as SchemaWrite>::write(writer, &data.len())?;
+        for elem in data {
+            <usize as SchemaWrite>::write(writer, &elem)?;
+        }
+        Ok(())
+    }
 }
 
 impl SecretKey {
