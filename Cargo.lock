@@ -3266,7 +3266,7 @@ dependencies = [
 [[package]]
 name = "wincode"
 version = "0.1.2"
-source = "git+https://github.com/anza-xyz/wincode?branch=master#3e6e6850059fca823db983dc74f60d22ab2839a7"
+source = "git+https://github.com/anza-xyz/wincode?rev=3e6e6850059fca823db983dc74f60d22ab2839a7#3e6e6850059fca823db983dc74f60d22ab2839a7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3277,7 +3277,7 @@ dependencies = [
 [[package]]
 name = "wincode-derive"
 version = "0.1.1"
-source = "git+https://github.com/anza-xyz/wincode?branch=master#3e6e6850059fca823db983dc74f60d22ab2839a7"
+source = "git+https://github.com/anza-xyz/wincode?rev=3e6e6850059fca823db983dc74f60d22ab2839a7#3e6e6850059fca823db983dc74f60d22ab2839a7"
 dependencies = [
  "darling",
  "proc-macro2",
