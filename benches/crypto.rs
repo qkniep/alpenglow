@@ -134,12 +134,14 @@ fn compress_bls(bencher: divan::Bencher) {
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
             let mut rng = rand::rng();
-            let mut bytes = [0; 128];
-            rng.fill_bytes(&mut bytes);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            sk.sign(&bytes)
+            let mut ikm = [0; 32];
+            let mut msg = [0; 32];
+            rng.fill_bytes(&mut ikm);
+            rng.fill_bytes(&mut msg);
+            let sk = blst::min_sig::SecretKey::key_gen(&ikm, &[]).unwrap();
+            sk.sign(&msg, &[], &[])
         })
-        .bench_values(|sig: IndividualSignature| sig.0.compress());
+        .bench_values(|sig: blst::min_sig::Signature| sig.compress());
 }
 
 #[divan::bench]
@@ -148,11 +150,13 @@ fn uncompress_bls(bencher: divan::Bencher) {
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
             let mut rng = rand::rng();
-            let mut bytes = [0; 128];
-            rng.fill_bytes(&mut bytes);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            let sig = sk.sign(&bytes);
-            sig.0.compress()
+            let mut ikm = [0; 32];
+            let mut msg = [0; 32];
+            rng.fill_bytes(&mut ikm);
+            rng.fill_bytes(&mut msg);
+            let sk = blst::min_sig::SecretKey::key_gen(&ikm, &[]).unwrap();
+            let sig = sk.sign(&msg, &[], &[]);
+            sig.compress()
         })
         .bench_values(|comp: [u8; 48]| blst::min_sig::Signature::uncompress(&comp));
 }
