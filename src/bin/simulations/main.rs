@@ -36,6 +36,7 @@
 mod alpenglow;
 mod discrete_event_simulator;
 mod pyjama;
+mod quick_release;
 mod quorum_robustness;
 mod rotor;
 mod ryse;
@@ -65,6 +66,9 @@ use crate::alpenglow::{
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
 use crate::pyjama::{
     PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
+};
+use crate::quick_release::{
+    QuickReleaseInstanceBuilder, QuickReleaseLatencySimulation, QuickReleaseParams,
 };
 use crate::rotor::{
     RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
@@ -443,6 +447,24 @@ fn run_tests<
         engine
             .stats()
             .write_to_csv("data/output/pyjama_1000.csv", &params)?;
+
+        // Quick Release MCP
+        let params = QuickReleaseParams::new(8, 640);
+        let builder = QuickReleaseInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<QuickReleaseLatencySimulation<_, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("quick-release latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/quick_release_1000.csv", &params)?;
 
         // Alpenglow
         // latency experiments with random leaders
