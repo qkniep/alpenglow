@@ -23,7 +23,7 @@ colored = "3"
 csv = "1"
 ctr = "0.10.0-rc.1"
 derive_more = { version = "2", features = ["as_ref", "from", "into"] }
-ed25519-consensus = "2"
+ed25519-dalek = { version = "3.0.0-pre.1", features = ["rand_core", "serde"] }
 either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
 fastrace-opentelemetry = "0.14"

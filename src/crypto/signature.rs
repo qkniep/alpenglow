@@ -5,9 +5,9 @@
 //!
 //! This implements the Ed25519 digital signature scheme, as specified in
 //! [RFC 8032](https://tools.ietf.org/html/rfc8032).
-//! Specifically, this is a wrapper around the [`ed25519_consensus`] crate.
+//! Specifically, this is a wrapper around the [`ed25519_dalek`] crate.
 
-use ed25519_consensus::{SigningKey, VerificationKey};
+use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
 use static_assertions::const_assert_eq;
@@ -18,26 +18,26 @@ use wincode::{SchemaRead, SchemaWrite};
 const SIGNATURE_SIZE: usize = 64;
 const_assert_eq!(
     SIGNATURE_SIZE,
-    std::mem::size_of::<ed25519_consensus::Signature>()
+    std::mem::size_of::<ed25519_dalek::Signature>()
 );
 
 /// A secret key for the digital signature scheme.
 ///
-/// This is a wrapper around [`ed25519_consensus::SigningKey`].
+/// This is a wrapper around [`ed25519_dalek::SigningKey`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SecretKey(SigningKey);
 
 /// A public key for the digital signature scheme.
 ///
-/// This is a wrapper around [`ed25519_consensus::VerificationKey`].
+/// This is a wrapper around [`ed25519_dalek::VerifyingKey`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct PublicKey(VerificationKey);
+pub struct PublicKey(VerifyingKey);
 
 /// A digital signature.
 ///
-/// This is a wrapper around [`ed25519_consensus::Signature`].
+/// This is a wrapper around [`ed25519_dalek::Signature`].
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
-pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
+pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_dalek::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.
@@ -53,7 +53,7 @@ impl SecretKey {
     /// Converts this secret key into the corresponding public key.
     #[must_use]
     pub fn to_pk(&self) -> PublicKey {
-        let pk = self.0.verification_key();
+        let pk = self.0.verifying_key();
         PublicKey(pk)
     }
 
@@ -84,7 +84,7 @@ impl Signature {
     /// Verifies that this is a valid signature of `msg` under `pk`.
     #[must_use]
     pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
-        pk.0.verify(&self.0, msg).is_ok()
+        pk.0.verify(msg, &self.0).is_ok_and(|()| true)
     }
 }
 
