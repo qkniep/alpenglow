@@ -83,9 +83,12 @@ impl ReedSolomonCoder {
             return Err(ReedSolomonShredError::TooMuchData);
         }
 
-        // determine padding length
+        // determine padding length & configure encoder for shred length
         let padding_bytes = 2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS);
         let shred_bytes = (payload.len() + padding_bytes).div_ceil(DATA_SHREDS);
+        self.encoder
+            .reset(DATA_SHREDS, self.num_coding, shred_bytes)
+            .unwrap();
 
         // add padding to last shreds
         let last_shreds_bytes = (2 * DATA_SHREDS).next_multiple_of(shred_bytes);
@@ -127,6 +130,12 @@ impl ReedSolomonCoder {
         if shreds_cnt < DATA_SHREDS {
             return Err(ReedSolomonDeshredError::NotEnoughShreds);
         }
+
+        // configure decoder for shred size
+        let shred_bytes = shreds.iter().flatten().next().unwrap().payload().data.len();
+        self.decoder
+            .reset(DATA_SHREDS, self.num_coding, shred_bytes)
+            .unwrap();
 
         let coding_offset = TOTAL_SHREDS - self.num_coding;
 
