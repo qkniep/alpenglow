@@ -1,3 +1,8 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Defines the [`ValidatedShreds`] type.
+
 use crate::shredder::{TOTAL_SHREDS, ValidatedShred};
 
 /// Validated shreds array type.

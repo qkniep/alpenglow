@@ -3,16 +3,13 @@
 
 //! Defines the [`Slice`] and related data structures.
 
-use std::mem::MaybeUninit;
-
 use rand::{RngCore, rng};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::Slot;
-use crate::crypto::Hash;
 use crate::crypto::merkle::{BlockHash, SliceRoot};
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
+use crate::{BlockId, Slot};
 
 /// A slice is the unit of data between block and shred.
 ///
@@ -86,11 +83,20 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
+
+    /// Extracts the [`SliceHeader`] from a [`Slice`].
+    pub(crate) fn to_header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
 }
 
 /// Struct to hold all the header payload of a [`Slice`].
 ///
-/// This is included in each [`crate::shredder::Shred`] after shredding.
+/// This information is included in each shred after shredding.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
@@ -103,16 +109,24 @@ pub(crate) struct SliceHeader {
 
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
-/// This is what actually gets "shredded" into different [`crate::shredder::Shred`]s.
+/// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
+    /// Same as [`Slice::parent`].
     pub(crate) parent: Option<(Slot, BlockHash)>,
+    /// Same as [`Slice::data`].
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
+    /// Constructs a new [`SlicePayload`] from its component parts.
     pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
+    }
+
+    /// Serializes the payload into bytes.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        wincode::serialize(self).unwrap()
     }
 }
 
@@ -122,18 +136,18 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<Vec<u8>> for SlicePayload {
-    fn from(payload: Vec<u8>) -> Self {
+impl From<&[u8]> for SlicePayload {
+    fn from(payload: &[u8]) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
             "payload.len()={} {MAX_DATA_PER_SLICE}",
             payload.len()
         );
-        wincode::deserialize(&payload).unwrap()
+        wincode::deserialize(payload).unwrap()
     }
 }
 
-/// Creates a [`SlicePayload`] with a random payload of desired size.
+/// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
@@ -141,30 +155,24 @@ impl From<Vec<u8>> for SlicePayload {
 // XXX: This is only used in test and benchmarking code.
 // Ensure it is only compiled when we are testing or benchmarking.
 pub(crate) fn create_slice_payload_with_invalid_txs(
-    parent: Option<(Slot, Hash)>,
+    parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let mut payload = vec![MaybeUninit::uninit(); desired_size];
+    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
+    // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
+    let data_len_bytes = 8;
 
-    let mut used = wincode::serialize_into(&parent, &mut payload).unwrap();
-    let left = desired_size.checked_sub(used).unwrap();
-
-    let size = left.checked_sub(8).unwrap();
+    let size = desired_size
+        .checked_sub(parent_bytes + data_len_bytes)
+        .unwrap();
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
-    used += wincode::serialize_into(&data, &mut payload[used..]).unwrap();
-    assert_eq!(used, desired_size);
 
-    let len = payload.len();
-    let cap = payload.capacity();
-    let ptr = payload.as_mut_ptr() as *mut u8;
-    std::mem::forget(payload); // prevent dropping uninitialized memory
-    let payload: Vec<u8> = unsafe { Vec::from_raw_parts(ptr, len, cap) };
-    payload.into()
+    SlicePayload { parent, data }
 }
 
-/// Creates a [`Slice`] with a random payload of desired size.
+/// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.

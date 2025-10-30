@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Implements Reed-Solomon shreding and deshreding.
+//!
+//! This is a low-level module that is used in various shredder implementations.
+//! It is mostly a wrapper around the [`reed_solomon_simd`] crate.
 
 use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
 use thiserror::Error;
@@ -12,14 +15,14 @@ use super::{
 };
 use crate::shredder::{MAX_DATA_PER_SHRED, ValidatedShred};
 
-/// Errors that may be returned by [`reed_solomon_shred()`].
+/// Errors that may be returned by [`ReedSolomonCoder::shred`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonShredError {
     #[error("too much data for slice")]
     TooMuchData,
 }
 
-/// Errors that may be returned by [`reed_solomon_deshred()`].
+/// Errors that may be returned by [`ReedSolomonCoder::deshred`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub(super) enum ReedSolomonDeshredError {
     #[error("not enough shreds to reconstruct")]
@@ -30,7 +33,7 @@ pub(super) enum ReedSolomonDeshredError {
     InvalidPadding,
 }
 
-/// The data and coding shreds returned from [`reed_solomon_shred()`] on success.
+/// The data and coding shreds returned from [`ReedSolomonCoder::shred`] on success.
 pub(super) struct RawShreds {
     /// A list of data shreds.
     pub(super) data: Vec<Vec<u8>>,
@@ -45,7 +48,12 @@ pub struct ReedSolomonCoder {
 }
 
 impl ReedSolomonCoder {
+    /// Creates a new Reed-Solomon coder.
     ///
+    /// This is a wrapper around both [`ReedSolomonEncoder`] and [`ReedSolomonDecoder`].
+    /// Therefore, it can be used for both encoding and decoding.
+    /// It is initialized for the given `num_coding` number of coding shreds.
+    /// It is also initialized for [`MAX_DATA_PER_SHRED`] bytes per fragment.
     pub(super) fn new(num_coding: usize) -> ReedSolomonCoder {
         assert!(num_coding <= TOTAL_SHREDS);
         let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
@@ -70,34 +78,42 @@ impl ReedSolomonCoder {
     /// Errors
     ///
     /// If the provided payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
-    pub(super) fn shred(
-        &mut self,
-        mut payload: Vec<u8>,
-    ) -> Result<RawShreds, ReedSolomonShredError> {
+    pub(super) fn shred(&mut self, payload: &[u8]) -> Result<RawShreds, ReedSolomonShredError> {
         if payload.len() > MAX_DATA_PER_SLICE {
             return Err(ReedSolomonShredError::TooMuchData);
         }
 
-        // add padding
+        // determine padding length
         let padding_bytes = 2 * DATA_SHREDS - payload.len() % (2 * DATA_SHREDS);
-        payload.push(0x80);
-        payload.resize(payload.len() + padding_bytes.saturating_sub(1), 0);
-        assert!(payload.len() <= MAX_DATA_PER_SLICE_AFTER_PADDING);
+        let shred_bytes = (payload.len() + padding_bytes).div_ceil(DATA_SHREDS);
 
-        let shred_bytes = payload.len().div_ceil(DATA_SHREDS);
-        let data = payload.chunks(shred_bytes).map(<[u8]>::to_vec).collect();
-        for d in &data {
-            self.encoder.add_original_shard(d).unwrap();
-        }
+        // add padding to last shreds
+        let last_shreds_bytes = (2 * DATA_SHREDS).next_multiple_of(shred_bytes);
+        let boundary = payload.len() - (last_shreds_bytes - padding_bytes);
+        let mut last_shreds = Vec::with_capacity(last_shreds_bytes);
+        last_shreds.extend_from_slice(&payload[boundary..]);
+        last_shreds.push(0x80);
+        last_shreds.resize(last_shreds_bytes, 0);
+
+        // chunk data & add coding
+        let mut data = Vec::with_capacity(DATA_SHREDS);
+        payload[..boundary]
+            .chunks(shred_bytes)
+            .chain(last_shreds.chunks(shred_bytes))
+            .for_each(|chunk| {
+                self.encoder.add_original_shard(chunk).unwrap();
+                data.push(chunk.to_vec());
+            });
         let result = self.encoder.encode().unwrap();
         let coding = result.recovery_iter().map(<[u8]>::to_vec).collect();
+
         Ok(RawShreds { data, coding })
     }
 
     /// Reconstructs the raw data from the given shreds.
     ///
     /// Removes the padding before returning the data.
-    /// See [`reed_solomon_shred()`] for details on the padding scheme.
+    /// See [`ReedSolomonCoder::shred`] for details on the padding scheme.
     ///
     /// Errors
     ///
@@ -220,7 +236,7 @@ mod tests {
     fn shred_too_much_data() {
         let payload = vec![0; MAX_DATA_PER_SLICE + 1];
         let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
-        let res = rs.shred(payload);
+        let res = rs.shred(&payload);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonShredError::TooMuchData);
     }
@@ -229,7 +245,7 @@ mod tests {
     fn deshred_not_enough_shreds() {
         let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
         let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
-        let shreds = rs.shred(payload.clone().into()).unwrap();
+        let shreds = rs.shred(&payload.to_bytes()).unwrap();
         let sk = SecretKey::new(&mut rand::rng());
         let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
         for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
@@ -242,7 +258,7 @@ mod tests {
 
     fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
         let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
-        let shreds = rs.shred(payload.clone()).unwrap();
+        let shreds = rs.shred(&payload).unwrap();
         let shreds = take_and_map_enough_shreds(header, shreds);
         let restored = rs.deshred(&shreds).unwrap();
         assert_eq!(restored, payload);

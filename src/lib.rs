@@ -5,6 +5,8 @@
 //!
 //! Research reference implementation of the Alpenglow consensus protocol.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+
 pub mod all2all;
 pub mod consensus;
 pub mod crypto;
@@ -22,6 +24,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use static_assertions::const_assert_eq;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::all2all::All2All;
@@ -41,6 +44,10 @@ use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
 
+// NOTE: In many places we assume that `usize` is 64 bits wide.
+// So, for now, we only support 64-bit architectures.
+const_assert_eq!(std::mem::size_of::<usize>(), 8);
+
 /// Validator ID number type.
 pub type ValidatorId = u64;
 /// Validator stake type.
@@ -48,6 +55,7 @@ pub type Stake = u64;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
+/// Maximum number of bytes a transaction payload can contain.
 const MAX_TRANSACTION_SIZE: usize = 512;
 
 /// Parsed block with information about parent and transactions as payload.
@@ -64,7 +72,7 @@ pub struct Block {
 
 /// Dummy transaction containing payload bytes.
 ///
-/// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
+/// A transaction cannot hold more than [`MAX_TRANSACTION_SIZE`] payload bytes.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Transaction(pub Vec<u8>);
 

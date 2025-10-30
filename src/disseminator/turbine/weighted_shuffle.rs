@@ -38,7 +38,7 @@ pub struct WeightedShuffle {
     /// Underlying array implementing the tree.
     /// Nodes without children are never accessed and don't need to be
     /// allocated, so `tree.len() < num_nodes`.
-    /// tree[i][j] is the sum of all weights in the j'th sub-tree of node i.
+    /// `tree[i][j]` is the sum of all weights in the `j`-th sub-tree of node `i`.
     tree: Vec<[Stake; FANOUT]>,
     /// Current sum of all weights, excluding already sampled ones.
     weight: Stake,

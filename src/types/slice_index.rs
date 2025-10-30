@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Defines the [`SliceIndex`] type.
+
 use std::fmt::Display;
 use std::mem::MaybeUninit;
 
@@ -14,6 +16,7 @@ pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 /// Slice index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= [`MAX_SLICES_PER_BLOCK`].
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
 pub struct SliceIndex(usize);
 
@@ -110,11 +113,11 @@ impl<'de> SchemaRead<'de> for SliceIndex {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
+        // SAFETY: Any read of `std::mem::size_of(usize)` bytes correctly initializes `usize`.
         unsafe {
             reader.read_t(dst)?;
             if dst.assume_init_ref().0 >= MAX_SLICES_PER_BLOCK {
-                // FIXME: replace this arbitrary error type
-                Err(wincode::ReadError::InvalidCharLead(0))
+                Err(wincode::ReadError::Custom("slice index out of bounds"))
             } else {
                 Ok(())
             }

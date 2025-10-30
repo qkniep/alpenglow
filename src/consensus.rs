@@ -116,8 +116,8 @@ where
 {
     /// Creates a new Alpenglow consensus node.
     ///
-    /// `repair_network` - Network from which the node sends [`RepairRequest`] messages and receives [`RepairResponse`] messages.
-    /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
+    /// `repair_network` - [`RepairNetwork`] for sending requests and receiving responses.
+    /// `repair_request_network` - [`RepairRequestNetwork`] for answering incoming requests.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new<RN, RR>(

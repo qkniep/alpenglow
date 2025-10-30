@@ -1,3 +1,8 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Defines the [`ValidatedShred`] type.
+
 use std::collections::btree_map::Entry;
 use std::ops::{Deref, DerefMut};
 
@@ -22,8 +27,8 @@ pub enum ShredVerifyError {
 ///
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
-#[derive(Clone, Debug)]
 #[repr(transparent)]
+#[derive(Clone, Debug)]
 pub struct ValidatedShred(Shred);
 
 impl ValidatedShred {

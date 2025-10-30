@@ -7,11 +7,10 @@
 //! [RFC 8032](https://tools.ietf.org/html/rfc8032).
 //! Specifically, this is a wrapper around the [`ed25519_consensus`] crate.
 
-use std::mem::MaybeUninit;
-
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
+use wincode::containers::Pod;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// A secret key for the digital signature scheme.
@@ -29,38 +28,8 @@ pub struct PublicKey(VerificationKey);
 /// A digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
-#[derive(Clone, Copy, Debug)]
-pub struct Signature(ed25519_consensus::Signature);
-
-impl<'de> SchemaRead<'de> for Signature {
-    type Dst = Signature;
-
-    fn read(
-        reader: &mut wincode::io::Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> wincode::ReadResult<()> {
-        let mut sig_bytes: MaybeUninit<[u8; 64]> = MaybeUninit::uninit();
-        let sig = unsafe {
-            reader.read_t(&mut sig_bytes)?;
-            ed25519_consensus::Signature::from(sig_bytes.assume_init())
-        };
-        // FIXME: unwrap
-        dst.write(Signature(sig));
-        wincode::ReadResult::Ok(())
-    }
-}
-
-impl SchemaWrite for Signature {
-    type Src = Signature;
-
-    fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
-        Ok(64)
-    }
-
-    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        unsafe { Ok(writer.write_t(&src.0.to_bytes())?) }
-    }
-}
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
+pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.

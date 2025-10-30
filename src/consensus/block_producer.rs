@@ -32,7 +32,7 @@ use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 /// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`Votor`].
+    /// This is not the same as the voting secret key, which is held by [`super::Votor`].
     secret_key: signature::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
@@ -50,10 +50,10 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
 
-    /// Should be set to `DELTA_BLOCK` in production.
+    /// Should be set to [`super::DELTA_BLOCK`] in production.
     /// Stored as a field to aid in testing.
     delta_block: Duration,
-    /// Should be set to `DELTA_FIRST_SLICE` in production.
+    /// Should be set to [`super::DELTA_FIRST_SLICE`] in production.
     /// Stored as a field to aid in testing.
     delta_first_slice: Duration,
 }
@@ -390,14 +390,15 @@ where
     T: TransactionNetwork,
 {
     let start_time = Instant::now();
-    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = wincode::serialize(&parent).unwrap().len();
+    // each slice should be able hold at least 1 transaction
+    // need 8 bytes to encode number of txs + 8 bytes to encode the length of the tx payload
+    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
+    // reserve space for parent and 8 bytes to encode number of txs
+    let parent_encoded_len = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len)
-        .unwrap()
-        .checked_sub(8)
+        .checked_sub(parent_encoded_len + 8)
         .unwrap();
     let mut txs = Vec::new();
 
@@ -415,7 +416,10 @@ where
         let tx = wincode::serialize(&tx).expect("serialization should not panic");
         slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
         txs.push(tx);
-        if slice_capacity_left < MAX_TRANSACTION_SIZE {
+
+        // if there is not enough space for another tx, break
+        // this needs to account for the 8 bytes to encode the length of the tx payload
+        if slice_capacity_left < MAX_TRANSACTION_SIZE + 8 {
             break duration_left.saturating_sub(start_time.elapsed());
         }
     };

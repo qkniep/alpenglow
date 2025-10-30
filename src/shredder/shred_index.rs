@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Defines the [`ShredIndex`] type.
+
 use std::fmt::Display;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
@@ -14,6 +16,7 @@ use crate::shredder::TOTAL_SHREDS;
 /// Shred index type.
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= [`TOTAL_SHREDS`].
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
 pub struct ShredIndex(usize);
 
@@ -82,11 +85,11 @@ impl<'de> SchemaRead<'de> for ShredIndex {
         reader: &mut wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
+        // SAFETY: Any read of `std::mem::size_of(usize)` bytes correctly initializes `usize`.
         unsafe {
             reader.read_t(dst)?;
             if dst.assume_init_ref().0 >= TOTAL_SHREDS {
-                // FIXME: replace this arbitrary error type
-                Err(wincode::ReadError::InvalidCharLead(0))
+                Err(wincode::ReadError::Custom("shred index out of bounds"))
             } else {
                 Ok(())
             }

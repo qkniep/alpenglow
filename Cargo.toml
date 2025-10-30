@@ -52,7 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
-wincode = { version = "0.1", features = ["derive"] }
+wincode = { git = "https://github.com/anza-xyz/wincode", rev = "3e6e6850059fca823db983dc74f60d22ab2839a7", features = ["derive"] }
 
 [dev-dependencies]
 divan = "0.1"
@@ -63,6 +63,12 @@ cast_possible_truncation = "allow"
 [profile.release]
 debug = true
 overflow-checks = true
+codegen-units = 1
+lto = true
+
+[profile.bench]
+codegen-units = 1
+lto = true
 
 [[bench]]
 name = "crypto"
