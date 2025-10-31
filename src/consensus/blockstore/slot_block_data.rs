@@ -154,6 +154,8 @@ pub struct BlockData {
     pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
     /// Cache of Merkle roots for which the leader signature has been verified.
     pub(super) merkle_root_cache: BTreeMap<SliceIndex, SliceRoot>,
+    /// Shredder used for reconstructing slices.
+    shredder: RegularShredder,
 }
 
 impl BlockData {
@@ -167,6 +169,7 @@ impl BlockData {
             last_slice: None,
             double_merkle_tree: None,
             merkle_root_cache: BTreeMap::new(),
+            shredder: RegularShredder::default(),
         }
     }
 
@@ -258,16 +261,15 @@ impl BlockData {
 
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (reconstructed_slice, reconstructed_shreds) =
-            // PERF: new shredder all the time!
-            match RegularShredder::default().deshred(slice_shreds) {
-                Ok(output) => output,
-                Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
-                rest => {
-                    warn!("deshreding failed with {rest:?}");
-                    return ReconstructSliceResult::Error;
-                }
-            };
+        let (reconstructed_slice, reconstructed_shreds) = match self.shredder.deshred(slice_shreds)
+        {
+            Ok(output) => output,
+            Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
+            rest => {
+                warn!("deshreding failed with {rest:?}");
+                return ReconstructSliceResult::Error;
+            }
+        };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
             warn!(
                 "reconstructed slice {} in slot {} expected to contain parent",
