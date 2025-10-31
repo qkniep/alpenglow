@@ -273,20 +273,22 @@ mod tests {
         assert_eq!(res.err().unwrap(), ReedSolomonShredError::TooMuchData);
     }
 
-    // #[test]
-    // fn deshred_not_enough_shreds() {
-    //     let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
-    //     let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
-    //     let shreds = rs.shred(&payload.to_bytes()).unwrap();
-    //     let sk = SecretKey::new(&mut rand::rng());
-    //     let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
-    //     for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
-    //         *shred = None;
-    //     }
-    //     let res = rs.deshred(&shreds);
-    //     assert!(res.is_err());
-    //     assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
-    // }
+    #[test]
+    fn deshred_not_enough_shreds() {
+        let (header, payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
+        let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let shreds = rs.shred(&payload.to_bytes()).unwrap();
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut shreds = data_and_coding_to_output_shreds(header, shreds, &sk).map(Some);
+        for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
+            *shred = None;
+        }
+        let validated_shreds =
+            ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let res = rs.deshred(validated_shreds);
+        assert!(res.is_err());
+        assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
+    }
 
     fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
         let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
