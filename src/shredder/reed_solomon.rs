@@ -41,6 +41,11 @@ pub(super) struct RawShreds {
     pub(super) coding: Vec<Vec<u8>>,
 }
 
+/// Reed-Solomon coder for shreds.
+///
+/// This is a wrapper around both [`ReedSolomonEncoder`] and [`ReedSolomonDecoder`].
+/// Therefore, it can be used for both encoding and decoding.
+/// Reusing this over multiple slices prevents reallocating working memory.
 pub(super) struct ReedSolomonCoder {
     num_coding: usize,
     encoder: ReedSolomonEncoder,
@@ -50,10 +55,8 @@ pub(super) struct ReedSolomonCoder {
 impl ReedSolomonCoder {
     /// Creates a new Reed-Solomon coder.
     ///
-    /// This is a wrapper around both [`ReedSolomonEncoder`] and [`ReedSolomonDecoder`].
-    /// Therefore, it can be used for both encoding and decoding.
-    /// It is initialized for the given `num_coding` number of coding shreds.
-    /// It is also initialized for [`MAX_DATA_PER_SHRED`] bytes per fragment.
+    /// It is initialized for [`DATA_SHREDS`] data shreds and `num_coding` coding shreds.
+    /// It is also initialized for up to [`MAX_DATA_PER_SHRED`] bytes per fragment.
     pub(super) fn new(num_coding: usize) -> ReedSolomonCoder {
         assert!(num_coding <= TOTAL_SHREDS);
         let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
