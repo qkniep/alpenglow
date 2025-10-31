@@ -14,7 +14,8 @@ use super::{
     DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING, ShredPayloadType,
     TOTAL_SHREDS,
 };
-use crate::shredder::{MAX_DATA_PER_SHRED, ValidatedShred};
+use crate::shredder::MAX_DATA_PER_SHRED;
+use crate::shredder::validated_shreds::ValidatedShreds;
 
 /// Errors that may be returned by [`ReedSolomonCoder::shred`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -137,11 +138,11 @@ impl ReedSolomonCoder {
     ///
     /// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns [`ReedSolomonDeshredError::NotEnoughShreds`].
     /// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
-    // TODO: pass ValidatedShreds here
     pub(super) fn deshred(
         &mut self,
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
+        shreds: ValidatedShreds,
     ) -> Result<Vec<u8>, ReedSolomonDeshredError> {
+        let shreds = shreds.to_shreds();
         let shreds_cnt = shreds.iter().filter(|s| s.is_some()).count();
         if shreds_cnt < DATA_SHREDS {
             return Err(ReedSolomonDeshredError::NotEnoughShreds);
@@ -171,16 +172,14 @@ impl ReedSolomonCoder {
         });
 
         for (i, d) in data.clone() {
-            // FIXME: ValidatedShreds should check shred size
             self.decoder
                 .add_original_shard(i, d)
-                .expect("validated shred should have correct index");
+                .expect("validated shred should have correct index and size");
         }
         for (i, c) in coding {
-            // FIXME: ValidatedShreds should check shred size
             self.decoder
                 .add_recovery_shard(i, c)
-                .expect("validated shred should have correct index");
+                .expect("validated shred should have correct index and size");
         }
         let restored = self.decoder.decode().expect("just added enough shreds");
 
@@ -227,7 +226,7 @@ mod tests {
     use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::data_and_coding_to_output_shreds;
+    use crate::shredder::{ValidatedShred, data_and_coding_to_output_shreds};
     use crate::types::slice::create_slice_with_invalid_txs;
     use crate::types::{SliceHeader, SliceIndex};
 
@@ -284,7 +283,9 @@ mod tests {
         for shred in shreds.iter_mut().skip(DATA_SHREDS - 1) {
             *shred = None;
         }
-        let res = rs.deshred(&shreds);
+        let validated_shreds =
+            ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let res = rs.deshred(validated_shreds);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
     }
@@ -293,7 +294,9 @@ mod tests {
         let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
         let shreds = rs.shred(&payload).unwrap();
         let shreds = take_and_map_enough_shreds(header, shreds);
-        let restored = rs.deshred(&shreds).unwrap();
+        let validated_shreds =
+            ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let restored = rs.deshred(validated_shreds).unwrap();
         assert_eq!(restored, payload);
     }
 
