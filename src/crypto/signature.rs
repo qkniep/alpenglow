@@ -10,16 +10,8 @@
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
-use static_assertions::const_assert_eq;
 use wincode::containers::Pod;
 use wincode::{SchemaRead, SchemaWrite};
-
-/// Size of an ed25519 signature.
-const SIGNATURE_SIZE: usize = 64;
-const_assert_eq!(
-    SIGNATURE_SIZE,
-    std::mem::size_of::<ed25519_consensus::Signature>()
-);
 
 /// A secret key for the digital signature scheme.
 ///

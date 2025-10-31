@@ -27,7 +27,7 @@ fn turbine_tree(bencher: divan::Bencher) {
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let shreds = RegularShredder::default().shred(slice, &sk).unwrap();
             let shred = shreds[shreds.len() - 1].clone();
 
             (shred, turbine1, turbine2)

@@ -115,9 +115,10 @@ mod tests {
     use crate::types::slice::create_slice_with_invalid_txs;
 
     fn create_random_shred() -> (Shred, SecretKey) {
+        let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let shreds = RegularShredder::shred(slice, &sk).unwrap();
+        let shreds = shredder.shred(slice, &sk).unwrap();
         let shred = shreds[shreds.len() - 1].clone().into_shred();
         (shred, sk)
     }
