@@ -78,7 +78,7 @@ impl ReedSolomonCoder {
     /// Bit padding of one 1bit and as many 0 bits as needed is added.
     /// In the byte representation this looks like `[0x80, 0x00, ..., 0x00]`.
     ///
-    /// Errors
+    /// # Errors
     ///
     /// If the provided payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
     pub(super) fn shred(&mut self, payload: &[u8]) -> Result<RawShreds, ReedSolomonShredError> {
