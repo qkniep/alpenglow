@@ -41,7 +41,7 @@ pub(super) struct RawShreds {
     pub(super) coding: Vec<Vec<u8>>,
 }
 
-pub struct ReedSolomonCoder {
+pub(super) struct ReedSolomonCoder {
     num_coding: usize,
     encoder: ReedSolomonEncoder,
     decoder: ReedSolomonDecoder,
