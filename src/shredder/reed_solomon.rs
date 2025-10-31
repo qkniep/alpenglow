@@ -7,6 +7,7 @@
 //! It is mostly a wrapper around the [`reed_solomon_simd`] crate.
 
 use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
+use static_assertions::const_assert;
 use thiserror::Error;
 
 use super::{
@@ -58,7 +59,11 @@ impl ReedSolomonCoder {
     /// It is initialized for [`DATA_SHREDS`] data shreds and `num_coding` coding shreds.
     /// It is also initialized for up to [`MAX_DATA_PER_SHRED`] bytes per fragment.
     pub(super) fn new(num_coding: usize) -> ReedSolomonCoder {
+        // max shreds supported by RS field
+        const_assert!(DATA_SHREDS + TOTAL_SHREDS <= 65536);
+
         assert!(num_coding <= TOTAL_SHREDS);
+
         let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
         let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
 
@@ -91,7 +96,7 @@ impl ReedSolomonCoder {
         let shred_bytes = (payload.len() + padding_bytes).div_ceil(DATA_SHREDS);
         self.encoder
             .reset(DATA_SHREDS, self.num_coding, shred_bytes)
-            .unwrap();
+            .expect("shred size with padding should be supported");
 
         // add padding to last shreds
         let last_shreds_bytes = (2 * DATA_SHREDS).next_multiple_of(shred_bytes);
@@ -101,16 +106,23 @@ impl ReedSolomonCoder {
         last_shreds.push(0x80);
         last_shreds.resize(last_shreds_bytes, 0);
 
-        // chunk data & add coding
+        // chunk data
         let mut data = Vec::with_capacity(DATA_SHREDS);
         payload[..boundary]
             .chunks(shred_bytes)
             .chain(last_shreds.chunks(shred_bytes))
             .for_each(|chunk| {
-                self.encoder.add_original_shard(chunk).unwrap();
+                self.encoder
+                    .add_original_shard(chunk)
+                    .expect("adding correct number of chunks of currect size");
                 data.push(chunk.to_vec());
             });
-        let result = self.encoder.encode().unwrap();
+
+        // perform coding
+        let result = self
+            .encoder
+            .encode()
+            .expect("we just added enough data shreds");
         let coding = result.recovery_iter().map(<[u8]>::to_vec).collect();
 
         Ok(RawShreds { data, coding })
@@ -125,6 +137,7 @@ impl ReedSolomonCoder {
     ///
     /// If fewer than [`DATA_SHREDS`] elements in `shreds` are `Some()` then returns [`ReedSolomonDeshredError::NotEnoughShreds`].
     /// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
+    // TODO: pass ValidatedShreds here
     pub(super) fn deshred(
         &mut self,
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
@@ -138,7 +151,7 @@ impl ReedSolomonCoder {
         let shred_bytes = shreds.iter().flatten().next().unwrap().payload().data.len();
         self.decoder
             .reset(DATA_SHREDS, self.num_coding, shred_bytes)
-            .unwrap();
+            .expect("size of validated shred should be supported");
 
         let coding_offset = TOTAL_SHREDS - self.num_coding;
 
@@ -158,12 +171,18 @@ impl ReedSolomonCoder {
         });
 
         for (i, d) in data.clone() {
-            self.decoder.add_original_shard(i, d).unwrap();
+            // FIXME: ValidatedShreds should check shred size
+            self.decoder
+                .add_original_shard(i, d)
+                .expect("validated shred should have correct index");
         }
         for (i, c) in coding {
-            self.decoder.add_recovery_shard(i, c).unwrap();
+            // FIXME: ValidatedShreds should check shred size
+            self.decoder
+                .add_recovery_shard(i, c)
+                .expect("validated shred should have correct index");
         }
-        let restored = self.decoder.decode().unwrap();
+        let restored = self.decoder.decode().expect("just added enough shreds");
 
         let mut data_shreds = vec![None; DATA_SHREDS];
         for (i, d) in data {
@@ -175,7 +194,9 @@ impl ReedSolomonCoder {
         for (i, d) in data_shreds.into_iter().enumerate() {
             let shred_data = match d {
                 Some(data_ref) => data_ref,
-                None => restored.restored_original(i).unwrap(),
+                None => restored
+                    .restored_original(i)
+                    .expect("all non-existing data shreds are restored"),
             };
             if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE_AFTER_PADDING {
                 return Err(ReedSolomonDeshredError::TooMuchData);
