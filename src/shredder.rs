@@ -17,6 +17,7 @@
 //!
 //! It also uses the [`Slice`] struct defined in the [`crate::types::slice`] module.
 
+mod pool;
 mod reed_solomon;
 mod shred_index;
 mod validated_shred;
@@ -29,6 +30,7 @@ use rand::{RngCore, rng};
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
+pub use self::pool::{ShredderGuard, ShredderPool};
 use self::reed_solomon::{
     RawShreds, ReedSolomonCoder, ReedSolomonDeshredError, ReedSolomonShredError,
 };

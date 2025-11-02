@@ -7,7 +7,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::sync::{Arc, Mutex};
 
 use log::{debug, trace, warn};
 use thiserror::Error;
@@ -17,7 +16,8 @@ use crate::consensus::votor::VotorEvent;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
 use crate::shredder::{
-    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
+    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, ShredderGuard, TOTAL_SHREDS,
+    ValidatedShred,
 };
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
@@ -77,7 +77,7 @@ impl SlotBlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: Arc<Mutex<RegularShredder>>,
+        shredder: ShredderGuard<'_, RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
@@ -102,7 +102,7 @@ impl SlotBlockData {
         hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: Arc<Mutex<RegularShredder>>,
+        shredder: ShredderGuard<'_, RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
@@ -177,7 +177,7 @@ impl BlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: Arc<Mutex<RegularShredder>>,
+        shredder: ShredderGuard<'_, RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
@@ -189,7 +189,7 @@ impl BlockData {
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
-        shredder: Arc<Mutex<RegularShredder>>,
+        shredder: ShredderGuard<'_, RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
@@ -253,7 +253,7 @@ impl BlockData {
     fn try_reconstruct_slice(
         &mut self,
         index: SliceIndex,
-        shredder: Arc<Mutex<RegularShredder>>,
+        mut shredder: ShredderGuard<'_, RegularShredder>,
     ) -> ReconstructSliceResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
@@ -267,15 +267,14 @@ impl BlockData {
 
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (reconstructed_slice, reconstructed_shreds) =
-            match shredder.lock().unwrap().deshred(slice_shreds) {
-                Ok(output) => output,
-                Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
-                rest => {
-                    warn!("deshreding failed with {rest:?}");
-                    return ReconstructSliceResult::Error;
-                }
-            };
+        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
+            Ok(output) => output,
+            Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
+            rest => {
+                warn!("deshreding failed with {rest:?}");
+                return ReconstructSliceResult::Error;
+            }
+        };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
             warn!(
                 "reconstructed slice {} in slot {} expected to contain parent",
@@ -375,7 +374,7 @@ impl BlockData {
 mod tests {
     use super::*;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
+    use crate::shredder::{DATA_SHREDS, ShredIndex, ShredderPool, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
 
     fn handle_slice(
@@ -383,12 +382,12 @@ mod tests {
         slice: Slice,
         sk: &SecretKey,
     ) -> (Vec<VotorEvent>, Result<(), AddShredError>) {
-        let shredder = Arc::new(Mutex::new(RegularShredder::default()));
+        let shredders = ShredderPool::<RegularShredder>::with_size(1);
         let pk = sk.to_pk();
-        let shreds = shredder.lock().unwrap().shred(slice, sk).unwrap();
+        let shreds = shredders.take().shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred.into_shred(), pk, shredder.clone()) {
+            match block_data.add_shred(shred.into_shred(), pk, shredders.take()) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
@@ -411,7 +410,7 @@ mod tests {
 
     #[test]
     fn reconstruct_slice_and_shreds() {
-        let shredder = Arc::new(Mutex::new(RegularShredder::default()));
+        let shredders = ShredderPool::<RegularShredder>::with_size(1);
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
         let slot = Slot::new(123);
@@ -419,15 +418,11 @@ mod tests {
         // manage to construct block from just enough shreds
         let slices = create_random_block(slot, 1);
         let mut block_data = BlockData::new(slot);
-        let shreds = shredder
-            .lock()
-            .unwrap()
-            .shred(slices[0].clone(), &sk)
-            .unwrap();
+        let shreds = shredders.take().shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             if let Some(event) = block_data
-                .add_shred(shred.into_shred(), pk, shredder.clone())
+                .add_shred(shred.into_shred(), pk, shredders.take())
                 .unwrap()
             {
                 events.push(event);
