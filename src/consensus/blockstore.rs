@@ -6,7 +6,7 @@
 mod slot_block_data;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use log::debug;
@@ -18,7 +18,7 @@ use super::epoch_info::EpochInfo;
 use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, MerkleRoot, SliceRoot};
-use crate::shredder::{Shred, ShredIndex, ValidatedShred};
+use crate::shredder::{RegularShredder, Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
 
@@ -78,6 +78,8 @@ pub trait Blockstore {
 pub struct BlockstoreImpl {
     /// Data structure holding the actual block data per slot.
     block_data: BTreeMap<Slot, SlotBlockData>,
+    /// Shredder to use for reconstructing slices.
+    shredder: Arc<Mutex<RegularShredder>>,
 
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
@@ -95,6 +97,7 @@ impl BlockstoreImpl {
     pub fn new(epoch_info: Arc<EpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
         Self {
             block_data: BTreeMap::new(),
+            shredder: Arc::new(Mutex::new(RegularShredder::default())),
             votor_channel,
             epoch_info,
         }
@@ -205,8 +208,7 @@ impl Blockstore for BlockstoreImpl {
     /// Stores a new shred in the blockstore.
     ///
     /// This shred is stored in the default spot without a known block hash.
-    /// For shreds obtained through repair, `add_shred_from_repair`
-    /// should be used instead.
+    /// For shreds obtained through repair, `add_shred_from_repair` should be used instead.
     /// Compared to that function, this one checks for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
@@ -221,9 +223,10 @@ impl Blockstore for BlockstoreImpl {
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
+        let shredder = self.shredder.clone();
         match self
             .slot_data_mut(slot)
-            .add_shred_from_disseminator(shred, leader_pk)?
+            .add_shred_from_disseminator(shred, leader_pk, shredder)?
         {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
@@ -250,9 +253,10 @@ impl Blockstore for BlockstoreImpl {
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
+        let shredder = self.shredder.clone();
         match self
             .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, leader_pk)?
+            .add_shred_from_repair(hash, shred, leader_pk, shredder)?
         {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
