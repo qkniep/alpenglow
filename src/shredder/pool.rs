@@ -25,8 +25,6 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
-use crate::shredder::RegularShredder;
-
 use super::Shredder;
 
 /// A pool of shredders of the same type.
