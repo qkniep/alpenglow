@@ -17,13 +17,15 @@
 //! let shredder_pool = ShredderPool::<RegularShredder>::with_size(1);
 //! {
 //!     let mut shredder = shredder_pool.take();
-//!     use_shredder(&mut shredder);
+//!     use_shredder(&mut (*shredder));
 //!     // shredder is automatically returned to pool when dropped
 //! }
 //! ```
 
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
+
+use crate::shredder::RegularShredder;
 
 use super::Shredder;
 
