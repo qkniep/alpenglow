@@ -223,11 +223,12 @@ impl Blockstore for BlockstoreImpl {
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
-        let shredder = self.shredders.take();
-        match self
-            .slot_data_mut(slot)
-            .add_shred_from_disseminator(shred, leader_pk, shredder)?
-        {
+        let mut shredder = self.shredders.take();
+        match self.slot_data_mut(slot).add_shred_from_disseminator(
+            shred,
+            leader_pk,
+            &mut shredder,
+        )? {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
         }
@@ -253,11 +254,13 @@ impl Blockstore for BlockstoreImpl {
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
         let leader_pk = self.epoch_info.leader(slot).pubkey;
-        let shredder = self.shredders.take();
-        match self
-            .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, leader_pk, shredder)?
-        {
+        let mut shredder = self.shredders.take();
+        match self.slot_data_mut(slot).add_shred_from_repair(
+            hash,
+            shred,
+            leader_pk,
+            &mut shredder,
+        )? {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
         }

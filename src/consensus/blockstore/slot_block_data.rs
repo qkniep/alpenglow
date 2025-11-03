@@ -16,8 +16,7 @@ use crate::consensus::votor::VotorEvent;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
 use crate::shredder::{
-    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, ShredderGuard, TOTAL_SHREDS,
-    ValidatedShred,
+    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
 use crate::types::{Slice, SliceIndex};
 use crate::{Block, Slot};
@@ -77,7 +76,7 @@ impl SlotBlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: ShredderGuard<RegularShredder>,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
@@ -102,7 +101,7 @@ impl SlotBlockData {
         hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: ShredderGuard<RegularShredder>,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
@@ -177,7 +176,7 @@ impl BlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: ShredderGuard<RegularShredder>,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
@@ -189,7 +188,7 @@ impl BlockData {
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
-        shredder: ShredderGuard<RegularShredder>,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
@@ -253,7 +252,7 @@ impl BlockData {
     fn try_reconstruct_slice(
         &mut self,
         index: SliceIndex,
-        mut shredder: ShredderGuard<RegularShredder>,
+        shredder: &mut RegularShredder,
     ) -> ReconstructSliceResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
@@ -387,7 +386,7 @@ mod tests {
         let shreds = shredders.take().shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred.into_shred(), pk, shredders.take()) {
+            match block_data.add_shred(shred.into_shred(), pk, &mut shredders.take()) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
@@ -410,7 +409,6 @@ mod tests {
 
     #[test]
     fn reconstruct_slice_and_shreds() {
-        let shredders = ShredderPool::<RegularShredder>::with_size(1);
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
         let slot = Slot::new(123);
@@ -418,11 +416,12 @@ mod tests {
         // manage to construct block from just enough shreds
         let slices = create_random_block(slot, 1);
         let mut block_data = BlockData::new(slot);
-        let shreds = shredders.take().shred(slices[0].clone(), &sk).unwrap();
+        let mut shredder = RegularShredder::default();
+        let shreds = shredder.shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             if let Some(event) = block_data
-                .add_shred(shred.into_shred(), pk, shredders.take())
+                .add_shred(shred.into_shred(), pk, &mut shredder)
                 .unwrap()
             {
                 events.push(event);
