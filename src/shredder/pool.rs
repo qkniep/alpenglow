@@ -8,7 +8,7 @@
 //! Obtain a shredder from the pool, use it, and let it return on drop.
 //!
 //! ```rust
-//! use alpenglow::shredder::{RegularShredder, ShredderPool};
+//! use alpenglow::shredder::{RegularShredder, ShredderPool, Shredder};
 //!
 //! fn use_shredder<S: Shredder>(shredder: &mut S) {
 //!     // ...
