@@ -1,27 +1,48 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Pool of shredder instances.
 //!
+//! # Examples
+//!
+//! Obtain a shredder from the pool, use it, and let it return on drop.
+//!
+//! ```rust
+//! use alpenglow::shredder::{RegularShredder, ShredderPool};
+//!
+//! fn use_shredder<S: Shredder>(shredder: &mut S) {
+//!     // ...
+//! }
+//!
+//! let shredder_pool = ShredderPool::<RegularShredder>::with_size(1);
+//! {
+//!     let mut shredder = shredder_pool.take();
+//!     use_shredder(&mut shredder);
+//!     // shredder is automatically returned to pool when dropped
+//! }
+//! ```
 
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
 use super::Shredder;
 
-///
+/// A pool of shredders of the same type.
 pub struct ShredderPool<S: Shredder> {
     shredders: Arc<Mutex<Vec<S>>>,
 }
 
 impl<S: Shredder> ShredderPool<S> {
-    ///
+    /// Creates a new pool with the provided shredders.
     pub fn new(shredders: Vec<S>) -> Self {
         Self {
             shredders: Arc::new(Mutex::new(shredders)),
         }
     }
 
+    /// Takes a shredder from the pool.
     ///
+    /// The shredder is automatically returned to the pool when dropped.
     pub fn take(&self) -> ShredderGuard<S> {
         ShredderGuard {
             pool: self.shredders.clone(),
@@ -31,14 +52,16 @@ impl<S: Shredder> ShredderPool<S> {
 }
 
 impl<S: Shredder + Default> ShredderPool<S> {
-    ///
+    /// Creates a new pool with `size` shredders.
     pub fn with_size(size: usize) -> Self {
         let shredders = (0..size).map(|_| S::default()).collect::<Vec<_>>();
         Self::new(shredders)
     }
 }
 
+/// Guard holding a single shredder from a pool.
 ///
+/// The shredder is automatically returned to the pool when dropped.
 pub struct ShredderGuard<S: Shredder> {
     pool: Arc<Mutex<Vec<S>>>,
     shredder: Option<S>,
