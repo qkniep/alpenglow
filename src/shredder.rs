@@ -274,12 +274,11 @@ impl Shredder for RegularShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.to_shreds();
         let payload_bytes = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
-        let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
+        let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
         let slice = Slice::from_shreds(payload, any_shred);
         let header = slice.to_header();
 
@@ -330,12 +329,11 @@ impl Shredder for CodingOnlyShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.to_shreds();
         let payload_bytes = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
-        let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
+        let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
         let slice = Slice::from_shreds(payload, any_shred);
 
         // additional Merkle tree validity check
@@ -407,14 +405,13 @@ impl Shredder for PetsShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.to_shreds();
         let mut buffer = self.0.deshred(shreds)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
-        let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
+        let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
 
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root.clone();
@@ -496,14 +493,13 @@ impl Shredder for AontShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let shreds = shreds.to_shreds();
         let mut buffer = self.0.deshred(shreds)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
-        let any_shred = shreds.iter().find_map(|s| s.as_ref()).unwrap();
+        let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
 
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root.clone();
