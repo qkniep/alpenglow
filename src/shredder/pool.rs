@@ -88,3 +88,31 @@ impl<S: Shredder> Drop for ShredderGuard<S> {
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shredder::RegularShredder;
+
+    #[test]
+    fn take_sequentially() {
+        let shredder_pool = ShredderPool::<RegularShredder>::with_size(1);
+        for _ in 0..10 {
+            let mut guard = shredder_pool.take();
+            let _shredder: &mut RegularShredder = &mut guard;
+        }
+    }
+
+    #[test]
+    fn take_concurrently() {
+        let shredder_pool = ShredderPool::<RegularShredder>::with_size(2);
+
+        let mut guard1 = shredder_pool.take();
+        let _shredder1: &mut RegularShredder = &mut guard1;
+        let mut guard2 = shredder_pool.take();
+        let _shredder2: &mut RegularShredder = &mut guard2;
+
+        drop(guard1);
+        drop(guard2);
+    }
+}
