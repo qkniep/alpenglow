@@ -45,7 +45,7 @@ impl<S: Shredder> ShredderPool<S> {
     /// The shredder is automatically returned to the pool when dropped.
     pub fn take(&self) -> ShredderGuard<S> {
         ShredderGuard {
-            pool: self.shredders.clone(),
+            pool: Arc::clone(&self.shredders),
             shredder: self.shredders.lock().unwrap().pop(),
         }
     }
