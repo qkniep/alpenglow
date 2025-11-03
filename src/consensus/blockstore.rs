@@ -78,7 +78,7 @@ pub trait Blockstore {
 pub struct BlockstoreImpl {
     /// Data structure holding the actual block data per slot.
     block_data: BTreeMap<Slot, SlotBlockData>,
-    ///
+    /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
 
     /// Event channel for sending notifications to Votor.

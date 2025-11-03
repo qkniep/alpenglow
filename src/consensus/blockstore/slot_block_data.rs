@@ -77,7 +77,7 @@ impl SlotBlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: ShredderGuard<'_, RegularShredder>,
+        shredder: ShredderGuard<RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
@@ -102,7 +102,7 @@ impl SlotBlockData {
         hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: ShredderGuard<'_, RegularShredder>,
+        shredder: ShredderGuard<RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
@@ -177,7 +177,7 @@ impl BlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
-        shredder: ShredderGuard<'_, RegularShredder>,
+        shredder: ShredderGuard<RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
@@ -189,7 +189,7 @@ impl BlockData {
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
-        shredder: ShredderGuard<'_, RegularShredder>,
+        shredder: ShredderGuard<RegularShredder>,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
@@ -253,7 +253,7 @@ impl BlockData {
     fn try_reconstruct_slice(
         &mut self,
         index: SliceIndex,
-        mut shredder: ShredderGuard<'_, RegularShredder>,
+        mut shredder: ShredderGuard<RegularShredder>,
     ) -> ReconstructSliceResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
