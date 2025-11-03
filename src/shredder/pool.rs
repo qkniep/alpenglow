@@ -16,7 +16,7 @@
 //!
 //! let shredder_pool = ShredderPool::<RegularShredder>::with_size(1);
 //! {
-//!     let mut shredder = shredder_pool.take();
+//!     let mut shredder = shredder_pool.take().unwrap();
 //!     use_shredder(&mut (*shredder));
 //!     // shredder is automatically returned to pool when dropped
 //! }
@@ -43,11 +43,17 @@ impl<S: Shredder> ShredderPool<S> {
     /// Takes a shredder from the pool.
     ///
     /// The shredder is automatically returned to the pool when dropped.
-    pub fn take(&self) -> ShredderGuard<S> {
-        ShredderGuard {
-            pool: Arc::clone(&self.shredders),
-            shredder: self.shredders.lock().unwrap().pop(),
-        }
+    ///
+    /// Returns [`None`] iff the pool is empty.
+    pub fn take(&self) -> Option<ShredderGuard<S>> {
+        self.shredders
+            .lock()
+            .unwrap()
+            .pop()
+            .map(|shredder| ShredderGuard {
+                pool: Arc::clone(&self.shredders),
+                shredder: Some(shredder),
+            })
     }
 }
 
@@ -71,21 +77,20 @@ impl<S: Shredder> Deref for ShredderGuard<S> {
     type Target = S;
 
     fn deref(&self) -> &Self::Target {
-        self.shredder.as_ref().unwrap()
+        self.shredder.as_ref().expect("should exist until dropping")
     }
 }
 
 impl<S: Shredder> DerefMut for ShredderGuard<S> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.shredder.as_mut().unwrap()
+        self.shredder.as_mut().expect("should exist until dropping")
     }
 }
 
 impl<S: Shredder> Drop for ShredderGuard<S> {
     fn drop(&mut self) {
-        if let Some(shredder) = self.shredder.take() {
-            self.pool.lock().unwrap().push(shredder);
-        };
+        let shredder = self.shredder.take().expect("should exist until dropping");
+        self.pool.lock().unwrap().push(shredder);
     }
 }
 
@@ -96,21 +101,31 @@ mod tests {
 
     #[test]
     fn take_sequentially() {
-        let shredder_pool = ShredderPool::<RegularShredder>::with_size(1);
+        let shredder_pool = ShredderPool::with_size(1);
+
         for _ in 0..10 {
-            let mut guard = shredder_pool.take();
+            // taking one shredder at a time works
+            let mut guard = shredder_pool.take().unwrap();
+
+            // taking a second shredder should fail
+            assert!(shredder_pool.take().is_none());
+
             let _shredder: &mut RegularShredder = &mut guard;
         }
     }
 
     #[test]
     fn take_concurrently() {
-        let shredder_pool = ShredderPool::<RegularShredder>::with_size(2);
+        let shredder_pool = ShredderPool::with_size(2);
 
-        let mut guard1 = shredder_pool.take();
+        // taking two shredders at a time works
+        let mut guard1 = shredder_pool.take().unwrap();
         let _shredder1: &mut RegularShredder = &mut guard1;
-        let mut guard2 = shredder_pool.take();
+        let mut guard2 = shredder_pool.take().unwrap();
         let _shredder2: &mut RegularShredder = &mut guard2;
+
+        // taking a third shredder should fail
+        assert!(shredder_pool.take().is_none());
 
         drop(guard1);
         drop(guard2);

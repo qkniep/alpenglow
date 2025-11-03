@@ -373,7 +373,7 @@ impl BlockData {
 mod tests {
     use super::*;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, ShredIndex, ShredderPool, TOTAL_SHREDS};
+    use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
 
     fn handle_slice(
@@ -381,12 +381,12 @@ mod tests {
         slice: Slice,
         sk: &SecretKey,
     ) -> (Vec<VotorEvent>, Result<(), AddShredError>) {
-        let shredders = ShredderPool::<RegularShredder>::with_size(1);
+        let mut shredder = RegularShredder::default();
         let pk = sk.to_pk();
-        let shreds = shredders.take().shred(slice, sk).unwrap();
+        let shreds = shredder.shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred.into_shred(), pk, &mut shredders.take()) {
+            match block_data.add_shred(shred.into_shred(), pk, &mut shredder) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
