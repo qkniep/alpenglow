@@ -60,7 +60,7 @@ impl<S: Shredder> ShredderPool<S> {
 impl<S: Shredder + Default> ShredderPool<S> {
     /// Creates a new pool with `size` shredders.
     pub fn with_size(size: usize) -> Self {
-        let shredders = (0..size).map(|_| S::default()).collect::<Vec<_>>();
+        let shredders = (0..size).map(|_| S::default()).collect();
         Self::new(shredders)
     }
 }
