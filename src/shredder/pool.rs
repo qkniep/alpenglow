@@ -16,7 +16,7 @@
 //!
 //! let shredder_pool = ShredderPool::<RegularShredder>::with_size(1);
 //! {
-//!     let mut shredder = shredder_pool.take().unwrap();
+//!     let mut shredder = shredder_pool.checkout().unwrap();
 //!     use_shredder(&mut (*shredder));
 //!     // shredder is automatically returned to pool when dropped
 //! }
@@ -45,7 +45,7 @@ impl<S: Shredder> ShredderPool<S> {
     /// The shredder is automatically returned to the pool when dropped.
     ///
     /// Returns [`None`] iff the pool is empty.
-    pub fn take(&self) -> Option<ShredderGuard<S>> {
+    pub fn checkout(&self) -> Option<ShredderGuard<S>> {
         self.shredders
             .lock()
             .unwrap()
@@ -100,32 +100,32 @@ mod tests {
     use crate::shredder::RegularShredder;
 
     #[test]
-    fn take_sequentially() {
+    fn checkout_sequentially() {
         let shredder_pool = ShredderPool::with_size(1);
 
         for _ in 0..10 {
             // taking one shredder at a time works
-            let mut guard = shredder_pool.take().unwrap();
+            let mut guard = shredder_pool.checkout().unwrap();
 
             // taking a second shredder should fail
-            assert!(shredder_pool.take().is_none());
+            assert!(shredder_pool.checkout().is_none());
 
             let _shredder: &mut RegularShredder = &mut guard;
         }
     }
 
     #[test]
-    fn take_concurrently() {
+    fn checkout_concurrently() {
         let shredder_pool = ShredderPool::with_size(2);
 
         // taking two shredders at a time works
-        let mut guard1 = shredder_pool.take().unwrap();
+        let mut guard1 = shredder_pool.checkout().unwrap();
         let _shredder1: &mut RegularShredder = &mut guard1;
-        let mut guard2 = shredder_pool.take().unwrap();
+        let mut guard2 = shredder_pool.checkout().unwrap();
         let _shredder2: &mut RegularShredder = &mut guard2;
 
         // taking a third shredder should fail
-        assert!(shredder_pool.take().is_none());
+        assert!(shredder_pool.checkout().is_none());
 
         drop(guard1);
         drop(guard2);

@@ -225,7 +225,7 @@ impl Blockstore for BlockstoreImpl {
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let mut shredder = self
             .shredders
-            .take()
+            .checkout()
             .expect("should have a shredder because of exclusive access");
         match self.slot_data_mut(slot).add_shred_from_disseminator(
             shred,
@@ -259,7 +259,7 @@ impl Blockstore for BlockstoreImpl {
         let leader_pk = self.epoch_info.leader(slot).pubkey;
         let mut shredder = self
             .shredders
-            .take()
+            .checkout()
             .expect("should have a shredder because of exclusive access");
         match self.slot_data_mut(slot).add_shred_from_repair(
             hash,
