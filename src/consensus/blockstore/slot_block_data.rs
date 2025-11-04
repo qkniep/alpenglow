@@ -76,6 +76,7 @@ impl SlotBlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
@@ -83,7 +84,7 @@ impl SlotBlockData {
             return Err(AddShredError::InvalidShred);
         }
         self.disseminated
-            .add_shred(shred, leader_pk)
+            .add_shred(shred, leader_pk, shredder)
             .inspect_err(|err| match err {
                 AddShredError::Equivocation | AddShredError::InvalidShred => {
                     self.leader_misbehaved = true;
@@ -100,6 +101,7 @@ impl SlotBlockData {
         hash: BlockHash,
         shred: Shred,
         leader_pk: PublicKey,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
@@ -107,7 +109,7 @@ impl SlotBlockData {
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
         block_data
-            .add_shred(shred, leader_pk)
+            .add_shred(shred, leader_pk, shredder)
             .inspect_err(|err| match err {
                 AddShredError::Equivocation | AddShredError::InvalidShred => {
                     self.leader_misbehaved = true;
@@ -174,17 +176,19 @@ impl BlockData {
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
         let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
         let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
-        self.add_validated_shred(validated_shred)
+        self.add_validated_shred(validated_shred, shredder)
     }
 
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
+        shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
@@ -228,7 +232,7 @@ impl BlockData {
             return Ok(Some(VotorEvent::FirstShred(self.slot)));
         }
 
-        match self.try_reconstruct_slice(slice_index) {
+        match self.try_reconstruct_slice(slice_index, shredder) {
             ReconstructSliceResult::NoAction => Ok(None),
             ReconstructSliceResult::Error => Err(AddShredError::InvalidShred),
             ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
@@ -245,7 +249,11 @@ impl BlockData {
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
     /// See [`ReconstructSliceResult`] for more info on what the function returns.
-    fn try_reconstruct_slice(&mut self, index: SliceIndex) -> ReconstructSliceResult {
+    fn try_reconstruct_slice(
+        &mut self,
+        index: SliceIndex,
+        shredder: &mut RegularShredder,
+    ) -> ReconstructSliceResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
             return ReconstructSliceResult::NoAction;
@@ -258,16 +266,14 @@ impl BlockData {
 
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (reconstructed_slice, reconstructed_shreds) =
-            // PERF: new shredder all the time!
-            match RegularShredder::default().deshred(slice_shreds) {
-                Ok(output) => output,
-                Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
-                rest => {
-                    warn!("deshreding failed with {rest:?}");
-                    return ReconstructSliceResult::Error;
-                }
-            };
+        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
+            Ok(output) => output,
+            Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
+            rest => {
+                warn!("deshreding failed with {rest:?}");
+                return ReconstructSliceResult::Error;
+            }
+        };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
             warn!(
                 "reconstructed slice {} in slot {} expected to contain parent",
@@ -375,11 +381,12 @@ mod tests {
         slice: Slice,
         sk: &SecretKey,
     ) -> (Vec<VotorEvent>, Result<(), AddShredError>) {
+        let mut shredder = RegularShredder::default();
         let pk = sk.to_pk();
-        let shreds = RegularShredder::default().shred(slice, sk).unwrap();
+        let shreds = shredder.shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred.into_shred(), pk) {
+            match block_data.add_shred(shred.into_shred(), pk, &mut shredder) {
                 Ok(Some(event)) => {
                     events.push(event);
                 }
@@ -413,7 +420,10 @@ mod tests {
         let shreds = shredder.shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_shred(shred.into_shred(), pk).unwrap() {
+            if let Some(event) = block_data
+                .add_shred(shred.into_shred(), pk, &mut shredder)
+                .unwrap()
+            {
                 events.push(event);
             }
         }
