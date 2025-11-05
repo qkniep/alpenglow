@@ -43,11 +43,13 @@ smoke_tests () {
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 	slow_tests
 elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
-	fast_tests && doc_tests && sequential_tests
+	fast_tests && doc_tests && sequential_tests && smoke_tests
 elif [ $# -gt 0 ] && [ $1 == "doc" ]; then
 	doc_tests
 elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
 	sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "smoke" ]; then
+	smoke_tests
 elif [ $# -gt 0 ] && [ $1 == "many" ]; then
 	echo "🔁 Running tests for 50 iterations to detect flaky tests..."
 	for i in $(seq 1 50); do
