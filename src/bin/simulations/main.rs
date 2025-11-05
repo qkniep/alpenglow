@@ -47,7 +47,7 @@ use std::sync::{Arc, Mutex};
 
 use ::alpenglow::disseminator::rotor::sampling_strategy::{
     AllSameSampler, DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler,
-    TurbineSampler, UniformSampler,
+    ReuseBatchSampler, ReuseCycleSampler, TurbineSampler, UniformSampler,
 };
 use ::alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use ::alpenglow::network::simulated::ping_data::PingServer;
@@ -186,6 +186,8 @@ fn run_tests_for_stake_distribution(
         .iter()
         .map(|(v, _)| v.clone())
         .collect();
+
+    test_reuse_cycle_sampling(&validators_and_ping_servers, &validators_with_pings)?;
 
     // TODO: indicatif progress bar
 
@@ -540,6 +542,92 @@ fn run_tests<
     if RUN_ROTOR_ROBUSTNESS_TESTS {
         for &(n, k) in &SHRED_COMBINATIONS {
             run_rotor_robustness_test(n, k)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn test_reuse_cycle_sampling(
+    validators_and_ping_servers: &[(ValidatorInfo, &'static PingServer)],
+    validators_with_pings: &[ValidatorInfo],
+) -> Result<()> {
+    let total_stake: Stake = validators_with_pings.iter().map(|v| v.stake).sum();
+
+    let leader_bandwidth = 10_000_000_000; // 10 Gbps
+    let min_bandwidth = 1_000_000_000; // 1 Gbps
+    let bandwidths = validators_with_pings
+        .iter()
+        .map(|v| {
+            ((v.stake as f64 / total_stake as f64
+                * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
+                .round() as u64)
+                .max(min_bandwidth)
+        })
+        .collect();
+    let environment =
+        SimulationEnvironment::from_validators_with_ping_data(validators_and_ping_servers)
+            .with_bandwidths(leader_bandwidth, bandwidths);
+
+    let leader_sampler = StakeWeightedSampler::new(validators_with_pings.to_vec());
+    let rotor_sampler = StakeWeightedSampler::new(validators_with_pings.to_vec());
+
+    info!("ReuseCycleSampler");
+    for slices in [1, 2, 4, 8, 16, 32, 64, 128] {
+        for reuse_relays in [1, 2, 4, 8, 16, 32, 64, 128] {
+            if reuse_relays > slices {
+                continue;
+            }
+            let rotor_sampler = ReuseCycleSampler::new(
+                rotor_sampler.clone(),
+                validators_with_pings.to_vec(),
+                slices / reuse_relays,
+                reuse_relays,
+            );
+
+            let params = RotorParams::new(32, 64, slices);
+            let builder = RotorInstanceBuilder::new(leader_sampler.clone(), rotor_sampler, params);
+            let engine =
+                SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
+            engine.run_many_parallel(10_000);
+            let median_block_time = engine
+                .stats()
+                .get(&crate::rotor::LatencyEvent::Block)
+                .unwrap()
+                .get_avg_percentile_latency(50);
+            info!(
+                "rotor latency sim (slices: {slices}, reuse: {reuse_relays}): {:.1} ms",
+                median_block_time
+            );
+        }
+    }
+
+    info!("ReuseBatchSampler");
+    for slices in [1, 2, 4, 8, 16, 32, 64, 128] {
+        for reuse_relays in [1, 2, 4, 8, 16, 32, 64, 128] {
+            if reuse_relays > slices {
+                continue;
+            }
+            let rotor_sampler = ReuseBatchSampler::new(
+                rotor_sampler.clone(),
+                validators_with_pings.to_vec(),
+                reuse_relays,
+            );
+
+            let params = RotorParams::new(32, 64, slices);
+            let builder = RotorInstanceBuilder::new(leader_sampler.clone(), rotor_sampler, params);
+            let engine =
+                SimulationEngine::<RotorLatencySimulation<_, _>>::new(builder, environment.clone());
+            engine.run_many_parallel(10_000);
+            let median_block_time = engine
+                .stats()
+                .get(&crate::rotor::LatencyEvent::Block)
+                .unwrap()
+                .get_avg_percentile_latency(50);
+            info!(
+                "rotor latency sim (slices: {slices}, reuse: {reuse_relays}): {:.1} ms",
+                median_block_time
+            );
         }
     }
 

@@ -21,7 +21,8 @@
 //! - [`FaitAccompli1Sampler`] uses the FA1-F committee sampling strategy.
 //! - [`FaitAccompli2Sampler`] uses the FA2 committee sampling strategy.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Mutex, RwLock};
 
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
@@ -68,6 +69,133 @@ pub trait SamplingStrategy {
     /// Returns a printable name of the sampling strategy.
     fn name() -> &'static str {
         std::any::type_name::<Self>()
+    }
+}
+
+/// A sampler that reuses sampled validators after `cycle_length` iterations.
+///
+/// That is, for `cycle_length -> inf` this sampler resuses the same single set validators.
+/// For `cycle_length = 1` this sampler behaves as the underlying sampler.
+///
+/// For simplicity, cycles are kept separate for different `k`.
+/// So, calling `sample_multiple(2)` and `sample_multiple(4)` uses different cycles.
+/// Calling `sample()` or `sample_info()` uses the same cycle as `sample_multiple(1)`.
+// TODO: add tests for `ReuseCycleSampler`
+pub struct ReuseCycleSampler<S: SamplingStrategy> {
+    sampler: S,
+    validators: Vec<ValidatorInfo>,
+    num_cycles: usize,
+    cycle_length: usize,
+    cycle_cache: RwLock<HashMap<usize, Vec<Vec<ValidatorId>>>>,
+    cycle_counters: RwLock<HashMap<usize, (usize, usize)>>,
+}
+
+impl<S: SamplingStrategy> ReuseCycleSampler<S> {
+    pub fn new(
+        sampler: S,
+        validators: Vec<ValidatorInfo>,
+        num_cycles: usize,
+        cycle_length: usize,
+    ) -> Self {
+        Self {
+            sampler,
+            validators,
+            num_cycles,
+            cycle_length,
+            cycle_cache: RwLock::new(HashMap::new()),
+            cycle_counters: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn next_in_cycle<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        let mut cache = self.cycle_cache.write().unwrap();
+        let cycle = cache.entry(k).or_default();
+
+        let mut counters = self.cycle_counters.write().unwrap();
+        let (iteration, cycle_index) = counters.entry(k).or_insert((0, 0));
+        if *cycle_index >= cycle.len() {
+            cycle.push(self.sampler.sample_multiple(k, rng));
+        }
+        let samples = cycle[*cycle_index].clone();
+
+        *cycle_index = (*cycle_index + 1) % self.num_cycles;
+        if *cycle_index == 0 {
+            *iteration += 1;
+        }
+        if *iteration >= self.cycle_length {
+            cache.remove(&k);
+            counters.remove(&k);
+        }
+
+        samples
+    }
+}
+
+impl<S: SamplingStrategy> SamplingStrategy for ReuseCycleSampler<S> {
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        self.next_in_cycle(1, rng)[0]
+    }
+
+    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+        let val_id = self.next_in_cycle(1, rng)[0];
+        &self.validators[val_id as usize]
+    }
+
+    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        self.next_in_cycle(k, rng)
+    }
+}
+
+/// A sampler that reuses sampled validators `batch_length` times in a row.
+///
+/// That is, for `batch_length -> sinf` this sampler resuses the same single set validators.
+/// For `batch_length = 1` this sampler behaves as the underlying sampler.
+// TODO: add tests for `ReuseBatchSampler`
+pub struct ReuseBatchSampler<S: SamplingStrategy> {
+    sampler: S,
+    validators: Vec<ValidatorInfo>,
+    batch_length: usize,
+    batch_cache: RwLock<HashMap<usize, Vec<ValidatorId>>>,
+    batch_counters: RwLock<HashMap<usize, usize>>,
+}
+
+impl<S: SamplingStrategy> ReuseBatchSampler<S> {
+    pub fn new(sampler: S, validators: Vec<ValidatorInfo>, batch_length: usize) -> Self {
+        Self {
+            sampler,
+            validators,
+            batch_length,
+            batch_cache: RwLock::new(HashMap::new()),
+            batch_counters: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn next_in_batch<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        let mut cache = self.batch_cache.write().unwrap();
+        let batch = cache.entry(k).or_default();
+
+        let mut counters = self.batch_counters.write().unwrap();
+        let counter = counters.entry(k).or_insert(0);
+        if *counter == 0 {
+            *batch = self.sampler.sample_multiple(k, rng);
+        }
+        *counter = (*counter + 1) % self.batch_length;
+        batch.clone()
+    }
+}
+
+impl<S: SamplingStrategy> SamplingStrategy for ReuseBatchSampler<S> {
+    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+        self.next_in_batch(1, rng)[0]
+    }
+
+    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+        let val_id = self.next_in_batch(1, rng)[0];
+        &self.validators[val_id as usize]
+    }
+
+    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        self.next_in_batch(k, rng)
     }
 }
 
