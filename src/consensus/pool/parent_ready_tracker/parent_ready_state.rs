@@ -1,15 +1,21 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implements the [`ParentReadyState`] data structure.
+//!
+//! It holds the necessary state for a given slot to track the parent-ready condition.
+//! This is used by the [`super::ParentReadyTracker`].
+
 use either::Either;
 use log::warn;
 use smallvec::{SmallVec, smallvec};
 use tokio::sync::oneshot;
 
 use crate::BlockId;
+use crate::crypto::Hash;
 use crate::crypto::merkle::BlockHash;
 
-/// Tracks the status of whether an individual slot has a parent ready.
+/// Status of whether an individual slot has a parent ready.
 enum IsReady {
     /// Do not have a parent ready for this slot yet.
     ///
@@ -32,14 +38,12 @@ impl Default for IsReady {
 #[derive(Default)]
 pub(super) struct ParentReadyState {
     /// Whether this slot is skip-certified.
-    // XXX: consider making this field private
-    pub(super) skip: bool,
+    skip: bool,
     /// Blocks that are notarized-fallback for this slot, if any.
     ///
     /// We can potentially have multiple notar fallbacks per slot,
     /// but we optimize for the common case where there will only be one.
-    // XXX: consider making this field private
-    pub(super) notar_fallbacks: SmallVec<[BlockHash; 1]>,
+    notar_fallbacks: SmallVec<[BlockHash; 1]>,
     /// Current status of the parent-ready condition for this slot.
     // NOTE: Do not make this field more visible.
     // Updating it must sometimes produce additional actions.
@@ -47,6 +51,49 @@ pub(super) struct ParentReadyState {
 }
 
 impl ParentReadyState {
+    /// Creates a new [`ParentReadyState`] for the genesis block.
+    pub(super) fn genesis() -> Self {
+        Self {
+            skip: false,
+            notar_fallbacks: SmallVec::from([Hash::default().into()]),
+            is_ready: IsReady::default(),
+        }
+    }
+
+    /// Marks this slot as skip-certified.
+    ///
+    /// Returns `true` iff this slot was not already skip-certified.
+    pub(super) fn mark_skip(&mut self) -> bool {
+        if self.skip {
+            false
+        } else {
+            self.skip = true;
+            true
+        }
+    }
+
+    /// Returns `true` iff this slot is skip-certified.
+    pub(super) fn is_skip_certified(&self) -> bool {
+        self.skip
+    }
+
+    /// Marks the given block as notarized-fallback.
+    ///
+    /// Returns `true` iff this block was not already marked as notarized-fallback.
+    pub(super) fn mark_notar_fallback(&mut self, hash: BlockHash) -> bool {
+        if self.notar_fallbacks.contains(&hash) {
+            false
+        } else {
+            self.notar_fallbacks.push(hash);
+            true
+        }
+    }
+
+    /// Returns an iterator over the notarized-fallback block hashes for this slot.
+    pub(super) fn notar_fallback_blocks(&self) -> impl Iterator<Item = BlockHash> {
+        self.notar_fallbacks.iter().cloned()
+    }
+
     /// Adds a [`BlockId`] to the parents ready list.
     ///
     /// Additionally, will inform any waiters.
@@ -71,7 +118,7 @@ impl ParentReadyState {
             }
             IsReady::Ready(ready_ids) => {
                 assert!(!ready_ids.contains(&id));
-                ready_ids.push(id)
+                ready_ids.push(id);
             }
         }
     }

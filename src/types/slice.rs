@@ -4,14 +4,12 @@
 //! Defines the [`Slice`] and related data structures.
 
 use rand::{RngCore, rng};
-use serde::{Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
-use crate::crypto::Hash;
 use crate::crypto::merkle::{BlockHash, SliceRoot};
-use crate::network::BINCODE_CONFIG;
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
-use crate::{Slot, highest_non_zero_byte};
+use crate::{BlockId, Slot};
 
 /// A slice is the unit of data between block and shred.
 ///
@@ -85,12 +83,21 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
+
+    /// Extracts the [`SliceHeader`] from a [`Slice`].
+    pub(crate) fn to_header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
 }
 
 /// Struct to hold all the header payload of a [`Slice`].
 ///
-/// This is included in each [`Shred`] after shredding.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// This information is included in each shred after shredding.
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,
@@ -102,73 +109,70 @@ pub(crate) struct SliceHeader {
 
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
-/// This is what actually gets "shredded" into different [`Shred`]s.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// This is what actually gets "shredded" into different shreds.
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
+    /// Same as [`Slice::parent`].
     pub(crate) parent: Option<(Slot, BlockHash)>,
+    /// Same as [`Slice::data`].
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
+    /// Constructs a new [`SlicePayload`] from its component parts.
     pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
         Self { parent, data }
+    }
+
+    /// Serializes the payload into bytes.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        wincode::serialize(self).unwrap()
     }
 }
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        bincode::serde::encode_to_vec(payload, BINCODE_CONFIG).unwrap()
+        wincode::serialize(&payload).unwrap()
     }
 }
 
-impl From<Vec<u8>> for SlicePayload {
-    fn from(payload: Vec<u8>) -> Self {
+impl From<&[u8]> for SlicePayload {
+    fn from(payload: &[u8]) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
             "payload.len()={} {MAX_DATA_PER_SLICE}",
             payload.len()
         );
-        let (ret, bytes): (SlicePayload, usize) =
-            bincode::serde::decode_from_slice(&payload, BINCODE_CONFIG).unwrap();
-        assert_eq!(payload.len(), bytes);
-        ret
+        wincode::deserialize(payload).unwrap()
     }
 }
 
-/// Creates a [`SlicePayload`] with a random payload of desired size.
+/// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
+// XXX: This is only used in test and benchmarking code.
+// Ensure it is only compiled when we are testing or benchmarking.
 pub(crate) fn create_slice_payload_with_invalid_txs(
-    parent: Option<(Slot, Hash)>,
+    parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let mut payload = vec![0; desired_size];
+    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
+    // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
+    let data_len_bytes = 8;
 
-    let used = bincode::serde::encode_into_slice(parent, &mut payload, BINCODE_CONFIG).unwrap();
-    let left = desired_size.checked_sub(used).unwrap();
-
-    // Super hacky.  Figure out how big the data should be so that its bincode encoded size is `left`.  If the size of the vec fits in a single byte, then it takes one byte to bincode encode it.  Otherwise, it takes number of non-zero bytes minus 1.
-    let highest_byte = highest_non_zero_byte(desired_size);
-    let size = if highest_byte == 1 {
-        left.checked_sub(highest_byte).unwrap()
-    } else {
-        left.checked_sub(highest_byte)
-            .unwrap()
-            .checked_sub(1)
-            .unwrap()
-    };
+    let size = desired_size
+        .checked_sub(parent_bytes + data_len_bytes)
+        .unwrap();
     let mut data = vec![0; size];
     let mut rng = rng();
     rng.fill_bytes(&mut data);
-    bincode::serde::encode_into_slice(data, &mut payload[used..], BINCODE_CONFIG).unwrap();
 
-    payload.into()
+    SlicePayload { parent, data }
 }
 
-/// Creates a [`Slice`] with a random payload of desired size.
+/// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.

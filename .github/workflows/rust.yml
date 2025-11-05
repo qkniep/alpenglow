@@ -13,7 +13,7 @@ env:
 jobs:
   main:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v5
@@ -93,3 +93,13 @@ jobs:
 
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build docs
+        run: cargo doc --no-deps --document-private-items

@@ -33,13 +33,13 @@ use color_eyre::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
-use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
-pub use self::cert::Cert;
+pub use self::cert::{Cert, NotarCert};
 pub use self::epoch_info::EpochInfo;
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
 pub use self::vote::Vote;
@@ -52,7 +52,7 @@ use crate::shredder::Shred;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
-const DELTA: Duration = Duration::from_millis(250);
+pub const DELTA: Duration = Duration::from_millis(250);
 /// Time the leader has for producing and sending the block.
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the first slice.
@@ -63,7 +63,7 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ConsensusMessage {
     Vote(Vote),
     Cert(Cert),
@@ -116,8 +116,8 @@ where
 {
     /// Creates a new Alpenglow consensus node.
     ///
-    /// `repair_network` - Network from which the node sends [`RepairRequest`] messages and receives [`RepairResponse`] messages.
-    /// `repair_request_network` - Network where the node receives [`RepairRequest`] messages and sends [`RepairResponse`] messages.
+    /// `repair_network` - [`RepairNetwork`] for sending requests and receiving responses.
+    /// `repair_request_network` - [`RepairRequestNetwork`] for answering incoming requests.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new<RN, RR>(
@@ -199,8 +199,8 @@ where
         Self {
             epoch_info,
             blockstore,
-            block_producer,
             pool,
+            block_producer,
             all2all,
             disseminator,
             cancel_token,

@@ -25,7 +25,6 @@ use tokio::sync::oneshot;
 
 use self::parent_ready_state::ParentReadyState;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
-use crate::crypto::Hash;
 use crate::{BlockId, Slot};
 
 /// Keeps track of the parent-ready condition across slots.
@@ -39,10 +38,9 @@ impl ParentReadyTracker {
     pub fn mark_notar_fallback(&mut self, id: &BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
         let (slot, hash) = id.clone();
         let state = self.slot_state(slot);
-        if state.notar_fallbacks.contains(&hash) {
+        if !state.mark_notar_fallback(hash) {
             return SmallVec::new();
         }
-        state.notar_fallbacks.push(hash);
 
         // add this block as valid parent to any skip-connected future windows
         let mut newly_certified = SmallVec::new();
@@ -52,7 +50,7 @@ impl ParentReadyTracker {
                 state.add_to_ready(id.clone());
                 newly_certified.push((slot, id.clone()));
             }
-            if !state.skip {
+            if !state.is_skip_certified() {
                 break;
             }
         }
@@ -64,10 +62,9 @@ impl ParentReadyTracker {
     /// Returns a list of any newly connected parents.
     pub fn mark_skipped(&mut self, marked_slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
         let state = self.slot_state(marked_slot);
-        if state.skip {
+        if !state.mark_skip() {
             return SmallVec::new();
         }
-        state.skip = true;
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
@@ -77,12 +74,12 @@ impl ParentReadyTracker {
             let state = self.slot_state(slot);
             // add any notarized-fallback blocks from this slot
             if slot != marked_slot {
-                for nf in state.notar_fallbacks.clone() {
+                for nf in state.notar_fallback_blocks() {
                     potential_parents.push((slot, nf));
                 }
             }
             // stop as soon as we see any non-skipped slot
-            if !state.skip {
+            if !state.is_skip_certified() {
                 break;
             }
             // if the slot is skipped, add its parents as well
@@ -101,7 +98,7 @@ impl ParentReadyTracker {
                 }
             }
             // stop as soon as we see any non-skipped slot
-            if !state.skip {
+            if !state.is_skip_certified() {
                 break;
             }
         }
@@ -168,8 +165,7 @@ impl Default for ParentReadyTracker {
     /// Initially, only the genesis block is considered notarized-fallback.
     fn default() -> Self {
         let mut map = HashMap::new();
-        let mut genesis_parent_state = ParentReadyState::default();
-        genesis_parent_state.notar_fallbacks = SmallVec::from([Hash::default().into()]);
+        let genesis_parent_state = ParentReadyState::genesis();
         map.insert(Slot::genesis(), genesis_parent_state);
         Self(map)
     }
@@ -178,6 +174,7 @@ impl Default for ParentReadyTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::Hash;
     use crate::types::SLOTS_PER_WINDOW;
 
     #[test]

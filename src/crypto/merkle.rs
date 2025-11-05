@@ -19,8 +19,8 @@ use std::marker::PhantomData;
 
 use derive_more::{From, Into};
 use hex_literal::hex;
-use serde::{Deserialize, Serialize};
 use static_assertions::const_assert;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::Hash;
 use super::hash::hash_all;
@@ -42,23 +42,15 @@ const RIGHT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE RIGHT-NODE";
 
 /// Pre-calculated empty roots for up to `2 ^ MAX_MERKLE_TREE_HEIGHT` leaves.
 ///
-/// For each given `height` these are calculated as `empty_root_fast(height)` below,
-/// which is much faster than but equivalent to the straightforward `empty_root(height)`.
-/// ```rust
+/// These are calculated by running `cargo test -- empty_roots --no-capture`,
+/// which is much faster than but equivalent to this straightforward snippet:
+/// ```no_run
 /// use alpenglow::crypto::hash::Hash;
-/// use alpenglow::crypto::merkle::MerkleTree;
+/// use alpenglow::crypto::merkle::{MAX_MERKLE_TREE_HEIGHT, PlainMerkleTree};
 ///
-/// fn empty_root_fast(height: usize) -> Hash {
-///     let mut node = hash_leaf(&[]);
-///     for _ in 0..height {
-///         node = hash_pair(node, node);
-///     }
-///     println!("{}", hex::encode(node));
-/// }
-///
-/// fn empty_root(height: usize) -> Hash {
-///     let data = vec![[]; 1 << height];
-///     let tree = MerkleTree::new(&data);
+/// for height in 0..MAX_MERKLE_TREE_HEIGHT {
+///     let data = vec![vec![]; 1 << height];
+///     let tree = PlainMerkleTree::new(&data);
 ///     println!("{}", hex::encode(tree.get_root()));
 /// }
 /// ```
@@ -120,7 +112,7 @@ impl MerkleProof for Vec<Hash> {}
 
 #[repr(transparent)]
 #[derive(
-    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
 )]
 pub struct SliceRoot(Hash);
 impl MerkleRoot for SliceRoot {
@@ -136,7 +128,7 @@ impl AsRef<[u8]> for SliceRoot {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Debug, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct SliceProof(Vec<Hash>);
 impl MerkleProof for SliceProof {}
 
@@ -148,7 +140,7 @@ impl AsRef<[Hash]> for SliceProof {
 
 #[repr(transparent)]
 #[derive(
-    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, Serialize, Deserialize,
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
 )]
 pub struct DoubleMerkleRoot(Hash);
 impl MerkleRoot for DoubleMerkleRoot {
@@ -158,7 +150,7 @@ impl MerkleRoot for DoubleMerkleRoot {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Debug, PartialEq, Eq, From, Into, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct DoubleMerkleProof(Vec<Hash>);
 impl MerkleProof for DoubleMerkleProof {}
 pub type BlockHash = DoubleMerkleRoot;
@@ -238,10 +230,9 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
                     let inner_node = Self::hash_pair(nodes[i], EMPTY_ROOTS[h]);
                     nodes.push(inner_node);
                     break;
-                } else {
-                    let inner_node = Self::hash_pair(nodes[i], nodes[i + 1]);
-                    nodes.push(inner_node);
                 }
+                let inner_node = Self::hash_pair(nodes[i], nodes[i + 1]);
+                nodes.push(inner_node);
             }
 
             len = len.div_ceil(2);
@@ -502,6 +493,18 @@ mod tests {
                     ));
                 }
             }
+        }
+    }
+
+    // NOTE: This is used for calculating `EMPTY_ROOTS`.
+    #[test]
+    fn empty_roots() {
+        for height in 0..MAX_MERKLE_TREE_HEIGHT {
+            let mut node = PlainMerkleTree::hash_leaf(&vec![]);
+            for _ in 0..height {
+                node = PlainMerkleTree::hash_pair(node, node);
+            }
+            println!("{}", hex::encode(node));
         }
     }
 }

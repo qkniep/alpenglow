@@ -19,12 +19,10 @@ use tokio_util::sync::CancellationToken;
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::merkle::{BlockHash, MerkleRoot};
 use crate::crypto::{Hash, signature};
-use crate::network::{BINCODE_CONFIG, Network, TransactionNetwork};
+use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
-use crate::{
-    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
-};
+use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
 /// Produces blocks from transactions and dissminates them.
 ///
@@ -34,7 +32,7 @@ use crate::{
 /// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`Votor`].
+    /// This is not the same as the voting secret key, which is held by [`super::Votor`].
     secret_key: signature::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<EpochInfo>,
@@ -52,10 +50,10 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
 
-    /// Should be set to `DELTA_BLOCK` in production.
+    /// Should be set to [`super::DELTA_BLOCK`] in production.
     /// Stored as a field to aid in testing.
     delta_block: Duration,
-    /// Should be set to `DELTA_FIRST_SLICE` in production.
+    /// Should be set to [`super::DELTA_FIRST_SLICE`] in production.
     /// Stored as a field to aid in testing.
     delta_first_slice: Duration,
 }
@@ -227,7 +225,9 @@ where
                         let start = Instant::now();
                         let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash != *parent_hash {
+                        if new_hash == *parent_hash {
+                            debug!("parent is ready, continuing with same parent");
+                        } else {
                             assert_ne!(new_slot, *parent_slot);
                             debug!(
                                 "changed parent from {} in slot {} to {} in slot {}",
@@ -237,14 +237,11 @@ where
                                 new_slot
                             );
                             payload.parent = Some((new_slot, new_hash));
-                        } else {
-                            debug!("parent is ready, continuing with same parent");
                         }
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
-                        let elapsed = Instant::now() - start;
-                        let duration = self.delta_block.saturating_sub(elapsed);
+                        let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
                   }
                 }
@@ -326,12 +323,11 @@ where
                 is_last,
             };
 
-            match self.shred_and_disseminate(header, payload).await? {
-                Some(block_hash) => return Ok((slot, block_hash)),
-                None => {
-                    assert!(!new_duration_left.is_zero());
-                    duration_left = new_duration_left;
-                }
+            if let Some(block_hash) = self.shred_and_disseminate(header, payload).await? {
+                return Ok((slot, block_hash));
+            } else {
+                assert!(!new_duration_left.is_zero());
+                duration_left = new_duration_left;
             }
         }
         unreachable!()
@@ -350,7 +346,9 @@ where
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload, None);
         let mut maybe_block_hash = None;
-        let shreds = RegularShredder::shred(slice, &self.secret_key)
+        // PERF: new shredder every time!
+        let shreds = RegularShredder::default()
+            .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
             self.disseminator.send(&s).await?;
@@ -392,24 +390,20 @@ where
     T: TransactionNetwork,
 {
     let start_time = Instant::now();
-    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = bincode::serde::encode_to_vec(parent.clone(), BINCODE_CONFIG)
-        .unwrap()
-        .len();
+    // each slice should be able hold at least 1 transaction
+    // need 8 bytes to encode number of txs + 8 bytes to encode the length of the tx payload
+    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // HACK: As long as the size of the txs vec fits in a single byte,
-    // bincode encoding seems to take a single byte so account for that here.
-    assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
+    // reserve space for parent and 8 bytes to encode number of txs
+    let parent_encoded_len = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len)
-        .unwrap()
-        .checked_sub(1)
+        .checked_sub(parent_encoded_len + 8)
         .unwrap();
     let mut txs = Vec::new();
 
     let ret = loop {
-        let sleep_duration = duration_left.saturating_sub(Instant::now() - start_time);
+        let sleep_duration = duration_left.saturating_sub(start_time.elapsed());
         let res = tokio::select! {
             () = tokio::time::sleep(sleep_duration) => {
                 break Duration::ZERO;
@@ -419,18 +413,19 @@ where
             }
         };
         let tx = res.expect("receiving tx");
-        let tx = bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG)
-            .expect("serialization should not panic");
+        let tx = wincode::serialize(&tx).expect("serialization should not panic");
         slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
         txs.push(tx);
-        if slice_capacity_left < MAX_TRANSACTION_SIZE {
+
+        // if there is not enough space for another tx, break
+        // this needs to account for the 8 bytes to encode the length of the tx payload
+        if slice_capacity_left < MAX_TRANSACTION_SIZE + 8 {
             break duration_left.saturating_sub(start_time.elapsed());
         }
     };
 
     // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
-    let txs = bincode::serde::encode_to_vec(&txs, BINCODE_CONFIG)
-        .expect("serialization should not panic");
+    let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     (payload, ret)
 }
@@ -537,16 +532,16 @@ mod tests {
             produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty Vec takes 1 byte
-        assert_eq!(payload.data.len(), 1);
+        // bin encoding an empty Vec takes 8 bytes
+        assert_eq!(payload.data.len(), 8);
 
         let parent = Some((Slot::genesis(), Hash::default().into()));
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty Vec takes 1 byte
-        assert_eq!(payload.data.len(), 1);
+        // bin encoding an empty Vec takes 8 bytes
+        assert_eq!(payload.data.len(), 8);
     }
 
     #[tokio::test]

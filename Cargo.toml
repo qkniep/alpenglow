@@ -2,6 +2,7 @@
 name = "alpenglow"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.90"
 authors = ["Quentin Kniep <quentin@anza.xyz>"]
 description = "Reference research implementation of the Alpenglow consensus protocol."
 license = "Apache-2.0"
@@ -14,10 +15,8 @@ publish = false
 [dependencies]
 aes = { version = "0.9.0-rc.1", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
-bincode = { version = "2", features = ["serde"] }
 bitvec = { version = "1", features = ["serde"] }
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
-bytes = { version = "1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3"
@@ -53,6 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
+wincode = { git = "https://github.com/anza-xyz/wincode", rev = "3e6e6850059fca823db983dc74f60d22ab2839a7", features = ["derive"] }
 
 [dev-dependencies]
 divan = "0.1"
@@ -63,6 +63,12 @@ cast_possible_truncation = "allow"
 [profile.release]
 debug = true
 overflow-checks = true
+codegen-units = 1
+lto = true
+
+[profile.bench]
+codegen-units = 1
+lto = true
 
 [[bench]]
 name = "crypto"

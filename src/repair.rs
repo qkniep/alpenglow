@@ -15,14 +15,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, trace, warn};
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{Blockstore, EpochInfo, Pool};
+use crate::consensus::{Blockstore, DELTA, EpochInfo, Pool};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, MerkleRoot, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{BINCODE_CONFIG, Network, RepairNetwork, RepairRequestNetwork};
+use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
 use crate::shredder::{Shred, ShredIndex};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
@@ -30,11 +30,10 @@ use crate::{BlockId, ValidatorId};
 /// Maximum time to wait for a response to a repair request.
 ///
 /// After a request times out we retry it from another node.
-// TODO: make this tighter (can probably be close to `2 * DELTA`)
-const REPAIR_TIMEOUT: Duration = Duration::from_secs(2);
+const REPAIR_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
 
 /// Different types of [`RepairRequest`] messages.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum RepairRequestType {
     /// Request for the total number of slices in block with a given hash.
     LastSliceRoot(BlockId),
@@ -45,19 +44,19 @@ pub enum RepairRequestType {
 }
 
 impl RepairRequestType {
-    /// Digests the [`RepairRequestType`] into a [`Hash`].
+    /// Digests the [`RepairRequestType`] into a [`crate::crypto::Hash`].
     fn hash(&self) -> Hash {
         let repair = RepairRequest {
             req_type: self.clone(),
             sender: 0,
         };
-        let msg_bytes = bincode::serde::encode_to_vec(repair, BINCODE_CONFIG).unwrap();
+        let msg_bytes = wincode::serialize(&repair).unwrap();
         hash(&msg_bytes)
     }
 }
 
 /// Request messages for the repair sub-protocol.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequest {
     /// The validator that sent the message.
     sender: ValidatorId,
@@ -70,7 +69,7 @@ pub struct RepairRequest {
 /// Each response type corresponds to a specific request message type.
 /// Each response contains the request message that it is a response to.
 /// If well-formed, it thus contains the corresponding variant of [`RepairRequest`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum RepairResponse {
     /// Response with the last slice's Merkle root hash, plus corresponding proof.
     LastSliceRoot(RepairRequestType, SliceIndex, SliceRoot, DoubleMerkleProof),
@@ -247,7 +246,7 @@ where
                     self.repair_block(block_id).await;
                 }
                 // handle next request timeout
-                _ = tokio::time::sleep(sleep_duration) => {
+                () = tokio::time::sleep(sleep_duration) => {
                     let Some((_, hash)) = self.request_timeouts.pop() else {
                         continue;
                     };

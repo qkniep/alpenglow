@@ -28,18 +28,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use tokio::sync::{Mutex, RwLock, mpsc};
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
 use super::Network;
 use crate::ValidatorId;
-use crate::network::{BINCODE_CONFIG, MTU_BYTES};
+use crate::network::MTU_BYTES;
 
 /// A simulated network interface for local testing and simulations.
-// TODO: add examples
 pub struct SimulatedNetwork<S, R> {
     /// ID of the validator this network interface belongs to.
     id: ValidatorId,
@@ -63,7 +61,7 @@ impl<S, R> SimulatedNetwork<S, R> {
 
     async fn send_serialized(&self, bytes: Vec<u8>, addr: SocketAddr) -> std::io::Result<()> {
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let validator_id = addr.port() as ValidatorId;
+        let validator_id = addr.port().into();
         self.send_byte_vec(bytes, validator_id).await?;
         Ok(())
     }
@@ -72,8 +70,8 @@ impl<S, R> SimulatedNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
-    S: Serialize + Send + Sync,
-    R: DeserializeOwned + Send + Sync,
+    S: SchemaWrite<Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -83,7 +81,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = wincode::serialize(msg).unwrap();
         let tasks = addrs.map(|addr| {
             let bytes = bytes.clone();
             async move { self.send_serialized(bytes, addr).await }
@@ -95,7 +93,7 @@ where
     }
 
     async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).unwrap();
+        let bytes = wincode::serialize(msg).unwrap();
         self.send_serialized(bytes, addr).await
     }
 
@@ -104,20 +102,13 @@ where
             let Some(buf) = self.receiver.lock().await.recv().await else {
                 return Err(std::io::Error::other("channel closed"));
             };
-            let (msg, bytes_used) = match bincode::serde::decode_from_slice(&buf, BINCODE_CONFIG) {
+            let msg = match wincode::deserialize(&buf) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("deserializing failed with {err:?}");
                     continue;
                 }
             };
-            if bytes_used != buf.len() {
-                warn!(
-                    "deserialization used {bytes_used} bytes; expected to use {}",
-                    buf.len()
-                );
-                continue;
-            }
             return Ok(msg);
         }
     }
@@ -171,6 +162,7 @@ mod tests {
         let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
+        let mut shredder = RegularShredder::default();
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -183,7 +175,7 @@ mod tests {
                 is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
-            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
@@ -228,6 +220,7 @@ mod tests {
         let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
 
         // create a full block (1024 slices)
+        let mut shredder = RegularShredder::default();
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -240,7 +233,7 @@ mod tests {
                 is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
-            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 
@@ -285,6 +278,7 @@ mod tests {
         let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(1).await;
 
         // create a full block (1024 slices)
+        let mut shredder = RegularShredder::default();
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
@@ -297,7 +291,7 @@ mod tests {
                 is_last: slice_index == final_slice_index,
             };
             let slice = Slice::from_parts(header, payload, None);
-            let slice_shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
 

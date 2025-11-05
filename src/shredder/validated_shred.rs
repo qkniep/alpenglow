@@ -1,3 +1,8 @@
+// Copyright (c) Anza Technology, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Defines the [`ValidatedShred`] type.
+
 use std::collections::btree_map::Entry;
 use std::ops::{Deref, DerefMut};
 
@@ -6,7 +11,7 @@ use crate::crypto::signature::PublicKey;
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
 
-/// Different errors returned from [`ValidatedShred::new`].
+/// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
 pub enum ShredVerifyError {
     /// The shred contained an invalid Merkle proof.
@@ -20,10 +25,10 @@ pub enum ShredVerifyError {
 
 /// A verified wrapper around a [`Shred`].
 ///
-/// It uses the new type pattern to encode verification in the type system.  
+/// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
-#[derive(Clone, Debug)]
 #[repr(transparent)]
+#[derive(Clone, Debug)]
 pub struct ValidatedShred(Shred);
 
 impl ValidatedShred {
@@ -31,14 +36,17 @@ impl ValidatedShred {
     ///
     /// `cached_merkle_root`: Refers to Merkle root of the slice, if known from earlier shred.
     /// It is used to potentially skip expensive signature verification or detect equivocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShredVerifyError`] if the [`Shred`] does not pass all verification checks.
     pub fn try_new(
         shred: Shred,
         cached_merkle_root: Entry<SliceIndex, SliceRoot>,
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
         if !SliceMerkleTree::check_proof(
-            // FIXME: allocation
-            &shred.payload().data.to_vec(),
+            &shred.payload().data,
             *shred.payload().shred_index,
             &shred.merkle_root,
             &shred.merkle_path,
@@ -107,9 +115,10 @@ mod tests {
     use crate::types::slice::create_slice_with_invalid_txs;
 
     fn create_random_shred() -> (Shred, SecretKey) {
+        let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let shreds = RegularShredder::shred(slice, &sk).unwrap();
+        let shreds = shredder.shred(slice, &sk).unwrap();
         let shred = shreds[shreds.len() - 1].clone().into_shred();
         (shred, sk)
     }

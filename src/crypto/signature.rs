@@ -10,6 +10,8 @@
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
+use wincode::containers::Pod;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// A secret key for the digital signature scheme.
 ///
@@ -26,8 +28,8 @@ pub struct PublicKey(VerificationKey);
 /// A digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Signature(ed25519_consensus::Signature);
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
+pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.

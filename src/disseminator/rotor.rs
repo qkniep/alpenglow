@@ -187,7 +187,7 @@ mod tests {
     async fn test_rotor_dissemination(count: u64, base_port: u16) {
         let (sks, mut rotors) = create_rotor_instances(count, base_port);
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::default().shred(slice, &sks[0]).unwrap();
 
         let mut shreds_received = Vec::with_capacity(rotors.len());
         (0..rotors.len()).for_each(|_| shreds_received.push(Arc::new(Mutex::new(HashSet::new()))));

@@ -31,6 +31,8 @@
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+
 mod alpenglow;
 mod discrete_event_simulator;
 mod pyjama;
@@ -110,12 +112,12 @@ fn main() -> Result<()> {
 
     logging::enable_logforth();
 
-    crate::ryse::run_robustness_tests()?;
-    crate::pyjama::run_robustness_tests()?;
+    crate::ryse::run_robustness_tests();
+    crate::pyjama::run_robustness_tests();
 
     for k in [64, 128, 256, 512] {
-        run_ryse_robustness_test(k);
-        run_pyjama_robustness_test(k);
+        run_ryse_robustness_test(k)?;
+        run_pyjama_robustness_test(k)?;
     }
 
     if RUN_BANDWIDTH_TESTS {
@@ -364,7 +366,7 @@ fn run_tests<
                 tester.set_num_shreds(shreds);
                 tester.reset();
                 tester.run_multiple(1_000_000);
-                tester.evaluate_supported(test_name, supported_writer_ref.clone());
+                tester.evaluate_supported(test_name, supported_writer_ref);
                 tester.evaluate_usage(test_name, usage_writer_ref.clone());
             }
         });
@@ -531,7 +533,7 @@ fn run_tests<
                     environment.clone(),
                 );
                 engine.run_many_sequential(1000);
-                let filename = format!("data/output/alpenglow_{}_1000.csv", city);
+                let filename = format!("data/output/alpenglow_{city}_1000.csv");
                 engine.stats().write_to_csv(filename, &params)
             })?;
         }
@@ -539,7 +541,7 @@ fn run_tests<
 
     if RUN_ROTOR_ROBUSTNESS_TESTS {
         for &(n, k) in &SHRED_COMBINATIONS {
-            run_rotor_robustness_test(n, k);
+            run_rotor_robustness_test(n, k)?;
         }
     }
 

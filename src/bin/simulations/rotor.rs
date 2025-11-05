@@ -7,8 +7,8 @@
 //! - Latency simulation for block dissemination via Rotor.
 //! - Robustness simulation against liveness and safety failures.
 
-mod latency;
-mod robustness;
+pub mod latency;
+pub mod robustness;
 
 use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::SamplingStrategy;
@@ -22,20 +22,20 @@ use crate::discrete_event_simulator::Builder;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RotorParams {
     /// Number of shreds needed to recover the data.
-    pub num_data_shreds: usize,
-    /// NUmber of shreds that make up a slice.
-    pub num_shreds: usize,
+    pub data_shreds: usize,
+    /// Number of shreds that make up a slice.
+    pub shreds: usize,
     /// Number of slices that make up a block.
-    pub num_slices: usize,
+    pub slices: usize,
 }
 
 impl RotorParams {
     /// Creates a new set of Rotor parameters.
-    pub fn new(num_data_shreds: usize, num_shreds: usize, num_slices: usize) -> Self {
+    pub fn new(data_shreds: usize, shreds: usize, slices: usize) -> Self {
         Self {
-            num_data_shreds,
-            num_shreds,
-            num_slices,
+            data_shreds,
+            shreds,
+            slices,
         }
     }
 }
@@ -66,11 +66,8 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
     fn build(&self, rng: &mut impl Rng) -> RotorInstance {
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
-            relays: (0..self.params.num_slices)
-                .map(|_| {
-                    self.rotor_sampler
-                        .sample_multiple(self.params.num_shreds, rng)
-                })
+            relays: (0..self.params.slices)
+                .map(|_| self.rotor_sampler.sample_multiple(self.params.shreds, rng))
                 .collect(),
             params: self.params,
         }

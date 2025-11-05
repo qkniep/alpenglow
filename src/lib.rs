@@ -5,6 +5,8 @@
 //!
 //! Research reference implementation of the Alpenglow consensus protocol.
 
+#![deny(rustdoc::broken_intra_doc_links)]
+
 pub mod all2all;
 pub mod consensus;
 pub mod crypto;
@@ -22,6 +24,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use static_assertions::const_assert_eq;
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::all2all::All2All;
 pub use self::consensus::Alpenglow;
@@ -40,6 +44,10 @@ use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
 
+// NOTE: In many places we assume that `usize` is 64 bits wide.
+// So, for now, we only support 64-bit architectures.
+const_assert_eq!(std::mem::size_of::<usize>(), 8);
+
 /// Validator ID number type.
 pub type ValidatorId = u64;
 /// Validator stake type.
@@ -47,24 +55,25 @@ pub type Stake = u64;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
+/// Maximum number of bytes a transaction payload can contain.
 const MAX_TRANSACTION_SIZE: usize = 512;
 
-const MAX_TRANSACTIONS_PER_SLICE: usize = 255;
-
 /// Parsed block with information about parent and transactions as payload.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Block {
-    slot: Slot,
-    block_hash: BlockHash,
+    // TODO: unused
+    _slot: Slot,
+    hash: BlockHash,
     parent: Slot,
     parent_hash: BlockHash,
-    transactions: Vec<Transaction>,
+    // TODO: unused
+    _transactions: Vec<Transaction>,
 }
 
 /// Dummy transaction containing payload bytes.
 ///
-/// A transaction cannot be bigger than [`MAX_TRANSACTION_SIZE`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A transaction cannot hold more than [`MAX_TRANSACTION_SIZE`] payload bytes.
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Transaction(pub Vec<u8>);
 
 /// Validator information as known about other validators.
@@ -81,16 +90,6 @@ pub struct ValidatorInfo {
     pub repair_request_address: SocketAddr,
     /// Send [`RepairResponse`] messages to this address when replying to a node's [`RepairRequest`] message.
     pub repair_response_address: SocketAddr,
-}
-
-/// Returns the highest non-zero byte in `val`.
-pub(crate) fn highest_non_zero_byte(mut val: usize) -> usize {
-    let mut cnt = 0;
-    while val != 0 {
-        val /= 256;
-        cnt += 1;
-    }
-    cnt
 }
 
 type TestNode = Alpenglow<
@@ -123,6 +122,7 @@ impl Networks {
 ///
 /// This code lives here to enable sharing between different testing and benchmarking.
 /// It should not be used in production code.
+#[must_use]
 pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
     // open sockets with arbitrary ports
     let networks = (0..count).map(|_| Networks::new()).collect::<Vec<_>>();

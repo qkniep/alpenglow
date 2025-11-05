@@ -18,11 +18,11 @@
 //!
 //! # Examples
 //!
-//! ```
-//! use alpenglow::network::{NetworkMessage};
+//! ```rust
 //! use alpenglow::all2all::All2All;
+//! use alpenglow::consensus::ConsensusMessage;
 //!
-//! async fn broadcast_all(msgs: &[NetworkMessage], all2all: impl All2All) -> Result<(), NetworkSendError> {
+//! async fn broadcast_all(msgs: &[ConsensusMessage], all2all: impl All2All) -> std::io::Result<()> {
 //!     for msg in msgs {
 //!         all2all.broadcast(msg).await?;
 //!     }
@@ -52,7 +52,7 @@ pub trait All2All {
     ///
     /// # Errors
     ///
-    /// Implementors should return [`NetworkSendError`] iff the underlying network fails.
+    /// Implementors should return an [`std::io::Error`] iff the underlying network fails.
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()>;
 
     /// Receives a message from any of the other nodes.
@@ -62,6 +62,6 @@ pub trait All2All {
     ///
     /// # Errors
     ///
-    /// Implementors should return [`NetworkReceiveError`] iff the underlying network fails.
+    /// Implementors should return an [`std::io::Error`] iff the underlying network fails.
     async fn receive(&self) -> std::io::Result<ConsensusMessage>;
 }
