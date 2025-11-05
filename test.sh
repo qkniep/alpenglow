@@ -25,13 +25,19 @@ doc_tests () {
 sequential_tests () {
 	echo "🦥 Running sequential tests!"
 	sleep 1
-		RUST_BACKTRACE=1 cargo nextest run --release --jobs=1 --run-ignored=only \
+	RUST_BACKTRACE=1 cargo nextest run --release --jobs=1 --run-ignored=only \
 		network::simulated::core::tests::asymmetric \
 		network::simulated::core::tests::symmetric \
 		network::simulated::token_bucket::tests::extreme_rate \
 		max_crashes \
 		repair::tests::repair_large_block \
 		three_nodes_crash
+}
+
+smoke_tests () {
+    echo "🚬 Running smoke tests!"
+    sleep 1
+	RUST_BACKTRACE=1 cargo run --release --bin=performance_test
 }
 
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then

@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    logging::enable_logforth_stderr();
+    logging::enable_logforth();
 
     latency_test(11).await;
 
