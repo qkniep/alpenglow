@@ -12,11 +12,12 @@ struct MinimalLogforthLayout;
 impl MinimalLogforthLayout {
     fn colorize_record_level(&self, level: Level) -> ColoredString {
         let color = match level {
-            Level::Error => Color::Red,
-            Level::Warn => Color::Yellow,
-            Level::Info => Color::Green,
-            Level::Debug => Color::Blue,
-            Level::Trace => Color::Magenta,
+            Level::Fatal | Level::Fatal2 | Level::Fatal3 | Level::Fatal4 => Color::BrightRed,
+            Level::Error | Level::Error2 | Level::Error3 | Level::Error4 => Color::Red,
+            Level::Warn | Level::Warn2 | Level::Warn3 | Level::Warn4 => Color::Yellow,
+            Level::Info | Level::Info2 | Level::Info3 | Level::Info4 => Color::Green,
+            Level::Debug | Level::Debug2 | Level::Debug3 | Level::Debug4 => Color::Blue,
+            Level::Trace | Level::Trace2 | Level::Trace3 | Level::Trace4 => Color::Magenta,
         };
         ColoredString::from(level.to_string()).color(color)
     }
