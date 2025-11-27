@@ -106,10 +106,10 @@ impl<'de> SchemaRead<'de> for IndividualSignature {
     type Dst = IndividualSignature;
 
     fn read(
-        reader: &mut wincode::io::Reader<'de>,
+        reader: &mut impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let sig_bytes = reader.read_borrowed(UNCOMPRESSED_SIG_SIZE)?;
+        let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
         let sig = BlstSignature::deserialize(sig_bytes).map_err(|e| {
             warn!("encountered invalid BLS sig: {e:?}");
             wincode::ReadError::Custom("invalid BLS encoding")
@@ -126,8 +126,8 @@ impl SchemaWrite for IndividualSignature {
         Ok(UNCOMPRESSED_SIG_SIZE)
     }
 
-    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        Ok(writer.write_exact(&src.0.serialize())?)
+    fn write(writer: &mut impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        Ok(writer.write(&src.0.serialize())?)
     }
 }
 
@@ -144,11 +144,11 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
     type Dst = AggregateSignature;
 
     fn read(
-        reader: &mut wincode::io::Reader<'de>,
+        reader: &mut impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         // read raw data
-        let sig_bytes = reader.read_borrowed(UNCOMPRESSED_SIG_SIZE)?;
+        let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
         let num_bits = <usize>::get(reader)?;
         let bitmask_raw_vec = <Vec<usize>>::get(reader)?;
 
@@ -197,8 +197,8 @@ impl SchemaWrite for AggregateSignature {
         Ok(UNCOMPRESSED_SIG_SIZE + 8 + 8 + 8 * bitslice_num_elements)
     }
 
-    fn write(writer: &mut wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        writer.write_exact(&src.sig.serialize())?;
+    fn write(writer: &mut impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        writer.write(&src.sig.serialize())?;
         <usize as SchemaWrite>::write(writer, &src.bitmask.as_bitslice().len())?;
         let data = src.bitmask.as_bitslice().domain();
         <usize as SchemaWrite>::write(writer, &data.len())?;

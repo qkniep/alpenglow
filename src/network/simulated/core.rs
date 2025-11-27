@@ -271,7 +271,7 @@ mod tests {
     #[ignore]
     async fn symmetric() {
         // set up network with two nodes
-        let msg = Ping;
+        let msg = Ping::default();
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)
@@ -308,7 +308,7 @@ mod tests {
     #[ignore]
     async fn asymmetric() {
         // set up network with two nodes
-        let msg = Ping;
+        let msg = Ping::default();
         let core = Arc::new(
             SimulatedNetworkCore::default()
                 .with_jitter(0.0)
@@ -360,29 +360,29 @@ mod tests {
         core.set_latency(0, 2, Duration::from_millis(20)).await;
 
         // send ping on faster link
-        let msg = PingOrPong::Ping;
+        let msg = PingOrPong::Ping([0; 32]);
         net2.send(&msg, sock0).await.unwrap();
         // send pong on slower link
-        let msg = PingOrPong::Pong;
+        let msg = PingOrPong::Pong([0; 32]);
         net3.send(&msg, sock0).await.unwrap();
 
         // ping should arrive before pong
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, PingOrPong::Ping));
+        assert_eq!(received, PingOrPong::Ping([0; 32]));
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, PingOrPong::Pong));
+        assert_eq!(received, PingOrPong::Pong([0; 32]));
 
         // queue messages in the other order
-        let msg = PingOrPong::Pong;
+        let msg = PingOrPong::Pong([0; 32]);
         net3.send(&msg, sock0).await.unwrap();
-        let msg = PingOrPong::Ping;
+        let msg = PingOrPong::Ping([0; 32]);
         net2.send(&msg, sock0).await.unwrap();
 
         // ping should still arrive before pong
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, PingOrPong::Ping));
+        assert_eq!(received, PingOrPong::Ping([0; 32]));
         let received = net1.receive().await.unwrap();
-        assert!(matches!(received, PingOrPong::Pong));
+        assert_eq!(received, PingOrPong::Pong([0; 32]));
     }
 
     #[tokio::test]
@@ -393,13 +393,14 @@ mod tests {
         let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(1).await;
 
         // send 1000 pings
-        let msg = Ping;
+        let msg = Ping::default();
         for _ in 0..1000 {
             net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
         let mut pings_received = 0;
-        while let Ok(Ok(Ping)) = timeout(Duration::from_millis(100), net2.receive()).await {
+        let max_time = Duration::from_millis(100);
+        while let Ok(Ok(_)) = timeout(max_time, net2.receive()).await {
             pings_received += 1;
         }
 

@@ -3245,8 +3245,9 @@ dependencies = [
 
 [[package]]
 name = "wincode"
-version = "0.1.2"
-source = "git+https://github.com/anza-xyz/wincode?rev=3e6e6850059fca823db983dc74f60d22ab2839a7#3e6e6850059fca823db983dc74f60d22ab2839a7"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd2ce6dda5b5cde0288a9fd83d513cef824744c4ca601a92e12970c3120e8e93"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3256,8 +3257,9 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.1.1"
-source = "git+https://github.com/anza-xyz/wincode?rev=3e6e6850059fca823db983dc74f60d22ab2839a7#3e6e6850059fca823db983dc74f60d22ab2839a7"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a73ae1f9280de1c129b7baa5899ff75682ac67da1224d82d1b473a2ad1cbb49a"
 dependencies = [
  "darling",
  "proc-macro2",
