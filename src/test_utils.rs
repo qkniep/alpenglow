@@ -22,18 +22,18 @@ use crate::{
 };
 
 /// A simple ping network message.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct Ping;
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
+pub struct Ping(pub [u8; 32]);
 
 /// A simple pong network message.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct Pong;
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
+pub struct Pong(pub [u8; 32]);
 
 /// A simple network message that can be either a ping or a pong.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum PingOrPong {
-    Ping,
-    Pong,
+    Ping([u8; 32]),
+    Pong([u8; 32]),
 }
 
 /// Generates [`ValidatorInfo`] for the given number of validators.
