@@ -1,8 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::mem::MaybeUninit;
-
 use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, Vote};
 use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::crypto::{Hash, aggsig, signature};
@@ -122,13 +120,12 @@ fn serialize_slice_into(bencher: divan::Bencher) {
                 .into_iter()
                 .map(|v| v.into_shred())
                 .collect::<Vec<_>>();
-            let buf = vec![MaybeUninit::uninit(); 1500];
+            let buf = vec![0; 1500];
             (buf, shreds)
         })
-        .bench_values(|(mut buf, shreds): (Vec<MaybeUninit<u8>>, Vec<Shred>)| {
+        .bench_values(|(mut buf, shreds): (Vec<u8>, Vec<Shred>)| {
             for shred in shreds {
-                let _bytes_written = wincode::serialize_into(&shred, &mut buf)
-                    .expect("serialization should not panic");
+                wincode::serialize_into(&mut buf, &shred).expect("serialization should not panic");
             }
         });
 }
