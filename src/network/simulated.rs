@@ -135,17 +135,19 @@ mod tests {
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1 = core.join(0, 8192, 8192).await;
         let net2 = core.join(1, 8192, 8192).await;
-        let msg = Ping;
+        let msg = Ping::default();
 
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
-        if !matches!(net2.receive().await, Ok(Ping)) {
+        let received: Ping = net2.receive().await.expect("didn't receive message");
+        if received.0 != msg.0 {
             panic!("received wrong message");
         }
 
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
-        if !matches!(net1.receive().await, Ok(Ping)) {
+        let received: Ping = net1.receive().await.expect("didn't receive message");
+        if received.0 != msg.0 {
             panic!("received wrong message");
         }
     }

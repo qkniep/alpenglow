@@ -13,7 +13,7 @@ categories = ["algorithms", "network-programming", "data-structures"]
 publish = false
 
 [dependencies]
-aes = { version = "0.9.0-rc.1", features = ["hazmat", "zeroize"] }
+aes = { version = "0.9.0-rc.2", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
 bitvec = { version = "1", features = ["serde"] }
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
@@ -21,19 +21,19 @@ clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3"
 csv = "1"
-ctr = "0.10.0-rc.1"
+ctr = "0.10.0-rc.2"
 derive_more = { version = "2", features = ["as_ref", "from", "into"] }
 ed25519-consensus = "2"
 either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
-fastrace-opentelemetry = "0.14"
+fastrace-opentelemetry = "0.15"
 futures = "0.3"
-geo = "0.31"
+geo = "0.32"
 hex = "0.4"
 hex-literal = "1"
 log = "0.4"
-logforth = { version = "0.28", features = ["append-fastrace", "starter-log"] }
-mockall = "0.13"
+logforth = { version = "0.29", features = ["append-fastrace", "starter-log"] }
+mockall = "0.14"
 moka = { version = "0.12", features = ["future"] }
 opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
@@ -52,7 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
-wincode = { git = "https://github.com/anza-xyz/wincode", rev = "3e6e6850059fca823db983dc74f60d22ab2839a7", features = ["derive"] }
+wincode = { version = "0.2", features = ["derive"] }
 
 [dev-dependencies]
 divan = "0.1"
