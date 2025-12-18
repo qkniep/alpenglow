@@ -116,7 +116,6 @@ pub enum ShredPayloadType {
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     pub(crate) payload_type: ShredPayloadType,
-    pub(crate) merkle_root: SliceRoot,
     merkle_root_sig: Signature,
     merkle_path: SliceProof,
 }
@@ -586,7 +585,6 @@ fn data_and_coding_to_output_shreds(
         .map(|(merkle_path, payload)| {
             ValidatedShred::new_validated(Shred {
                 payload_type: payload,
-                merkle_root: merkle_root.clone(),
                 merkle_root_sig,
                 merkle_path,
             })
@@ -638,12 +636,10 @@ fn create_output_shreds_for_other_leader(
             let (merkle_path, payload) = convert(shred_index, c);
             (merkle_path, ShredPayloadType::Coding(payload))
         });
-    let merkle_root = tree.get_root().clone();
     data.chain(coding)
         .map(|(merkle_path, payload)| {
             ValidatedShred::new_validated(Shred {
                 payload_type: payload,
-                merkle_root: merkle_root.clone(),
                 merkle_root_sig: leader_signature,
                 merkle_path,
             })
