@@ -482,7 +482,7 @@ impl Shredder for AontShredder {
 
         let hash = hash(&payload);
         for i in 0..16 {
-            payload.push(hash[i] ^ key[i]);
+            payload.push(hash.as_ref()[i] ^ key[i]);
         }
 
         let raw_shreds = self.0.shred(&payload)?;
@@ -517,7 +517,7 @@ impl Shredder for AontShredder {
         let iv = Array::from([0; 16]);
         let mut key = Array::try_from(tail.as_slice()).unwrap();
         for i in 0..16 {
-            key[i] ^= hash[i];
+            key[i] ^= hash.as_ref()[i];
         }
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
