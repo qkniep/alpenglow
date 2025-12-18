@@ -23,6 +23,7 @@ pub mod validator;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use derive_more::{Add, From, Into, Sum};
 use serde::{Deserialize, Serialize};
 use static_assertions::const_assert_eq;
 use wincode::{SchemaRead, SchemaWrite};
@@ -51,7 +52,25 @@ const_assert_eq!(std::mem::size_of::<usize>(), 8);
 /// Validator ID number type.
 pub type ValidatorId = u64;
 /// Validator stake type.
-pub type Stake = u64;
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Add,
+    Sum,
+    From,
+    Into,
+    SchemaRead,
+    SchemaWrite,
+    Serialize,
+    Deserialize,
+)]
+#[repr(transparent)]
+pub struct Stake(u64);
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
@@ -141,7 +160,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
         validators.push(ValidatorInfo {
             id: id as u64,
-            stake: 1,
+            stake: 1.into(),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,

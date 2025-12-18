@@ -49,7 +49,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
             id: i,
-            stake: 1,
+            stake: 1.into(),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(0),

@@ -22,7 +22,7 @@ color-eyre = "0.6"
 colored = "3"
 csv = "1"
 ctr = "0.10.0-rc.2"
-derive_more = { version = "2", features = ["as_ref", "from", "into"] }
+derive_more = { version = "2", features = ["add", "as_ref", "from", "into", "sum"] }
 ed25519-consensus = "2"
 either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
