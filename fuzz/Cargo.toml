@@ -1,0 +1,22 @@
+[package]
+name = "alpenglow-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+wincode = "0.2"
+
+[dependencies.alpenglow]
+path = ".."
+
+[[bin]]
+name = "deserialize_consensus_message"
+path = "fuzz_targets/deserialize_consensus_message.rs"
+test = false
+doc = false
+bench = false
