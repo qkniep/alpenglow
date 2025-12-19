@@ -3,16 +3,16 @@
 
 //! Cryptographic hash function.
 //!
-//! This module abstratcs the specific cryptographic hash function used
-//! throughout the entire library. Currently, SHA-256 is used.
+//! This module abstratcs the hash function used throughout the entire library.
+//! Currently, SHA-256, specifically the implementation from the [`sha2`] crate is used.
 
 use sha2::{Digest, Sha256};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Regular hash that should be used in most cases.
 ///
-/// This provides 256-bit resistance against (second) preimage attacks
-/// and 128-bit resistance against collision attacks.
+/// This provides 256-bit resistance against (second) preimage attacks.
+/// It also provides 128-bit resistance against collision attacks.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, SchemaRead, SchemaWrite)]
 pub struct Hash(pub(super) [u8; 32]);
 
@@ -40,10 +40,11 @@ impl std::hash::Hash for Hash {
 
 /// Short hash that should be used carefully.
 ///
-/// It provides 128-bit resistance agains (second) preimage attacks,
-/// but only provides 64-bit resistance against collision attacks.
-/// Only use this if you are 100% certain that (second) preimage
-/// resistance is enough for the use case. Otherwise, use `Hash`.
+/// Usually a regular [`self::Hash`] is what you want.
+///
+/// This provides up to 128-bit resistance against (second) preimage attacks.
+/// However, it provides at most 64-bit resistance against collision attacks.
+/// Only use this if you are 100% certain that second preimage resistance is enough!
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct ShortHash([u8; 16]);
 
@@ -62,12 +63,10 @@ impl std::hash::Hash for ShortHash {
 /// Hashes the given data using SHA-256.
 #[must_use]
 pub fn hash(data: &[u8]) -> Hash {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    Hash(hasher.finalize().into())
+    Hash(Sha256::digest(data).into())
 }
 
-/// Hashes all the given data slices together using SHA-256.
+/// Hashes all the given data concatenated together.
 #[must_use]
 pub fn hash_all(data: &[&[u8]]) -> Hash {
     let mut hasher = Sha256::new();

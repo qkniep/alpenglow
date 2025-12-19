@@ -19,6 +19,7 @@ use std::marker::PhantomData;
 
 use derive_more::{From, Into};
 use hex_literal::hex;
+use smallvec::SmallVec;
 use static_assertions::const_assert;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -251,7 +252,7 @@ pub struct MerkleTree<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> {
     /// All hashes in the tree, leaf hashes and inner nodes.
     nodes: Vec<Hash>,
     /// For each level, has the offset in `nodes` and the number of hashes on that level.
-    levels: Vec<(u32, u32)>,
+    levels: SmallVec<[(u32, u32); MAX_MERKLE_TREE_HEIGHT]>,
     /// Marker for the type of the tree.
     _type: PhantomData<(Leaf, Root, Proof)>,
 }
@@ -281,7 +282,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         nodes.reserve(num_inner_nodes);
 
         // prepare levels index with correct size
-        let mut levels = Vec::with_capacity(nodes.len().ilog2() as usize + 1);
+        let mut levels = SmallVec::new();
         levels.push((0, nodes.len().try_into().expect("too many leaves")));
 
         // calculate inner nodes
@@ -363,8 +364,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// Checks a Merkle path against a leaf hash.
     ///
     /// Returns `true` iff `proof` is a valid Merkle path for a leaf that hashes
-    /// to the given `hash` at the given `index` in the tree corresponding to
-    /// the given `root`.
+    /// to the given `hash` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
     fn check_hash_proof(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
         let mut i = index;
@@ -393,7 +393,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
     fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
+        assert!(proof.as_ref().len() <= MAX_MERKLE_TREE_HEIGHT);
         let mut i = index;
         let mut node = hash;
         for (height, h) in proof.as_ref().iter().enumerate() {
@@ -566,11 +566,12 @@ mod tests {
     // NOTE: This is used for calculating `EMPTY_ROOTS`.
     #[test]
     fn empty_roots() {
-        for height in 0..MAX_MERKLE_TREE_HEIGHT {
+        for (height, empty_root) in EMPTY_ROOTS.iter().enumerate() {
             let mut node = PlainMerkleTree::hash_leaf(&vec![]);
             for _ in 0..height {
                 node = PlainMerkleTree::hash_pair(&node, &node);
             }
+            assert_eq!(node, *empty_root);
             println!("{}", hex::encode(node));
         }
     }
