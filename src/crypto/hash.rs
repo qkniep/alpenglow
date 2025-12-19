@@ -63,7 +63,7 @@ impl std::hash::Hash for ShortHash {
 /// Hashes the given data using SHA-256.
 #[must_use]
 pub fn hash(data: &[u8]) -> Hash {
-    Sha256::digest(data).into()
+    Hash(Sha256::digest(data).into())
 }
 
 /// Hashes all the given data concatenated together.
