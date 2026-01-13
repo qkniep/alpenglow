@@ -956,12 +956,12 @@ mod tests {
 
         // 6/11 NOT enough for 60% threshold
         let votes = (0..6)
-            .map(|i| match i % 2 {
-                0 => Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId),
-                1 => {
+            .map(|i| {
+                if i % 2 == 0 {
+                    Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId)
+                } else {
                     Vote::new_notar_fallback(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId)
                 }
-                _ => unreachable!(),
             })
             .collect::<Vec<_>>();
         let cert = NotarFallbackCert::try_new(&votes, &info).unwrap();
