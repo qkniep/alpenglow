@@ -36,6 +36,18 @@ pub enum Cert {
 }
 
 impl Cert {
+    /// Checks that the stake threshold is met.
+    #[must_use]
+    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+        match self {
+            Self::Notar(n) => n.check_threshold(validators),
+            Self::NotarFallback(n) => n.check_threshold(validators),
+            Self::Skip(s) => s.check_threshold(validators),
+            Self::FastFinal(f) => f.check_threshold(validators),
+            Self::Final(f) => f.check_threshold(validators),
+        }
+    }
+
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
@@ -207,6 +219,18 @@ impl NotarCert {
         Self::try_new(votes, validators).unwrap()
     }
 
+    /// Checks that the stake threshold is met.
+    #[must_use]
+    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let stake: Stake = validators
+            .iter()
+            .filter(|v| self.agg_sig.is_signer(v.id))
+            .map(|v| v.stake)
+            .sum();
+        stake >= (total_stake * 3).div_ceil(5)
+    }
+
     /// Checks that the aggregated signature is valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
@@ -292,6 +316,26 @@ impl NotarFallbackCert {
     /// Panics if `try_new` returns an error.
     pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
         Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the stake threshold is met.
+    #[must_use]
+    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let stake: Stake = validators
+            .iter()
+            .filter(|v| {
+                self.agg_sig_notar
+                    .as_ref()
+                    .is_some_and(|s| s.is_signer(v.id))
+                    || self
+                        .agg_sig_notar_fallback
+                        .as_ref()
+                        .is_some_and(|s| s.is_signer(v.id))
+            })
+            .map(|v| v.stake)
+            .sum();
+        stake >= (total_stake * 3).div_ceil(5)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -388,6 +432,26 @@ impl SkipCert {
         Self::try_new(votes, validators).unwrap()
     }
 
+    /// Checks that the stake threshold is met.
+    #[must_use]
+    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let stake: Stake = validators
+            .iter()
+            .filter(|v| {
+                self.agg_sig_skip
+                    .as_ref()
+                    .is_some_and(|s| s.is_signer(v.id))
+                    || self
+                        .agg_sig_skip_fallback
+                        .as_ref()
+                        .is_some_and(|s| s.is_signer(v.id))
+            })
+            .map(|v| v.stake)
+            .sum();
+        stake >= (total_stake * 3).div_ceil(5)
+    }
+
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
@@ -466,6 +530,18 @@ impl FastFinalCert {
         Self::try_new(votes, validators).unwrap()
     }
 
+    /// Checks that the stake threshold is met.
+    #[must_use]
+    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let stake: Stake = validators
+            .iter()
+            .filter(|v| self.agg_sig.is_signer(v.id))
+            .map(|v| v.stake)
+            .sum();
+        stake >= (total_stake * 4).div_ceil(5)
+    }
+
     /// Checks that the aggregated signatures are valid.
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
@@ -529,6 +605,18 @@ impl FinalCert {
     /// Panics if `try_new` returns an error.
     pub fn new_unchecked(votes: &[Vote], validators: &[ValidatorInfo]) -> Self {
         Self::try_new(votes, validators).unwrap()
+    }
+
+    /// Checks that the stake threshold is met.
+    #[must_use]
+    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
+        let stake: Stake = validators
+            .iter()
+            .filter(|v| self.agg_sig.is_signer(v.id))
+            .map(|v| v.stake)
+            .sum();
+        stake >= (total_stake * 3).div_ceil(5)
     }
 
     /// Checks that the aggregated signatures are valid.

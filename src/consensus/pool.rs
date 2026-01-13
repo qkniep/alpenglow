@@ -51,6 +51,8 @@ pub enum AddVoteError {
 pub enum AddCertError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
+    #[error("stake threshold not met")]
+    ThresholdNotMet,
     #[error("invalid signature on the cert")]
     InvalidSignature,
     #[error("duplicate cert")]
@@ -373,8 +375,10 @@ impl Pool for PoolImpl {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
-        // verify signature
-        if !cert.check_sig(&self.epoch_info.validators) {
+        // verify stake threshold & signature
+        if !cert.check_threshold(&self.epoch_info.validators) {
+            return Err(AddCertError::ThresholdNotMet);
+        } else if !cert.check_sig(&self.epoch_info.validators) {
             return Err(AddCertError::InvalidSignature);
         }
 
