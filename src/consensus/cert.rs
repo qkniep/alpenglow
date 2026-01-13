@@ -915,4 +915,202 @@ mod tests {
         let res = FinalCert::try_new(&[vote1, vote2], &info);
         assert_eq!(res.err(), Some(CertError::WrongVoteType));
     }
+
+    #[test]
+    fn notar_stake_threshold() {
+        let (sks, info) = create_signers(11);
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // 7/11 enough for 60% threshold
+        let votes = (0..7)
+            .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = NotarCert::try_new(&votes, &info).unwrap();
+        assert!(cert.check_threshold(&info));
+
+        // 6/11 NOT enough for 60% threshold
+        let votes = (0..6)
+            .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = NotarCert::try_new(&votes, &info).unwrap();
+        assert!(!cert.check_threshold(&info));
+    }
+
+    #[test]
+    fn notar_fallback_stake_threshold() {
+        let (sks, info) = create_signers(11);
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // 7/11 enough for 60% threshold
+        let votes = (0..7)
+            .map(|i| match i % 2 {
+                0 => Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId),
+                1 => {
+                    Vote::new_notar_fallback(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId)
+                }
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+        let cert = NotarFallbackCert::try_new(&votes, &info).unwrap();
+        assert!(cert.check_threshold(&info));
+
+        // 6/11 NOT enough for 60% threshold
+        let votes = (0..6)
+            .map(|i| match i % 2 {
+                0 => Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId),
+                1 => {
+                    Vote::new_notar_fallback(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId)
+                }
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+        let cert = NotarFallbackCert::try_new(&votes, &info).unwrap();
+        assert!(!cert.check_threshold(&info));
+    }
+
+    #[test]
+    fn skip_stake_threshold() {
+        let (sks, info) = create_signers(11);
+
+        // 7/11 enough for 60% threshold
+        let votes = (0..7)
+            .map(|i| Vote::new_skip(Slot::new(1), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = SkipCert::try_new(&votes, &info).unwrap();
+        assert!(cert.check_threshold(&info));
+
+        // 6/11 NOT enough for 60% threshold
+        let votes = (0..6)
+            .map(|i| Vote::new_skip(Slot::new(1), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = SkipCert::try_new(&votes, &info).unwrap();
+        assert!(!cert.check_threshold(&info));
+    }
+
+    #[test]
+    fn final_stake_threshold() {
+        let (sks, info) = create_signers(11);
+
+        // 7/11 enough for 60% threshold
+        let votes = (0..7)
+            .map(|i| Vote::new_final(Slot::new(1), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = FinalCert::try_new(&votes, &info).unwrap();
+        assert!(cert.check_threshold(&info));
+
+        // 6/11 NOT enough for 60% threshold
+        let votes = (0..6)
+            .map(|i| Vote::new_final(Slot::new(1), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = FinalCert::try_new(&votes, &info).unwrap();
+        assert!(!cert.check_threshold(&info));
+    }
+
+    #[test]
+    fn fast_final_stake_threshold() {
+        let (sks, info) = create_signers(11);
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // 9/11 enough for 80% threshold
+        let votes = (0..9)
+            .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = FastFinalCert::try_new(&votes, &info).unwrap();
+        assert!(cert.check_threshold(&info));
+
+        // 8/11 NOT enough for 80% threshold
+        let votes = (0..8)
+            .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
+            .collect::<Vec<_>>();
+        let cert = FastFinalCert::try_new(&votes, &info).unwrap();
+        assert!(!cert.check_threshold(&info));
+    }
+
+    #[test]
+    fn notar_sig_validity() {
+        let (sks, info) = create_signers(2);
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // valid sig
+        let vote1 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[0], 0);
+        let vote2 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 1);
+        let cert = NotarCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(cert.check_sig(&info));
+
+        // invalid sig
+        let vote1 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 0);
+        let vote2 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 1);
+        let cert = NotarCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(!cert.check_sig(&info));
+    }
+
+    #[test]
+    fn notar_fallback_sig_validity() {
+        let (sks, info) = create_signers(2);
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // valid sig
+        let vote1 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[0], 0);
+        let vote2 = Vote::new_notar_fallback(Slot::new(1), hash.clone(), &sks[1], 1);
+        let cert = NotarFallbackCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(cert.check_sig(&info));
+
+        // invalid sig
+        let vote1 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 0);
+        let vote2 = Vote::new_notar_fallback(Slot::new(1), hash.clone(), &sks[1], 1);
+        let cert = NotarFallbackCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(!cert.check_sig(&info));
+    }
+
+    #[test]
+    fn skip_sig_validity() {
+        let (sks, info) = create_signers(2);
+
+        // valid sig
+        let vote1 = Vote::new_skip(Slot::new(1), &sks[0], 0);
+        let vote2 = Vote::new_skip(Slot::new(1), &sks[1], 1);
+        let cert = SkipCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(cert.check_sig(&info));
+
+        // invalid sig
+        let vote1 = Vote::new_skip(Slot::new(1), &sks[1], 0);
+        let vote2 = Vote::new_skip(Slot::new(1), &sks[1], 1);
+        let cert = SkipCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(!cert.check_sig(&info));
+    }
+
+    #[test]
+    fn final_sig_validity() {
+        let (sks, info) = create_signers(2);
+
+        // valid sig
+        let vote1 = Vote::new_final(Slot::new(1), &sks[0], 0);
+        let vote2 = Vote::new_final(Slot::new(1), &sks[1], 1);
+        let cert = FinalCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(cert.check_sig(&info));
+
+        // invalid sig
+        let vote1 = Vote::new_final(Slot::new(1), &sks[1], 0);
+        let vote2 = Vote::new_final(Slot::new(1), &sks[1], 1);
+        let cert = FinalCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(!cert.check_sig(&info));
+    }
+
+    #[test]
+    fn fast_final_sig_validity() {
+        let (sks, info) = create_signers(2);
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // valid sig
+        let vote1 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[0], 0);
+        let vote2 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 1);
+        let cert = FastFinalCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(cert.check_sig(&info));
+
+        // invalid sig
+        let vote1 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 0);
+        let vote2 = Vote::new_notar(Slot::new(1), hash.clone(), &sks[1], 1);
+        let cert = FastFinalCert::try_new(&[vote1, vote2], &info).unwrap();
+        assert!(!cert.check_sig(&info));
+    }
 }
