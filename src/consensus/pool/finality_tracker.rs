@@ -21,8 +21,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use crate::BlockId;
-use crate::crypto::Hash;
-use crate::crypto::merkle::BlockHash;
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::types::Slot;
 
 /// Tracks finality of blocks.
@@ -295,7 +294,7 @@ impl Default for FinalityTracker {
         let mut status = BTreeMap::new();
         status.insert(
             Slot::genesis(),
-            FinalizationStatus::Notarized(Hash::default().into()),
+            FinalizationStatus::Notarized(GENESIS_BLOCK_HASH),
         );
         Self {
             status,
@@ -308,51 +307,55 @@ impl Default for FinalityTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::Hash;
 
     #[test]
     fn basic() {
         let mut tracker = FinalityTracker::default();
 
         // slow finalize a block
-        let slot = Slot::genesis().next();
-        let event = tracker.mark_notarized(slot, [1; 32].into());
+        let slot1 = Slot::genesis().next();
+        let hash1: BlockHash = Hash::random_for_test().into();
+        let event = tracker.mark_notarized(slot1, hash1.clone());
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_finalized(slot);
-        assert_eq!(event.finalized, Some((slot, [1; 32].into())));
+        let event = tracker.mark_finalized(slot1);
+        assert_eq!(event.finalized, Some((slot1, hash1)));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // fast finalize a block
-        let slot = slot.next();
-        let event = tracker.mark_fast_finalized(slot, [2; 32].into());
-        assert_eq!(event.finalized, Some((slot, [2; 32].into())));
+        let slot2 = slot1.next();
+        let hash2: BlockHash = Hash::random_for_test().into();
+        let event = tracker.mark_fast_finalized(slot2, hash2.clone());
+        assert_eq!(event.finalized, Some((slot2, hash2)));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITHOUT skips
-        let slot = slot.next().next();
-        let event = tracker.add_parent((slot, [4; 32].into()), (slot.prev(), [3; 32].into()));
+        let slot4 = slot2.next().next();
+        let hash3: BlockHash = Hash::random_for_test().into();
+        let hash4: BlockHash = Hash::random_for_test().into();
+        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [4; 32].into());
-        assert_eq!(event.finalized, Some((slot, [4; 32].into())));
-        assert_eq!(
-            event.implicitly_finalized,
-            vec![(slot.prev(), [3; 32].into())]
-        );
+        let event = tracker.mark_fast_finalized(slot4, hash4.clone());
+        assert_eq!(event.finalized, Some((slot4, hash4)));
+        assert_eq!(event.implicitly_finalized, vec![(slot4.prev(), hash3)]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITH skips
-        let slot = slot.next().next().next();
+        let slot7 = slot4.next().next().next();
+        let hash5: BlockHash = Hash::random_for_test().into();
+        let hash7: BlockHash = Hash::random_for_test().into();
         let event =
-            tracker.add_parent((slot, [6; 32].into()), (slot.prev().prev(), [5; 32].into()));
+            tracker.add_parent((slot7, hash7.clone()), (slot7.prev().prev(), hash5.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [6; 32].into());
-        assert_eq!(event.finalized, Some((slot, [6; 32].into())));
+        let event = tracker.mark_fast_finalized(slot7, hash7.clone());
+        assert_eq!(event.finalized, Some((slot7, hash7.clone())));
         assert_eq!(
             event.implicitly_finalized,
-            vec![(slot.prev().prev(), [5; 32].into())]
+            vec![(slot7.prev().prev(), hash5)]
         );
-        assert_eq!(event.implicitly_skipped, vec![slot.prev()]);
+        assert_eq!(event.implicitly_skipped, vec![slot7.prev()]);
     }
 
     #[test]
@@ -360,39 +363,43 @@ mod tests {
         let mut tracker = FinalityTracker::default();
 
         // slow finalize + fast finalize a block
-        let slot = Slot::genesis().next();
-        let event = tracker.mark_finalized(slot);
+        let slot1 = Slot::genesis().next();
+        let hash1: BlockHash = Hash::random_for_test().into();
+        let event = tracker.mark_finalized(slot1);
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_notarized(slot, [1; 32].into());
-        assert_eq!(event.finalized, Some((slot, [1; 32].into())));
+        let event = tracker.mark_notarized(slot1, hash1.clone());
+        assert_eq!(event.finalized, Some((slot1, hash1.clone())));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
-        let event = tracker.mark_fast_finalized(slot, [1; 32].into());
+        let event = tracker.mark_fast_finalized(slot1, hash1.clone());
         assert_eq!(event, FinalizationEvent::default());
 
         // do NOT implicitly finalize parent, that is already directly finalized
-        let slot = slot.next();
-        let event = tracker.add_parent((slot, [2; 32].into()), (slot.prev(), [1; 32].into()));
+        let slot2 = slot1.next();
+        let hash2: BlockHash = Hash::random_for_test().into();
+        let event = tracker.add_parent((slot2, hash2.clone()), (slot2.prev(), hash1.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [2; 32].into());
-        assert_eq!(event.finalized, Some((slot, [2; 32].into())));
+        let event = tracker.mark_fast_finalized(slot2, hash2.clone());
+        assert_eq!(event.finalized, Some((slot2, hash2.clone())));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITHOUT skips
-        let slot = slot.next().next();
-        let event = tracker.add_parent((slot, [4; 32].into()), (slot.prev(), [3; 32].into()));
+        let slot4 = slot2.next().next();
+        let hash3: BlockHash = Hash::random_for_test().into();
+        let hash4: BlockHash = Hash::random_for_test().into();
+        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot, [4; 32].into());
-        assert_eq!(event.finalized, Some((slot, [4; 32].into())));
+        let event = tracker.mark_fast_finalized(slot4, hash4.clone());
+        assert_eq!(event.finalized, Some((slot4, hash4.clone())));
         assert_eq!(
             event.implicitly_finalized,
-            vec![(slot.prev(), [3; 32].into())]
+            vec![(slot4.prev(), hash3.clone())]
         );
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // do NOT implicitly finalize parent again when adding parent again
-        let event = tracker.add_parent((slot, [4; 32].into()), (slot.prev(), [3; 32].into()));
+        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
     }
 }

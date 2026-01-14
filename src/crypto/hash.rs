@@ -3,47 +3,83 @@
 
 //! Cryptographic hash function.
 //!
-//! This module abstratcs the specific cryptographic hash function used
-//! throughout the entire library. Currently, SHA-256 is used.
+//! This module abstratcs the hash function used throughout the entire library.
+//! Currently, SHA-256, specifically the implementation from the [`sha2`] crate is used.
 
 use sha2::{Digest, Sha256};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Regular hash that should be used in most cases.
 ///
-/// This provides 256-bit resistance against (second) preimage attacks
-/// and 128-bit resistance against collision attacks.
-pub type Hash = [u8; 32];
+/// This provides 256-bit resistance against (second) preimage attacks.
+/// It also provides 128-bit resistance against collision attacks.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, SchemaRead, SchemaWrite)]
+pub struct Hash(pub(super) [u8; 32]);
+
+impl Hash {
+    /// Creates a random hash for testing.
+    #[cfg(test)]
+    pub fn random_for_test() -> Self {
+        let mut bytes = [0; 32];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
+        Hash(bytes)
+    }
+}
+
+impl AsRef<[u8]> for Hash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::hash::Hash for Hash {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(&self.0);
+    }
+}
 
 /// Short hash that should be used carefully.
 ///
-/// It provides 128-bit resistance agains (second) preimage attacks,
-/// but only provides 64-bit resistance against collision attacks.
-/// Only use this if you are 100% certain that (second) preimage
-/// resistance is enough for the use case. Otherwise, use `Hash`.
-pub type ShortHash = [u8; 16];
+/// Usually a regular [`self::Hash`] is what you want.
+///
+/// This provides up to 128-bit resistance against (second) preimage attacks.
+/// However, it provides at most 64-bit resistance against collision attacks.
+/// Only use this if you are 100% certain that second preimage resistance is enough!
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+pub struct ShortHash([u8; 16]);
+
+impl AsRef<[u8]> for ShortHash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::hash::Hash for ShortHash {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(&self.0);
+    }
+}
 
 /// Hashes the given data using SHA-256.
 #[must_use]
 pub fn hash(data: &[u8]) -> Hash {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().into()
+    Hash(Sha256::digest(data).into())
 }
 
-/// Hashes all the given data slices together using SHA-256.
+/// Hashes all the given data concatenated together.
 #[must_use]
 pub fn hash_all(data: &[&[u8]]) -> Hash {
     let mut hasher = Sha256::new();
     for item in data {
         hasher.update(item);
     }
-    hasher.finalize().into()
+    Hash(hasher.finalize().into())
 }
 
 /// Truncates the given hash into a [`ShortHash`].
 #[must_use]
 pub fn truncate(hash: Hash) -> ShortHash {
-    hash[..16].try_into().expect("wrong length")
+    ShortHash(hash.0[..16].try_into().expect("wrong length"))
 }
 
 #[cfg(test)]

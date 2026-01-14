@@ -118,7 +118,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
     let mut slices = Vec::new();
     for slice_index in final_slice_index.until() {
         let parent = if slice_index.is_first() {
-            Some((parent_slot, Hash::default().into()))
+            Some((parent_slot, Hash::random_for_test().into()))
         } else {
             None
         };

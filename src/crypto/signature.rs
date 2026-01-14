@@ -3,9 +3,11 @@
 
 //! Implementation of a digital signature scheme.
 //!
-//! This implements the Ed25519 digital signature scheme, as specified in
-//! [RFC 8032](https://tools.ietf.org/html/rfc8032).
-//! Specifically, this is a wrapper around the [`ed25519_consensus`] crate.
+//! This module abstratcs the digital signatures used throughout the entire library.
+//! Currently, it provides Ed25519 digital signature scheme, as specified in [RFC 8032].
+//! Specifically, it is a wrapper around the [`ed25519_consensus`] crate.
+//!
+//! [RFC 8032]: https://tools.ietf.org/html/rfc8032
 
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
@@ -13,19 +15,19 @@ use serde::{Deserialize, Serialize};
 use wincode::containers::Pod;
 use wincode::{SchemaRead, SchemaWrite};
 
-/// A secret key for the digital signature scheme.
+/// Secret key for the digital signature scheme.
 ///
 /// This is a wrapper around [`ed25519_consensus::SigningKey`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SecretKey(SigningKey);
 
-/// A public key for the digital signature scheme.
+/// Public key for the digital signature scheme.
 ///
 /// This is a wrapper around [`ed25519_consensus::VerificationKey`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PublicKey(VerificationKey);
 
-/// A digital signature.
+/// Digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]

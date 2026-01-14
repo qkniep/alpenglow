@@ -21,9 +21,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
-use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::merkle::{BlockHash, MerkleRoot};
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::{All2All, Slot, ValidatorId};
 
 /// Events that Votor is interested in.
@@ -113,13 +112,13 @@ impl<A: All2All> Votor<A> {
     ) -> Self {
         // add dummy genesis block to some of the data structures
         let voted = [Slot::genesis()].into_iter().collect();
-        let voted_notar = [(Slot::genesis(), Hash::default().into())]
+        let voted_notar = [(Slot::genesis(), GENESIS_BLOCK_HASH)]
             .into_iter()
             .collect();
-        let block_notarized = [(Slot::genesis(), Hash::default().into())]
+        let block_notarized = [(Slot::genesis(), GENESIS_BLOCK_HASH)]
             .into_iter()
             .collect();
-        let parents_ready = [(Slot::genesis(), Slot::genesis(), Hash::default().into())]
+        let parents_ready = [(Slot::genesis(), Slot::genesis(), GENESIS_BLOCK_HASH)]
             .into_iter()
             .collect();
         let retired_slots = [Slot::genesis()].into_iter().collect();
@@ -370,6 +369,7 @@ mod tests {
     use crate::all2all::TrivialAll2All;
     use crate::consensus::cert::NotarCert;
     use crate::consensus::{ConsensusMessage, EpochInfo};
+    use crate::crypto::Hash;
     use crate::network::SimulatedNetwork;
     use crate::test_utils::{generate_all2all_instances, generate_validators};
 
@@ -419,8 +419,8 @@ mod tests {
         let event = VotorEvent::FirstShred(slot);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
-            hash: [1u8; 32].into(),
-            parent: (Slot::genesis(), Hash::default().into()),
+            hash: Hash::random_for_test().into(),
+            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
@@ -447,15 +447,15 @@ mod tests {
     #[tokio::test]
     async fn notar_out_of_order() {
         let (other_a2a, tx, _) = start_votor().await;
-        let (slot1, hash1) = (Slot::genesis().next(), [1u8; 32]);
-        let (slot2, hash2) = (slot1.next(), [2u8; 32]);
+        let (slot1, hash1) = (Slot::genesis().next(), Hash::random_for_test());
+        let (slot2, hash2) = (slot1.next(), Hash::random_for_test());
 
         // give later block to votor first
         let event = VotorEvent::FirstShred(slot2);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
             hash: hash2.into(),
-            parent: (slot1, hash1.into()),
+            parent: (slot1, hash1.clone().into()),
         };
         let event = VotorEvent::Block {
             slot: slot2,
@@ -475,7 +475,7 @@ mod tests {
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
             hash: hash1.into(),
-            parent: (Slot::genesis(), Hash::default().into()),
+            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
         let event = VotorEvent::Block {
             slot: slot1,
@@ -514,13 +514,14 @@ mod tests {
         }
 
         // vote notar-fallback after safe-to-notar
-        let event = VotorEvent::SafeToNotar(slot, [1; 32].into());
+        let hash = Hash::random_for_test();
+        let event = VotorEvent::SafeToNotar(slot, hash.clone().into());
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(v.is_notar_fallback());
                 assert_eq!(v.slot(), slot);
-                assert_eq!(v.block_hash(), Some(&[1; 32].into()));
+                assert_eq!(v.block_hash(), Some(&hash.into()));
             }
             m => panic!("other msg: {m:?}"),
         }
@@ -535,8 +536,8 @@ mod tests {
         let event = VotorEvent::FirstShred(slot);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
-            hash: [1u8; 32].into(),
-            parent: (Slot::genesis(), Hash::default().into()),
+            hash: Hash::random_for_test().into(),
+            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
