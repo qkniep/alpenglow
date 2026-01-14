@@ -376,7 +376,7 @@ impl Pool for PoolImpl {
         }
 
         // verify stake threshold & signature
-        if !cert.check_threshold(&self.epoch_info.validators) {
+        if !cert.check_threshold(&self.epoch_info) {
             return Err(AddCertError::ThresholdNotMet);
         } else if !cert.check_sig(&self.epoch_info.validators) {
             return Err(AddCertError::InvalidSignature);

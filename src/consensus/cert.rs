@@ -10,6 +10,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::Vote;
 use super::vote::VoteKind;
+use crate::consensus::EpochInfo;
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::{AggregateSignature, Signable};
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
@@ -38,13 +39,13 @@ pub enum Cert {
 impl Cert {
     /// Checks that the stake threshold is met.
     #[must_use]
-    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
+    pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
         match self {
-            Self::Notar(n) => n.check_threshold(validators),
-            Self::NotarFallback(n) => n.check_threshold(validators),
-            Self::Skip(s) => s.check_threshold(validators),
-            Self::FastFinal(f) => f.check_threshold(validators),
-            Self::Final(f) => f.check_threshold(validators),
+            Self::Notar(n) => n.check_threshold(epoch_info),
+            Self::NotarFallback(n) => n.check_threshold(epoch_info),
+            Self::Skip(s) => s.check_threshold(epoch_info),
+            Self::FastFinal(f) => f.check_threshold(epoch_info),
+            Self::Final(f) => f.check_threshold(epoch_info),
         }
     }
 
@@ -220,14 +221,19 @@ impl NotarCert {
     }
 
     /// Checks that the stake threshold is met.
+    ///
+    /// The threshold for [`NotarCert`] is >= 60% of the total stake.
     #[must_use]
-    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let stake: Stake = validators
+    pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
+        let total_stake = epoch_info.total_stake();
+        let stake: Stake = epoch_info
+            .validators
             .iter()
             .filter(|v| self.agg_sig.is_signer(v.id))
             .map(|v| v.stake)
             .sum();
+
+        // at least 60% stake
         stake >= (total_stake * 3).div_ceil(5)
     }
 
@@ -319,10 +325,14 @@ impl NotarFallbackCert {
     }
 
     /// Checks that the stake threshold is met.
+    ///
+    /// The threshold for [`NotarFallbackCert`] is >= 60% of the total stake.
+    /// Each validator is counted only once, even if notar and notar-fallback are included for them.
     #[must_use]
-    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let stake: Stake = validators
+    pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
+        let total_stake = epoch_info.total_stake();
+        let stake: Stake = epoch_info
+            .validators
             .iter()
             .filter(|v| {
                 self.agg_sig_notar
@@ -335,6 +345,8 @@ impl NotarFallbackCert {
             })
             .map(|v| v.stake)
             .sum();
+
+        // at least 60% stake
         stake >= (total_stake * 3).div_ceil(5)
     }
 
@@ -433,10 +445,14 @@ impl SkipCert {
     }
 
     /// Checks that the stake threshold is met.
+    ///
+    /// The threshold for [`SkipCert`] is >= 60% of the total stake.
+    /// Each validator is counted only once, even if skip and skip-fallback are included for them.
     #[must_use]
-    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let stake: Stake = validators
+    pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
+        let total_stake = epoch_info.total_stake();
+        let stake: Stake = epoch_info
+            .validators
             .iter()
             .filter(|v| {
                 self.agg_sig_skip
@@ -449,6 +465,8 @@ impl SkipCert {
             })
             .map(|v| v.stake)
             .sum();
+
+        // at least 60% stake
         stake >= (total_stake * 3).div_ceil(5)
     }
 
@@ -531,14 +549,19 @@ impl FastFinalCert {
     }
 
     /// Checks that the stake threshold is met.
+    ///
+    /// The threshold for [`FastFinalCert`] is >= 80% of the total stake.
     #[must_use]
-    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let stake: Stake = validators
+    pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
+        let total_stake = epoch_info.total_stake();
+        let stake: Stake = epoch_info
+            .validators
             .iter()
             .filter(|v| self.agg_sig.is_signer(v.id))
             .map(|v| v.stake)
             .sum();
+
+        // at least 80% stake
         stake >= (total_stake * 4).div_ceil(5)
     }
 
@@ -608,14 +631,19 @@ impl FinalCert {
     }
 
     /// Checks that the stake threshold is met.
+    ///
+    /// The threshold for [`FinalCert`] is >= 60% of the total stake.
     #[must_use]
-    pub fn check_threshold(&self, validators: &[ValidatorInfo]) -> bool {
-        let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
-        let stake: Stake = validators
+    pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
+        let total_stake: Stake = epoch_info.total_stake();
+        let stake: Stake = epoch_info
+            .validators
             .iter()
             .filter(|v| self.agg_sig.is_signer(v.id))
             .map(|v| v.stake)
             .sum();
+
+        // at least 60% stake
         stake >= (total_stake * 3).div_ceil(5)
     }
 
@@ -919,6 +947,7 @@ mod tests {
     #[test]
     fn notar_stake_threshold() {
         let (sks, info) = create_signers(11);
+        let epoch = EpochInfo::new(0, info.clone());
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 7/11 enough for 60% threshold
@@ -926,19 +955,20 @@ mod tests {
             .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = NotarCert::try_new(&votes, &info).unwrap();
-        assert!(cert.check_threshold(&info));
+        assert!(cert.check_threshold(&epoch));
 
         // 6/11 NOT enough for 60% threshold
         let votes = (0..6)
             .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = NotarCert::try_new(&votes, &info).unwrap();
-        assert!(!cert.check_threshold(&info));
+        assert!(!cert.check_threshold(&epoch));
     }
 
     #[test]
     fn notar_fallback_stake_threshold() {
         let (sks, info) = create_signers(11);
+        let epoch = EpochInfo::new(0, info.clone());
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 7/11 enough for 60% threshold
@@ -952,7 +982,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let cert = NotarFallbackCert::try_new(&votes, &info).unwrap();
-        assert!(cert.check_threshold(&info));
+        assert!(cert.check_threshold(&epoch));
 
         // 6/11 NOT enough for 60% threshold
         let votes = (0..6)
@@ -965,50 +995,53 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let cert = NotarFallbackCert::try_new(&votes, &info).unwrap();
-        assert!(!cert.check_threshold(&info));
+        assert!(!cert.check_threshold(&epoch));
     }
 
     #[test]
     fn skip_stake_threshold() {
         let (sks, info) = create_signers(11);
+        let epoch = EpochInfo::new(0, info.clone());
 
         // 7/11 enough for 60% threshold
         let votes = (0..7)
             .map(|i| Vote::new_skip(Slot::new(1), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = SkipCert::try_new(&votes, &info).unwrap();
-        assert!(cert.check_threshold(&info));
+        assert!(cert.check_threshold(&epoch));
 
         // 6/11 NOT enough for 60% threshold
         let votes = (0..6)
             .map(|i| Vote::new_skip(Slot::new(1), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = SkipCert::try_new(&votes, &info).unwrap();
-        assert!(!cert.check_threshold(&info));
+        assert!(!cert.check_threshold(&epoch));
     }
 
     #[test]
     fn final_stake_threshold() {
         let (sks, info) = create_signers(11);
+        let epoch = EpochInfo::new(0, info.clone());
 
         // 7/11 enough for 60% threshold
         let votes = (0..7)
             .map(|i| Vote::new_final(Slot::new(1), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = FinalCert::try_new(&votes, &info).unwrap();
-        assert!(cert.check_threshold(&info));
+        assert!(cert.check_threshold(&epoch));
 
         // 6/11 NOT enough for 60% threshold
         let votes = (0..6)
             .map(|i| Vote::new_final(Slot::new(1), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = FinalCert::try_new(&votes, &info).unwrap();
-        assert!(!cert.check_threshold(&info));
+        assert!(!cert.check_threshold(&epoch));
     }
 
     #[test]
     fn fast_final_stake_threshold() {
         let (sks, info) = create_signers(11);
+        let epoch = EpochInfo::new(0, info.clone());
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 9/11 enough for 80% threshold
@@ -1016,14 +1049,14 @@ mod tests {
             .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = FastFinalCert::try_new(&votes, &info).unwrap();
-        assert!(cert.check_threshold(&info));
+        assert!(cert.check_threshold(&epoch));
 
         // 8/11 NOT enough for 80% threshold
         let votes = (0..8)
             .map(|i| Vote::new_notar(Slot::new(1), hash.clone(), &sks[i], i as ValidatorId))
             .collect::<Vec<_>>();
         let cert = FastFinalCert::try_new(&votes, &info).unwrap();
-        assert!(!cert.check_threshold(&info));
+        assert!(!cert.check_threshold(&epoch));
     }
 
     #[test]
