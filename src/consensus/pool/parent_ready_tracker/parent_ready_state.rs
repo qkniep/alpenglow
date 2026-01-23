@@ -12,8 +12,7 @@ use smallvec::{SmallVec, smallvec};
 use tokio::sync::oneshot;
 
 use crate::BlockId;
-use crate::crypto::Hash;
-use crate::crypto::merkle::BlockHash;
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 
 /// Status of whether an individual slot has a parent ready.
 enum IsReady {
@@ -55,7 +54,7 @@ impl ParentReadyState {
     pub(super) fn genesis() -> Self {
         Self {
             skip: false,
-            notar_fallbacks: SmallVec::from([Hash::default().into()]),
+            notar_fallbacks: SmallVec::from([GENESIS_BLOCK_HASH]),
             is_ready: IsReady::default(),
         }
     }
@@ -158,12 +157,13 @@ impl ParentReadyState {
 mod tests {
     use super::*;
     use crate::Slot;
+    use crate::crypto::Hash;
 
     #[test]
     fn wait_for_parent_ready_no_blocking() {
         let mut state = ParentReadyState::default();
         assert_eq!(state.ready_block_ids().len(), 0);
-        let block_id = (Slot::new(0), [1; 32].into());
+        let block_id = (Slot::new(1), Hash::random_for_test().into());
         state.add_to_ready(block_id.clone());
         let res = state.wait_for_parent_ready();
         let Either::Left(received_block_id) = res else {
@@ -181,7 +181,7 @@ mod tests {
         let Either::Right(rx) = res else {
             panic!("unexpected result {res:?}");
         };
-        let block_id = (Slot::new(0), [1; 32].into());
+        let block_id = (Slot::new(1), Hash::random_for_test().into());
         state.add_to_ready(block_id.clone());
         let received_block_id = rx.await.unwrap();
         assert_eq!(received_block_id, block_id);

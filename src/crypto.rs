@@ -4,6 +4,7 @@
 //! Cryptographic primitives.
 //!
 //! This module contains any cryptographic primitives used by the library.
+//! These are mostly wrappers around existing libraries.
 
 pub mod aggsig;
 pub mod hash;

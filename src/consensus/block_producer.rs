@@ -17,8 +17,8 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::merkle::{BlockHash, MerkleRoot};
-use crate::crypto::{Hash, signature};
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
+use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
@@ -131,7 +131,7 @@ where
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
                         // genesis block is already produced so skip it
-                        (first_slot_in_window, Hash::default().into())
+                        (first_slot_in_window, GENESIS_BLOCK_HASH)
                     } else {
                         self.produce_block_parent_ready(first_slot_in_window, parent)
                             .await?
@@ -455,7 +455,7 @@ async fn wait_for_first_slot(
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
     if first_slot_in_window.is_genesis_window() {
-        return SlotReady::Ready((Slot::genesis(), Hash::default().into()));
+        return SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH));
     }
 
     // if already have parent ready, return it, otherwise get a channel to await on
@@ -535,7 +535,7 @@ mod tests {
         // bin encoding an empty Vec takes 8 bytes
         assert_eq!(payload.data.len(), 8);
 
-        let parent = Some((Slot::genesis(), Hash::default().into()));
+        let parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
@@ -586,7 +586,7 @@ mod tests {
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default().into());
+        let parent = (slot.prev(), GENESIS_BLOCK_HASH);
 
         let mut pool = MockPool::new();
         let p = parent.clone();
@@ -609,7 +609,7 @@ mod tests {
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default().into());
+        let parent = (slot.prev(), GENESIS_BLOCK_HASH);
         let (tx, rx) = oneshot::channel();
         tx.send(parent.clone()).unwrap();
 
@@ -661,9 +661,11 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_ready() {
         let slot = Slot::windows().nth(10).unwrap();
+        let hash: BlockHash = Hash::random_for_test().into();
+        let hash_prev: BlockHash = Hash::random_for_test().into();
         let block_info = BlockInfo {
-            hash: [1; 32].into(),
-            parent: (slot.prev(), [2; 32].into()),
+            hash: hash.clone(),
+            parent: (slot.prev(), hash_prev.clone()),
         };
 
         // Handles TOTAL_SHRED number of calls.
@@ -718,9 +720,9 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
-        let slot_hash: BlockHash = [1; 32].into();
-        let old_parent = (slot.prev(), [2; 32].into());
-        let new_parent = (slot.prev().prev(), [3; 32].into());
+        let slot_hash: BlockHash = Hash::random_for_test().into();
+        let old_parent = (slot.prev(), Hash::random_for_test().into());
+        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,

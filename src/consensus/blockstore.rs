@@ -631,7 +631,7 @@ mod tests {
         // insert shreds with wrong Merkle root
         for shred in slices[0].clone() {
             let mut shred = shred.into_shred();
-            shred.merkle_root = Hash::default().into();
+            shred.merkle_root = Hash::random_for_test().into();
             let res = add_shred_ignore_duplicate(&mut blockstore, shred).await;
             assert!(res.is_err());
             assert_eq!(res.err(), Some(AddShredError::InvalidSignature));
