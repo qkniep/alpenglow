@@ -43,7 +43,7 @@ pub fn run_robustness_tests() {
         .print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
-pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
+pub fn run_maxcp_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 1);
@@ -120,7 +120,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     };
 
     let filename = format!(
-        "pyjama_robustness_{}_{}",
+        "maxcp_robustness_{}_{}",
         params.num_proposers, total_shreds
     );
     let path = std::path::Path::new("data")
