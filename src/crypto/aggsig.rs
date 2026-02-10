@@ -37,6 +37,7 @@ use log::warn;
 use rand::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use static_assertions::const_assert_eq;
+use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ValidatorId;
@@ -102,11 +103,11 @@ impl PublicKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndividualSignature(BlstSignature);
 
-impl<'de> SchemaRead<'de> for IndividualSignature {
+unsafe impl<'de> SchemaRead<'de, DefaultConfig> for IndividualSignature {
     type Dst = IndividualSignature;
 
     fn read(
-        reader: &mut impl wincode::io::Reader<'de>,
+        reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
@@ -119,14 +120,14 @@ impl<'de> SchemaRead<'de> for IndividualSignature {
     }
 }
 
-impl SchemaWrite for IndividualSignature {
+unsafe impl SchemaWrite<DefaultConfig> for IndividualSignature {
     type Src = IndividualSignature;
 
     fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
         Ok(UNCOMPRESSED_SIG_SIZE)
     }
 
-    fn write(writer: &mut impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+    fn write(mut writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         Ok(writer.write(&src.0.serialize())?)
     }
 }
@@ -140,11 +141,11 @@ pub struct AggregateSignature {
     bitmask: BitVec,
 }
 
-impl<'de> SchemaRead<'de> for AggregateSignature {
+unsafe impl<'de> SchemaRead<'de, DefaultConfig> for AggregateSignature {
     type Dst = AggregateSignature;
 
     fn read(
-        reader: &mut impl wincode::io::Reader<'de>,
+        reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         // read raw data
@@ -188,7 +189,7 @@ impl<'de> SchemaRead<'de> for AggregateSignature {
     }
 }
 
-impl SchemaWrite for AggregateSignature {
+unsafe impl SchemaWrite<DefaultConfig> for AggregateSignature {
     type Src = AggregateSignature;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
@@ -197,7 +198,7 @@ impl SchemaWrite for AggregateSignature {
         Ok(UNCOMPRESSED_SIG_SIZE + 8 + 8 + 8 * bitslice_num_elements)
     }
 
-    fn write(writer: &mut impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+    fn write(mut writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         writer.write(&src.sig.serialize())?;
         <usize as SchemaWrite>::write(writer, &src.bitmask.as_bitslice().len())?;
         let data = src.bitmask.as_bitslice().domain();

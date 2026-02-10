@@ -17,6 +17,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use wincode::{SchemaRead, SchemaWrite};
+use wincode::config::DefaultConfig;
 
 use super::Network;
 use crate::network::MTU_BYTES;
@@ -85,8 +86,8 @@ impl<S, R> TcpNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for TcpNetwork<S, R>
 where
-    S: SchemaWrite<Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
