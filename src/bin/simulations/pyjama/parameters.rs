@@ -24,7 +24,7 @@ pub struct PyjamaParameters {
     pub num_slices: u64,
 }
 
-/// Specific instance of the Ryse protocol.
+/// Specific instance of the Pyjama protocol.
 pub struct PyjamaInstance {
     pub leader: ValidatorId,
     pub proposers: Vec<ValidatorId>,
@@ -32,7 +32,7 @@ pub struct PyjamaInstance {
     pub params: PyjamaParameters,
 }
 
-/// Builder for Ryse instances with a specific set of parameters.
+/// Builder for Pyjama instances with a specific set of parameters.
 pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     proposer_sampler: P,
