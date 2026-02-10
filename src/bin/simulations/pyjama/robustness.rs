@@ -19,11 +19,11 @@ use color_eyre::Result;
 use super::parameters::{AdversaryStrength, PyjamaParameters};
 use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
 
-const NUM_PROPOSERS: u64 = 16;
-const NUM_RELAYS: u64 = 512;
+const NUM_PROPOSERS: u64 = 32;
+const NUM_RELAYS: u64 = 256;
 const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     crashed: 0.0,
-    byzantine: 0.18,
+    byzantine: 0.15,
 };
 
 pub fn run_robustness_tests() {
@@ -32,6 +32,8 @@ pub fn run_robustness_tests() {
     PyjamaParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_paper2(NUM_PROPOSERS, NUM_RELAYS)
+        .print_failure_probabilities(ADVERSARY_STRENGTH);
+    PyjamaParameters::new_supernova(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_hiding(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
@@ -66,7 +68,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     let relays_to_censor_proposers_threshold = QuorumThreshold::Simple {
         quorum: 2,
         threshold: (params.attestations_threshold - params.should_decode_threshold) as usize,
-        is_crash_enough: true,
+        is_crash_enough: false,
     };
     let censorship_attack = all_proposers_threshold
         .clone()
@@ -76,7 +78,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     let relays_to_hold_protocol_threshold = QuorumThreshold::Simple {
         quorum: 2,
         threshold: (params.should_decode_threshold - params.can_decode_threshold) as usize,
-        is_crash_enough: true,
+        is_crash_enough: false,
     };
     let relays_to_censor_leader_threshold = QuorumThreshold::Simple {
         quorum: 2,
