@@ -35,6 +35,7 @@
 
 mod alpenglow;
 mod discrete_event_simulator;
+mod maxcp;
 mod pyjama;
 mod quorum_robustness;
 mod rotor;

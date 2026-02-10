@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Latency simulation for Pyjama, the MCP protocol.
+//! Latency simulation for MaxCP, the MCP protocol.
 //!
 //! So far, this test can only simulate the happy path.
 
@@ -11,7 +11,7 @@ use alpenglow::ValidatorId;
 use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::shredder::{DATA_SHREDS, MAX_DATA_PER_SHRED, TOTAL_SHREDS};
 
-use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
+use super::{MaxcpInstance, MaxcpInstanceBuilder, MaxcpParams};
 use crate::alpenglow::AlpenglowLatencySimulation;
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
@@ -19,17 +19,17 @@ use crate::discrete_event_simulator::{
 };
 use crate::rotor::RotorParams;
 
-/// Wrapper type for the Pyjama latency simulation.
+/// Wrapper type for the Maxcp latency simulation.
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct PyjamaLatencySimulation<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+pub struct MaxcpLatencySimulation<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _proposer_sampler: PhantomData<P>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L, P, R> Protocol for PyjamaLatencySimulation<L, P, R>
+impl<L, P, R> Protocol for MaxcpLatencySimulation<L, P, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
@@ -37,12 +37,12 @@ where
 {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
-    type Params = PyjamaParams;
-    type Instance = PyjamaInstance;
-    type Builder = PyjamaInstanceBuilder<L, P, R>;
+    type Params = MaxcpParams;
+    type Instance = MaxcpInstance;
+    type Builder = MaxcpInstanceBuilder<L, P, R>;
 }
 
-/// Stages of the Pyjama latency simulation.
+/// Stages of the MaxCP latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyTestStage {
     Propose,
@@ -54,7 +54,7 @@ pub enum LatencyTestStage {
 
 impl Stage for LatencyTestStage {
     type Event = LatencyEvent;
-    type Params = PyjamaParams;
+    type Params = MaxcpParams;
 
     fn first() -> Self {
         LatencyTestStage::Propose
@@ -85,7 +85,7 @@ impl Stage for LatencyTestStage {
     }
 }
 
-/// Events that can occur at each validator during the Pyjama latency simulation.
+/// Events that can occur at each validator during the MaxCP latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
     Propose,
@@ -98,8 +98,8 @@ pub enum LatencyEvent {
 }
 
 impl Event for LatencyEvent {
-    type Params = PyjamaParams;
-    type Instance = PyjamaInstance;
+    type Params = MaxcpParams;
+    type Instance = MaxcpInstance;
 
     fn name(&self) -> String {
         match self {
@@ -118,7 +118,7 @@ impl Event for LatencyEvent {
         true
     }
 
-    fn dependencies(&self, _params: &PyjamaParams) -> Vec<Self> {
+    fn dependencies(&self, _params: &MaxcpParams) -> Vec<Self> {
         match self {
             Self::Propose => vec![],
             Self::Relay => vec![Self::Propose],
@@ -134,7 +134,7 @@ impl Event for LatencyEvent {
         &self,
         start_time: SimTime,
         dependency_timings: &[&[SimTime]],
-        instance: &PyjamaInstance,
+        instance: &MaxcpInstance,
         resources: &mut Resources,
         environment: &SimulationEnvironment,
     ) -> Vec<SimTime> {

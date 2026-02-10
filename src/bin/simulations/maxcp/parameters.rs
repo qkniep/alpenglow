@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Parameters for Pyjama, the MCP protocol.
+//! Parameters for MaxCP, the MCP protocol.
 //!
 //!
 
@@ -13,9 +13,9 @@ use statrs::distribution::{Binomial, DiscreteCDF};
 
 use crate::discrete_event_simulator::Builder;
 
-/// Parameters for the Pyjama MCP protocol.
+/// Parameters for the MaxCP MCP protocol.
 #[derive(Clone, Copy, Debug)]
-pub struct PyjamaParameters {
+pub struct MaxcpParameters {
     pub num_proposers: u64,
     pub num_relays: u64,
     pub can_decode_threshold: u64,
@@ -24,23 +24,23 @@ pub struct PyjamaParameters {
     pub num_slices: u64,
 }
 
-/// Specific instance of the Ryse protocol.
-pub struct PyjamaInstance {
+/// Specific instance of the MaxCP protocol.
+pub struct MaxcpInstance {
     pub leader: ValidatorId,
     pub proposers: Vec<ValidatorId>,
     pub relays: Vec<ValidatorId>,
-    pub params: PyjamaParameters,
+    pub params: MaxcpParameters,
 }
 
-/// Builder for Ryse instances with a specific set of parameters.
-pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+/// Builder for MaxCP instances with a specific set of parameters.
+pub struct MaxcpInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     proposer_sampler: P,
     relay_sampler: R,
-    params: PyjamaParameters,
+    params: MaxcpParameters,
 }
 
-impl<L, P, R> PyjamaInstanceBuilder<L, P, R>
+impl<L, P, R> MaxcpInstanceBuilder<L, P, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
@@ -51,7 +51,7 @@ where
         leader_sampler: L,
         proposer_sampler: P,
         relay_sampler: R,
-        params: PyjamaParameters,
+        params: MaxcpParameters,
     ) -> Self {
         Self {
             leader_sampler,
@@ -62,17 +62,17 @@ where
     }
 }
 
-impl<L, P, R> Builder for PyjamaInstanceBuilder<L, P, R>
+impl<L, P, R> Builder for MaxcpInstanceBuilder<L, P, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
     R: SamplingStrategy,
 {
-    type Params = PyjamaParameters;
-    type Instance = PyjamaInstance;
+    type Params = MaxcpParameters;
+    type Instance = MaxcpInstance;
 
-    fn build(&self, rng: &mut impl Rng) -> PyjamaInstance {
-        PyjamaInstance {
+    fn build(&self, rng: &mut impl Rng) -> MaxcpInstance {
+        MaxcpInstance {
             leader: self.leader_sampler.sample(rng),
             proposers: self
                 .proposer_sampler
@@ -96,7 +96,7 @@ pub struct AdversaryStrength {
     pub byzantine: f64,
 }
 
-impl PyjamaParameters {
+impl MaxcpParameters {
     /// Generates a new balanced parameter set, equally resistant against all attacks.
     pub fn new(num_proposers: u64, num_relays: u64) -> Self {
         Self {
@@ -247,7 +247,7 @@ impl PyjamaParameters {
     /// Capabilities of the adversary are specified in the `adv_strength` parameter.
     pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
-            "Pyjama parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
+            "MaxCP parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
             self.num_proposers,
             self.num_relays,
             self.can_decode_threshold as f64 / self.num_relays as f64 * 100.0,
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_mcp_parameters() {
-        let params = PyjamaParameters::new(2, 5);
+        let params = MaxcpParameters::new(2, 5);
         assert_eq!(params.num_proposers, 2);
         assert_eq!(params.num_relays, 5);
         assert_eq!(params.can_decode_threshold, 2);

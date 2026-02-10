@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Calculations about the robustness of the Pyjama MCP protocol.
+//! Calculations about the robustness of the MaxCP MCP protocol.
 //!
 //! Currently, this just runs some static calculations on the set of parameters.
 //!
@@ -16,7 +16,7 @@ use alpenglow::network::simulated::stake_distribution::{
 };
 use color_eyre::Result;
 
-use super::parameters::{AdversaryStrength, PyjamaParameters};
+use super::parameters::{AdversaryStrength, MaxcpParameters};
 use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
 
 const NUM_PROPOSERS: u64 = 32;
@@ -27,19 +27,19 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
 };
 
 pub fn run_robustness_tests() {
-    PyjamaParameters::new(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-    PyjamaParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-    PyjamaParameters::new_paper2(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new_paper2(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-    PyjamaParameters::new_supernova(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new_supernova(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-    PyjamaParameters::new_hiding(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new_hiding(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-    PyjamaParameters::new_liveness(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new_liveness(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
-    PyjamaParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS)
+    MaxcpParameters::new_permanent_liveness(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
@@ -51,7 +51,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), NUM_PROPOSERS);
     let relay_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), total_shreds);
-    let params = PyjamaParameters::new(NUM_PROPOSERS, total_shreds);
+    let params = MaxcpParameters::new(NUM_PROPOSERS, total_shreds);
 
     let hiding_threshold = QuorumThreshold::Simple {
         quorum: 2,
