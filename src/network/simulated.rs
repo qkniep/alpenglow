@@ -29,8 +29,8 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
-use wincode::{SchemaRead, SchemaWrite};
 use wincode::config::DefaultConfig;
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;

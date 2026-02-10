@@ -16,8 +16,8 @@ use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use wincode::{SchemaRead, SchemaWrite};
 use wincode::config::DefaultConfig;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::Network;
 use crate::network::MTU_BYTES;

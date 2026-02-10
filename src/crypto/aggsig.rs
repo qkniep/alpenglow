@@ -37,7 +37,7 @@ use log::warn;
 use rand::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use static_assertions::const_assert_eq;
-use wincode::config::DefaultConfig;
+use wincode::config::Config;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ValidatorId;
@@ -103,11 +103,11 @@ impl PublicKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndividualSignature(BlstSignature);
 
-unsafe impl<'de> SchemaRead<'de, DefaultConfig> for IndividualSignature {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
     type Dst = IndividualSignature;
 
     fn read(
-        reader: impl wincode::io::Reader<'de>,
+        mut reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
@@ -120,7 +120,7 @@ unsafe impl<'de> SchemaRead<'de, DefaultConfig> for IndividualSignature {
     }
 }
 
-unsafe impl SchemaWrite<DefaultConfig> for IndividualSignature {
+unsafe impl<C: Config> SchemaWrite<C> for IndividualSignature {
     type Src = IndividualSignature;
 
     fn size_of(_src: &Self::Src) -> wincode::WriteResult<usize> {
@@ -141,17 +141,17 @@ pub struct AggregateSignature {
     bitmask: BitVec,
 }
 
-unsafe impl<'de> SchemaRead<'de, DefaultConfig> for AggregateSignature {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
     type Dst = AggregateSignature;
 
     fn read(
-        reader: impl wincode::io::Reader<'de>,
+        mut reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         // read raw data
         let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
-        let num_bits = <usize>::get(reader)?;
-        let bitmask_raw_vec = <Vec<usize>>::get(reader)?;
+        let num_bits = <usize as SchemaRead<'de, C>>::get(&mut reader)?;
+        let bitmask_raw_vec = <Vec<usize> as SchemaRead<'de, C>>::get(&mut reader)?;
 
         // map BLS signature
         let sig = BlstSignature::from_bytes(sig_bytes).map_err(|e| {
@@ -189,7 +189,7 @@ unsafe impl<'de> SchemaRead<'de, DefaultConfig> for AggregateSignature {
     }
 }
 
-unsafe impl SchemaWrite<DefaultConfig> for AggregateSignature {
+unsafe impl<C: Config> SchemaWrite<C> for AggregateSignature {
     type Src = AggregateSignature;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
@@ -200,11 +200,11 @@ unsafe impl SchemaWrite<DefaultConfig> for AggregateSignature {
 
     fn write(mut writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         writer.write(&src.sig.serialize())?;
-        <usize as SchemaWrite>::write(writer, &src.bitmask.as_bitslice().len())?;
+        <usize as SchemaWrite<C>>::write(&mut writer, &src.bitmask.as_bitslice().len())?;
         let data = src.bitmask.as_bitslice().domain();
-        <usize as SchemaWrite>::write(writer, &data.len())?;
+        <usize as SchemaWrite<C>>::write(&mut writer, &data.len())?;
         for elem in data {
-            <usize as SchemaWrite>::write(writer, &elem)?;
+            <usize as SchemaWrite<C>>::write(&mut writer, &elem)?;
         }
         Ok(())
     }

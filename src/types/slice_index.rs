@@ -8,7 +8,7 @@ use std::mem::MaybeUninit;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
-use wincode::config::DefaultConfig;
+use wincode::config::Config;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Maximum number of slices a leader may produce per block.
@@ -107,11 +107,11 @@ impl<'de> Visitor<'de> for SliceIndexVisitor {
     }
 }
 
-unsafe impl<'de> SchemaRead<'de, DefaultConfig> for SliceIndex {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for SliceIndex {
     type Dst = Self;
 
     fn read(
-        reader: impl wincode::io::Reader<'de>,
+        mut reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         // SAFETY: Any read of `std::mem::size_of(usize)` bytes correctly initializes `usize`.
