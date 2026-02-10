@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    logging::enable_logforth_stderr();
+    logging::enable_logforth();
 
     latency_test(11).await;
 
@@ -145,7 +145,7 @@ async fn latency_test(num_nodes: usize) {
         let mut finalized = vec![Slot::new(0); pools.len()];
         let mut times = vec![Instant::now(); pools.len()];
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
             for (i, pool) in pools.iter().enumerate() {
                 if cancel_tokens[i].is_cancelled() {
                     continue;
@@ -166,8 +166,7 @@ async fn latency_test(num_nodes: usize) {
     });
 
     // let it run for a while
-    let delay = tokio::time::Duration::from_secs(60);
-    tokio::time::sleep(delay).await;
+    tokio::time::sleep(Duration::from_secs(60)).await;
 
     liveness_tester.abort();
     assert!(liveness_tester.await.unwrap_err().is_cancelled());
