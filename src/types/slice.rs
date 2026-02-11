@@ -3,7 +3,8 @@
 
 //! Defines the [`Slice`] and related data structures.
 
-use rand::{RngCore, rng};
+use rand::prelude::*;
+use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::merkle::{BlockHash, SliceRoot};
@@ -158,7 +159,8 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
+    let parent_bytes =
+        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
     // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
     let data_len_bytes = 8;
 
@@ -166,7 +168,7 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
         .checked_sub(parent_bytes + data_len_bytes)
         .unwrap();
     let mut data = vec![0; size];
-    let mut rng = rng();
+    let mut rng = rand::rng();
     rng.fill_bytes(&mut data);
 
     SlicePayload { parent, data }

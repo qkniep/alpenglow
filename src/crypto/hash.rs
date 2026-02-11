@@ -20,8 +20,10 @@ impl Hash {
     /// Creates a random hash for testing.
     #[cfg(test)]
     pub fn random_for_test() -> Self {
+        use rand::Rng;
+
         let mut bytes = [0; 32];
-        rand::RngCore::fill_bytes(&mut rand::rng(), &mut bytes);
+        rand::rng().fill_bytes(&mut bytes);
         Hash(bytes)
     }
 }

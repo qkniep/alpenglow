@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
+use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::core::SimulatedNetworkCore;
@@ -70,8 +71,8 @@ impl<S, R> SimulatedNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
-    S: SchemaWrite<Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;

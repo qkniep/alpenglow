@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::warn;
-use rand::Rng;
+use rand::prelude::*;
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use super::SimulatedNetwork;
