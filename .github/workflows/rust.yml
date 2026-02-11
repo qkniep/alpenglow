@@ -33,7 +33,7 @@ jobs:
       
       - name: Cache downloaded data
         id: cache-data
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ./data
           key: data-v1  # Change this if the dataset version changes
