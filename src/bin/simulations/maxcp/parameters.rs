@@ -35,6 +35,7 @@ pub struct MaxcpParameters {
 pub struct MaxcpInstance {
     pub leader: ValidatorId,
     pub proposers: Vec<ValidatorId>,
+    pub attestors: Vec<ValidatorId>,
     pub relays: Vec<ValidatorId>,
     pub params: MaxcpParameters,
 }
@@ -94,6 +95,9 @@ where
             proposers: self
                 .proposer_sampler
                 .sample_multiple(self.params.num_proposers as usize, rng),
+            attestors: self
+                .attestor_sampler
+                .sample_multiple(self.params.num_attestors as usize, rng),
             relays: self
                 .relay_sampler
                 .sample_multiple(self.params.num_relays as usize, rng),
@@ -137,10 +141,10 @@ impl MaxcpParameters {
             num_proposers,
             num_attestors,
             num_relays,
-            can_decode_proposal_threshold: (num_attestors * 40).div_ceil(100),
+            can_decode_proposal_threshold: (num_attestors * 20).div_ceil(100),
             can_decode_block_threshold: (num_relays * 50).div_ceil(100),
-            should_decode_threshold: (num_attestors * 60).div_ceil(100),
-            attestations_threshold: (num_attestors * 80).div_ceil(100),
+            should_decode_threshold: (num_attestors * 40).div_ceil(100),
+            attestations_threshold: (num_attestors * 60).div_ceil(100),
             slot_time: Duration::from_millis(400),
             num_batches: 20,
             slices_per_batch: 1,
@@ -185,14 +189,13 @@ impl MaxcpParameters {
 
         // probability that the adversary can prevent the leader from producing a non-empty block
         let attestors_dist = Binomial::new(failed, self.num_attestors).unwrap();
-        let attestors_to_hold_protocol =
-            self.should_decode_threshold - self.can_decode_proposal_threshold;
-        let attestors_to_censor_proposers =
-            self.attestations_threshold - self.should_decode_threshold;
+        // TODO: Byzantine liveness attack
+        // let attestors_to_hold_protocol =
+        //     self.should_decode_threshold - self.can_decode_proposal_threshold;
+        // let attestors_to_censor_proposers =
+        //     self.attestations_threshold - self.should_decode_threshold;
         let attestors_to_censor_leader = self.num_attestors - self.attestations_threshold;
-        let attestors_needed = attestors_to_hold_protocol
-            .min(attestors_to_censor_proposers)
-            .min(attestors_to_censor_leader);
+        let attestors_needed = attestors_to_censor_leader;
         let prob_censor_attestors = 1.0 - attestors_dist.cdf(attestors_needed - 1);
 
         // probability that the adversary can prevent Rotor from forwarding block

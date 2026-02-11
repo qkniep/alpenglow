@@ -15,7 +15,7 @@ use super::{MaxcpInstance, MaxcpInstanceBuilder, MaxcpParams};
 use crate::alpenglow::AlpenglowLatencySimulation;
 use crate::discrete_event_simulator::{
     Builder, Event, Protocol, Resources, SimTime, SimulationEngine, SimulationEnvironment, Stage,
-    Timings, column_max,
+    Timings,
 };
 use crate::rotor::RotorParams;
 
@@ -71,9 +71,9 @@ impl Stage for LatencyTestStage {
         match self {
             LatencyTestStage::Propose => Some(LatencyTestStage::Attest),
             LatencyTestStage::Attest => Some(LatencyTestStage::BuildBlock),
-            LatencyTestStage::BuildBlock => Some(LatencyTestStage::Consensus),
-            LatencyTestStage::Consensus => Some(LatencyTestStage::Reconstruct),
-            LatencyTestStage::Reconstruct => None,
+            LatencyTestStage::BuildBlock => Some(LatencyTestStage::Reconstruct),
+            LatencyTestStage::Reconstruct => Some(LatencyTestStage::Consensus),
+            LatencyTestStage::Consensus => None,
         }
     }
 
@@ -82,8 +82,8 @@ impl Stage for LatencyTestStage {
             LatencyTestStage::Propose => vec![LatencyEvent::Propose],
             LatencyTestStage::Attest => vec![LatencyEvent::Relay, LatencyEvent::Attest],
             LatencyTestStage::BuildBlock => vec![LatencyEvent::BuildBlock],
+            LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct],
             LatencyTestStage::Consensus => vec![LatencyEvent::Consensus],
-            LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct, LatencyEvent::Final],
         }
     }
 }
@@ -95,9 +95,8 @@ pub enum LatencyEvent {
     Relay,
     Attest,
     BuildBlock,
-    Consensus,
     Reconstruct,
-    Final,
+    Consensus,
 }
 
 impl Event for LatencyEvent {
@@ -110,9 +109,8 @@ impl Event for LatencyEvent {
             Self::Relay => "relay",
             Self::Attest => "attest",
             Self::BuildBlock => "build_block",
-            Self::Consensus => "consensus",
             Self::Reconstruct => "reconstruct",
-            Self::Final => "final",
+            Self::Consensus => "consensus",
         }
         .to_owned()
     }
@@ -125,11 +123,10 @@ impl Event for LatencyEvent {
         match self {
             Self::Propose => vec![],
             Self::Relay => vec![Self::Propose],
-            Self::Attest => vec![Self::Propose],
+            Self::Attest => vec![Self::Relay],
             Self::BuildBlock => vec![Self::Attest],
-            Self::Consensus => vec![Self::BuildBlock],
             Self::Reconstruct => vec![Self::Relay],
-            Self::Final => vec![Self::Consensus, Self::Reconstruct],
+            Self::Consensus => vec![Self::BuildBlock, Self::Reconstruct],
         }
     }
 
@@ -144,12 +141,12 @@ impl Event for LatencyEvent {
         match self {
             Self::Propose => {
                 let mut timings = vec![start_time; environment.num_validators()];
+                // TODO: handle more than 1 batch
                 for &proposer in &instance.proposers {
-                    let block_bytes =
-                        (instance.params.num_batches * instance.params.slices_per_batch) as usize
-                            * instance.params.num_attestors as usize
-                            * MAX_DATA_PER_SHRED;
-                    let tx_time = environment.transmission_delay(block_bytes, proposer);
+                    let batch_bytes = instance.params.slices_per_batch as usize
+                        * instance.params.num_attestors as usize
+                        * MAX_DATA_PER_SHRED;
+                    let tx_time = environment.transmission_delay(batch_bytes, proposer);
                     let start_sending_time =
                         resources.network.time_next_free_after(proposer, start_time);
                     resources.network.schedule(proposer, start_time, tx_time);
@@ -160,48 +157,89 @@ impl Event for LatencyEvent {
             Self::Relay => {
                 let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
-                for (relay_offset, &relay) in instance.relays.iter().enumerate() {
+                for (attestor_offset, &attestor) in instance.attestors.iter().enumerate() {
                     let shreds_from_all_proposers = instance
                         .proposers
                         .iter()
                         .map(|proposer| {
-                            let start_send_time = dependency_timings[0][*proposer as usize];
-                            let prop_delay = environment.propagation_delay(*proposer, relay);
-                            let shred_send_index = relay_offset + 1;
-                            let tx_delay = environment.transmission_delay(
+                            let start_time = dependency_timings[0][*proposer as usize];
+                            let shred_send_index = attestor_offset + 1;
+                            let tx_time = environment.transmission_delay(
                                 shred_send_index * MAX_DATA_PER_SHRED,
                                 *proposer,
                             );
-                            start_send_time + prop_delay + tx_delay
+                            let start_send_time = resources
+                                .network
+                                .time_next_free_after(*proposer, start_time);
+                            resources.network.schedule(*proposer, start_time, tx_time);
+                            start_send_time + tx_time
                         })
                         .max()
                         .unwrap();
-                    timings[relay as usize] =
-                        timings[relay as usize].max(shreds_from_all_proposers);
+                    timings[attestor as usize] =
+                        timings[attestor as usize].max(shreds_from_all_proposers);
                 }
                 timings
             }
             Self::Attest => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                for attestor in &instance.attestors {
+                    let attestation_bytes = instance.params.num_proposers.div_ceil(11) as usize;
+                    let batch_time_secs = instance.params.slot_time.as_secs_f64()
+                        / instance.params.num_batches as f64;
+                    let send_time = dependency_timings[0][*attestor as usize]
+                        .max(SimTime::from_secs(batch_time_secs));
+                    timings[*attestor as usize] =
+                        send_time + environment.transmission_delay(attestation_bytes, *attestor);
+                }
                 timings
             }
             Self::BuildBlock => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
-                for (i, relay) in instance.relays.iter().enumerate() {
-                    shred_timings[i] = dependency_timings[0][*relay as usize]
-                        + environment.propagation_delay(*relay, instance.leader)
-                        + environment.transmission_delay(MAX_DATA_PER_SHRED, *relay);
+                let mut shred_timings =
+                    vec![SimTime::NEVER; instance.params.num_attestors as usize];
+                for (i, attestor) in instance.attestors.iter().enumerate() {
+                    shred_timings[i] = dependency_timings[0][*attestor as usize]
+                        + environment.propagation_delay(*attestor, instance.leader);
                 }
                 shred_timings.sort_unstable();
                 timings[instance.leader as usize] =
                     shred_timings[instance.params.attestations_threshold as usize - 1];
                 timings
             }
+            Self::Reconstruct => {
+                if !instance.params.quick_release {
+                    return vec![SimTime::ZERO; environment.num_validators()];
+                }
+
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
+                for (recipient, timing) in timings.iter_mut().enumerate() {
+                    for (i, relay) in instance.relays.iter().enumerate() {
+                        shred_timings[i] = dependency_timings[0][*relay as usize]
+                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                            + environment.transmission_delay(
+                                (recipient + 1)
+                                    * instance.params.num_proposers as usize
+                                    * MAX_DATA_PER_SHRED,
+                                *relay,
+                            );
+                    }
+                    shred_timings.sort_unstable();
+                    *timing =
+                        shred_timings[instance.params.can_decode_proposal_threshold as usize - 1];
+                }
+                timings
+            }
             Self::Consensus => {
                 let consensus_start_time = dependency_timings[0][instance.leader as usize];
                 // TODO: find better way of integrating sub-protocol
-                let slices_required = 3;
+                let slices_required = if instance.params.quick_release {
+                    instance.params.num_proposers.div_ceil(11)
+                } else {
+                    instance.params.num_proposers.div_ceil(2)
+                        + instance.params.num_proposers.div_ceil(11)
+                } as usize;
                 let rotor_params = RotorParams {
                     data_shreds: DATA_SHREDS,
                     shreds: TOTAL_SHREDS,
@@ -228,27 +266,6 @@ impl Event for LatencyEvent {
                     .unwrap()
                     .to_vec()
             }
-            Self::Reconstruct => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
-                for (recipient, timing) in timings.iter_mut().enumerate() {
-                    for (i, relay) in instance.relays.iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][*relay as usize]
-                            + environment.propagation_delay(*relay, recipient as ValidatorId)
-                            + environment.transmission_delay(
-                                (recipient + 1)
-                                    * instance.params.num_proposers as usize
-                                    * MAX_DATA_PER_SHRED,
-                                *relay,
-                            );
-                    }
-                    shred_timings.sort_unstable();
-                    *timing =
-                        shred_timings[instance.params.can_decode_proposal_threshold as usize - 1];
-                }
-                timings
-            }
-            Self::Final => column_max(dependency_timings),
         }
     }
 }

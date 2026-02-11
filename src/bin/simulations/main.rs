@@ -78,6 +78,7 @@ use crate::ryse::{
 };
 
 const RUN_BANDWIDTH_TESTS: bool = false;
+const RUN_ROBUSTENSS_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
 const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
 
@@ -120,10 +121,12 @@ fn main() -> Result<()> {
     crate::pyjama::run_robustness_tests();
     crate::maxcp::run_robustness_tests();
 
-    for k in [64, 128, 256, 512] {
-        run_ryse_robustness_test(k)?;
-        run_pyjama_robustness_test(k)?;
-        run_maxcp_robustness_test(k)?;
+    if RUN_ROBUSTENSS_TESTS {
+        for k in [64, 128, 256, 512] {
+            run_ryse_robustness_test(k)?;
+            run_pyjama_robustness_test(k)?;
+            run_maxcp_robustness_test(k)?;
+        }
     }
 
     if RUN_BANDWIDTH_TESTS {
