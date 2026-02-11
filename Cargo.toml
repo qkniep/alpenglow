@@ -13,7 +13,7 @@ categories = ["algorithms", "network-programming", "data-structures"]
 publish = false
 
 [dependencies]
-aes = { version = "0.9.0-rc.2", features = ["hazmat", "zeroize"] }
+aes = { version = "0.9.0-rc.4", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
 bitvec = { version = "1", features = ["serde"] }
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
@@ -21,7 +21,7 @@ clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3"
 csv = "1"
-ctr = "0.10.0-rc.2"
+ctr = "0.10.0-rc.3"
 derive_more = { version = "2", features = ["as_ref", "from", "into"] }
 ed25519-consensus = "2"
 either = "1"
@@ -38,7 +38,7 @@ moka = { version = "0.12", features = ["future"] }
 opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
 opentelemetry_sdk = "0.31"
-rand = "0.9"
+rand = "0.10"
 rayon = "1"
 reed-solomon-simd = "3"
 serde = { version = "1", features = ["derive"] }
@@ -52,7 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
-wincode = { version = "0.2", features = ["derive"] }
+wincode = { version = "0.4", features = ["derive"] }
 
 [dev-dependencies]
 divan = "0.1"
