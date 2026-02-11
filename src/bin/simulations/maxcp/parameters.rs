@@ -40,39 +40,49 @@ pub struct MaxcpInstance {
 }
 
 /// Builder for MaxCP instances with a specific set of parameters.
-pub struct MaxcpInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+pub struct MaxcpInstanceBuilder<
+    L: SamplingStrategy,
+    P: SamplingStrategy,
+    A: SamplingStrategy,
+    R: SamplingStrategy,
+> {
     leader_sampler: L,
     proposer_sampler: P,
+    attestor_sampler: A,
     relay_sampler: R,
     params: MaxcpParameters,
 }
 
-impl<L, P, R> MaxcpInstanceBuilder<L, P, R>
+impl<L, P, A, R> MaxcpInstanceBuilder<L, P, A, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
+    A: SamplingStrategy,
     R: SamplingStrategy,
 {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(
         leader_sampler: L,
         proposer_sampler: P,
+        attestor_sampler: A,
         relay_sampler: R,
         params: MaxcpParameters,
     ) -> Self {
         Self {
             leader_sampler,
             proposer_sampler,
+            attestor_sampler,
             relay_sampler,
             params,
         }
     }
 }
 
-impl<L, P, R> Builder for MaxcpInstanceBuilder<L, P, R>
+impl<L, P, A, R> Builder for MaxcpInstanceBuilder<L, P, A, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
+    A: SamplingStrategy,
     R: SamplingStrategy,
 {
     type Params = MaxcpParameters;

@@ -23,23 +23,30 @@ use crate::rotor::RotorParams;
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct MaxcpLatencySimulation<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+pub struct MaxcpLatencySimulation<
+    L: SamplingStrategy,
+    P: SamplingStrategy,
+    A: SamplingStrategy,
+    R: SamplingStrategy,
+> {
     _leader_sampler: PhantomData<L>,
     _proposer_sampler: PhantomData<P>,
+    _attestor_sampler: PhantomData<A>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L, P, R> Protocol for MaxcpLatencySimulation<L, P, R>
+impl<L, P, A, R> Protocol for MaxcpLatencySimulation<L, P, A, R>
 where
     L: SamplingStrategy,
     P: SamplingStrategy,
+    A: SamplingStrategy,
     R: SamplingStrategy,
 {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = MaxcpParams;
     type Instance = MaxcpInstance;
-    type Builder = MaxcpInstanceBuilder<L, P, R>;
+    type Builder = MaxcpInstanceBuilder<L, P, A, R>;
 }
 
 /// Stages of the MaxCP latency simulation.
