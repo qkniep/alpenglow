@@ -53,10 +53,10 @@ where
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyTestStage {
     Propose,
-    Relay,
-    Attestation,
-    Consensus,
+    Attest,
+    BuildBlock,
     Reconstruct,
+    Consensus,
 }
 
 impl Stage for LatencyTestStage {
@@ -69,9 +69,9 @@ impl Stage for LatencyTestStage {
 
     fn next(&self) -> Option<Self> {
         match self {
-            LatencyTestStage::Propose => Some(LatencyTestStage::Relay),
-            LatencyTestStage::Relay => Some(LatencyTestStage::Attestation),
-            LatencyTestStage::Attestation => Some(LatencyTestStage::Consensus),
+            LatencyTestStage::Propose => Some(LatencyTestStage::Attest),
+            LatencyTestStage::Attest => Some(LatencyTestStage::BuildBlock),
+            LatencyTestStage::BuildBlock => Some(LatencyTestStage::Consensus),
             LatencyTestStage::Consensus => Some(LatencyTestStage::Reconstruct),
             LatencyTestStage::Reconstruct => None,
         }
@@ -80,14 +80,10 @@ impl Stage for LatencyTestStage {
     fn events(&self, _params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
             LatencyTestStage::Propose => vec![LatencyEvent::Propose],
-            LatencyTestStage::Relay => vec![LatencyEvent::Relay],
-            LatencyTestStage::Attestation => vec![LatencyEvent::Attestation],
+            LatencyTestStage::Attest => vec![LatencyEvent::Relay, LatencyEvent::Attest],
+            LatencyTestStage::BuildBlock => vec![LatencyEvent::BuildBlock],
             LatencyTestStage::Consensus => vec![LatencyEvent::Consensus],
-            LatencyTestStage::Reconstruct => vec![
-                LatencyEvent::Release,
-                LatencyEvent::Reconstruct,
-                LatencyEvent::Final,
-            ],
+            LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct, LatencyEvent::Final],
         }
     }
 }
@@ -97,9 +93,9 @@ impl Stage for LatencyTestStage {
 pub enum LatencyEvent {
     Propose,
     Relay,
-    Attestation,
+    Attest,
+    BuildBlock,
     Consensus,
-    Release,
     Reconstruct,
     Final,
 }
@@ -112,9 +108,9 @@ impl Event for LatencyEvent {
         match self {
             Self::Propose => "propose",
             Self::Relay => "relay",
-            Self::Attestation => "attestation",
+            Self::Attest => "attest",
+            Self::BuildBlock => "build_block",
             Self::Consensus => "consensus",
-            Self::Release => "release",
             Self::Reconstruct => "reconstruct",
             Self::Final => "final",
         }
@@ -129,10 +125,10 @@ impl Event for LatencyEvent {
         match self {
             Self::Propose => vec![],
             Self::Relay => vec![Self::Propose],
-            Self::Attestation => vec![Self::Relay],
-            Self::Consensus => vec![Self::Attestation],
-            Self::Release => vec![Self::Consensus],
-            Self::Reconstruct => vec![Self::Release],
+            Self::Attest => vec![Self::Propose],
+            Self::BuildBlock => vec![Self::Attest],
+            Self::Consensus => vec![Self::BuildBlock],
+            Self::Reconstruct => vec![Self::Relay],
             Self::Final => vec![Self::Consensus, Self::Reconstruct],
         }
     }
@@ -185,7 +181,11 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            Self::Attestation => {
+            Self::Attest => {
+                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
+                timings
+            }
+            Self::BuildBlock => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (i, relay) in instance.relays.iter().enumerate() {
@@ -227,21 +227,6 @@ impl Event for LatencyEvent {
                     .get(crate::alpenglow::LatencyEvent::Final)
                     .unwrap()
                     .to_vec()
-            }
-            Self::Release => {
-                let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                for relay in &instance.relays {
-                    let dep_time = dependency_timings[0][*relay as usize];
-                    let block_bytes = environment.num_validators()
-                        * instance.params.num_proposers as usize
-                        * MAX_DATA_PER_SHRED;
-                    let tx_time = environment.transmission_delay(block_bytes, *relay);
-                    let start_sending_time =
-                        resources.network.time_next_free_after(*relay, dep_time);
-                    resources.network.schedule(*relay, dep_time, tx_time);
-                    timings[*relay as usize] = start_sending_time;
-                }
-                timings
             }
             Self::Reconstruct => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
