@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       
       - name: Install tools
         uses: taiki-e/install-action@v2
@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Build docs
         run: cargo doc --no-deps --document-private-items
