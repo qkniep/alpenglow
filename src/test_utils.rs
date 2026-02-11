@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rand::RngCore;
+use rand::prelude::*;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
