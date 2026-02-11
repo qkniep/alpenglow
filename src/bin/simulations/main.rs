@@ -64,6 +64,9 @@ use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
+use crate::maxcp::{
+    MaxcpInstanceBuilder, MaxcpLatencySimulation, MaxcpParams, run_maxcp_robustness_test,
+};
 use crate::pyjama::{
     PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
 };
@@ -115,10 +118,12 @@ fn main() -> Result<()> {
 
     crate::ryse::run_robustness_tests();
     crate::pyjama::run_robustness_tests();
+    crate::maxcp::run_robustness_tests();
 
     for k in [64, 128, 256, 512] {
         run_ryse_robustness_test(k)?;
         run_pyjama_robustness_test(k)?;
+        run_maxcp_robustness_test(k)?;
     }
 
     if RUN_BANDWIDTH_TESTS {
@@ -444,6 +449,25 @@ fn run_tests<
         engine
             .stats()
             .write_to_csv("data/output/pyjama_1000.csv", &params)?;
+
+        // MaxCP
+        let params = MaxcpParams::new(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_1000.csv", &params)?;
 
         // Alpenglow
         // latency experiments with random leaders
