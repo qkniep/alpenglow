@@ -68,12 +68,14 @@ jobs:
 
       # test coverage
       - name: Collect coverage data
+        if: github.actor != 'dependabot[bot]'
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
         run: cargo llvm-cov --lcov --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --release --output-path lcov.info nextest
 
       - name: Upload coverage to Codecov
+        if: github.actor != 'dependabot[bot]'
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true
