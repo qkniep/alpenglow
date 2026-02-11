@@ -149,9 +149,10 @@ impl Event for LatencyEvent {
             Self::Propose => {
                 let mut timings = vec![start_time; environment.num_validators()];
                 for &proposer in &instance.proposers {
-                    let block_bytes = instance.params.num_slices as usize
-                        * instance.params.num_relays as usize
-                        * MAX_DATA_PER_SHRED;
+                    let block_bytes =
+                        (instance.params.num_batches * instance.params.slices_per_batch) as usize
+                            * instance.params.num_attestors as usize
+                            * MAX_DATA_PER_SHRED;
                     let tx_time = environment.transmission_delay(block_bytes, proposer);
                     let start_sending_time =
                         resources.network.time_next_free_after(proposer, start_time);
@@ -257,7 +258,8 @@ impl Event for LatencyEvent {
                             );
                     }
                     shred_timings.sort_unstable();
-                    *timing = shred_timings[instance.params.can_decode_threshold as usize - 1];
+                    *timing =
+                        shred_timings[instance.params.can_decode_proposal_threshold as usize - 1];
                 }
                 timings
             }
