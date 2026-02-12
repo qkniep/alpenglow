@@ -472,6 +472,25 @@ fn run_tests<
             .stats()
             .write_to_csv("data/output/maxcp_1000.csv", &params)?;
 
+        // MaxCP (quick relase)
+        let params = MaxcpParams::new_quick_release(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp-qr latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_quick_release_1000.csv", &params)?;
+
         // Alpenglow
         // latency experiments with random leaders
         for (n, k) in SHRED_COMBINATIONS {
