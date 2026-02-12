@@ -127,7 +127,7 @@ impl Event for LatencyEvent {
             Self::Relay => vec![Self::Propose],
             Self::Attest => vec![Self::Relay],
             Self::BuildBlock => vec![Self::Attest],
-            Self::Reconstruct => vec![Self::Relay],
+            Self::Reconstruct => vec![Self::Attest],
             Self::Execution => vec![Self::BuildBlock, Self::Reconstruct],
             Self::Consensus => vec![Self::BuildBlock, Self::Reconstruct],
         }
@@ -161,7 +161,7 @@ impl Event for LatencyEvent {
                 let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
                 for (attestor_offset, &attestor) in instance.attestors.iter().enumerate() {
-                    let mut shred_times = instance
+                    let shred_times = instance
                         .proposers
                         .iter()
                         .map(|proposer| {
@@ -175,24 +175,18 @@ impl Event for LatencyEvent {
                             start_time + tx_time + prop_time
                         })
                         .collect::<Vec<_>>();
-                    shred_times.sort_unstable();
                     let sent_time = shred_times
-                        .iter()
+                        .into_iter()
                         .map(|recv_time| {
                             if !instance.params.quick_release {
                                 let tx_time = environment.transmission_delay(
                                     instance.params.num_proposers as usize * MAX_DATA_PER_SHRED,
                                     attestor,
                                 );
-                                resources.network.schedule(attestor, *recv_time, tx_time);
-                                *recv_time + tx_time
+                                resources.network.schedule(attestor, recv_time, tx_time);
+                                recv_time + tx_time
                             } else {
-                                // let shred_send_index = attestor_offset + 1;
-                                // let tx_time = environment.transmission_delay(
-                                //     environment.num_validators() * MAX_DATA_PER_SHRED,
-                                //     attestor,
-                                // );
-                                *recv_time
+                                recv_time
                             }
                         })
                         .max()
@@ -233,13 +227,16 @@ impl Event for LatencyEvent {
                 }
 
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
+                let mut shred_timings =
+                    vec![SimTime::NEVER; instance.params.num_attestors as usize];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
-                    for (i, relay) in instance.relays.iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][*relay as usize]
-                            + environment.propagation_delay(*relay, recipient as ValidatorId)
-                            + environment
-                                .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
+                    for (i, attestor) in instance.attestors.iter().enumerate() {
+                        shred_timings[i] = dependency_timings[0][*attestor as usize]
+                            + environment.propagation_delay(*attestor, recipient as ValidatorId)
+                            + environment.transmission_delay(
+                                (recipient + 1) * MAX_DATA_PER_SHRED,
+                                *attestor,
+                            );
                     }
                     shred_timings.sort_unstable();
                     *timing =
