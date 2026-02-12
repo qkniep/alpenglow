@@ -64,7 +64,7 @@ impl Stage for LatencyTestStage {
 
     fn events(&self, _params: &Self::Params) -> Vec<LatencyEvent> {
         match self {
-            Self::Rotor => vec![LatencyEvent::Block],
+            Self::Rotor => vec![LatencyEvent::Block, LatencyEvent::BlockValid],
             Self::Notar => vec![LatencyEvent::LocalNotar, LatencyEvent::Notar],
             Self::Final1 => vec![LatencyEvent::LocalFastFinal, LatencyEvent::LocalSlowFinal],
             Self::Final2 => vec![LatencyEvent::LocalFinal, LatencyEvent::Final],
@@ -76,6 +76,7 @@ impl Stage for LatencyTestStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LatencyEvent {
     Block,
+    BlockValid,
     LocalNotar,
     Notar,
     LocalFastFinal,
@@ -91,6 +92,7 @@ impl Event for LatencyEvent {
     fn name(&self) -> String {
         match self {
             Self::Block => "block",
+            Self::BlockValid => "block_valid",
             Self::LocalNotar => "local_notar",
             Self::Notar => "notar",
             Self::LocalFastFinal => "local_fast_final",
@@ -102,16 +104,17 @@ impl Event for LatencyEvent {
     }
 
     fn should_track_stats(&self) -> bool {
-        true
+        !matches!(self, Self::BlockValid)
     }
 
     // TODO: simulate actual circular dependency (of certs and status)
     fn dependencies(&self, _params: &LatencySimParams) -> Vec<Self> {
         match self {
             Self::Block => vec![],
-            Self::LocalNotar => vec![Self::Block],
+            Self::BlockValid => vec![Self::Block],
+            Self::LocalNotar => vec![Self::BlockValid],
             Self::Notar => vec![Self::LocalNotar],
-            Self::LocalFastFinal => vec![Self::Block],
+            Self::LocalFastFinal => vec![Self::BlockValid],
             Self::LocalSlowFinal => vec![Self::Notar],
             Self::LocalFinal => vec![Self::LocalFastFinal, Self::LocalSlowFinal],
             Self::Final => vec![Self::LocalFinal],
@@ -160,6 +163,18 @@ impl Event for LatencyEvent {
                     .get(crate::rotor::LatencyEvent::Block)
                     .unwrap()
                     .to_vec()
+            }
+            Self::BlockValid => {
+                // block is valid at the later of: (a) block arrival, (b) external validity time
+                let external_validity_times = instance
+                    .external_validity_times
+                    .clone()
+                    .unwrap_or(vec![SimTime::ZERO; environment.validators.len()]);
+                dependency_timings[0]
+                    .iter()
+                    .zip(external_validity_times)
+                    .map(|(block_time, validity_time)| (*block_time).max(validity_time))
+                    .collect()
             }
             Self::LocalNotar => broadcast_vote_threshold(resources, 0.6),
             Self::Notar => local_or_cert(resources),
@@ -216,8 +231,10 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
         let rotor_instances = (0..self.params.num_slots)
             .map(|_| self.rotor_builder.build(rng))
             .collect();
+
         LatencySimInstance {
             rotor_instances,
+            external_validity_times: None,
             params: self.params.clone(),
         }
     }
@@ -232,5 +249,14 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBui
 /// Contains one instance of the Rotor latency simulation, [`RotorInstance`], per slot.
 pub struct LatencySimInstance {
     rotor_instances: Vec<RotorInstance>,
+    external_validity_times: Option<Vec<SimTime>>,
     params: LatencySimParams,
+}
+
+impl LatencySimInstance {
+    /// Turns this instance into a new instance with the given external validity times.
+    pub fn with_external_validity_times(mut self, external_validity_times: Vec<SimTime>) -> Self {
+        self.external_validity_times = Some(external_validity_times);
+        self
+    }
 }
