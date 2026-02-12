@@ -83,7 +83,7 @@ impl Stage for LatencyTestStage {
             LatencyTestStage::Attest => vec![LatencyEvent::Relay, LatencyEvent::Attest],
             LatencyTestStage::BuildBlock => vec![LatencyEvent::BuildBlock],
             LatencyTestStage::Reconstruct => vec![LatencyEvent::Reconstruct],
-            LatencyTestStage::Consensus => vec![LatencyEvent::Consensus],
+            LatencyTestStage::Consensus => vec![LatencyEvent::Execution, LatencyEvent::Consensus],
         }
     }
 }
@@ -96,6 +96,7 @@ pub enum LatencyEvent {
     Attest,
     BuildBlock,
     Reconstruct,
+    Execution,
     Consensus,
 }
 
@@ -110,6 +111,7 @@ impl Event for LatencyEvent {
             Self::Attest => "attest",
             Self::BuildBlock => "build_block",
             Self::Reconstruct => "reconstruct",
+            Self::Execution => "execution",
             Self::Consensus => "consensus",
         }
         .to_owned()
@@ -126,6 +128,7 @@ impl Event for LatencyEvent {
             Self::Attest => vec![Self::Relay],
             Self::BuildBlock => vec![Self::Attest],
             Self::Reconstruct => vec![Self::Relay],
+            Self::Execution => vec![Self::BuildBlock, Self::Reconstruct],
             Self::Consensus => vec![Self::BuildBlock, Self::Reconstruct],
         }
     }
@@ -181,16 +184,15 @@ impl Event for LatencyEvent {
                                     instance.params.num_proposers as usize * MAX_DATA_PER_SHRED,
                                     attestor,
                                 );
+                                resources.network.schedule(attestor, *recv_time, tx_time);
                                 *recv_time + tx_time
                             } else {
                                 // let shred_send_index = attestor_offset + 1;
-                                let tx_time = environment.transmission_delay(
-                                    instance.params.num_proposers as usize
-                                        * environment.num_validators()
-                                        * MAX_DATA_PER_SHRED,
-                                    attestor,
-                                );
-                                *recv_time + tx_time
+                                // let tx_time = environment.transmission_delay(
+                                //     environment.num_validators() * MAX_DATA_PER_SHRED,
+                                //     attestor,
+                                // );
+                                *recv_time
                             }
                         })
                         .max()
@@ -236,12 +238,8 @@ impl Event for LatencyEvent {
                     for (i, relay) in instance.relays.iter().enumerate() {
                         shred_timings[i] = dependency_timings[0][*relay as usize]
                             + environment.propagation_delay(*relay, recipient as ValidatorId)
-                            + environment.transmission_delay(
-                                (recipient + 1)
-                                    * instance.params.num_proposers as usize
-                                    * MAX_DATA_PER_SHRED,
-                                *relay,
-                            );
+                            + environment
+                                .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
                     }
                     shred_timings.sort_unstable();
                     *timing =
@@ -249,14 +247,14 @@ impl Event for LatencyEvent {
                 }
                 timings
             }
-            Self::Consensus => {
+            Self::Execution => {
                 let consensus_start_time = dependency_timings[0][instance.leader as usize];
                 // TODO: find better way of integrating sub-protocol
                 let slices_required = if instance.params.quick_release {
                     instance.params.num_proposers.div_ceil(11)
                 } else {
-                    // instance.params.num_proposers.div_ceil(2)
-                    instance.params.num_proposers.div_ceil(11)
+                    instance.params.num_proposers.div_ceil(2)
+                        + instance.params.num_proposers.div_ceil(11)
                 } as usize;
                 let rotor_params = RotorParams {
                     data_shreds: DATA_SHREDS,
@@ -272,7 +270,48 @@ impl Event for LatencyEvent {
                     rotor_builder,
                     crate::alpenglow::LatencySimParams::new(rotor_params, 4, 1),
                 );
-                let consensus_instance = builder.build(&mut rand::rng());
+                let mut consensus_instance = builder.build(&mut rand::rng());
+                let reconstruct_times = dependency_timings[1].to_vec();
+                consensus_instance =
+                    consensus_instance.with_external_validity_times(reconstruct_times);
+                let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                    builder,
+                    environment.clone(),
+                );
+                let mut timings = Timings::new(consensus_start_time);
+                engine.run(&consensus_instance, &mut timings);
+                timings
+                    .get(crate::alpenglow::LatencyEvent::BlockValid)
+                    .unwrap()
+                    .to_vec()
+            }
+            Self::Consensus => {
+                let consensus_start_time = dependency_timings[0][instance.leader as usize];
+                // TODO: find better way of integrating sub-protocol
+                let slices_required = if instance.params.quick_release {
+                    instance.params.num_proposers.div_ceil(11)
+                } else {
+                    instance.params.num_proposers.div_ceil(2)
+                        + instance.params.num_proposers.div_ceil(11)
+                } as usize;
+                let rotor_params = RotorParams {
+                    data_shreds: DATA_SHREDS,
+                    shreds: TOTAL_SHREDS,
+                    slices: slices_required,
+                };
+                let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
+                    StakeWeightedSampler::new(environment.validators.clone()),
+                    StakeWeightedSampler::new(environment.validators.clone()),
+                    rotor_params,
+                );
+                let builder = crate::alpenglow::LatencySimInstanceBuilder::new(
+                    rotor_builder,
+                    crate::alpenglow::LatencySimParams::new(rotor_params, 4, 1),
+                );
+                let mut consensus_instance = builder.build(&mut rand::rng());
+                let reconstruct_times = dependency_timings[1].to_vec();
+                consensus_instance =
+                    consensus_instance.with_external_validity_times(reconstruct_times);
                 let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
                     builder,
                     environment.clone(),
