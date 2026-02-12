@@ -158,7 +158,7 @@ impl Event for LatencyEvent {
                 let mut timings = vec![SimTime::ZERO; environment.num_validators()];
                 // TODO: actually run for more than 1 slot
                 for (attestor_offset, &attestor) in instance.attestors.iter().enumerate() {
-                    let shreds_from_all_proposers = instance
+                    let mut shred_times = instance
                         .proposers
                         .iter()
                         .map(|proposer| {
@@ -168,16 +168,34 @@ impl Event for LatencyEvent {
                                 shred_send_index * MAX_DATA_PER_SHRED,
                                 *proposer,
                             );
-                            let start_send_time = resources
-                                .network
-                                .time_next_free_after(*proposer, start_time);
-                            resources.network.schedule(*proposer, start_time, tx_time);
-                            start_send_time + tx_time
+                            let prop_time = environment.propagation_delay(*proposer, attestor);
+                            start_time + tx_time + prop_time
+                        })
+                        .collect::<Vec<_>>();
+                    shred_times.sort_unstable();
+                    let sent_time = shred_times
+                        .iter()
+                        .map(|recv_time| {
+                            if !instance.params.quick_release {
+                                let tx_time = environment.transmission_delay(
+                                    instance.params.num_proposers as usize * MAX_DATA_PER_SHRED,
+                                    attestor,
+                                );
+                                *recv_time + tx_time
+                            } else {
+                                // let shred_send_index = attestor_offset + 1;
+                                let tx_time = environment.transmission_delay(
+                                    instance.params.num_proposers as usize
+                                        * environment.num_validators()
+                                        * MAX_DATA_PER_SHRED,
+                                    attestor,
+                                );
+                                *recv_time + tx_time
+                            }
                         })
                         .max()
                         .unwrap();
-                    timings[attestor as usize] =
-                        timings[attestor as usize].max(shreds_from_all_proposers);
+                    timings[attestor as usize] = timings[attestor as usize].max(sent_time);
                 }
                 timings
             }
@@ -237,8 +255,8 @@ impl Event for LatencyEvent {
                 let slices_required = if instance.params.quick_release {
                     instance.params.num_proposers.div_ceil(11)
                 } else {
-                    instance.params.num_proposers.div_ceil(2)
-                        + instance.params.num_proposers.div_ceil(11)
+                    // instance.params.num_proposers.div_ceil(2)
+                    instance.params.num_proposers.div_ceil(11)
                 } as usize;
                 let rotor_params = RotorParams {
                     data_shreds: DATA_SHREDS,
