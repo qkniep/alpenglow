@@ -9,9 +9,63 @@ use alpenglow::shredder::{
 use alpenglow::types::Slice;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::BytesCount;
+use rand::Rng;
+use rand::rngs::ThreadRng;
+use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
 
 fn main() {
     divan::main();
+}
+
+#[divan::bench()]
+fn test(bencher: divan::Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let shredder = ReedSolomonEncoder::new(1200, 2000, 32).unwrap();
+            let shards: Vec<[u8; 32]> = (0..1200).map(|_| rng.random()).collect();
+            (shredder, shards, rng)
+        })
+        .bench_values(
+            |(mut shredder, shards, _rng): (ReedSolomonEncoder, Vec<[u8; 32]>, ThreadRng)| {
+                for shard in shards {
+                    shredder.add_original_shard(shard).unwrap();
+                }
+                let _ = shredder.encode().unwrap();
+            },
+        );
+}
+
+#[divan::bench()]
+fn test2(bencher: divan::Bencher) {
+    bencher
+        .with_inputs(|| {
+            let mut rng = rand::rng();
+            let mut shredder = ReedSolomonEncoder::new(1200, 2000, 32).unwrap();
+            let shards: Vec<[u8; 32]> = (0..1200).map(|_| rng.random()).collect();
+            for shard in shards.iter() {
+                shredder.add_original_shard(shard).unwrap();
+            }
+            let res = shredder.encode().unwrap();
+            let recovered = res.recovery_iter().map(|s| s.to_vec()).collect::<Vec<_>>();
+            let deshredder = ReedSolomonDecoder::new(1200, 2000, 32).unwrap();
+            (deshredder, shards, recovered)
+        })
+        .bench_values(
+            |(mut deshredder, shards, recovered): (
+                ReedSolomonDecoder,
+                Vec<[u8; 32]>,
+                Vec<Vec<u8>>,
+            )| {
+                for (i, shard) in shards.iter().enumerate().skip(200) {
+                    deshredder.add_original_shard(i, shard).unwrap();
+                }
+                for (i, shard) in recovered.iter().enumerate().take(200) {
+                    deshredder.add_recovery_shard(i, shard).unwrap();
+                }
+                let _ = deshredder.decode().unwrap();
+            },
+        );
 }
 
 #[divan::bench(types = [RegularShredder, CodingOnlyShredder, PetsShredder, AontShredder])]
