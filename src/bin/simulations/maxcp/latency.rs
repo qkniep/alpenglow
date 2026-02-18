@@ -150,8 +150,16 @@ impl Event for LatencyEvent {
                         * instance.params.num_attestors as usize
                         * MAX_DATA_PER_SHRED;
                     let tx_time = environment.transmission_delay(batch_bytes, proposer);
-                    let start_sending_time =
-                        resources.network.time_next_free_after(proposer, start_time);
+                    let max_prop_time = instance
+                        .attestors
+                        .iter()
+                        .map(|attestor| environment.propagation_delay(proposer, *attestor))
+                        .max()
+                        .unwrap();
+                    let should_send_time = SimTime::from_secs(0.22 - max_prop_time.as_secs());
+                    let start_sending_time = resources
+                        .network
+                        .time_next_free_after(proposer, should_send_time);
                     resources.network.schedule(proposer, start_time, tx_time);
                     timings[proposer as usize] = start_sending_time;
                 }
@@ -202,7 +210,7 @@ impl Event for LatencyEvent {
                     let batch_time_secs = instance.params.slot_time.as_secs_f64()
                         / instance.params.num_batches as f64;
                     let send_time = dependency_timings[0][*attestor as usize]
-                        .max(SimTime::from_secs(batch_time_secs));
+                        .max(SimTime::from_secs(0.2 + batch_time_secs));
                     timings[*attestor as usize] =
                         send_time + environment.transmission_delay(attestation_bytes, *attestor);
                 }
