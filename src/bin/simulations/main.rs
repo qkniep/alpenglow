@@ -35,6 +35,7 @@
 
 mod alpenglow;
 mod discrete_event_simulator;
+mod maxcp;
 mod pyjama;
 mod quorum_robustness;
 mod rotor;
@@ -63,6 +64,9 @@ use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
+use crate::maxcp::{
+    MaxcpInstanceBuilder, MaxcpLatencySimulation, MaxcpParams, run_maxcp_robustness_test,
+};
 use crate::pyjama::{
     PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
 };
@@ -74,6 +78,7 @@ use crate::ryse::{
 };
 
 const RUN_BANDWIDTH_TESTS: bool = false;
+const RUN_ROBUSTENSS_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
 const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
 
@@ -114,10 +119,14 @@ fn main() -> Result<()> {
 
     crate::ryse::run_robustness_tests();
     crate::pyjama::run_robustness_tests();
+    crate::maxcp::run_robustness_tests();
 
-    for k in [64, 128, 256, 512] {
-        run_ryse_robustness_test(k)?;
-        run_pyjama_robustness_test(k)?;
+    if RUN_ROBUSTENSS_TESTS {
+        for k in [64, 128, 256, 512] {
+            run_ryse_robustness_test(k)?;
+            run_pyjama_robustness_test(k)?;
+            run_maxcp_robustness_test(k)?;
+        }
     }
 
     if RUN_BANDWIDTH_TESTS {
@@ -443,6 +452,124 @@ fn run_tests<
         engine
             .stats()
             .write_to_csv("data/output/pyjama_1000.csv", &params)?;
+
+        // MaxCP
+        let params = MaxcpParams::new(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_1000.csv", &params)?;
+
+        // MaxCP (quick relase)
+        let params = MaxcpParams::new_quick_release(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp-qr latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_quick_release_1000.csv", &params)?;
+
+        // MaxCP (Amsterdam)
+        let leader = find_leader_in_city(validators_with_ping_data, "Westpoort");
+        let params = MaxcpParams::new(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            AllSameSampler(leader),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp-ams latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_ams_1000.csv", &params)?;
+
+        // MaxCP (Amsterdam, quick relase)
+        let leader = find_leader_in_city(validators_with_ping_data, "Westpoort");
+        let params = MaxcpParams::new_quick_release(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            AllSameSampler(leader),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp-ams-qr latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_ams_quick_release_1000.csv", &params)?;
+
+        // MaxCP (Singapore)
+        let leader = find_leader_in_city(validators_with_ping_data, "Singapore");
+        let params = MaxcpParams::new(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            AllSameSampler(leader),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp-sin latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_sin_1000.csv", &params)?;
+
+        // MaxCP (Singapore, quick relase)
+        let leader = find_leader_in_city(validators_with_ping_data, "Singapore");
+        let params = MaxcpParams::new_quick_release(16, 64, 64);
+        let builder = MaxcpInstanceBuilder::new(
+            AllSameSampler(leader),
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            params,
+        );
+        let engine = SimulationEngine::<MaxcpLatencySimulation<_, _, _, _>>::new(
+            builder,
+            environment.clone(),
+        );
+        info!("maxcp-sin-qr latency sim (parallel)");
+        engine.run_many_parallel(1000);
+        engine
+            .stats()
+            .write_to_csv("data/output/maxcp_sin_quick_release_1000.csv", &params)?;
 
         // Alpenglow
         // latency experiments with random leaders
