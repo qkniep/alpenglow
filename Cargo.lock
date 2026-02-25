@@ -769,9 +769,9 @@ dependencies = [
 
 [[package]]
 name = "fastrace"
-version = "0.7.16"
+version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8df0cb35ba204d668c758a6400c2e43eab9b038843debfab606b26f194ad7f1b"
+checksum = "2130caec636d7a1d23b173576674ced1af967228642ceaeb6a1b4705c282b00e"
 dependencies = [
  "fastant",
  "fastrace-macro",
@@ -784,9 +784,9 @@ dependencies = [
 
 [[package]]
 name = "fastrace-macro"
-version = "0.7.16"
+version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc6ca71d5dfcbab9e09b19b5248e06a4bd8ac779055491fb47e6ebbdd20e5567"
+checksum = "0b35f67e02527fca6515ff61f922360df781f477daf6a806fff16bd59525dee5"
 dependencies = [
  "proc-macro-error2",
  "proc-macro2",
@@ -796,9 +796,9 @@ dependencies = [
 
 [[package]]
 name = "fastrace-opentelemetry"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faefa772789a7899f1af0bbb83cf22bf0aa2a830cdc3f718c9751ab8b812db29"
+checksum = "4644a8a7ce6d20d83e73d9562f323388e4d817470d40bcb51fa2fe328db58cd2"
 dependencies = [
  "fastrace",
  "log",
