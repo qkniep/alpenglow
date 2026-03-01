@@ -24,7 +24,7 @@ pub struct PyjamaParameters {
     pub num_slices: u64,
 }
 
-/// Specific instance of the Ryse protocol.
+/// Specific instance of the Pyjama protocol.
 pub struct PyjamaInstance {
     pub leader: ValidatorId,
     pub proposers: Vec<ValidatorId>,
@@ -32,7 +32,7 @@ pub struct PyjamaInstance {
     pub params: PyjamaParameters,
 }
 
-/// Builder for Ryse instances with a specific set of parameters.
+/// Builder for Pyjama instances with a specific set of parameters.
 pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
     leader_sampler: L,
     proposer_sampler: P,
@@ -129,6 +129,18 @@ impl PyjamaParameters {
             can_decode_threshold: (num_relays * 30).div_ceil(100),
             should_decode_threshold: (num_relays * 60).div_ceil(100),
             attestations_threshold: (num_relays * 80).div_ceil(100),
+            num_slices: 1,
+        }
+    }
+
+    /// Generates a new parameter set based on the second ones proposed in the Supernova paper.
+    pub fn new_supernova(num_proposers: u64, num_relays: u64) -> Self {
+        Self {
+            num_proposers,
+            num_relays,
+            can_decode_threshold: (num_relays * 20).div_ceil(100),
+            should_decode_threshold: (num_relays * 40).div_ceil(100),
+            attestations_threshold: (num_relays * 60).div_ceil(100),
             num_slices: 1,
         }
     }
