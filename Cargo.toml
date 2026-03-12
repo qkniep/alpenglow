@@ -21,7 +21,7 @@ clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3"
 csv = "1"
-ctr = "0.10.0-rc.3"
+ctr = "0.10.0-rc.4"
 derive_more = { version = "2", features = ["as_ref", "from", "into"] }
 ed25519-consensus = "2"
 either = "1"
