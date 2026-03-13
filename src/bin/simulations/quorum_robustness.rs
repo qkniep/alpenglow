@@ -425,7 +425,8 @@ pub enum QuorumThreshold {
         is_crash_enough: bool,
     },
     /// This threshold is reached if all of the contained thresholds are reached.
-    #[allow(dead_code)] // currently unused
+    // NOTE: currently unused
+    #[allow(dead_code)]
     All(Vec<Self>),
     /// This threshold is reached if at least one of the contained thresholds are reached.
     Any(Vec<Self>),
@@ -467,6 +468,7 @@ impl QuorumThreshold {
             Self::All(thresholds) => thresholds
                 .iter()
                 .all(|threshold| threshold.evaluate(corrupted)),
+            // FIXME: Currently assumes independence.
             Self::Any(thresholds) => thresholds
                 .iter()
                 .any(|threshold| threshold.evaluate(corrupted)),
