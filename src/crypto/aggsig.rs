@@ -110,7 +110,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
         mut reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
+        let sig_bytes = reader.take_borrowed(UNCOMPRESSED_SIG_SIZE)?;
         let sig = BlstSignature::deserialize(sig_bytes).map_err(|e| {
             warn!("encountered invalid BLS sig: {e:?}");
             wincode::ReadError::Custom("invalid BLS encoding")
@@ -149,7 +149,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         // read raw data
-        let sig_bytes = reader.borrow_exact(UNCOMPRESSED_SIG_SIZE)?;
+        let sig_bytes = reader.take_borrowed(UNCOMPRESSED_SIG_SIZE)?;
         let num_bits = <usize as SchemaRead<'de, C>>::get(&mut reader)?;
         let bitmask_raw_vec = <Vec<usize> as SchemaRead<'de, C>>::get(&mut reader)?;
 
