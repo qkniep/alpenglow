@@ -58,8 +58,7 @@ pub trait Blockstore {
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
-    -> Option<&'a SliceRoot>;
+    fn get_slice_root(&self, block_id: &BlockId, slice: SliceIndex) -> Option<SliceRoot>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
@@ -312,10 +311,9 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold any shred for that slice.
-    fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<&SliceRoot> {
+    fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<SliceRoot> {
         let block_data = self.get_block_data(block_id)?;
-        let slice_shreds = block_data.shreds.get(&slice_index)?;
-        slice_shreds.iter().flatten().next().map(|s| &s.merkle_root)
+        block_data.merkle_root_cache.get(&slice_index).cloned()
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
@@ -355,7 +353,7 @@ mod tests {
     use crate::ValidatorInfo;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::crypto::{Hash, aggsig};
+    use crate::crypto::aggsig;
     use crate::network::dontcare_sockaddr;
     use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
     use crate::test_utils::create_random_shredded_block;
@@ -401,7 +399,7 @@ mod tests {
         let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &sk);
         let block_id = (slot, block_hash);
 
-        let slice_hash = &shreds[0][0].merkle_root;
+        let slice_hash = shreds[0][0].merkle_root();
         for shred in &shreds[0] {
             // store shred
             add_shred_ignore_duplicate(&mut blockstore, shred.clone().into_shred()).await?;
@@ -424,7 +422,7 @@ mod tests {
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
-        assert!(DoubleMerkleTree::check_proof(slice_hash, 0, &root, &proof));
+        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
 
         Ok(())
     }
@@ -628,10 +626,10 @@ mod tests {
         let (sk, mut blockstore) = test_setup(tx);
         let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &sk);
 
-        // insert shreds with wrong Merkle root
+        // insert shreds with corrupted data (derived Merkle root won't match signature)
         for shred in slices[0].clone() {
             let mut shred = shred.into_shred();
-            shred.merkle_root = Hash::random_for_test().into();
+            shred.payload_mut().data.fill(0);
             let res = add_shred_ignore_duplicate(&mut blockstore, shred).await;
             assert!(res.is_err());
             assert_eq!(res.err(), Some(AddShredError::InvalidSignature));

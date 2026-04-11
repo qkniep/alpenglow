@@ -121,20 +121,25 @@ pub struct Shred {
 }
 
 impl Shred {
-    /// Verifies only the Merkle proof of this shred.
+    /// Derives the Merkle root of the slice's shred tree from this shred's proof.
+    #[must_use]
+    pub fn merkle_root(&self) -> SliceRoot {
+        SliceMerkleTree::derive_root(
+            &self.payload().data,
+            *self.payload().shred_index,
+            &self.merkle_path,
+        )
+    }
+
+    /// Verifies only the Merkle proof of this shred against the given root.
     ///
     /// For full verification, see [`ValidatedShred::try_new`].
-    ///
-    /// Returns `true` iff the Merkle root matches the given root and the proof is valid.
     #[must_use]
     pub fn verify_path_only(&self, root: &SliceRoot) -> bool {
-        if &self.merkle_root != root {
-            return false;
-        }
         SliceMerkleTree::check_proof(
             &self.payload().data,
             *self.payload().shred_index,
-            &self.merkle_root,
+            root,
             &self.merkle_path,
         )
     }
@@ -278,16 +283,17 @@ impl Shredder for RegularShredder {
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
-        let slice = Slice::from_shreds(payload, any_shred);
-        let header = slice.to_header();
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root.clone();
+        let merkle_root = any_shred.merkle_root();
         let raw_shreds = self.0.shred(&payload_bytes)?;
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
+
+        let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
+        let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = any_shred.merkle_root_sig;
@@ -333,16 +339,17 @@ impl Shredder for CodingOnlyShredder {
 
         // deshreding succeeded above, there should be at least one shred in the array so the unwrap() below should be safe
         let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
-        let slice = Slice::from_shreds(payload, any_shred);
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root.clone();
+        let merkle_root = any_shred.merkle_root();
         let mut raw_shreds = self.0.shred(&payload_bytes)?;
         raw_shreds.data = vec![];
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
             return Err(DeshredError::InvalidMerkleTree);
         }
+
+        let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let (header, _payload) = slice.clone().deconstruct();
@@ -413,7 +420,7 @@ impl Shredder for PetsShredder {
         let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root.clone();
+        let merkle_root = any_shred.merkle_root();
         let header = any_shred.payload().header.clone();
         let mut raw_shreds = self.0.shred(&buffer)?;
         raw_shreds.data.pop();
@@ -430,7 +437,7 @@ impl Shredder for PetsShredder {
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
         let payload = SlicePayload::from(buffer.as_slice());
-        let slice = Slice::from_shreds(payload, any_shred);
+        let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = any_shred.merkle_root_sig;
@@ -501,7 +508,7 @@ impl Shredder for AontShredder {
         let any_shred = shreds.to_shreds().iter().find_map(|s| s.as_ref()).unwrap();
 
         // additional Merkle tree validity check
-        let merkle_root = any_shred.merkle_root.clone();
+        let merkle_root = any_shred.merkle_root();
         let header = any_shred.payload().header.clone();
         let raw_shreds = self.0.shred(&buffer)?;
         let tree = build_merkle_tree(&raw_shreds);
@@ -522,7 +529,7 @@ impl Shredder for AontShredder {
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
         let payload = SlicePayload::from(buffer.as_slice());
-        let slice = Slice::from_shreds(payload, any_shred);
+        let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = any_shred.merkle_root_sig;

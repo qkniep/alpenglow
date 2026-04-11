@@ -151,7 +151,7 @@ where
                 else {
                     return Ok(());
                 };
-                RepairResponse::LastSliceRoot(request.req_type, last_slice, root.clone(), proof)
+                RepairResponse::LastSliceRoot(request.req_type, last_slice, root, proof)
             }
             RepairRequestType::SliceRoot(block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
@@ -161,7 +161,7 @@ where
                 let Some(proof) = blockstore.create_double_merkle_proof(block_id, *slice) else {
                     return Ok(());
                 };
-                RepairResponse::SliceRoot(request.req_type, root.clone(), proof)
+                RepairResponse::SliceRoot(request.req_type, root, proof)
             }
             RepairRequestType::Shred(block_id, slice, shred) => {
                 let blockstore = self.blockstore.read().await;
@@ -565,7 +565,7 @@ mod tests {
         let response = RepairResponse::LastSliceRoot(
             req_type,
             SliceIndex::new_unchecked(num_slices - 1),
-            shreds.last().unwrap()[0].merkle_root.clone(),
+            shreds.last().unwrap()[0].merkle_root(),
             merkle_tree.create_proof(num_slices - 1),
         );
         let port1 = localhost_ip_sockaddr(3);
@@ -589,7 +589,7 @@ mod tests {
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
             let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
-            let root = shreds[slice.inner()][0].merkle_root.clone();
+            let root = shreds[slice.inner()][0].merkle_root();
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
             other_network_request.send(&response, port1).await.unwrap();
@@ -676,7 +676,7 @@ mod tests {
         };
         assert_eq!(req_type, request.req_type);
         assert_eq!(last_slice.inner(), SLICES - 1);
-        assert_eq!(root, shreds[last_slice.inner()][0].merkle_root);
+        assert_eq!(root, shreds[last_slice.inner()][0].merkle_root());
         let correct_proof = blockstore
             .read()
             .await
@@ -698,7 +698,7 @@ mod tests {
                 panic!("not SliceRoot response");
             };
             assert_eq!(req_type, request.req_type);
-            assert_eq!(root, shreds[slice.inner()][0].merkle_root);
+            assert_eq!(root, shreds[slice.inner()][0].merkle_root());
             let correct_proof = blockstore
                 .read()
                 .await

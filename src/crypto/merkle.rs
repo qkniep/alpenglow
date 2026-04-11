@@ -363,8 +363,8 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         let mut node = hash;
         for h in proof.as_ref() {
             node = match i % 2 {
-                0 => Self::hash_pair(node, *h),
-                _ => Self::hash_pair(*h, node),
+                0 => Self::hash_pair(&node, h),
+                _ => Self::hash_pair(h, &node),
             };
             i /= 2;
         }
@@ -372,7 +372,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     }
 
     #[must_use]
-    pub fn derive_root_last(leaf: &Leaf, index: usize, proof: &Proof) -> Root {
+    pub(crate) fn derive_root_last(leaf: &Leaf, index: usize, proof: &Proof) -> Root {
         let hash = Self::hash_leaf(leaf);
         Self::derive_hash_root_last(hash, index, proof)
     }
@@ -384,8 +384,8 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         let mut node = hash;
         for (height, h) in proof.as_ref().iter().enumerate() {
             node = match i % 2 {
-                0 => Self::hash_pair(node, EMPTY_ROOTS[height]),
-                _ => Self::hash_pair(*h, node),
+                0 => Self::hash_pair(&node, &EMPTY_ROOTS[height]),
+                _ => Self::hash_pair(h, &node),
             };
             i /= 2;
         }
@@ -408,16 +408,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// to the given `hash` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
     fn check_hash_proof(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        let mut i = index;
-        let mut node = hash;
-        for h in proof.as_ref() {
-            node = match i % 2 {
-                0 => Self::hash_pair(&node, h),
-                _ => Self::hash_pair(h, &node),
-            };
-            i /= 2;
-        }
-        node == *root.as_hash()
+        *Self::derive_hash_root(hash, index, proof).as_hash() == *root.as_hash()
     }
 
     /// Checks a Merkle path proves the given leaf's data is last in the tree.
@@ -434,17 +425,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
     fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        assert!(proof.as_ref().len() <= MAX_MERKLE_TREE_HEIGHT);
-        let mut i = index;
-        let mut node = hash;
-        for (height, h) in proof.as_ref().iter().enumerate() {
-            node = match i % 2 {
-                0 => Self::hash_pair(&node, &EMPTY_ROOTS[height]),
-                _ => Self::hash_pair(h, &node),
-            };
-            i /= 2;
-        }
-        node == *root.as_hash()
+        *Self::derive_hash_root_last(hash, index, proof).as_hash() == *root.as_hash()
     }
 
     /// Hashes some leaf data with a label into a leaf node.
