@@ -390,7 +390,8 @@ where
         let hash = req_type.hash();
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;
-        self.outstanding_requests.insert(hash, req_type.clone());
+        self.outstanding_requests
+            .insert(hash.clone(), req_type.clone());
         self.request_timeouts.retain(|(_, h)| h != &hash);
         self.request_timeouts.push((expiry, hash));
 

@@ -202,18 +202,18 @@ impl Signable for VoteKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Hash;
+    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
 
     #[test]
     fn basic() {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
-        let vote = Vote::new_notar(Slot::new(0), Hash::default().into(), &sk, 0);
+        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sk, 0);
         assert!(vote.is_notar());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_notar_fallback(Slot::new(0), Hash::default().into(), &sk, 0);
+        let vote = Vote::new_notar_fallback(Slot::new(0), GENESIS_BLOCK_HASH, &sk, 0);
         assert!(vote.is_notar_fallback());
         assert!(vote.check_sig(&pk));
 

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rand::RngCore;
+use rand::prelude::*;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
@@ -22,18 +22,18 @@ use crate::{
 };
 
 /// A simple ping network message.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct Ping;
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
+pub struct Ping(pub [u8; 32]);
 
 /// A simple pong network message.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct Pong;
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
+pub struct Pong(pub [u8; 32]);
 
 /// A simple network message that can be either a ping or a pong.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum PingOrPong {
-    Ping,
-    Pong,
+    Ping([u8; 32]),
+    Pong([u8; 32]),
 }
 
 /// Generates [`ValidatorInfo`] for the given number of validators.
@@ -118,7 +118,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
     let mut slices = Vec::new();
     for slice_index in final_slice_index.until() {
         let parent = if slice_index.is_first() {
-            Some((parent_slot, Hash::default().into()))
+            Some((parent_slot, Hash::random_for_test().into()))
         } else {
             None
         };

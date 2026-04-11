@@ -5,7 +5,7 @@ use alpenglow::crypto::merkle::{SliceMerkleTree, SliceProof};
 use alpenglow::crypto::{IndividualSignature, Signature, aggsig, hash, signature};
 use alpenglow::shredder::{MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE};
 use divan::counter::{BytesCount, ItemsCount};
-use rand::RngCore;
+use rand::prelude::*;
 
 fn main() {
     // run registered benchmarks.

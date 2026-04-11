@@ -1,18 +1,16 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::mem::MaybeUninit;
-
 use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, Vote};
 use alpenglow::crypto::aggsig::SecretKey;
-use alpenglow::crypto::{Hash, aggsig, signature};
+use alpenglow::crypto::merkle::GENESIS_BLOCK_HASH;
+use alpenglow::crypto::{aggsig, signature};
 use alpenglow::network::localhost_ip_sockaddr;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
 use alpenglow::{ValidatorId, ValidatorInfo};
 use divan::counter::{BytesCount, ItemsCount};
-use rand::prelude::*;
 
 fn main() {
     // run registered benchmarks.
@@ -21,10 +19,9 @@ fn main() {
 
 fn generate_vote() -> Vote {
     let mut rng = rand::rng();
-    let mut hash = Hash::default();
-    rng.fill_bytes(&mut hash);
+    let hash = GENESIS_BLOCK_HASH;
     let sk = aggsig::SecretKey::new(&mut rng);
-    Vote::new_notar(Slot::new(0), hash.into(), &sk, 0)
+    Vote::new_notar(Slot::new(0), hash, &sk, 0)
 }
 
 #[divan::bench]
@@ -51,13 +48,11 @@ fn deserialize_vote(bencher: divan::Bencher) {
 fn generate_cert() -> Cert {
     let (sks, val_info) = generate_validators(100);
 
-    let mut rng = rand::rng();
-    let mut hash = Hash::default();
-    rng.fill_bytes(&mut hash);
+    let hash = GENESIS_BLOCK_HASH;
     let votes = sks
         .iter()
         .enumerate()
-        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash.into(), sk, v as ValidatorId))
+        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash.clone(), sk, v as ValidatorId))
         .collect::<Vec<_>>();
     let notar_cert = NotarCert::try_new(&votes, &val_info).unwrap();
     Cert::Notar(notar_cert)
@@ -122,13 +117,12 @@ fn serialize_slice_into(bencher: divan::Bencher) {
                 .into_iter()
                 .map(|v| v.into_shred())
                 .collect::<Vec<_>>();
-            let buf = vec![MaybeUninit::uninit(); 1500];
+            let buf = vec![0; 1500];
             (buf, shreds)
         })
-        .bench_values(|(mut buf, shreds): (Vec<MaybeUninit<u8>>, Vec<Shred>)| {
+        .bench_values(|(mut buf, shreds): (Vec<u8>, Vec<Shred>)| {
             for shred in shreds {
-                let _bytes_written = wincode::serialize_into(&shred, &mut buf)
-                    .expect("serialization should not panic");
+                wincode::serialize_into(&mut buf, &shred).expect("serialization should not panic");
             }
         });
 }

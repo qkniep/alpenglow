@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
 use tokio::net::UdpSocket;
+use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::MTU_BYTES;
@@ -69,8 +70,8 @@ impl<S, R> UdpNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for UdpNetwork<S, R>
 where
-    S: SchemaWrite<Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -122,9 +123,9 @@ mod tests {
         let addr1 = localhost_ip_sockaddr(socket1.port());
 
         // regular send()
-        socket2.send(&Ping, addr1).await.unwrap();
+        socket2.send(&Ping::default(), addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
-        assert!(matches!(msg, Ping));
+        assert_eq!(msg.0, Ping::default().0);
     }
 
     #[tokio::test]
@@ -134,11 +135,11 @@ mod tests {
         let addr1 = localhost_ip_sockaddr(socket1.port());
         let addr2 = localhost_ip_sockaddr(socket2.port());
 
-        socket1.send(&Ping, addr2).await.unwrap();
-        let msg = socket2.receive().await.unwrap();
-        assert!(matches!(msg, Ping));
-        socket2.send(&Pong, addr1).await.unwrap();
-        let msg = socket1.receive().await.unwrap();
-        assert!(matches!(msg, Pong));
+        socket1.send(&Ping::default(), addr2).await.unwrap();
+        let msg: Ping = socket2.receive().await.unwrap();
+        assert_eq!(msg.0, Ping::default().0);
+        socket2.send(&Pong(msg.0), addr1).await.unwrap();
+        let msg: Pong = socket1.receive().await.unwrap();
+        assert_eq!(msg.0, Ping::default().0);
     }
 }

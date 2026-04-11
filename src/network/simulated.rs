@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
+use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::core::SimulatedNetworkCore;
@@ -70,8 +71,8 @@ impl<S, R> SimulatedNetwork<S, R> {
 #[async_trait]
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
-    S: SchemaWrite<Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, Dst = R> + Send + Sync,
+    S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
+    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -135,17 +136,19 @@ mod tests {
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1 = core.join(0, 8192, 8192).await;
         let net2 = core.join(1, 8192, 8192).await;
-        let msg = Ping;
+        let msg = Ping::default();
 
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
-        if !matches!(net2.receive().await, Ok(Ping)) {
+        let received: Ping = net2.receive().await.expect("didn't receive message");
+        if received.0 != msg.0 {
             panic!("received wrong message");
         }
 
         // other direction
         net2.send(&msg, localhost_ip_sockaddr(0)).await.unwrap();
-        if !matches!(net1.receive().await, Ok(Ping)) {
+        let received: Ping = net1.receive().await.expect("didn't receive message");
+        if received.0 != msg.0 {
             panic!("received wrong message");
         }
     }

@@ -3,33 +3,38 @@
 
 //! Implementation of a digital signature scheme.
 //!
-//! This implements the Ed25519 digital signature scheme, as specified in
-//! [RFC 8032](https://tools.ietf.org/html/rfc8032).
-//! Specifically, this is a wrapper around the [`ed25519_consensus`] crate.
+//! This module abstratcs the digital signatures used throughout the entire library.
+//! Currently, it provides Ed25519 digital signature scheme, as specified in [RFC 8032].
+//! Specifically, it is a wrapper around the [`ed25519_consensus`] crate.
+//!
+//! [RFC 8032]: https://tools.ietf.org/html/rfc8032
 
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
-use wincode::containers::Pod;
 use wincode::{SchemaRead, SchemaWrite};
 
-/// A secret key for the digital signature scheme.
+/// Secret key for the digital signature scheme.
 ///
 /// This is a wrapper around [`ed25519_consensus::SigningKey`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SecretKey(SigningKey);
 
-/// A public key for the digital signature scheme.
+/// Public key for the digital signature scheme.
 ///
 /// This is a wrapper around [`ed25519_consensus::VerificationKey`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PublicKey(VerificationKey);
 
-/// A digital signature.
+wincode::pod_wrapper! {
+    unsafe struct PodSignature(ed25519_consensus::Signature);
+}
+
+/// Digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
-pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
+pub struct Signature(#[wincode(with = "PodSignature")] ed25519_consensus::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.
@@ -92,5 +97,15 @@ mod tests {
         let msg = b"ed25519 is pretty fine";
         let sig = sk.sign(msg);
         assert!(sig.verify(msg, &pk));
+    }
+
+    #[test]
+    fn wincode() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let msg = b"ed25519 is pretty fine";
+        let sig = sk.sign(msg);
+        let bytes = wincode::serialize(&sig).unwrap();
+        let recovered_sig: Signature = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(sig.0.to_bytes(), recovered_sig.0.to_bytes());
     }
 }

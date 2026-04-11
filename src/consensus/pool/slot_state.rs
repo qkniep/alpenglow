@@ -585,6 +585,7 @@ impl SlotVotes {
 mod tests {
     use super::*;
     use crate::ValidatorId;
+    use crate::crypto::Hash;
     use crate::test_utils::generate_validators;
 
     #[test]
@@ -609,11 +610,12 @@ mod tests {
     #[test]
     fn add_cert() {
         let (sks, epoch_info) = generate_validators(11);
-        let mut slot_state = SlotState::new(Slot::new(1), epoch_info.clone());
+        let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
+        let mut slot_state = SlotState::new(slot, epoch_info.clone());
         let votes: Vec<_> = sks
             .iter()
             .enumerate()
-            .map(|(i, sk)| Vote::new_notar(Slot::new(1), [1; 32].into(), sk, i as ValidatorId))
+            .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId))
             .collect();
         let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert!(slot_state.certificates.notar.is_none());
@@ -624,16 +626,17 @@ mod tests {
     #[test]
     fn add_vote() {
         let (sks, epoch_info) = generate_validators(11);
-        let mut slot_state = SlotState::new(Slot::new(1), epoch_info.clone());
+        let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
+        let mut slot_state = SlotState::new(slot, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
-            let vote = Vote::new_notar(Slot::new(1), [1; 32].into(), sk, i as ValidatorId);
+            let vote = Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId);
             let voter_stake = epoch_info.validator(i as ValidatorId).stake;
             assert!(slot_state.votes.notar[i].is_none());
             slot_state.add_vote(vote.clone(), voter_stake);
             let notar_vote = &slot_state.votes.notar[i];
             assert!(notar_vote.is_some());
             assert_eq!(
-                slot_state.voted_stakes.notar.get(&[1; 32].into()),
+                slot_state.voted_stakes.notar.get(&hash),
                 Some(&((i + 1) as Stake))
             );
             assert_eq!(slot_state.voted_stakes.notar_or_skip, (i + 1) as Stake);
@@ -643,14 +646,15 @@ mod tests {
     #[test]
     fn safe_to_notar() {
         let (sks, epoch_info) = generate_validators(3);
-        let mut slot_state = SlotState::new(Slot::new(1), epoch_info.clone());
+        let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
+        let mut slot_state = SlotState::new(slot, epoch_info.clone());
 
         // mark parent as notarized(-fallback)
-        slot_state.notify_parent_known([1; 32].into());
-        slot_state.notify_parent_certified([1; 32].into());
+        slot_state.notify_parent_known(hash.clone());
+        slot_state.notify_parent_certified(hash.clone());
 
         // 33% notar alone has no effect
-        let vote = Vote::new_notar(Slot::new(1), [1; 32].into(), &sks[1], 1);
+        let vote = Vote::new_notar(slot, hash.clone(), &sks[1], 1);
         let voter_stake = epoch_info.validator(1).stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
@@ -658,7 +662,7 @@ mod tests {
         assert!(blocks.is_empty());
 
         // additional 33% skip should lead to safe-to-notar
-        let vote = Vote::new_skip(Slot::new(1), &sks[0], 0);
+        let vote = Vote::new_skip(slot, &sks[0], 0);
         let voter_stake = epoch_info.validator(0).stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
@@ -666,8 +670,8 @@ mod tests {
         assert!(blocks.is_empty());
         match &events[0] {
             VotorEvent::SafeToNotar(s, h) => {
-                assert_eq!(*s, Slot::new(1));
-                assert_eq!(*h, [1; 32].into());
+                assert_eq!(*s, slot);
+                assert_eq!(*h, hash);
             }
             _ => unreachable!(),
         }
