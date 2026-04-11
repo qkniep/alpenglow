@@ -9,14 +9,58 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-wincode = "0.2"
+wincode = "0.5"
 
 [dependencies.alpenglow]
 path = ".."
 
+# --- Fuzz Targets ---
+
 [[bin]]
 name = "deserialize_consensus_message"
 path = "fuzz_targets/deserialize_consensus_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deserialize_shred"
+path = "fuzz_targets/deserialize_shred.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deserialize_repair_request"
+path = "fuzz_targets/deserialize_repair_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deserialize_repair_response"
+path = "fuzz_targets/deserialize_repair_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deserialize_transaction"
+path = "fuzz_targets/deserialize_transaction.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "merkle_proof_verify"
+path = "fuzz_targets/merkle_proof_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "consensus_message_roundtrip"
+path = "fuzz_targets/consensus_message_roundtrip.rs"
 test = false
 doc = false
 bench = false
