@@ -351,9 +351,9 @@ mod tests {
 
     use super::*;
     use crate::ValidatorInfo;
+    use crate::crypto::aggsig;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::crypto::aggsig;
     use crate::network::dontcare_sockaddr;
     use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
     use crate::test_utils::create_random_shredded_block;
