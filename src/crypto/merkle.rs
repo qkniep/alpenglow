@@ -372,12 +372,6 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     }
 
     #[must_use]
-    pub(crate) fn derive_root_last(leaf: &Leaf, index: usize, proof: &Proof) -> Root {
-        let hash = Self::hash_leaf(leaf);
-        Self::derive_hash_root_last(hash, index, proof)
-    }
-
-    #[must_use]
     fn derive_hash_root_last(hash: Hash, index: usize, proof: &Proof) -> Root {
         assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
         let mut i = index;
