@@ -26,7 +26,7 @@ mod validated_shreds;
 use aes::Aes128;
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
 use ctr::Ctr64LE;
-use rand::{RngCore, rng};
+use rand::prelude::*;
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -385,7 +385,7 @@ impl Shredder for PetsShredder {
         let mut payload: Vec<u8> = payload.into();
         assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
-        let mut rng = rng();
+        let mut rng = rand::rng();
         let mut key = Array::from([0; 16]);
         rng.fill_bytes(&mut key);
         let iv = Array::from([0; 16]);
@@ -472,7 +472,7 @@ impl Shredder for AontShredder {
         let mut payload: Vec<u8> = payload.into();
         assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
-        let mut rng = rng();
+        let mut rng = rand::rng();
         let mut key = Array::from([0; 16]);
         rng.fill_bytes(&mut key);
         let iv = Array::from([0; 16]);
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn regular_shredding() -> Result<()> {
         let mut shredder = RegularShredder::default();
-        let sk = SecretKey::new(&mut rng());
+        let sk = SecretKey::new(&mut rand::rng());
         let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn coding_only_shredding() -> Result<()> {
         let mut shredder = CodingOnlyShredder::default();
-        let sk = SecretKey::new(&mut rng());
+        let sk = SecretKey::new(&mut rand::rng());
         let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
@@ -778,7 +778,7 @@ mod tests {
     #[test]
     fn aont_shredding() -> Result<()> {
         let mut shredder = AontShredder::default();
-        let sk = SecretKey::new(&mut rng());
+        let sk = SecretKey::new(&mut rand::rng());
         let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
@@ -828,7 +828,7 @@ mod tests {
     #[test]
     fn pets_shredding() -> Result<()> {
         let mut shredder = PetsShredder::default();
-        let sk = SecretKey::new(&mut rng());
+        let sk = SecretKey::new(&mut rand::rng());
         let mut slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);

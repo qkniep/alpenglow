@@ -15,6 +15,7 @@ use tokio::pin;
 use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use wincode::config::DefaultConfig;
 
 use crate::consensus::{Blockstore, EpochInfo, Pool};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
@@ -396,7 +397,8 @@ where
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
     // reserve space for parent and 8 bytes to encode number of txs
-    let parent_encoded_len = <Option<BlockId> as wincode::SchemaWrite>::size_of(&parent).unwrap();
+    let parent_encoded_len =
+        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
         .checked_sub(parent_encoded_len + 8)
         .unwrap();

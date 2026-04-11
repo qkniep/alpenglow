@@ -42,7 +42,7 @@ pub trait SamplingStrategy {
     ///
     /// Implementations may panic if the sampler has reached an invalid state
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         self.sample_info(rng).id
     }
 
@@ -54,14 +54,14 @@ pub trait SamplingStrategy {
     ///
     /// Implementations may panic if the sampler has reached an invalid state
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo;
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo;
 
     /// Samples `k` validators with this probability distribution.
     ///
     /// # Panics
     ///
     /// Panics if any of the `k` calls to [`SamplingStrategy::sample`] panics.
-    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         (0..k).map(|_| self.sample(rng)).collect()
     }
 
@@ -76,11 +76,11 @@ pub trait SamplingStrategy {
 pub struct AllSameSampler(pub ValidatorInfo);
 
 impl SamplingStrategy for AllSameSampler {
-    fn sample<R: RngCore>(&self, _rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, _rng: &mut R) -> ValidatorId {
         self.0.id
     }
 
-    fn sample_info<R: RngCore>(&self, _rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, _rng: &mut R) -> &ValidatorInfo {
         &self.0
     }
 
@@ -105,11 +105,11 @@ impl UniformSampler {
 }
 
 impl SamplingStrategy for UniformSampler {
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
     }
@@ -142,11 +142,11 @@ impl StakeWeightedSampler {
 }
 
 impl SamplingStrategy for StakeWeightedSampler {
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         self.stake_index.sample(rng) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
     }
@@ -196,7 +196,7 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
     /// # Panics
     ///
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
             let mut sample_count = self.sample_count.lock().unwrap();
@@ -210,12 +210,12 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
         panic!("rejected all {MAX_TRIES_PER_SAMPLE} samples");
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.stake_weighted.validators[index]
     }
 
-    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         let samples = (0..k).map(|_| self.sample(rng)).collect();
         self.reset();
         samples
@@ -315,7 +315,7 @@ impl SamplingStrategy for TurbineSampler {
     /// # Panics
     ///
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         let n = self.stake_weighted.validators.len();
         let root = self.stake_weighted.sample(rng);
         if rng.random::<f64>() < self.fanout as f64 / n as f64 {
@@ -331,7 +331,7 @@ impl SamplingStrategy for TurbineSampler {
         }
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.stake_weighted.validators[index]
     }
@@ -419,16 +419,16 @@ impl PartitionSampler {
 }
 
 impl SamplingStrategy for PartitionSampler {
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
     }
 
-    fn sample_multiple<R: RngCore>(&self, _k: usize, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_multiple<R: Rng>(&self, _k: usize, rng: &mut R) -> Vec<ValidatorId> {
         let mut samples = Vec::new();
         for (bin, validators) in self.bins.iter().zip(self.bin_validators.iter()) {
             let i = bin.sample(rng);
@@ -520,16 +520,16 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
 }
 
 impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
     }
 
-    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         let mut validators = Vec::with_capacity(k);
         validators.extend_from_slice(&self.required_samples);
         if validators.len() < k {
@@ -645,16 +645,16 @@ impl FaitAccompli2Sampler {
 }
 
 impl SamplingStrategy for FaitAccompli2Sampler {
-    fn sample<R: RngCore>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
         rng.random_range(0..self.validators.len()) as ValidatorId
     }
 
-    fn sample_info<R: RngCore>(&self, rng: &mut R) -> &ValidatorInfo {
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng) as usize;
         &self.validators[index]
     }
 
-    fn sample_multiple<R: RngCore>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
         // add required FA1 samples
         let mut validators = Vec::with_capacity(k);
         validators.extend_from_slice(&self.required_samples);
