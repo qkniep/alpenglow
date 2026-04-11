@@ -9,6 +9,7 @@ use std::ops::Deref;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
+use wincode::config::Config;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::shredder::TOTAL_SHREDS;
@@ -78,11 +79,11 @@ impl<'de> Visitor<'de> for ShredIndexVisitor {
     }
 }
 
-impl<'de> SchemaRead<'de> for ShredIndex {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for ShredIndex {
     type Dst = Self;
 
     fn read(
-        reader: &mut impl wincode::io::Reader<'de>,
+        mut reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         // SAFETY: Any read of `std::mem::size_of(usize)` bytes correctly initializes `usize`.
