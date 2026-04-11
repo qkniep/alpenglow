@@ -9,7 +9,7 @@ use alpenglow::{Transaction, logging};
 use clap::Parser;
 use color_eyre::Result;
 use log::info;
-use rand::RngCore;
+use rand::prelude::*;
 
 /// Worklaod generator for benchmarks.
 #[derive(Debug, Clone, Parser)]

@@ -12,7 +12,6 @@
 use ed25519_consensus::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
-use wincode::containers::Pod;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Secret key for the digital signature scheme.
@@ -27,11 +26,15 @@ pub struct SecretKey(SigningKey);
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PublicKey(VerificationKey);
 
+wincode::pod_wrapper! {
+    unsafe struct PodSignature(ed25519_consensus::Signature);
+}
+
 /// Digital signature.
 ///
 /// This is a wrapper around [`ed25519_consensus::Signature`].
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
-pub struct Signature(#[wincode(with = "Pod<_>")] ed25519_consensus::Signature);
+pub struct Signature(#[wincode(with = "PodSignature")] ed25519_consensus::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.
@@ -94,5 +97,15 @@ mod tests {
         let msg = b"ed25519 is pretty fine";
         let sig = sk.sign(msg);
         assert!(sig.verify(msg, &pk));
+    }
+
+    #[test]
+    fn wincode() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let msg = b"ed25519 is pretty fine";
+        let sig = sk.sign(msg);
+        let bytes = wincode::serialize(&sig).unwrap();
+        let recovered_sig: Signature = wincode::deserialize(&bytes).unwrap();
+        assert_eq!(sig.0.to_bytes(), recovered_sig.0.to_bytes());
     }
 }
