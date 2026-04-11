@@ -35,9 +35,9 @@ sequential_tests () {
 }
 
 smoke_tests () {
-    echo "🚬 Running smoke tests!"
+    echo "🔥 Running smoke tests!"
     sleep 1
-	RUST_BACKTRACE=1 cargo run --release --bin=performance_test
+    RUST_BACKTRACE=1 cargo nextest run --release --test smoke_tests --run-ignored=all
 }
 
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then
