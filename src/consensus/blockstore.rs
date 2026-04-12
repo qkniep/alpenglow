@@ -223,7 +223,7 @@ impl Blockstore for BlockstoreImpl {
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.leader(slot).pubkey;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
         let mut shredder = self
             .shredders
             .checkout()
@@ -257,7 +257,7 @@ impl Blockstore for BlockstoreImpl {
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.leader(slot).pubkey;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
         let mut shredder = self
             .shredders
             .checkout()

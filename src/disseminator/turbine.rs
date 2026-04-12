@@ -90,7 +90,11 @@ where
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let addr = self.epoch_info.validator(root).disseminator_address;
+        let addr = self
+            .epoch_info
+            .epoch_info()
+            .validator(root)
+            .disseminator_address;
         self.network.send(shred, addr).await
     }
 
@@ -104,10 +108,12 @@ where
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
-        let addrs = tree
-            .get_children()
-            .iter()
-            .map(|child| self.epoch_info.validator(*child).disseminator_address);
+        let addrs = tree.get_children().iter().map(|child| {
+            self.epoch_info
+                .epoch_info()
+                .validator(*child)
+                .disseminator_address
+        });
         self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
@@ -119,7 +125,7 @@ where
             return tree;
         }
         let tree = TurbineTree::new(
-            self.epoch_info.validators(),
+            self.epoch_info.epoch_info().validators(),
             self.fanout,
             self.epoch_info.own_id(),
             slot,

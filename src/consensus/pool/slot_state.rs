@@ -119,7 +119,7 @@ impl SlotState {
     /// Initially, it is completely empty.
     pub fn new(slot: Slot, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
-            votes: SlotVotes::new(epoch_info.validators().len()),
+            votes: SlotVotes::new(epoch_info.epoch_info().validators().len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
             parents: BTreeMap::new(),
@@ -276,6 +276,7 @@ impl SlotState {
         if !self.sent_safe_to_skip
             && self
                 .epoch_info
+                .epoch_info()
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
             && self.votes.notar[self.epoch_info.own_id() as usize].is_some()
         {
@@ -287,23 +288,30 @@ impl SlotState {
             .notar_fallback
             .get(block_hash)
             .unwrap_or(&Stake::default());
-        if self.epoch_info.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash)
+        if self
+            .epoch_info
+            .epoch_info()
+            .is_quorum(nf_stake + notar_stake)
+            && !self.is_notar_fallback(block_hash)
         {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, self.epoch_info.validators());
+            let cert =
+                NotarFallbackCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::NotarFallback(cert));
         }
-        if self.epoch_info.is_quorum(notar_stake) && self.certificates.notar.is_none() {
+        if self.epoch_info.epoch_info().is_quorum(notar_stake) && self.certificates.notar.is_none()
+        {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.validators());
+            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Notar(cert));
         }
-        if self.epoch_info.is_strong_quorum(notar_stake)
+        if self.epoch_info.epoch_info().is_strong_quorum(notar_stake)
             && self.certificates.fast_finalize.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = FastFinalCert::new_unchecked(&votes, self.epoch_info.validators());
+            let cert =
+                FastFinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -329,11 +337,16 @@ impl SlotState {
             .notar
             .get(block_hash)
             .unwrap_or(&Stake::default());
-        if self.epoch_info.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash)
+        if self
+            .epoch_info
+            .epoch_info()
+            .is_quorum(nf_stake + notar_stake)
+            && !self.is_notar_fallback(block_hash)
         {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, self.epoch_info.validators());
+            let cert =
+                NotarFallbackCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::NotarFallback(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -366,15 +379,18 @@ impl SlotState {
             }
         }
         let total_skip_stake = self.voted_stakes.skip + self.voted_stakes.skip_fallback;
-        if self.epoch_info.is_quorum(total_skip_stake) && self.certificates.skip.is_none() {
+        if self.epoch_info.epoch_info().is_quorum(total_skip_stake)
+            && self.certificates.skip.is_none()
+        {
             let mut votes = self.votes.skip_votes();
             votes.extend(self.votes.skip_fallback_votes());
-            let cert = SkipCert::new_unchecked(&votes, self.epoch_info.validators());
+            let cert = SkipCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Skip(cert));
         }
         if !self.sent_safe_to_skip
             && self
                 .epoch_info
+                .epoch_info()
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
             && self.votes.notar[self.epoch_info.own_id() as usize].is_some()
         {
@@ -391,11 +407,14 @@ impl SlotState {
     fn count_finalize_stake(&mut self, stake: Stake) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         self.voted_stakes.finalize += stake;
-        if self.epoch_info.is_quorum(self.voted_stakes.finalize)
+        if self
+            .epoch_info
+            .epoch_info()
+            .is_quorum(self.voted_stakes.finalize)
             && self.certificates.finalize.is_none()
         {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.validators());
+            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -474,11 +493,14 @@ impl SlotState {
             .get(&block_hash)
             .unwrap_or(&Stake::default());
         let skip_stake = self.voted_stakes.skip;
-        if !self.epoch_info.is_weakest_quorum(notar_stake) {
+        if !self.epoch_info.epoch_info().is_weakest_quorum(notar_stake) {
             return SafeToNotarStatus::AwaitingVotes;
         }
-        if !self.epoch_info.is_weak_quorum(notar_stake)
-            && !self.epoch_info.is_quorum(notar_stake + skip_stake)
+        if !self.epoch_info.epoch_info().is_weak_quorum(notar_stake)
+            && !self
+                .epoch_info
+                .epoch_info()
+                .is_quorum(notar_stake + skip_stake)
         {
             self.pending_safe_to_notar.insert(block_hash);
             return SafeToNotarStatus::AwaitingVotes;
@@ -609,7 +631,7 @@ mod tests {
             .enumerate()
             .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId))
             .collect();
-        let cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
+        let cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert!(slot_state.certificates.notar.is_none());
         slot_state.add_cert(Cert::Notar(cert));
         assert!(slot_state.certificates.notar.is_some());
@@ -623,7 +645,7 @@ mod tests {
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
             let vote = Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId);
-            let voter_stake = epoch_info.validator(i as ValidatorId).stake;
+            let voter_stake = epoch_info.epoch_info().validator(i as ValidatorId).stake;
             assert!(slot_state.votes.notar[i].is_none());
             slot_state.add_vote(vote.clone(), voter_stake);
             let notar_vote = &slot_state.votes.notar[i];
@@ -648,7 +670,7 @@ mod tests {
 
         // 33% notar alone has no effect
         let vote = Vote::new_notar(slot, hash.clone(), &sks[1], 1);
-        let voter_stake = epoch_info.validator(1).stake;
+        let voter_stake = epoch_info.epoch_info().validator(1).stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert!(events.is_empty());
@@ -656,7 +678,7 @@ mod tests {
 
         // additional 33% skip should lead to safe-to-notar
         let vote = Vote::new_skip(slot, &sks[0], 0);
-        let voter_stake = epoch_info.validator(0).stake;
+        let voter_stake = epoch_info.epoch_info().validator(0).stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);

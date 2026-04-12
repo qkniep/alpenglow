@@ -179,7 +179,11 @@ where
         response: RepairResponse,
         validator: ValidatorId,
     ) -> std::io::Result<()> {
-        let to = self.epoch_info.validator(validator).repair_response_address;
+        let to = self
+            .epoch_info
+            .epoch_info()
+            .validator(validator)
+            .repair_response_address;
         self.network.send(&response, to).await
     }
 }
@@ -213,7 +217,7 @@ where
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
     ) -> Self {
-        let validators = epoch_info.validators().to_vec();
+        let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,

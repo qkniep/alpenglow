@@ -1,8 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ops::Deref;
-
 use crate::consensus::{
     QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, WEAK_QUORUM_THRESHOLD, WEAKEST_QUORUM_THRESHOLD,
 };
@@ -124,12 +122,10 @@ impl ValidatorEpochInfo {
     pub fn own_id(&self) -> ValidatorId {
         self.own_id
     }
-}
 
-impl Deref for ValidatorEpochInfo {
-    type Target = EpochInfo;
-
-    fn deref(&self) -> &EpochInfo {
+    /// Returns the shared epoch information.
+    #[must_use]
+    pub fn epoch_info(&self) -> &EpochInfo {
         &self.epoch
     }
 }

@@ -40,7 +40,7 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
     pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
-        let validators = epoch_info.validators().to_vec();
+        let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             network,
@@ -56,7 +56,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
     pub fn new_fa1(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
-        let validators = epoch_info.validators().to_vec();
+        let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler =
             FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
         Self {
@@ -80,14 +80,18 @@ where
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
-        let v = self.epoch_info.validator(relay);
+        let v = self.epoch_info.epoch_info().validator(relay);
         self.network.send(shred, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
-        let leader = self.epoch_info.leader(shred.payload().header.slot).id;
+        let leader = self
+            .epoch_info
+            .epoch_info()
+            .leader(shred.payload().header.slot)
+            .id;
 
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
@@ -98,6 +102,7 @@ where
         // otherwise, broadcast
         let to = self
             .epoch_info
+            .epoch_info()
             .validators()
             .iter()
             .filter(|v| v.id != leader && v.id != relay)
