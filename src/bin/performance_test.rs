@@ -101,7 +101,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     }
 
     // turn validator info into actual nodes
-    let shared_epoch = Arc::new(EpochInfo::new(validators.clone()));
+    let shared_epoch = EpochInfo::new(validators.clone());
     validators
         .iter()
         .map(|v| {

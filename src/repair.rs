@@ -458,8 +458,7 @@ mod tests {
         SecretKey,
     ) {
         // create EpochInfo for 2 validators and the corresponding network
-        let (_, epoch_info) = generate_validators(2);
-        let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
+        let (_, mut epoch_info) = generate_validators(2);
         let leader_key = SecretKey::new(&mut rand::rng());
         let v0 = epoch_info.validators.get_mut(0).unwrap();
         v0.pubkey = leader_key.to_pk();
@@ -485,7 +484,6 @@ mod tests {
             .join_unlimited(v1.repair_response_address.port() as u64)
             .await;
 
-        let epoch_info = Arc::new(epoch_info);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(1, epoch_info));
 
         // set up blockstore

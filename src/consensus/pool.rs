@@ -543,7 +543,7 @@ mod tests {
     use crate::types::SLOTS_PER_WINDOW;
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
-    fn wrap_epoch_info(epoch_info: Arc<EpochInfo>) -> Arc<ValidatorEpochInfo> {
+    fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
         Arc::new(ValidatorEpochInfo::new(0, epoch_info))
     }
 

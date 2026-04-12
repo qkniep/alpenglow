@@ -176,7 +176,7 @@ mod tests {
             });
         }
 
-        let epoch_info = Arc::new(EpochInfo::new(validators.clone()));
+        let epoch_info = EpochInfo::new(validators.clone());
         let mut rotors = Vec::new();
         for i in 0..count {
             let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(i, epoch_info.clone()));

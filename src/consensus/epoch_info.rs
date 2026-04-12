@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::ops::Deref;
-use std::sync::Arc;
 
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
@@ -20,11 +19,10 @@ pub struct EpochInfo {
 /// Per-validator epoch information, wrapping shared [`EpochInfo`].
 ///
 /// Adds the node's own identity on top of the shared epoch data.
-/// Cheaply cloneable (just a [`ValidatorId`] + an [`Arc`]).
 #[derive(Clone, Debug)]
 pub struct ValidatorEpochInfo {
     pub(crate) own_id: ValidatorId,
-    epoch: Arc<EpochInfo>,
+    epoch: EpochInfo,
 }
 
 impl EpochInfo {
@@ -79,7 +77,7 @@ impl ValidatorEpochInfo {
     /// # Panics
     ///
     /// Panics if `own_id` is not a valid validator index.
-    pub fn new(own_id: ValidatorId, epoch: Arc<EpochInfo>) -> Self {
+    pub fn new(own_id: ValidatorId, epoch: EpochInfo) -> Self {
         assert!(
             (own_id as usize) < epoch.validators.len(),
             "own_id {own_id} is out of range for {} validators",

@@ -119,7 +119,7 @@ fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
     let epoch_info = Arc::new(ValidatorEpochInfo::new(
         config.id,
-        Arc::new(EpochInfo::new(config.gossip.clone())),
+        EpochInfo::new(config.gossip.clone()),
     ));
     let start_port = config.port;
     let network = UdpNetwork::new(start_port);

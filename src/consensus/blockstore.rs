@@ -380,8 +380,7 @@ mod tests {
             repair_response_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
-        let epoch_info = Arc::new(EpochInfo::new(validators));
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(0, epoch_info));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(0, EpochInfo::new(validators)));
         (sk, BlockstoreImpl::new(epoch_info, tx))
     }
 

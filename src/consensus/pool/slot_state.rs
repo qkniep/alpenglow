@@ -590,7 +590,7 @@ mod tests {
     use crate::test_utils::generate_validators;
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
-    fn wrap_epoch_info(epoch_info: Arc<EpochInfo>) -> Arc<ValidatorEpochInfo> {
+    fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
         Arc::new(ValidatorEpochInfo::new(0, epoch_info))
     }
 
