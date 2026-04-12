@@ -4,7 +4,7 @@
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
-/// Epoch-specfic validator information.
+/// Epoch-specific validator information.
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
     pub(crate) own_id: ValidatorId,
@@ -13,7 +13,24 @@ pub struct EpochInfo {
 
 impl EpochInfo {
     /// Creates a new `EpochInfo` instance with the given validators.
-    pub const fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Panics if `own_id` is not a valid index into `validators`,
+    /// or if any validator's `id` does not match its position in the vector.
+    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+        assert!(
+            (own_id as usize) < validators.len(),
+            "own_id {own_id} is out of range for {} validators",
+            validators.len()
+        );
+        for (i, v) in validators.iter().enumerate() {
+            assert!(
+                v.id == i as u64,
+                "validator at index {i} has id {}, expected {i}",
+                v.id
+            );
+        }
         Self { own_id, validators }
     }
 
