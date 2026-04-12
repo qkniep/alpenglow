@@ -33,6 +33,7 @@ pub use self::consensus::votor::VotorEvent;
 use self::crypto::{aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;
+pub use self::types::{Stake, ValidatorId};
 pub use self::validator::Validator;
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
@@ -43,7 +44,6 @@ use crate::disseminator::rotor::StakeWeightedSampler;
 use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
-pub use self::types::{Stake, ValidatorId};
 
 // NOTE: In many places we assume that `usize` is 64 bits wide.
 // So, for now, we only support 64-bit architectures.

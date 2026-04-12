@@ -963,7 +963,7 @@ mod tests {
             .filter_map(ValidatorData::active_stake)
             .collect::<Vec<_>>();
         let total_stake: Stake = stakes.iter().copied().sum();
-        let mut validators = create_validator_info(stakes.len() as ValidatorId);
+        let mut validators = create_validator_info(stakes.len() as u64);
         for (i, stake) in stakes.into_iter().enumerate() {
             validators[i].stake = stake;
         }
