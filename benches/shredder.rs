@@ -9,7 +9,7 @@ use alpenglow::shredder::{
 use alpenglow::types::Slice;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
 use divan::counter::BytesCount;
-use rand::Rng;
+use rand::RngExt;
 use rand::rngs::ThreadRng;
 use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
 
