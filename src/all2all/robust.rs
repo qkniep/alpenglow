@@ -74,13 +74,13 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::{Stake, ValidatorId};
     use crate::consensus::Vote;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::types::Slot;
+    use crate::{Stake, ValidatorId};
 
     async fn broadcast_test(packet_loss: f64) {
         // set up network and nodes

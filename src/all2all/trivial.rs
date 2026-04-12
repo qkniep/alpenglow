@@ -58,13 +58,13 @@ mod tests {
     use tokio::task::JoinSet;
 
     use super::*;
-    use crate::{Stake, ValidatorId};
     use crate::consensus::Vote;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::types::Slot;
+    use crate::{Stake, ValidatorId};
 
     #[tokio::test]
     async fn simple_broadcast() {
