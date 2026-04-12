@@ -9,7 +9,7 @@ use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 /// Shared epoch information, identical across all validators.
 ///
 /// Contains the validator set and derived data for one epoch.
-/// Constructed once per epoch and shared via [`Arc`].
+/// Constructed once per epoch and shared via [`std::sync::Arc`].
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
     pub(crate) validators: Vec<ValidatorInfo>,
