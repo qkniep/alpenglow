@@ -19,7 +19,7 @@ use super::SlashableOffence;
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
 use crate::consensus::vote::VoteKind;
 use crate::consensus::votor::VotorEvent;
-use crate::consensus::{Cert, EpochInfo, Vote};
+use crate::consensus::{Cert, ValidatorEpochInfo, Vote};
 use crate::crypto::merkle::BlockHash;
 use crate::{BlockId, Slot, Stake};
 
@@ -44,7 +44,7 @@ pub struct SlotState {
     /// The slot this state is for.
     slot: Slot,
     /// Information about all validators active in this slot.
-    pub(super) epoch_info: Arc<EpochInfo>,
+    pub(super) epoch_info: Arc<ValidatorEpochInfo>,
 }
 
 // PERF: replace storing Votes (50% size overhead) with storing only signatures?
@@ -117,7 +117,7 @@ impl SlotState {
     /// Creates a new container for votes and certificates for a single slot.
     ///
     /// Initially, it is completely empty.
-    pub fn new(slot: Slot, epoch_info: Arc<EpochInfo>) -> Self {
+    pub fn new(slot: Slot, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             votes: SlotVotes::new(epoch_info.validators.len()),
             voted_stakes: SlotVotedStake::default(),
@@ -585,12 +585,19 @@ impl SlotVotes {
 mod tests {
     use super::*;
     use crate::ValidatorId;
+    use crate::consensus::EpochInfo;
     use crate::crypto::Hash;
     use crate::test_utils::generate_validators;
+
+    /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
+    fn wrap_epoch_info(epoch_info: Arc<EpochInfo>) -> Arc<ValidatorEpochInfo> {
+        Arc::new(ValidatorEpochInfo::new(0, epoch_info))
+    }
 
     #[test]
     fn quorums() {
         let (_, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let slot_state = SlotState::new(Slot::new(0), epoch_info);
         assert!(slot_state.is_weak_quorum(3));
         assert!(!slot_state.is_quorum(3));
@@ -599,6 +606,7 @@ mod tests {
         assert!(slot_state.is_strong_quorum(5));
 
         let (_, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let slot_state = SlotState::new(Slot::new(0), epoch_info);
         assert!(slot_state.is_weak_quorum(5));
         assert!(!slot_state.is_quorum(5));
@@ -610,6 +618,7 @@ mod tests {
     #[test]
     fn add_cert() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
         let votes: Vec<_> = sks
@@ -626,6 +635,7 @@ mod tests {
     #[test]
     fn add_vote() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
@@ -646,6 +656,7 @@ mod tests {
     #[test]
     fn safe_to_notar() {
         let (sks, epoch_info) = generate_validators(3);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
 

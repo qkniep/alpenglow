@@ -18,7 +18,7 @@ use log::{debug, trace, warn};
 use tokio::sync::RwLock;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{Blockstore, DELTA, EpochInfo, Pool};
+use crate::consensus::{Blockstore, DELTA, Pool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, MerkleRoot, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -96,7 +96,7 @@ impl RepairResponse {
 /// This is separated from [`Repair`] to handle repair requests and responses on separate sockets and tokio tasks.
 /// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
 pub struct RepairRequestHandler<N: Network> {
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
     network: N,
 }
@@ -110,7 +110,7 @@ where
     /// Given `network` instance will be used for receiving repair requests and sending repair responses.
     /// The blockstore will be used to handle the repair requests.
     pub fn new(
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
         network: N,
     ) -> Self {
@@ -196,7 +196,7 @@ pub struct Repair<N: Network> {
     request_timeouts: BinaryHeap<(Instant, Hash)>,
     network: N,
     sampler: StakeWeightedSampler,
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 }
 
 impl<N> Repair<N>
@@ -211,7 +211,7 @@ where
         blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
         pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
         network: N,
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
     ) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler = StakeWeightedSampler::new(validators);
@@ -477,7 +477,6 @@ mod tests {
         let v1 = epoch_info.validators.get_mut(1).unwrap();
         v1.repair_request_address = localhost_ip_sockaddr(2);
         v1.repair_response_address = localhost_ip_sockaddr(3);
-        epoch_info.own_id = 1;
 
         let v1_repair_request_network = core
             .join_unlimited(v1.repair_request_address.port() as u64)
@@ -487,6 +486,7 @@ mod tests {
             .await;
 
         let epoch_info = Arc::new(epoch_info);
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(1, epoch_info));
 
         // set up blockstore
         let (votor_tx, votor_rx) = tokio::sync::mpsc::channel(100);

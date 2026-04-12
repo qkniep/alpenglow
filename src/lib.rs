@@ -35,7 +35,7 @@ pub use self::disseminator::Disseminator;
 use self::types::Slot;
 pub use self::validator::Validator;
 use crate::all2all::TrivialAll2All;
-use crate::consensus::{ConsensusMessage, EpochInfo};
+use crate::consensus::{ConsensusMessage, EpochInfo, ValidatorEpochInfo};
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
@@ -152,11 +152,12 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
     }
 
     // turn validator info into actual nodes
+    let shared_epoch = Arc::new(EpochInfo::new(validators.clone()));
     networks
         .into_iter()
         .enumerate()
         .map(|(id, network)| {
-            let epoch_info = Arc::new(EpochInfo::new(id as u64, validators.clone()));
+            let epoch_info = Arc::new(ValidatorEpochInfo::new(id as u64, shared_epoch.clone()));
             let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
             let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
             let repair_network = network.repair;

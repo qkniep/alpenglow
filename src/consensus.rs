@@ -40,7 +40,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use self::cert::{Cert, NotarCert};
-pub use self::epoch_info::EpochInfo;
+pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
 pub use self::vote::Vote;
 use self::votor::Votor;
@@ -87,7 +87,7 @@ where
     T: TransactionNetwork + 'static,
 {
     /// Other validators' info.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -127,7 +127,7 @@ where
         disseminator: D,
         repair_network: RN,
         repair_request_network: RR,
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
     ) -> Self
     where

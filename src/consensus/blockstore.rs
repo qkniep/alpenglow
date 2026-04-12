@@ -14,7 +14,7 @@ use mockall::automock;
 use tokio::sync::mpsc::Sender;
 
 use self::slot_block_data::{AddShredError, SlotBlockData};
-use super::epoch_info::EpochInfo;
+use super::epoch_info::ValidatorEpochInfo;
 use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, MerkleRoot, SliceRoot};
@@ -85,7 +85,7 @@ pub struct BlockstoreImpl {
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
     /// Information about all active validators.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 }
 
 impl BlockstoreImpl {
@@ -95,7 +95,7 @@ impl BlockstoreImpl {
     /// - [`VotorEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`VotorEvent::Block`] for any reconstructed block
-    pub fn new(epoch_info: Arc<EpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
+    pub fn new(epoch_info: Arc<ValidatorEpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
@@ -357,6 +357,7 @@ mod tests {
 
     use super::*;
     use crate::ValidatorInfo;
+    use crate::consensus::EpochInfo;
     use crate::crypto::aggsig;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
@@ -379,8 +380,9 @@ mod tests {
             repair_response_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
-        let epoch_info = EpochInfo::new(0, validators);
-        (sk, BlockstoreImpl::new(Arc::new(epoch_info), tx))
+        let epoch_info = Arc::new(EpochInfo::new(validators));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(0, epoch_info));
+        (sk, BlockstoreImpl::new(epoch_info, tx))
     }
 
     async fn add_shred_ignore_duplicate(

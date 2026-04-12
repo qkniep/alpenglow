@@ -58,7 +58,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
             repair_response_address: localhost_ip_sockaddr(0),
         });
     }
-    let epoch_info = Arc::new(EpochInfo::new(0, validators));
+    let epoch_info = Arc::new(EpochInfo::new(validators));
     (voting_sks, epoch_info)
 }
 

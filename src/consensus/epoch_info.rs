@@ -1,20 +1,51 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::ops::Deref;
+use std::sync::Arc;
+
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
-/// Epoch-specfic validator information.
+/// Shared epoch information, identical across all validators.
+///
+/// Contains the validator set and derived data for one epoch.
+/// Constructed once per epoch and shared via [`Arc`].
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
-    pub(crate) own_id: ValidatorId,
     pub(crate) validators: Vec<ValidatorInfo>,
+    total_stake: Stake,
+}
+
+/// Per-validator epoch information, wrapping shared [`EpochInfo`].
+///
+/// Adds the node's own identity on top of the shared epoch data.
+/// Cheaply cloneable (just a [`ValidatorId`] + an [`Arc`]).
+#[derive(Clone, Debug)]
+pub struct ValidatorEpochInfo {
+    pub(crate) own_id: ValidatorId,
+    epoch: Arc<EpochInfo>,
 }
 
 impl EpochInfo {
-    /// Creates a new `EpochInfo` instance with the given validators.
-    pub const fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
-        Self { own_id, validators }
+    /// Creates a new `EpochInfo` from the given validator set.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any validator's `id` does not match its index in the vector.
+    pub fn new(validators: Vec<ValidatorInfo>) -> Self {
+        for (i, v) in validators.iter().enumerate() {
+            assert!(
+                v.id == i as u64,
+                "validator at index {i} has id {}, expected {i}",
+                v.id
+            );
+        }
+        let total_stake = validators.iter().map(|v| v.stake).sum();
+        Self {
+            validators,
+            total_stake,
+        }
     }
 
     /// Gives the validator info for the given validator ID.
@@ -38,6 +69,30 @@ impl EpochInfo {
     /// Gives the total stake over all validators.
     #[must_use]
     pub fn total_stake(&self) -> Stake {
-        self.validators.iter().map(|v| v.stake).sum()
+        self.total_stake
+    }
+}
+
+impl ValidatorEpochInfo {
+    /// Creates a per-validator view of the given epoch info.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `own_id` is not a valid validator index.
+    pub fn new(own_id: ValidatorId, epoch: Arc<EpochInfo>) -> Self {
+        assert!(
+            (own_id as usize) < epoch.validators.len(),
+            "own_id {own_id} is out of range for {} validators",
+            epoch.validators.len()
+        );
+        Self { own_id, epoch }
+    }
+}
+
+impl Deref for ValidatorEpochInfo {
+    type Target = EpochInfo;
+
+    fn deref(&self) -> &EpochInfo {
+        &self.epoch
     }
 }

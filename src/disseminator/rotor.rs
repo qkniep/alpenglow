@@ -22,7 +22,7 @@ use rand::prelude::*;
 use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
-use crate::consensus::EpochInfo;
+use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
@@ -31,7 +31,7 @@ use crate::{Slot, ValidatorId};
 pub struct Rotor<N: Network, S: SamplingStrategy> {
     network: N,
     sampler: S,
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 }
 
 impl<N: Network> Rotor<N, StakeWeightedSampler> {
@@ -39,7 +39,7 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
+    pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
@@ -55,7 +55,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new_fa1(network: N, epoch_info: Arc<EpochInfo>) -> Self {
+    pub fn new_fa1(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         let validators = epoch_info.validators.clone();
         let sampler =
             FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
@@ -148,6 +148,7 @@ mod tests {
 
     use super::*;
     use crate::ValidatorInfo;
+    use crate::consensus::EpochInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
@@ -175,11 +176,12 @@ mod tests {
             });
         }
 
+        let epoch_info = Arc::new(EpochInfo::new(validators.clone()));
         let mut rotors = Vec::new();
         for i in 0..count {
-            let epoch_info = Arc::new(EpochInfo::new(i, validators.clone()));
+            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(i, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
-            rotors.push(Rotor::new(network, epoch_info));
+            rotors.push(Rotor::new(network, validator_epoch_info));
         }
         (sks, rotors)
     }
