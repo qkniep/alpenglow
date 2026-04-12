@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use alpenglow::ValidatorInfo;
-use alpenglow::consensus::EpochInfo;
+use alpenglow::consensus::{EpochInfo, ValidatorEpochInfo};
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
@@ -40,9 +40,12 @@ fn turbine_tree(bencher: divan::Bencher) {
                     repair_response_address: addr,
                 })
                 .collect();
-            let epoch_info = Arc::new(EpochInfo::new(0, validators));
-            let turbine1 = Turbine::new(net1, epoch_info.clone());
-            let turbine2 = Turbine::new(net2, epoch_info);
+            let epoch_info = EpochInfo::new(validators);
+            let turbine1 = Turbine::new(
+                net1,
+                Arc::new(ValidatorEpochInfo::new(0, epoch_info.clone())),
+            );
+            let turbine2 = Turbine::new(net2, Arc::new(ValidatorEpochInfo::new(1, epoch_info)));
 
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
