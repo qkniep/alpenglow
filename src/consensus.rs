@@ -49,6 +49,7 @@ use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
+use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
@@ -62,6 +63,19 @@ const_assert!(DELTA_FIRST_SLICE.as_nanos() <= DELTA_BLOCK.as_nanos());
 const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
+
+/// Minimum fraction of total stake required for a weakest quorum (20%).
+pub const WEAKEST_QUORUM_THRESHOLD: Fraction = Fraction::new(1, 5);
+/// Minimum fraction of total stake required for a weak quorum (40%).
+pub const WEAK_QUORUM_THRESHOLD: Fraction = Fraction::new(2, 5);
+/// Minimum fraction of total stake required for a standard quorum (60%).
+///
+/// Used for notar, notar-fallback, skip, and final certificates.
+pub const QUORUM_THRESHOLD: Fraction = Fraction::new(3, 5);
+/// Minimum fraction of total stake required for a strong quorum (80%).
+///
+/// Used for fast-final certificates.
+pub const STRONG_QUORUM_THRESHOLD: Fraction = Fraction::new(4, 5);
 
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ConsensusMessage {

@@ -19,7 +19,10 @@ use super::SlashableOffence;
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
 use crate::consensus::vote::VoteKind;
 use crate::consensus::votor::VotorEvent;
-use crate::consensus::{Cert, EpochInfo, Vote};
+use crate::consensus::{
+    Cert, EpochInfo, QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, Vote, WEAK_QUORUM_THRESHOLD,
+    WEAKEST_QUORUM_THRESHOLD,
+};
 use crate::crypto::merkle::BlockHash;
 use crate::{BlockId, Slot, Stake};
 
@@ -237,19 +240,19 @@ impl SlotState {
     }
 
     fn is_weakest_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake()).div_ceil(5)
+        WEAKEST_QUORUM_THRESHOLD.is_met(stake, self.epoch_info.total_stake())
     }
 
     fn is_weak_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake() * 2).div_ceil(5)
+        WEAK_QUORUM_THRESHOLD.is_met(stake, self.epoch_info.total_stake())
     }
 
     fn is_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake() * 3).div_ceil(5)
+        QUORUM_THRESHOLD.is_met(stake, self.epoch_info.total_stake())
     }
 
     fn is_strong_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake() * 4).div_ceil(5)
+        STRONG_QUORUM_THRESHOLD.is_met(stake, self.epoch_info.total_stake())
     }
 
     /// Adds a given amount of `stake` to notarization counter for `block_hash`.

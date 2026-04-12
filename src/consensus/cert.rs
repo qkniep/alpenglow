@@ -8,8 +8,8 @@
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::Vote;
 use super::vote::VoteKind;
+use super::{QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, Vote};
 use crate::consensus::EpochInfo;
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::{AggregateSignature, Signable};
@@ -233,8 +233,7 @@ impl NotarCert {
             .map(|v| v.stake)
             .sum();
 
-        // at least 60% stake
-        stake >= (total_stake * 3).div_ceil(5)
+        QUORUM_THRESHOLD.is_met(stake, total_stake)
     }
 
     /// Checks that the aggregated signature is valid.
@@ -346,8 +345,7 @@ impl NotarFallbackCert {
             .map(|v| v.stake)
             .sum();
 
-        // at least 60% stake
-        stake >= (total_stake * 3).div_ceil(5)
+        QUORUM_THRESHOLD.is_met(stake, total_stake)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -466,8 +464,7 @@ impl SkipCert {
             .map(|v| v.stake)
             .sum();
 
-        // at least 60% stake
-        stake >= (total_stake * 3).div_ceil(5)
+        QUORUM_THRESHOLD.is_met(stake, total_stake)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -561,8 +558,7 @@ impl FastFinalCert {
             .map(|v| v.stake)
             .sum();
 
-        // at least 80% stake
-        stake >= (total_stake * 4).div_ceil(5)
+        STRONG_QUORUM_THRESHOLD.is_met(stake, total_stake)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -643,8 +639,7 @@ impl FinalCert {
             .map(|v| v.stake)
             .sum();
 
-        // at least 60% stake
-        stake >= (total_stake * 3).div_ceil(5)
+        QUORUM_THRESHOLD.is_met(stake, total_stake)
     }
 
     /// Checks that the aggregated signatures are valid.
