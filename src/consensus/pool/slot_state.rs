@@ -332,9 +332,7 @@ impl SlotState {
     ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let nf_stakes = &mut self.voted_stakes.notar_fallback;
-        let nf_stake = nf_stakes
-            .entry(block_hash.clone())
-            .or_default();
+        let nf_stake = nf_stakes.entry(block_hash.clone()).or_default();
         *nf_stake += stake;
         let nf_stake = *nf_stake;
         let notar_stake = *self

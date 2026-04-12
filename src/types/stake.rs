@@ -4,9 +4,9 @@
 //! Defines the [`Stake`] type.
 
 use std::fmt::Display;
-use std::ops::{Sub, SubAssign};
+use std::ops::{Mul, Sub, SubAssign};
 
-use derive_more::{Add, AddAssign, From, Into, Mul, Sum};
+use derive_more::{Add, AddAssign, Sum};
 use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -24,10 +24,7 @@ use wincode::{SchemaRead, SchemaWrite};
     Hash,
     Add,
     AddAssign,
-    Mul,
     Sum,
-    From,
-    Into,
     SchemaRead,
     SchemaWrite,
     Serialize,
@@ -69,6 +66,14 @@ impl Sub for Stake {
 impl SubAssign for Stake {
     fn sub_assign(&mut self, rhs: Self) {
         self.0 -= rhs.0;
+    }
+}
+
+impl Mul<u64> for Stake {
+    type Output = Self;
+
+    fn mul(self, rhs: u64) -> Self {
+        Self(self.0 * rhs)
     }
 }
 

@@ -58,6 +58,7 @@ mod tests {
     use tokio::task;
 
     use super::*;
+    use crate::Stake;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
@@ -79,7 +80,7 @@ mod tests {
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
                 id: i,
-                stake: 1.into(),
+                stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),

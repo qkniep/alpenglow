@@ -140,7 +140,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
         validators.push(ValidatorInfo {
             id: id as u64,
-            stake: 1.into(),
+            stake: Stake::new(1),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,
