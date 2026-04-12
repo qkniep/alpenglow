@@ -10,6 +10,10 @@
 //! via [`SamplingStrategy::sample_multiple`].
 //! However, samplers might override this for performance reasons.
 //!
+//! For strategies that produce a fixed-size quorum (like [`FaitAccompli1Sampler`]),
+//! use [`QuorumSamplingStrategy::sample_quorum`] instead of `sample_multiple`.
+//! The quorum size is fixed at construction time for these strategies.
+//!
 //! # Sampling strategies
 //!
 //! This module provides implementations for the following sampling strategies:
@@ -20,6 +24,8 @@
 //! - [`PartitionSampler`] splits validators into bins and samples from each bin.
 //! - [`FaitAccompli1Sampler`] uses the FA1-F committee sampling strategy.
 //! - [`FaitAccompli2Sampler`] uses the FA2 committee sampling strategy.
+//!
+//! The last three implement [`QuorumSamplingStrategy`] in addition to [`SamplingStrategy`].
 
 use std::sync::Mutex;
 
@@ -58,6 +64,10 @@ pub trait SamplingStrategy {
 
     /// Samples `k` validators with this probability distribution.
     ///
+    /// For samplers that implement [`QuorumSamplingStrategy`], prefer
+    /// [`QuorumSamplingStrategy::sample_quorum`], which uses the quorum size fixed
+    /// at construction time and avoids passing an incorrect `k`.
+    ///
     /// # Panics
     ///
     /// Panics if any of the `k` calls to [`SamplingStrategy::sample`] panics.
@@ -69,6 +79,23 @@ pub trait SamplingStrategy {
     fn name() -> &'static str {
         std::any::type_name::<Self>()
     }
+}
+
+/// Extension of [`SamplingStrategy`] for strategies that produce a fixed-size quorum.
+///
+/// Unlike [`SamplingStrategy::sample_multiple`], which takes `k` as a parameter at
+/// each call, a [`QuorumSamplingStrategy`] encodes the quorum size at construction time.
+/// This prevents accidental mismatches between the `k` used for construction (which
+/// pre-computes internal state) and the `k` passed to `sample_multiple` at call time.
+///
+/// Implementors also implement [`SamplingStrategy`] for single-validator sampling
+/// via [`SamplingStrategy::sample`].
+pub trait QuorumSamplingStrategy {
+    /// Returns the quorum size this sampler was constructed for.
+    fn quorum_size(&self) -> usize;
+
+    /// Samples a quorum of [`Self::quorum_size()`] validators.
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId>;
 }
 
 /// A trivial sampler that picks the same validator all the time.
@@ -355,7 +382,7 @@ impl SamplingStrategy for TurbineSampler {
 /// However, this is done with lower variance than [`StakeWeightedSampler`] would.
 #[derive(Clone)]
 pub struct PartitionSampler {
-    validators: Vec<ValidatorInfo>,
+    stake_sampler: StakeWeightedSampler,
     bins: Vec<WeightedIndex<u64>>,
     pub bin_validators: Vec<Vec<ValidatorId>>,
     pub bin_stakes: Vec<Vec<Stake>>,
@@ -367,9 +394,10 @@ impl PartitionSampler {
     /// Partitions the given validators into `num_bins` bins of equal stake.
     /// Paritioning is done randomly by splitting a randomly permuted list of nodes.
     pub fn new(validators: Vec<ValidatorInfo>, num_bins: usize) -> Self {
+        let stake_sampler = StakeWeightedSampler::new(validators.clone());
         if num_bins == 0 {
             return Self {
-                validators,
+                stake_sampler,
                 bins: Vec::new(),
                 bin_validators: Vec::new(),
                 bin_stakes: Vec::new(),
@@ -412,7 +440,7 @@ impl PartitionSampler {
         }
 
         Self {
-            validators,
+            stake_sampler,
             bins,
             bin_validators,
             bin_stakes,
@@ -422,25 +450,47 @@ impl PartitionSampler {
 
 impl SamplingStrategy for PartitionSampler {
     fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
-        ValidatorId::new(rng.random_range(0..self.validators.len()) as u64)
+        self.stake_sampler.sample(rng)
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
-        &self.validators[index]
+        self.stake_sampler.sample_info(rng)
     }
 
-    fn sample_multiple<R: Rng>(&self, _k: usize, rng: &mut R) -> Vec<ValidatorId> {
+    /// Samples `k` validators using the partition quorum sampling strategy.
+    ///
+    /// # Panics (debug only)
+    ///
+    /// In debug builds, panics if `k != self.quorum_size()`.
+    /// Prefer [`QuorumSamplingStrategy::sample_quorum`] instead.
+    fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
+        debug_assert_eq!(
+            k,
+            self.quorum_size(),
+            "PartitionSampler::sample_multiple called with k={k}, but was initialized for \
+             quorum_size={}; use sample_quorum() instead",
+            self.quorum_size()
+        );
+        self.sample_quorum(rng)
+    }
+
+    fn name() -> &'static str {
+        "partition"
+    }
+}
+
+impl QuorumSamplingStrategy for PartitionSampler {
+    fn quorum_size(&self) -> usize {
+        self.bins.len()
+    }
+
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
         let mut samples = Vec::new();
         for (bin, validators) in self.bins.iter().zip(self.bin_validators.iter()) {
             let i = bin.sample(rng);
             samples.push(validators[i]);
         }
         samples
-    }
-
-    fn name() -> &'static str {
-        "partition"
     }
 }
 
@@ -458,8 +508,10 @@ impl SamplingStrategy for PartitionSampler {
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli1Sampler<F: SamplingStrategy> {
     validators: Vec<ValidatorInfo>,
+    stake_sampler: StakeWeightedSampler,
     required_samples: Vec<ValidatorId>,
     pub fallback_sampler: F,
+    k: usize,
 }
 
 impl FaitAccompli1Sampler<PartitionSampler> {
@@ -480,6 +532,7 @@ impl FaitAccompli1Sampler<PartitionSampler> {
         let all_zero = validators_truncated_stake
             .iter()
             .all(|v| v.stake == Stake::new(0));
+        let stake_sampler = StakeWeightedSampler::new(validators.clone());
         let k_prime = k as usize - required_samples.len();
         let fallback_sampler = if all_zero {
             PartitionSampler::new(validators.clone(), k_prime)
@@ -488,8 +541,10 @@ impl FaitAccompli1Sampler<PartitionSampler> {
         };
         Self {
             validators,
+            stake_sampler,
             required_samples,
             fallback_sampler,
+            k: k as usize,
         }
     }
 }
@@ -512,6 +567,7 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
         let all_zero = validators_truncated_stake
             .iter()
             .all(|v| v.stake == Stake::new(0));
+        let stake_sampler = StakeWeightedSampler::new(validators.clone());
         let fallback_sampler = if all_zero {
             StakeWeightedSampler::new(validators.clone())
         } else {
@@ -519,31 +575,38 @@ impl FaitAccompli1Sampler<StakeWeightedSampler> {
         };
         Self {
             validators,
+            stake_sampler,
             required_samples,
             fallback_sampler,
+            k: k as usize,
         }
     }
 }
 
 impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
     fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
-        ValidatorId::new(rng.random_range(0..self.validators.len()) as u64)
+        self.stake_sampler.sample(rng)
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
-        &self.validators[index]
+        self.stake_sampler.sample_info(rng)
     }
 
+    /// Samples `k` validators via the FA1 quorum sampling strategy.
+    ///
+    /// # Panics (debug only)
+    ///
+    /// In debug builds, panics if `k != self.quorum_size()`.
+    /// Prefer [`QuorumSamplingStrategy::sample_quorum`] instead.
     fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
-        let mut validators = Vec::with_capacity(k);
-        validators.extend_from_slice(&self.required_samples);
-        if validators.len() < k {
-            let k_prime = k - validators.len();
-            let additional_samples = self.fallback_sampler.sample_multiple(k_prime, rng);
-            validators.extend_from_slice(&additional_samples);
-        }
-        validators
+        debug_assert_eq!(
+            k,
+            self.quorum_size(),
+            "FaitAccompli1Sampler::sample_multiple called with k={k}, but was initialized for \
+             quorum_size={}; use sample_quorum() instead",
+            self.quorum_size()
+        );
+        self.sample_quorum(rng)
     }
 
     fn name() -> &'static str {
@@ -557,12 +620,31 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
     }
 }
 
+impl<F: SamplingStrategy> QuorumSamplingStrategy for FaitAccompli1Sampler<F> {
+    fn quorum_size(&self) -> usize {
+        self.k
+    }
+
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+        let mut result = Vec::with_capacity(self.k);
+        result.extend_from_slice(&self.required_samples);
+        if result.len() < self.k {
+            let k_prime = self.k - result.len();
+            let additional_samples = self.fallback_sampler.sample_multiple(k_prime, rng);
+            result.extend_from_slice(&additional_samples);
+        }
+        result
+    }
+}
+
 impl<F: SamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
     fn clone(&self) -> Self {
         Self {
             validators: self.validators.clone(),
+            stake_sampler: self.stake_sampler.clone(),
             required_samples: self.required_samples.clone(),
             fallback_sampler: self.fallback_sampler.clone(),
+            k: self.k,
         }
     }
 }
@@ -572,9 +654,11 @@ impl<F: SamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli2Sampler {
     validators: Vec<ValidatorInfo>,
+    stake_sampler: StakeWeightedSampler,
     required_samples: Vec<ValidatorId>,
     medium_nodes: Vec<(ValidatorId, f64)>,
     fallback_sampler: StakeWeightedSampler,
+    k: usize,
 }
 
 impl FaitAccompli2Sampler {
@@ -627,6 +711,7 @@ impl FaitAccompli2Sampler {
                 v
             })
             .collect();
+        let stake_sampler = StakeWeightedSampler::new(validators.clone());
         let fallback_sampler = if r == 0.0 {
             StakeWeightedSampler::new(validators.clone())
         } else {
@@ -635,9 +720,11 @@ impl FaitAccompli2Sampler {
 
         Self {
             validators,
+            stake_sampler,
             required_samples,
             medium_nodes,
             fallback_sampler,
+            k: k as usize,
         }
     }
 
@@ -656,34 +743,28 @@ impl FaitAccompli2Sampler {
 
 impl SamplingStrategy for FaitAccompli2Sampler {
     fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
-        ValidatorId::new(rng.random_range(0..self.validators.len()) as u64)
+        self.stake_sampler.sample(rng)
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
-        &self.validators[index]
+        self.stake_sampler.sample_info(rng)
     }
 
+    /// Samples `k` validators via the FA2 quorum sampling strategy.
+    ///
+    /// # Panics (debug only)
+    ///
+    /// In debug builds, panics if `k != self.quorum_size()`.
+    /// Prefer [`QuorumSamplingStrategy::sample_quorum`] instead.
     fn sample_multiple<R: Rng>(&self, k: usize, rng: &mut R) -> Vec<ValidatorId> {
-        // add required FA1 samples
-        let mut validators = Vec::with_capacity(k);
-        validators.extend_from_slice(&self.required_samples);
-
-        // sample medium nodes (FA2 step)
-        for (validator, probability) in &self.medium_nodes {
-            if rng.random_bool(*probability) {
-                validators.push(*validator);
-            }
-        }
-
-        // sample remaining validators IID stake-weighted
-        if validators.len() < k {
-            let k_prime = k - validators.len();
-            let additional_samples = self.fallback_sampler.sample_multiple(k_prime, rng);
-            validators.extend_from_slice(&additional_samples);
-        }
-
-        validators
+        debug_assert_eq!(
+            k,
+            self.quorum_size(),
+            "FaitAccompli2Sampler::sample_multiple called with k={k}, but was initialized for \
+             quorum_size={}; use sample_quorum() instead",
+            self.quorum_size()
+        );
+        self.sample_quorum(rng)
     }
 
     fn name() -> &'static str {
@@ -691,13 +772,43 @@ impl SamplingStrategy for FaitAccompli2Sampler {
     }
 }
 
+impl QuorumSamplingStrategy for FaitAccompli2Sampler {
+    fn quorum_size(&self) -> usize {
+        self.k
+    }
+
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+        // add required FA1 samples
+        let mut result = Vec::with_capacity(self.k);
+        result.extend_from_slice(&self.required_samples);
+
+        // sample medium nodes (FA2 step)
+        for (validator, probability) in &self.medium_nodes {
+            if rng.random_bool(*probability) {
+                result.push(*validator);
+            }
+        }
+
+        // sample remaining validators IID stake-weighted
+        if result.len() < self.k {
+            let k_prime = self.k - result.len();
+            let additional_samples = self.fallback_sampler.sample_multiple(k_prime, rng);
+            result.extend_from_slice(&additional_samples);
+        }
+
+        result
+    }
+}
+
 impl Clone for FaitAccompli2Sampler {
     fn clone(&self) -> Self {
         Self {
             validators: self.validators.clone(),
+            stake_sampler: self.stake_sampler.clone(),
             required_samples: self.required_samples.clone(),
             medium_nodes: self.medium_nodes.clone(),
             fallback_sampler: self.fallback_sampler.clone(),
+            k: self.k,
         }
     }
 }
@@ -1029,7 +1140,8 @@ mod tests {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
         let sampler = PartitionSampler::new(validators, 64);
-        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampler.quorum_size(), 64);
+        let sampled = sampler.sample_quorum(&mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
@@ -1043,7 +1155,8 @@ mod tests {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
         let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
-        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampler.quorum_size(), 64);
+        let sampled = sampler.sample_quorum(&mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
@@ -1055,7 +1168,8 @@ mod tests {
         // (also for partitioning fallback sampler)
         let validators = create_validator_info(64);
         let sampler = FaitAccompli1Sampler::new_with_partition_fallback(validators, 64);
-        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampler.quorum_size(), 64);
+        let sampled = sampler.sample_quorum(&mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
@@ -1068,7 +1182,7 @@ mod tests {
         for _ in 0..20 {
             let validators = create_validator_info(1000);
             let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
-            let sampled = sampler.sample_multiple(64, &mut rand::rng());
+            let sampled = sampler.sample_quorum(&mut rand::rng());
             assert_eq!(sampled.len(), 64);
             let sampled_set = sampled.iter().collect::<HashSet<_>>();
             let max_appearances = sampled_set
@@ -1086,7 +1200,7 @@ mod tests {
         validators[0].stake = Stake::new(52);
         validators[1].stake = Stake::new(52);
         let sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators, 64);
-        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        let sampled = sampler.sample_quorum(&mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled0 = sampled
             .iter()
@@ -1105,7 +1219,8 @@ mod tests {
         // with k equal-weight nodes this deterministically selects all nodes
         let validators = create_validator_info(64);
         let sampler = FaitAccompli2Sampler::new(validators, 64);
-        let sampled = sampler.sample_multiple(64, &mut rand::rng());
+        assert_eq!(sampler.quorum_size(), 64);
+        let sampled = sampler.sample_quorum(&mut rand::rng());
         assert_eq!(sampled.len(), 64);
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
