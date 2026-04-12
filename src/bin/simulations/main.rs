@@ -381,7 +381,7 @@ fn run_tests<
         let bandwidths = validators_with_pings
             .iter()
             .map(|v| {
-                ((v.stake as f64 / total_stake as f64
+                ((v.stake.inner() as f64 / total_stake.inner() as f64
                     * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
                     .round() as u64)
                     .max(min_bandwidth)
