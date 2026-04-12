@@ -119,7 +119,7 @@ impl SlotState {
     /// Initially, it is completely empty.
     pub fn new(slot: Slot, epoch_info: Arc<EpochInfo>) -> Self {
         Self {
-            votes: SlotVotes::new(epoch_info.validators.len()),
+            votes: SlotVotes::new(epoch_info.validators().len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
             parents: BTreeMap::new(),
@@ -186,7 +186,7 @@ impl SlotState {
         };
 
         // own vote might have made a block safe-to-notar
-        if voter == self.epoch_info.own_id {
+        if voter == self.epoch_info.own_id() {
             for hash in self.pending_safe_to_notar.clone() {
                 if self.sent_safe_to_notar.contains(&hash) {
                     continue;
@@ -277,7 +277,7 @@ impl SlotState {
             && self
                 .epoch_info
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+            && self.votes.notar[self.epoch_info.own_id() as usize].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -291,19 +291,19 @@ impl SlotState {
         {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = NotarFallbackCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::NotarFallback(cert));
         }
         if self.epoch_info.is_quorum(notar_stake) && self.certificates.notar.is_none() {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::Notar(cert));
         }
         if self.epoch_info.is_strong_quorum(notar_stake)
             && self.certificates.fast_finalize.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = FastFinalCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = FastFinalCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -329,7 +329,7 @@ impl SlotState {
         {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = NotarFallbackCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::NotarFallback(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -365,14 +365,14 @@ impl SlotState {
         if self.epoch_info.is_quorum(total_skip_stake) && self.certificates.skip.is_none() {
             let mut votes = self.votes.skip_votes();
             votes.extend(self.votes.skip_fallback_votes());
-            let cert = SkipCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = SkipCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::Skip(cert));
         }
         if !self.sent_safe_to_skip
             && self
                 .epoch_info
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+            && self.votes.notar[self.epoch_info.own_id() as usize].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -391,7 +391,7 @@ impl SlotState {
             && self.certificates.finalize.is_none()
         {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -487,7 +487,7 @@ impl SlotState {
         }
 
         // check own vote
-        let own_id = self.epoch_info.own_id;
+        let own_id = self.epoch_info.own_id();
         let skip = &self.votes.skip[own_id as usize];
         let notar = &self.votes.notar[own_id as usize];
 
@@ -594,7 +594,7 @@ mod tests {
             .enumerate()
             .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId))
             .collect();
-        let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
         assert!(slot_state.certificates.notar.is_none());
         slot_state.add_cert(Cert::Notar(cert));
         assert!(slot_state.certificates.notar.is_some());

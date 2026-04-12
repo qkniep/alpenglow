@@ -213,7 +213,7 @@ where
         network: N,
         epoch_info: Arc<EpochInfo>,
     ) -> Self {
-        let validators = epoch_info.validators.clone();
+        let validators = epoch_info.validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,
@@ -396,7 +396,7 @@ where
         self.request_timeouts.push((expiry, hash));
 
         let request = RepairRequest {
-            sender: self.epoch_info.own_id,
+            sender: self.epoch_info.own_id(),
             req_type,
         };
         // HACK: magic number to fix high-failure scenarios
@@ -416,7 +416,7 @@ where
     fn pick_random_peer(&self) -> SocketAddr {
         let mut rng = rand::rng();
         let mut peer_info = self.sampler.sample_info(&mut rng);
-        while peer_info.id == self.epoch_info.own_id {
+        while peer_info.id == self.epoch_info.own_id() {
             peer_info = self.sampler.sample_info(&mut rng);
         }
         peer_info.repair_request_address
@@ -459,34 +459,21 @@ mod tests {
     ) {
         // create EpochInfo for 2 validators and the corresponding network
         let (_, epoch_info) = generate_validators(2);
-        let mut epoch_info = Arc::try_unwrap(epoch_info).unwrap();
         let leader_key = SecretKey::new(&mut rand::rng());
-        let v0 = epoch_info.validators.get_mut(0).unwrap();
-        v0.pubkey = leader_key.to_pk();
-        v0.repair_request_address = localhost_ip_sockaddr(0);
-        v0.repair_response_address = localhost_ip_sockaddr(1);
+        let mut validators = epoch_info.validators().to_vec();
+        validators[0].pubkey = leader_key.to_pk();
+        validators[0].repair_request_address = localhost_ip_sockaddr(0);
+        validators[0].repair_response_address = localhost_ip_sockaddr(1);
+        validators[1].repair_request_address = localhost_ip_sockaddr(2);
+        validators[1].repair_response_address = localhost_ip_sockaddr(3);
 
         let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
-        let v0_repair_request_network = core
-            .join_unlimited(v0.repair_request_address.port() as u64)
-            .await;
-        let v0_repair_network = core
-            .join_unlimited(v0.repair_response_address.port() as u64)
-            .await;
+        let v0_repair_request_network = core.join_unlimited(0).await;
+        let v0_repair_network = core.join_unlimited(1).await;
+        let v1_repair_request_network = core.join_unlimited(2).await;
+        let v1_repair_network = core.join_unlimited(3).await;
 
-        let v1 = epoch_info.validators.get_mut(1).unwrap();
-        v1.repair_request_address = localhost_ip_sockaddr(2);
-        v1.repair_response_address = localhost_ip_sockaddr(3);
-        epoch_info.own_id = 1;
-
-        let v1_repair_request_network = core
-            .join_unlimited(v1.repair_request_address.port() as u64)
-            .await;
-        let v1_repair_network = core
-            .join_unlimited(v1.repair_response_address.port() as u64)
-            .await;
-
-        let epoch_info = Arc::new(epoch_info);
+        let epoch_info = Arc::new(EpochInfo::new(1, validators));
 
         // set up blockstore
         let (votor_tx, votor_rx) = tokio::sync::mpsc::channel(100);
