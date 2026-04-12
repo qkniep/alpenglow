@@ -121,16 +121,6 @@ pub struct Shred {
 }
 
 impl Shred {
-    /// Derives the Merkle root of the slice's shred tree from this shred's proof.
-    #[must_use]
-    pub fn merkle_root(&self) -> SliceRoot {
-        SliceMerkleTree::derive_root(
-            &self.payload().data,
-            *self.payload().shred_index,
-            &self.merkle_path,
-        )
-    }
-
     /// Verifies only the Merkle proof of this shred against the given root.
     ///
     /// For full verification, see [`ValidatedShred::try_new`].
@@ -166,6 +156,16 @@ impl Shred {
     /// Returns `true` iff this is a coding shred.
     pub const fn is_coding(&self) -> bool {
         matches!(self.payload_type, ShredPayloadType::Coding(_))
+    }
+
+    /// Derives the Merkle root of the slice from this shred's proof.
+    #[must_use]
+    pub fn merkle_root(&self) -> SliceRoot {
+        SliceMerkleTree::derive_root(
+            &self.payload().data,
+            *self.payload().shred_index,
+            &self.merkle_path,
+        )
     }
 }
 
