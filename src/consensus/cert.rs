@@ -8,8 +8,8 @@
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
+use super::Vote;
 use super::vote::VoteKind;
-use super::{QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, Vote};
 use crate::consensus::EpochInfo;
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::{AggregateSignature, Signable};
@@ -225,7 +225,6 @@ impl NotarCert {
     /// The threshold for [`NotarCert`] is >= 60% of the total stake.
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
-        let total_stake = epoch_info.total_stake();
         let stake: Stake = epoch_info
             .validators
             .iter()
@@ -233,7 +232,7 @@ impl NotarCert {
             .map(|v| v.stake)
             .sum();
 
-        QUORUM_THRESHOLD.is_met(stake, total_stake)
+        epoch_info.is_quorum(stake)
     }
 
     /// Checks that the aggregated signature is valid.
@@ -329,7 +328,6 @@ impl NotarFallbackCert {
     /// Each validator is counted only once, even if notar and notar-fallback are included for them.
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
-        let total_stake = epoch_info.total_stake();
         let stake: Stake = epoch_info
             .validators
             .iter()
@@ -345,7 +343,7 @@ impl NotarFallbackCert {
             .map(|v| v.stake)
             .sum();
 
-        QUORUM_THRESHOLD.is_met(stake, total_stake)
+        epoch_info.is_quorum(stake)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -448,7 +446,6 @@ impl SkipCert {
     /// Each validator is counted only once, even if skip and skip-fallback are included for them.
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
-        let total_stake = epoch_info.total_stake();
         let stake: Stake = epoch_info
             .validators
             .iter()
@@ -464,7 +461,7 @@ impl SkipCert {
             .map(|v| v.stake)
             .sum();
 
-        QUORUM_THRESHOLD.is_met(stake, total_stake)
+        epoch_info.is_quorum(stake)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -550,7 +547,6 @@ impl FastFinalCert {
     /// The threshold for [`FastFinalCert`] is >= 80% of the total stake.
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
-        let total_stake = epoch_info.total_stake();
         let stake: Stake = epoch_info
             .validators
             .iter()
@@ -558,7 +554,7 @@ impl FastFinalCert {
             .map(|v| v.stake)
             .sum();
 
-        STRONG_QUORUM_THRESHOLD.is_met(stake, total_stake)
+        epoch_info.is_strong_quorum(stake)
     }
 
     /// Checks that the aggregated signatures are valid.
@@ -631,7 +627,6 @@ impl FinalCert {
     /// The threshold for [`FinalCert`] is >= 60% of the total stake.
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
-        let total_stake: Stake = epoch_info.total_stake();
         let stake: Stake = epoch_info
             .validators
             .iter()
@@ -639,7 +634,7 @@ impl FinalCert {
             .map(|v| v.stake)
             .sum();
 
-        QUORUM_THRESHOLD.is_met(stake, total_stake)
+        epoch_info.is_quorum(stake)
     }
 
     /// Checks that the aggregated signatures are valid.

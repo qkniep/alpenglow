@@ -1,6 +1,9 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::consensus::{
+    QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, WEAK_QUORUM_THRESHOLD, WEAKEST_QUORUM_THRESHOLD,
+};
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
@@ -39,5 +42,29 @@ impl EpochInfo {
     #[must_use]
     pub fn total_stake(&self) -> Stake {
         self.validators.iter().map(|v| v.stake).sum()
+    }
+
+    /// Returns `true` if `stake` meets the weakest quorum threshold (20%).
+    #[must_use]
+    pub fn is_weakest_quorum(&self, stake: Stake) -> bool {
+        WEAKEST_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+    }
+
+    /// Returns `true` if `stake` meets the weak quorum threshold (40%).
+    #[must_use]
+    pub fn is_weak_quorum(&self, stake: Stake) -> bool {
+        WEAK_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+    }
+
+    /// Returns `true` if `stake` meets the standard quorum threshold (60%).
+    #[must_use]
+    pub fn is_quorum(&self, stake: Stake) -> bool {
+        QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+    }
+
+    /// Returns `true` if `stake` meets the strong quorum threshold (80%).
+    #[must_use]
+    pub fn is_strong_quorum(&self, stake: Stake) -> bool {
+        STRONG_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
     }
 }
