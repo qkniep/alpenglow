@@ -119,7 +119,7 @@ impl SlotState {
     /// Initially, it is completely empty.
     pub fn new(slot: Slot, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
-            votes: SlotVotes::new(epoch_info.validators.len()),
+            votes: SlotVotes::new(epoch_info.validators().len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
             parents: BTreeMap::new(),
@@ -186,7 +186,7 @@ impl SlotState {
         };
 
         // own vote might have made a block safe-to-notar
-        if voter == self.epoch_info.own_id {
+        if voter == self.epoch_info.own_id() {
             for hash in self.pending_safe_to_notar.clone() {
                 if self.sent_safe_to_notar.contains(&hash) {
                     continue;
@@ -236,22 +236,6 @@ impl SlotState {
         }
     }
 
-    fn is_weakest_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake()).div_ceil(5)
-    }
-
-    fn is_weak_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake() * 2).div_ceil(5)
-    }
-
-    fn is_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake() * 3).div_ceil(5)
-    }
-
-    fn is_strong_quorum(&self, stake: Stake) -> bool {
-        stake >= (self.epoch_info.total_stake() * 4).div_ceil(5)
-    }
-
     /// Adds a given amount of `stake` to notarization counter for `block_hash`.
     /// Then, checks if a new notarization certificate can be created.
     ///
@@ -290,8 +274,10 @@ impl SlotState {
             }
         }
         if !self.sent_safe_to_skip
-            && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+            && self
+                .epoch_info
+                .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
+            && self.votes.notar[self.epoch_info.own_id() as usize].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -301,20 +287,23 @@ impl SlotState {
             .notar_fallback
             .get(block_hash)
             .unwrap_or(&0);
-        if self.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash) {
+        if self.epoch_info.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash)
+        {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = NotarFallbackCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::NotarFallback(cert));
         }
-        if self.is_quorum(notar_stake) && self.certificates.notar.is_none() {
+        if self.epoch_info.is_quorum(notar_stake) && self.certificates.notar.is_none() {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::Notar(cert));
         }
-        if self.is_strong_quorum(notar_stake) && self.certificates.fast_finalize.is_none() {
+        if self.epoch_info.is_strong_quorum(notar_stake)
+            && self.certificates.fast_finalize.is_none()
+        {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = FastFinalCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = FastFinalCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -336,10 +325,11 @@ impl SlotState {
         *nf_stake += stake;
         let nf_stake = *nf_stake;
         let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
-        if self.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash) {
+        if self.epoch_info.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash)
+        {
             let mut votes = self.votes.notar_votes(block_hash);
             votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert = NotarFallbackCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = NotarFallbackCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::NotarFallback(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -372,15 +362,17 @@ impl SlotState {
             }
         }
         let total_skip_stake = self.voted_stakes.skip + self.voted_stakes.skip_fallback;
-        if self.is_quorum(total_skip_stake) && self.certificates.skip.is_none() {
+        if self.epoch_info.is_quorum(total_skip_stake) && self.certificates.skip.is_none() {
             let mut votes = self.votes.skip_votes();
             votes.extend(self.votes.skip_fallback_votes());
-            let cert = SkipCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = SkipCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::Skip(cert));
         }
         if !self.sent_safe_to_skip
-            && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+            && self
+                .epoch_info
+                .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
+            && self.votes.notar[self.epoch_info.own_id() as usize].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -395,9 +387,11 @@ impl SlotState {
     fn count_finalize_stake(&mut self, stake: Stake) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         self.voted_stakes.finalize += stake;
-        if self.is_quorum(self.voted_stakes.finalize) && self.certificates.finalize.is_none() {
+        if self.epoch_info.is_quorum(self.voted_stakes.finalize)
+            && self.certificates.finalize.is_none()
+        {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, &self.epoch_info.validators);
+            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.validators());
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -472,10 +466,12 @@ impl SlotState {
         // check general voted stake conditions
         let notar_stake = *self.voted_stakes.notar.get(&block_hash).unwrap_or(&0);
         let skip_stake = self.voted_stakes.skip;
-        if !self.is_weakest_quorum(notar_stake) {
+        if !self.epoch_info.is_weakest_quorum(notar_stake) {
             return SafeToNotarStatus::AwaitingVotes;
         }
-        if !self.is_weak_quorum(notar_stake) && !self.is_quorum(notar_stake + skip_stake) {
+        if !self.epoch_info.is_weak_quorum(notar_stake)
+            && !self.epoch_info.is_quorum(notar_stake + skip_stake)
+        {
             self.pending_safe_to_notar.insert(block_hash);
             return SafeToNotarStatus::AwaitingVotes;
         }
@@ -491,7 +487,7 @@ impl SlotState {
         }
 
         // check own vote
-        let own_id = self.epoch_info.own_id;
+        let own_id = self.epoch_info.own_id();
         let skip = &self.votes.skip[own_id as usize];
         let notar = &self.votes.notar[own_id as usize];
 
@@ -595,27 +591,6 @@ mod tests {
     }
 
     #[test]
-    fn quorums() {
-        let (_, epoch_info) = generate_validators(6);
-        let epoch_info = wrap_epoch_info(epoch_info);
-        let slot_state = SlotState::new(Slot::new(0), epoch_info);
-        assert!(slot_state.is_weak_quorum(3));
-        assert!(!slot_state.is_quorum(3));
-        assert!(slot_state.is_quorum(4));
-        assert!(!slot_state.is_strong_quorum(4));
-        assert!(slot_state.is_strong_quorum(5));
-
-        let (_, epoch_info) = generate_validators(11);
-        let epoch_info = wrap_epoch_info(epoch_info);
-        let slot_state = SlotState::new(Slot::new(0), epoch_info);
-        assert!(slot_state.is_weak_quorum(5));
-        assert!(!slot_state.is_quorum(5));
-        assert!(slot_state.is_quorum(7));
-        assert!(!slot_state.is_strong_quorum(7));
-        assert!(slot_state.is_strong_quorum(9));
-    }
-
-    #[test]
     fn add_cert() {
         let (sks, epoch_info) = generate_validators(11);
         let epoch_info = wrap_epoch_info(epoch_info);
@@ -626,7 +601,7 @@ mod tests {
             .enumerate()
             .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId))
             .collect();
-        let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
         assert!(slot_state.certificates.notar.is_none());
         slot_state.add_cert(Cert::Notar(cert));
         assert!(slot_state.certificates.notar.is_some());

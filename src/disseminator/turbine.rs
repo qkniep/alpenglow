@@ -18,7 +18,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::consensus::EpochInfo;
+use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
@@ -34,7 +34,7 @@ const MAX_CACHED_TREES: u64 = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
 pub struct Turbine<N: Network> {
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
     network: N,
     fanout: usize,
     tree_cache: Cache<(Slot, usize), TurbineTree>,
@@ -57,7 +57,7 @@ where
     N: ShredNetwork,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
-    pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
+    pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             epoch_info,
             network,
@@ -119,9 +119,9 @@ where
             return tree;
         }
         let tree = TurbineTree::new(
-            &self.epoch_info.validators,
+            self.epoch_info.validators(),
             self.fanout,
-            self.epoch_info.own_id,
+            self.epoch_info.own_id(),
             slot,
             shred,
         );
@@ -230,6 +230,7 @@ mod tests {
     use tokio::task;
 
     use super::*;
+    use crate::consensus::EpochInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
@@ -272,7 +273,8 @@ mod tests {
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
             let network = core.join_unlimited(i as ValidatorId).await;
-            let epoch_info = Arc::new(EpochInfo::new(i as ValidatorId, validators.to_vec()));
+            let epoch_info = EpochInfo::new(validators.to_vec());
+            let epoch_info = Arc::new(ValidatorEpochInfo::new(i as ValidatorId, epoch_info));
             let turbine = Turbine::new(network, epoch_info);
             disseminators.push(turbine);
         }
