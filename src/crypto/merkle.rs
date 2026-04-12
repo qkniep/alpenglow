@@ -367,16 +367,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// to the given `hash` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
     fn check_hash_proof(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        let mut i = index;
-        let mut node = hash;
-        for h in proof.as_ref() {
-            node = match i % 2 {
-                0 => Self::hash_pair(&node, h),
-                _ => Self::hash_pair(h, &node),
-            };
-            i /= 2;
-        }
-        node == *root.as_hash()
+        *Self::derive_hash_root(hash, index, proof).as_hash() == *root.as_hash()
     }
 
     /// Checks a Merkle path proves the given leaf's data is last in the tree.
@@ -393,7 +384,33 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
     fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        assert!(proof.as_ref().len() <= MAX_MERKLE_TREE_HEIGHT);
+        *Self::derive_hash_root_last(hash, index, proof).as_hash() == *root.as_hash()
+    }
+
+    /// Derives the root from an element in the tree and its proof.
+    #[must_use]
+    pub fn derive_root(data: &Leaf, index: usize, proof: &Proof) -> Root {
+        let hash = Self::hash_leaf(data);
+        Self::derive_hash_root(hash, index, proof)
+    }
+
+    #[must_use]
+    fn derive_hash_root(hash: Hash, index: usize, proof: &Proof) -> Root {
+        let mut i = index;
+        let mut node = hash;
+        for h in proof.as_ref() {
+            node = match i % 2 {
+                0 => Self::hash_pair(&node, h),
+                _ => Self::hash_pair(h, &node),
+            };
+            i /= 2;
+        }
+        node.into()
+    }
+
+    #[must_use]
+    fn derive_hash_root_last(hash: Hash, index: usize, proof: &Proof) -> Root {
+        assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
         let mut i = index;
         let mut node = hash;
         for (height, h) in proof.as_ref().iter().enumerate() {
@@ -403,7 +420,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
             };
             i /= 2;
         }
-        node == *root.as_hash()
+        node.into()
     }
 
     /// Hashes some leaf data with a label into a leaf node.
