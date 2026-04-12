@@ -50,8 +50,7 @@ const_assert_eq!(std::mem::size_of::<usize>(), 8);
 
 /// Validator ID number type.
 pub type ValidatorId = u64;
-/// Validator stake type.
-pub type Stake = u64;
+pub use self::types::Stake;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
@@ -141,7 +140,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
         validators.push(ValidatorInfo {
             id: id as u64,
-            stake: 1,
+            stake: Stake::new(1),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,
