@@ -421,7 +421,7 @@ impl Shredder for PetsShredder {
 
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root();
-        let header = any_shred.payload().header.clone();
+        let header = any_shred.payload().header;
         let mut raw_shreds = self.0.encode_coding_from_data(&data_shreds)?;
         raw_shreds.data.pop();
         let tree = build_merkle_tree(&raw_shreds);
@@ -509,7 +509,7 @@ impl Shredder for AontShredder {
 
         // additional Merkle tree validity check
         let merkle_root = any_shred.merkle_root();
-        let header = any_shred.payload().header.clone();
+        let header = any_shred.payload().header;
         let raw_shreds = self.0.encode_coding_from_data(&data_shreds)?;
         let tree = build_merkle_tree(&raw_shreds);
         if tree.get_root() != merkle_root {
@@ -562,7 +562,7 @@ fn data_and_coding_to_output_shreds(
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
-            header: header.clone(),
+            header,
             shred_index,
             data,
         };
@@ -617,7 +617,7 @@ fn create_output_shreds_for_other_leader(
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
-            header: header.clone(),
+            header,
             shred_index,
             data,
         };
