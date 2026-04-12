@@ -62,7 +62,7 @@ impl<S, R> SimulatedNetwork<S, R> {
 
     async fn send_serialized(&self, bytes: Vec<u8>, addr: SocketAddr) -> std::io::Result<()> {
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let validator_id = addr.port().into();
+        let validator_id = ValidatorId::new(addr.port() as u64);
         self.send_byte_vec(bytes, validator_id).await?;
         Ok(())
     }
@@ -120,7 +120,6 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use crate::Slot;
     use crate::crypto::signature::SecretKey;
     use crate::network::localhost_ip_sockaddr;
     use crate::shredder::{
@@ -129,13 +128,14 @@ mod tests {
     use crate::test_utils::Ping;
     use crate::types::slice::create_slice_payload_with_invalid_txs;
     use crate::types::{Slice, SliceHeader, SliceIndex};
+    use crate::{Slot, ValidatorId};
 
     #[tokio::test]
     async fn basic() {
         // set up network with two nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-        let net1 = core.join(0, 8192, 8192).await;
-        let net2 = core.join(1, 8192, 8192).await;
+        let net1 = core.join(ValidatorId::new(0), 8192, 8192).await;
+        let net2 = core.join(ValidatorId::new(1), 8192, 8192).await;
         let msg = Ping::default();
 
         // one direction
@@ -161,8 +161,10 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join(0, 32_768, 32_768).await; // 32 KiB/s
-        let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 32_768, 32_768).await; // 32 KiB/s
+        let net1: SimulatedNetwork<Shred, Shred> =
+            core.join(ValidatorId::new(0), 32_768, 32_768).await; // 32 KiB/s
+        let net2: SimulatedNetwork<Shred, Shred> =
+            core.join(ValidatorId::new(1), 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
         let mut shredder = RegularShredder::default();
@@ -219,8 +221,12 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join(0, 104_857_600, 104_857_600).await; // 100 MiB/s
-        let net2: SimulatedNetwork<Shred, Shred> = core.join(1, 104_857_600, 104_857_600).await; // 100 MiB/s
+        let net1: SimulatedNetwork<Shred, Shred> = core
+            .join(ValidatorId::new(0), 104_857_600, 104_857_600)
+            .await; // 100 MiB/s
+        let net2: SimulatedNetwork<Shred, Shred> = core
+            .join(ValidatorId::new(1), 104_857_600, 104_857_600)
+            .await; // 100 MiB/s
 
         // create a full block (1024 slices)
         let mut shredder = RegularShredder::default();
@@ -277,8 +283,8 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorId::new(0)).await;
+        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorId::new(1)).await;
 
         // create a full block (1024 slices)
         let mut shredder = RegularShredder::default();

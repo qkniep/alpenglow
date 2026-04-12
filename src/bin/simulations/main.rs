@@ -186,7 +186,7 @@ fn run_tests_for_stake_distribution(
     // sort by stake (from highest to lowest)
     validators_and_ping_servers.sort_by_key(|(v, _)| Reverse(v.stake));
     for (i, (v, _)) in validators_and_ping_servers.iter_mut().enumerate() {
-        v.id = i as ValidatorId;
+        v.id = ValidatorId::new(i as u64);
     }
 
     // extract the validators only
@@ -389,7 +389,7 @@ fn run_tests<
         let bandwidths = validators_with_pings
             .iter()
             .map(|v| {
-                ((v.stake as f64 / total_stake as f64
+                ((v.stake.inner() as f64 / total_stake.inner() as f64
                     * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
                     .round() as u64)
                     .max(min_bandwidth)

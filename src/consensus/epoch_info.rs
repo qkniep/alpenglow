@@ -24,13 +24,13 @@ impl EpochInfo {
     /// or if any validator's `id` does not match its position in the vector.
     pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
         assert!(
-            (own_id as usize) < validators.len(),
+            own_id.as_index() < validators.len(),
             "own_id {own_id} is out of range for {} validators",
             validators.len()
         );
         for (i, v) in validators.iter().enumerate() {
             assert!(
-                v.id == i as u64,
+                v.id.as_index() == i,
                 "validator at index {i} has id {}, expected {i}",
                 v.id
             );
@@ -62,7 +62,7 @@ impl EpochInfo {
     /// Panics if the validator ID is out of range.
     #[must_use]
     pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
-        &self.validators[id as usize]
+        &self.validators[id.as_index()]
     }
 
     /// Gives the validator info for the leader for the given slot.
@@ -70,7 +70,7 @@ impl EpochInfo {
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot.inner() / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
-        self.validator(leader_id)
+        self.validator(ValidatorId::new(leader_id))
     }
 
     /// Gives the total stake over all validators.
@@ -82,46 +82,47 @@ impl EpochInfo {
     /// Returns `true` if `stake` meets the weakest quorum threshold (20%).
     #[must_use]
     pub fn is_weakest_quorum(&self, stake: Stake) -> bool {
-        WEAKEST_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        WEAKEST_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 
     /// Returns `true` if `stake` meets the weak quorum threshold (40%).
     #[must_use]
     pub fn is_weak_quorum(&self, stake: Stake) -> bool {
-        WEAK_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        WEAK_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 
     /// Returns `true` if `stake` meets the standard quorum threshold (60%).
     #[must_use]
     pub fn is_quorum(&self, stake: Stake) -> bool {
-        QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 
     /// Returns `true` if `stake` meets the strong quorum threshold (80%).
     #[must_use]
     pub fn is_strong_quorum(&self, stake: Stake) -> bool {
-        STRONG_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        STRONG_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::Stake;
     use crate::test_utils::generate_validators;
 
     #[test]
     fn quorums() {
         let (_, epoch_info) = generate_validators(6);
-        assert!(epoch_info.is_weak_quorum(3));
-        assert!(!epoch_info.is_quorum(3));
-        assert!(epoch_info.is_quorum(4));
-        assert!(!epoch_info.is_strong_quorum(4));
-        assert!(epoch_info.is_strong_quorum(5));
+        assert!(epoch_info.is_weak_quorum(Stake::new(3)));
+        assert!(!epoch_info.is_quorum(Stake::new(3)));
+        assert!(epoch_info.is_quorum(Stake::new(4)));
+        assert!(!epoch_info.is_strong_quorum(Stake::new(4)));
+        assert!(epoch_info.is_strong_quorum(Stake::new(5)));
 
         let (_, epoch_info) = generate_validators(11);
-        assert!(epoch_info.is_weak_quorum(5));
-        assert!(!epoch_info.is_quorum(5));
-        assert!(epoch_info.is_quorum(7));
-        assert!(!epoch_info.is_strong_quorum(7));
-        assert!(epoch_info.is_strong_quorum(9));
+        assert!(epoch_info.is_weak_quorum(Stake::new(5)));
+        assert!(!epoch_info.is_quorum(Stake::new(5)));
+        assert!(epoch_info.is_quorum(Stake::new(7)));
+        assert!(!epoch_info.is_strong_quorum(Stake::new(7)));
+        assert!(epoch_info.is_strong_quorum(Stake::new(9)));
     }
 }
