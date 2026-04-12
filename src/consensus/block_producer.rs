@@ -104,10 +104,10 @@ where
 
             // don't do anything if we are not the leader
             let leader = self.epoch_info.leader(first_slot_in_window);
-            if leader.id != self.epoch_info.own_id {
+            if leader.id != self.epoch_info.own_id() {
                 debug!(
                     "[val {}] not producing in window {first_slot_in_window}..{last_slot_in_window}, not leader",
-                    self.epoch_info.own_id
+                    self.epoch_info.own_id()
                 );
                 continue;
             }

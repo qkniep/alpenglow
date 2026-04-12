@@ -226,7 +226,7 @@ impl NotarCert {
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
         let stake: Stake = epoch_info
-            .validators
+            .validators()
             .iter()
             .filter(|v| self.agg_sig.is_signer(v.id))
             .map(|v| v.stake)
@@ -329,7 +329,7 @@ impl NotarFallbackCert {
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
         let stake: Stake = epoch_info
-            .validators
+            .validators()
             .iter()
             .filter(|v| {
                 self.agg_sig_notar
@@ -447,7 +447,7 @@ impl SkipCert {
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
         let stake: Stake = epoch_info
-            .validators
+            .validators()
             .iter()
             .filter(|v| {
                 self.agg_sig_skip
@@ -548,7 +548,7 @@ impl FastFinalCert {
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
         let stake: Stake = epoch_info
-            .validators
+            .validators()
             .iter()
             .filter(|v| self.agg_sig.is_signer(v.id))
             .map(|v| v.stake)
@@ -628,7 +628,7 @@ impl FinalCert {
     #[must_use]
     pub fn check_threshold(&self, epoch_info: &EpochInfo) -> bool {
         let stake: Stake = epoch_info
-            .validators
+            .validators()
             .iter()
             .filter(|v| self.agg_sig.is_signer(v.id))
             .map(|v| v.stake)
