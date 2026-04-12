@@ -7,27 +7,32 @@ use crate::consensus::{
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
-/// Epoch-specific validator information.
+/// Shared epoch information, identical across all validators.
+///
+/// Contains the validator set and derived data for one epoch.
+/// Constructed once per epoch and shared via [`std::sync::Arc`].
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
-    own_id: ValidatorId,
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
 }
 
+/// Per-validator epoch information, wrapping shared [`EpochInfo`].
+///
+/// Adds the node's own identity on top of the shared epoch data.
+#[derive(Clone, Debug)]
+pub struct ValidatorEpochInfo {
+    own_id: ValidatorId,
+    epoch: EpochInfo,
+}
+
 impl EpochInfo {
-    /// Creates a new `EpochInfo` instance with the given validators.
+    /// Creates a new `EpochInfo` from the given validator set.
     ///
     /// # Panics
     ///
-    /// Panics if `own_id` is not a valid index into `validators`,
-    /// or if any validator's `id` does not match its position in the vector.
-    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
-        assert!(
-            own_id.as_index() < validators.len(),
-            "own_id {own_id} is out of range for {} validators",
-            validators.len()
-        );
+    /// Panics if any validator's `id` does not match its index in the vector.
+    pub fn new(validators: Vec<ValidatorInfo>) -> Self {
         for (i, v) in validators.iter().enumerate() {
             assert!(
                 v.id.as_index() == i,
@@ -37,16 +42,9 @@ impl EpochInfo {
         }
         let total_stake = validators.iter().map(|v| v.stake).sum();
         Self {
-            own_id,
             validators,
             total_stake,
         }
-    }
-
-    /// Returns our own validator ID.
-    #[must_use]
-    pub fn own_id(&self) -> ValidatorId {
-        self.own_id
     }
 
     /// Returns all validators in this epoch.
@@ -101,6 +99,34 @@ impl EpochInfo {
     #[must_use]
     pub fn is_strong_quorum(&self, stake: Stake) -> bool {
         STRONG_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
+    }
+}
+
+impl ValidatorEpochInfo {
+    /// Creates a per-validator view of the given epoch info.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `own_id` is not a valid validator index.
+    pub fn new(own_id: ValidatorId, epoch: EpochInfo) -> Self {
+        assert!(
+            own_id.as_index() < epoch.validators.len(),
+            "own_id {own_id} is out of range for {} validators",
+            epoch.validators.len()
+        );
+        Self { own_id, epoch }
+    }
+
+    /// Returns our own validator ID.
+    #[must_use]
+    pub fn own_id(&self) -> ValidatorId {
+        self.own_id
+    }
+
+    /// Returns the shared epoch information.
+    #[must_use]
+    pub fn epoch_info(&self) -> &EpochInfo {
+        &self.epoch
     }
 }
 

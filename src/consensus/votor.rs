@@ -375,7 +375,7 @@ mod tests {
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
-    async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, Arc<EpochInfo>) {
+    async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, EpochInfo) {
         let (sks, epoch_info) = generate_validators(2);
         let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
         let (tx, rx) = mpsc::channel(100);

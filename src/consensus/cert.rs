@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn notar_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(ValidatorId::new(0), info.clone());
+        let epoch = EpochInfo::new(info.clone());
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 7/11 enough for 60% threshold
@@ -1015,7 +1015,7 @@ mod tests {
     #[test]
     fn notar_fallback_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(ValidatorId::new(0), info.clone());
+        let epoch = EpochInfo::new(info.clone());
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 7/11 enough for 60% threshold
@@ -1066,7 +1066,7 @@ mod tests {
     #[test]
     fn skip_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(ValidatorId::new(0), info.clone());
+        let epoch = EpochInfo::new(info.clone());
 
         // 7/11 enough for 60% threshold
         let votes = (0..7)
@@ -1086,7 +1086,7 @@ mod tests {
     #[test]
     fn final_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(ValidatorId::new(0), info.clone());
+        let epoch = EpochInfo::new(info.clone());
 
         // 7/11 enough for 60% threshold
         let votes = (0..7)
@@ -1106,7 +1106,7 @@ mod tests {
     #[test]
     fn fast_final_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(ValidatorId::new(0), info.clone());
+        let epoch = EpochInfo::new(info.clone());
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 9/11 enough for 80% threshold
