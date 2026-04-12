@@ -50,6 +50,14 @@ impl<'a> ValidatedShreds<'a> {
         Some(Self(shreds))
     }
 
+    /// Returns a reference to any shred in this set.
+    ///
+    /// Since deshredding succeeded before calling this, there is guaranteed to be
+    /// at least one shred in the array, so the unwrap is safe.
+    pub(super) fn any_shred(self) -> &'a ValidatedShred {
+        self.0.iter().flatten().next().unwrap()
+    }
+
     /// Returns the inner reference to an array of [`ValidatedShred`]s.
     pub(super) fn to_shreds(self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
         self.0
