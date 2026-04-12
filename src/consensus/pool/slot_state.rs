@@ -156,7 +156,7 @@ impl SlotState {
     pub fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
         let slot = vote.slot();
         let voter = vote.signer();
-        let v = voter as usize;
+        let v = voter.inner() as usize;
 
         let (certs_created, mut votor_events, mut blocks_to_repair) = match vote.kind() {
             VoteKind::Notar(_, block_hash) => {
@@ -291,7 +291,7 @@ impl SlotState {
         }
         if !self.sent_safe_to_skip
             && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+            && self.votes.notar[self.epoch_info.own_id.inner() as usize].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -380,7 +380,7 @@ impl SlotState {
         }
         if !self.sent_safe_to_skip
             && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id as usize].is_some()
+            && self.votes.notar[self.epoch_info.own_id.inner() as usize].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -410,7 +410,7 @@ impl SlotState {
     pub fn check_slashable_offence(&self, vote: &Vote) -> Option<SlashableOffence> {
         let slot = vote.slot();
         let voter = vote.signer();
-        let v = voter as usize;
+        let v = voter.inner() as usize;
         match vote.kind() {
             VoteKind::Notar(_, block_hash) => {
                 if self.votes.skip[v].is_some() {
@@ -455,7 +455,7 @@ impl SlotState {
     /// Votes for which this returns `true` should never be counted.
     /// Doing so could lead to double counting.
     pub fn should_ignore_vote(&self, vote: &Vote) -> bool {
-        let v = vote.signer() as usize;
+        let v = vote.signer().inner() as usize;
         match vote.kind() {
             VoteKind::Notar(_, _) => self.votes.notar[v].is_some(),
             VoteKind::NotarFallback(_, block_hash) => {
@@ -492,8 +492,8 @@ impl SlotState {
 
         // check own vote
         let own_id = self.epoch_info.own_id;
-        let skip = &self.votes.skip[own_id as usize];
-        let notar = &self.votes.notar[own_id as usize];
+        let skip = &self.votes.skip[own_id.inner() as usize];
+        let notar = &self.votes.notar[own_id.inner() as usize];
 
         match (skip, notar) {
             (Some(_), _) => {
@@ -615,7 +615,7 @@ mod tests {
         let votes: Vec<_> = sks
             .iter()
             .enumerate()
-            .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId))
+            .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, ValidatorId::new(i as u64)))
             .collect();
         let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
         assert!(slot_state.certificates.notar.is_none());
@@ -629,8 +629,8 @@ mod tests {
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
-            let vote = Vote::new_notar(slot, hash.clone(), sk, i as ValidatorId);
-            let voter_stake = epoch_info.validator(i as ValidatorId).stake;
+            let vote = Vote::new_notar(slot, hash.clone(), sk, ValidatorId::new(i as u64));
+            let voter_stake = epoch_info.validator(ValidatorId::new(i as u64)).stake;
             assert!(slot_state.votes.notar[i].is_none());
             slot_state.add_vote(vote.clone(), voter_stake);
             let notar_vote = &slot_state.votes.notar[i];
@@ -654,16 +654,16 @@ mod tests {
         slot_state.notify_parent_certified(hash.clone());
 
         // 33% notar alone has no effect
-        let vote = Vote::new_notar(slot, hash.clone(), &sks[1], 1);
-        let voter_stake = epoch_info.validator(1).stake;
+        let vote = Vote::new_notar(slot, hash.clone(), &sks[1], ValidatorId::new(1));
+        let voter_stake = epoch_info.validator(ValidatorId::new(1)).stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert!(events.is_empty());
         assert!(blocks.is_empty());
 
         // additional 33% skip should lead to safe-to-notar
-        let vote = Vote::new_skip(slot, &sks[0], 0);
-        let voter_stake = epoch_info.validator(0).stake;
+        let vote = Vote::new_skip(slot, &sks[0], ValidatorId::new(0));
+        let voter_stake = epoch_info.validator(ValidatorId::new(0)).stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);

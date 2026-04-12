@@ -135,7 +135,7 @@ impl<E: Event> Timings<E> {
     /// Records the latency for the given event and validator.
     pub fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
         let vec = self.event_timings.get_mut(&event).unwrap();
-        let entry = vec.get_mut(validator as usize).unwrap();
+        let entry = vec.get_mut(validator.inner() as usize).unwrap();
         if timing < *entry {
             *entry = timing;
         }
@@ -332,7 +332,7 @@ mod tests {
         let mut timings = Timings::<LatencyEvent>::default();
         let event = LatencyEvent::BlockSent;
         timings.initialize(event, 2);
-        timings.record(event, SimTime::new(10), 0);
+        timings.record(event, SimTime::new(10), ValidatorId::new(0));
         assert_eq!(timings.get(event).unwrap()[0], SimTime::new(10));
         assert_eq!(timings.get(event).unwrap()[1], SimTime::NEVER);
     }

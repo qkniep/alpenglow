@@ -74,6 +74,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+    use crate::ValidatorId;
     use crate::consensus::Vote;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
@@ -88,17 +89,17 @@ mod tests {
                 .with_default_latency(Duration::from_millis(10))
                 .with_packet_loss(packet_loss),
         );
-        let net_sender = core.join_unlimited(0).await;
+        let net_sender = core.join_unlimited(ValidatorId::new(0)).await;
         let mut net_others = Vec::new();
         let mut validators = Vec::new();
-        for i in 0..20 {
+        for i in 0..20u64 {
             if i > 0 {
-                net_others.push(core.join_unlimited(i).await);
+                net_others.push(core.join_unlimited(ValidatorId::new(i)).await);
             }
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
-                id: i,
+                id: ValidatorId::new(i),
                 stake: 1,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
@@ -120,7 +121,7 @@ mod tests {
         let mut tasks = JoinSet::new();
         tasks.spawn(async move {
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, 0);
+            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, ValidatorId::new(0));
             let msg = ConsensusMessage::Vote(vote);
             all2all_sender.broadcast(&msg).await.unwrap();
             while let Ok(Ok(_)) =

@@ -218,7 +218,7 @@ impl Event for LatencyEvent {
                     let tx_time = environment.transmission_delay(block_bytes, leader);
                     let finished_sending_time =
                         resources.network.schedule(leader, start_time, tx_time);
-                    timings[leader as usize] += finished_sending_time;
+                    timings[leader.inner() as usize] += finished_sending_time;
                 }
                 timings
             }
@@ -243,12 +243,13 @@ impl Event for LatencyEvent {
                         })
                         .max()
                         .unwrap();
-                    timings[relay as usize] = timings[relay as usize].max(shreds_from_all_leaders);
+                    timings[relay.inner() as usize] =
+                        timings[relay.inner() as usize].max(shreds_from_all_leaders);
                 }
                 // TODO: remove this again
                 let mut relay_timings = slice_relays
                     .iter()
-                    .map(|&relay| timings[relay as usize])
+                    .map(|&relay| timings[relay.inner() as usize])
                     .collect::<Vec<_>>();
                 relay_timings.sort_unstable();
                 debug!(
@@ -261,7 +262,7 @@ impl Event for LatencyEvent {
                 let mut timings = dependency_timings[0].to_vec();
                 // TODO: actually run for more than 1 slot
                 for &relay in &instance.ryse_instances[0].relays[*slice as usize] {
-                    let timing = &mut timings[relay as usize];
+                    let timing = &mut timings[relay.inner() as usize];
                     let total_bytes = instance.params.ryse_params.num_leaders as usize
                         * environment.num_validators()
                         * MAX_DATA_PER_SHRED;
@@ -279,15 +280,15 @@ impl Event for LatencyEvent {
                     let first_shred_time = instance.ryse_instances[0].relays[*slice as usize]
                         .iter()
                         .map(|relay| {
-                            let prop_delay =
-                                environment.propagation_delay(*relay, recipient as ValidatorId);
+                            let prop_delay = environment
+                                .propagation_delay(*relay, ValidatorId::new(recipient as u64));
                             let tx_delay = environment.transmission_delay(
                                 (recipient + 1)
                                     * instance.params.ryse_params.num_leaders as usize
                                     * MAX_DATA_PER_SHRED,
                                 *relay,
                             );
-                            dependency_timings[0][*relay as usize] + prop_delay + tx_delay
+                            dependency_timings[0][relay.inner() as usize] + prop_delay + tx_delay
                         })
                         .min()
                         .unwrap();
@@ -303,8 +304,9 @@ impl Event for LatencyEvent {
                     // TODO: actually run for more than 1 slot
                     let slice_relays = &instance.ryse_instances[0].relays[*slice as usize];
                     for (i, relay) in slice_relays.iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][*relay as usize]
-                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                        shred_timings[i] = dependency_timings[0][relay.inner() as usize]
+                            + environment
+                                .propagation_delay(*relay, ValidatorId::new(recipient as u64))
                             + environment.transmission_delay(
                                 (recipient + 1)
                                     * instance.params.ryse_params.num_leaders as usize

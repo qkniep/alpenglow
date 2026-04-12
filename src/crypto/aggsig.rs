@@ -10,6 +10,7 @@
 //!
 //! ```
 //! use alpenglow::crypto::aggsig::{AggregateSignature, SecretKey};
+//! use alpenglow::ValidatorId;
 //!
 //! let msg = b"hello world";
 //!
@@ -21,7 +22,7 @@
 //! let pk2 = sk2.to_pk();
 //! let sig2 = sk2.sign(msg);
 //!
-//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [0, 1], 2);
+//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
 //! assert!(aggsig.verify(msg, &[pk1, pk2]));
 //! ```
 
@@ -286,7 +287,7 @@ impl AggregateSignature {
 
         let mut bitmask = bitvec::bitvec![0; num_bits];
         for i in indices {
-            bitmask.set(i as usize, true);
+            bitmask.set(i.inner() as usize, true);
         }
 
         Self {
@@ -301,7 +302,7 @@ impl AggregateSignature {
         if self.bitmask.len() != pks.len() {
             return false;
         }
-        let pks: Vec<_> = self.signers().map(|v| &pks[v as usize].0).collect();
+        let pks: Vec<_> = self.signers().map(|v| &pks[v.inner() as usize].0).collect();
         let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
@@ -322,14 +323,14 @@ impl AggregateSignature {
     pub fn is_signer(&self, validator_id: ValidatorId) -> bool {
         *self
             .bitmask
-            .get(validator_id as usize)
+            .get(validator_id.inner() as usize)
             .as_deref()
             .unwrap_or(&false)
     }
 
     /// Iterates over all signers of this aggregate signature.
     pub fn signers(&self) -> impl Iterator<Item = ValidatorId> {
-        self.bitmask.iter_ones().map(|i| i as ValidatorId)
+        self.bitmask.iter_ones().map(|i| ValidatorId::new(i as u64))
     }
 }
 
@@ -362,7 +363,8 @@ mod tests {
         assert!(sig1.verify(msg, &pk1));
         assert!(sig2.verify(msg, &pk2));
 
-        let mut aggsig = AggregateSignature::new(&[sig1, sig2], [0, 1], 2);
+        let mut aggsig =
+            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
 
         // check aggregate signature
         assert!(aggsig.verify(msg, &[pk1, pk2]));
@@ -415,14 +417,15 @@ mod tests {
         assert!(sig3.verify(msg, &pk3));
 
         // only aggregate over 2/3 signatures
-        let aggsig = AggregateSignature::new(&[sig1, sig3], [0, 2], 3);
+        let aggsig =
+            AggregateSignature::new(&[sig1, sig3], [ValidatorId::new(0), ValidatorId::new(2)], 3);
 
         // check signers bitmask
         let signers: Vec<_> = aggsig.signers().collect();
         assert_eq!(signers.len(), 2);
-        assert!(signers.contains(&0));
-        assert!(!signers.contains(&1));
-        assert!(signers.contains(&2));
+        assert!(signers.contains(&ValidatorId::new(0)));
+        assert!(!signers.contains(&ValidatorId::new(1)));
+        assert!(signers.contains(&ValidatorId::new(2)));
 
         // check aggregate signature
         assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk3]));

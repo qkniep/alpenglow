@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use alpenglow::ValidatorId;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
@@ -21,8 +22,8 @@ fn turbine_tree(bencher: divan::Bencher) {
         .with_inputs(|| {
             let net1 = UdpNetwork::new_with_any_port();
             let net2 = UdpNetwork::new_with_any_port();
-            let turbine1 = Turbine::new(0, Vec::new(), net1);
-            let turbine2 = Turbine::new(1, Vec::new(), net2);
+            let turbine1 = Turbine::new(ValidatorId::new(0), Vec::new(), net1);
+            let turbine2 = Turbine::new(ValidatorId::new(1), Vec::new(), net2);
 
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();

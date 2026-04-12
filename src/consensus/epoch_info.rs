@@ -24,7 +24,7 @@ impl EpochInfo {
     /// Panics if the validator ID is out of range.
     #[must_use]
     pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
-        &self.validators[id as usize]
+        &self.validators[id.inner() as usize]
     }
 
     /// Gives the validator info for the leader for the given slot.
@@ -32,7 +32,7 @@ impl EpochInfo {
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot.inner() / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
-        self.validator(leader_id)
+        self.validator(ValidatorId::new(leader_id))
     }
 
     /// Gives the total stake over all validators.

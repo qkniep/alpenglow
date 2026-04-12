@@ -89,7 +89,7 @@ where
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let addr = self.validators[root as usize].disseminator_address;
+        let addr = self.validators[root.inner() as usize].disseminator_address;
         self.network.send(shred, addr).await
     }
 
@@ -106,7 +106,7 @@ where
         let addrs = tree
             .get_children()
             .iter()
-            .map(|child| self.validators[*child as usize].disseminator_address);
+            .map(|child| self.validators[child.inner() as usize].disseminator_address);
         self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
@@ -174,7 +174,7 @@ impl TurbineTree {
         // TODO: remove leader
         let validator_ids: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
-            .map(|i| i as ValidatorId)
+            .map(|i| ValidatorId::new(i as u64))
             .collect();
 
         // find root & parent
@@ -244,7 +244,7 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: i,
+                id: ValidatorId::new(i),
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
@@ -270,8 +270,8 @@ mod tests {
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
-            let network = core.join_unlimited(i as ValidatorId).await;
-            let turbine = Turbine::new(i as ValidatorId, validators.to_vec(), network);
+            let network = core.join_unlimited(ValidatorId::new(i as u64)).await;
+            let turbine = Turbine::new(ValidatorId::new(i as u64), validators.to_vec(), network);
             disseminators.push(turbine);
         }
         disseminators
@@ -282,7 +282,7 @@ mod tests {
         let (_, validators) = create_validator_info(2000);
         let mut trees = Vec::new();
         for v in 0..validators.len() {
-            let v = v as ValidatorId;
+            let v = ValidatorId::new(v as u64);
             let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             trees.push((v, tree));
         }
@@ -304,11 +304,11 @@ mod tests {
             }
             // parent-child compatibility
             for child in tree.get_children() {
-                let childs_parent = trees[*child as usize].1.get_parent();
+                let childs_parent = trees[child.inner() as usize].1.get_parent();
                 assert_eq!(childs_parent, Some(*v));
             }
             if let Some(parent) = tree.get_parent() {
-                let parents_children = trees[parent as usize].1.get_children();
+                let parents_children = trees[parent.inner() as usize].1.get_children();
                 assert!(parents_children.contains(v));
             }
         }
@@ -318,7 +318,7 @@ mod tests {
     fn tree_fanouts() {
         let (_, validators) = create_validator_info(500);
         for v in 0..validators.len() {
-            let v = v as ValidatorId;
+            let v = ValidatorId::new(v as u64);
             let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 200);
             let tree = TurbineTree::new(&validators, 1, v, Slot::new(0), 0);

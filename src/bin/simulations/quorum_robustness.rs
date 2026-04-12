@@ -169,10 +169,10 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
             if byzantine_stake + rel_stake < adversary_strength.byzantine {
-                byzantine[v.id as usize] = true;
+                byzantine[v.id.inner() as usize] = true;
                 byzantine_stake += rel_stake;
             } else if crashed_stake + rel_stake < adversary_strength.crashed {
-                crashed[v.id as usize] = true;
+                crashed[v.id.inner() as usize] = true;
                 crashed_stake += rel_stake;
             } else {
                 break;
@@ -211,10 +211,10 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         for v in &validators_to_corrupt {
             let rel_stake = v.stake as f64 / self.total_stake as f64;
             if byzantine_stake + rel_stake < adversary_strength.byzantine {
-                byzantine[v.id as usize] = true;
+                byzantine[v.id.inner() as usize] = true;
                 byzantine_stake += rel_stake;
             } else if crashed_stake + rel_stake < adversary_strength.crashed {
-                crashed[v.id as usize] = true;
+                crashed[v.id.inner() as usize] = true;
                 crashed_stake += rel_stake;
             } else {
                 break;
@@ -254,10 +254,10 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for v in &validators_to_corrupt {
                 let rel_stake = v.stake as f64 / self.total_stake as f64;
                 if byzantine_stake + rel_stake < adversary_strength.byzantine {
-                    byzantine[v.id as usize] = true;
+                    byzantine[v.id.inner() as usize] = true;
                     byzantine_stake += rel_stake;
                 } else if crashed_stake + rel_stake < adversary_strength.crashed {
-                    crashed[v.id as usize] = true;
+                    crashed[v.id.inner() as usize] = true;
                     crashed_stake += rel_stake;
                 }
             }
@@ -306,13 +306,13 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 let mut entries: Vec<_> = stakes[bin].iter().zip(vals[bin].iter()).collect();
                 entries.sort_by_key(|(s, _)| **s);
                 for (stake, id) in &entries {
-                    if corrupted[**id as usize] {
+                    if corrupted[id.inner() as usize] {
                         corrupted_stake += **stake as f64;
                     }
                 }
                 for (stake, id) in entries {
-                    let val_stake = self.validators[*id as usize].stake as f64;
-                    if corrupted[*id as usize] {
+                    let val_stake = self.validators[id.inner() as usize].stake as f64;
+                    if corrupted[id.inner() as usize] {
                         continue;
                     }
                     if corrupted_stake + (*stake as f64)
@@ -320,7 +320,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                         // && val_stake < stake_per_bin
                         && total_corrupted_stake + val_stake < self.total_stake as f64 * adversary_strength.byzantine
                     {
-                        corrupted[*id as usize] = true;
+                        corrupted[id.inner() as usize] = true;
                         corrupted_stake += *stake as f64;
                         total_corrupted_stake += val_stake;
                     }
@@ -358,9 +358,14 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 .map(|(quorum_index, quorum_size)| {
                     let sampler = &self.samplers[self.quorum_samplers[quorum_index]];
                     let sampled = sampler.sample_multiple(quorum_size, &mut rng);
-                    let byzantine_samples =
-                        sampled.iter().filter(|v| byzantine[**v as usize]).count();
-                    let crashed_samples = sampled.iter().filter(|v| crashed[**v as usize]).count();
+                    let byzantine_samples = sampled
+                        .iter()
+                        .filter(|v| byzantine[v.inner() as usize])
+                        .count();
+                    let crashed_samples = sampled
+                        .iter()
+                        .filter(|v| crashed[v.inner() as usize])
+                        .count();
                     (byzantine_samples, crashed_samples)
                 })
                 .collect::<Vec<_>>();

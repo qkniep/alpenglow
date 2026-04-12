@@ -147,12 +147,12 @@ mod tests {
     use tokio::task;
 
     use super::*;
-    use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
+    use crate::{ValidatorId, ValidatorInfo};
 
     type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
 
@@ -164,7 +164,7 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: i,
+                id: ValidatorId::new(i),
                 stake: 1,
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
@@ -177,7 +177,7 @@ mod tests {
 
         let mut rotors = Vec::new();
         for i in 0..count {
-            let epoch_info = Arc::new(EpochInfo::new(i, validators.clone()));
+            let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(i), validators.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
             rotors.push(Rotor::new(network, epoch_info));
         }
