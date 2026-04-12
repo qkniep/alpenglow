@@ -49,7 +49,7 @@ impl Resource {
 
     /// Returns the next time this resource will be free.
     pub fn time_next_free(&self, validator: ValidatorId) -> SimTime {
-        self.next_free[validator.inner() as usize]
+        self.next_free[validator.as_index()]
     }
 
     /// Returns the next time this resource will be free, after `time`.
@@ -79,7 +79,7 @@ impl Resource {
         duration: SimTime,
     ) -> SimTime {
         let end_time = start_time + duration;
-        self.next_free[validator.inner() as usize] = end_time;
+        self.next_free[validator.as_index()] = end_time;
         end_time
     }
 }

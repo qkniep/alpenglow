@@ -287,7 +287,7 @@ impl AggregateSignature {
 
         let mut bitmask = bitvec::bitvec![0; num_bits];
         for i in indices {
-            bitmask.set(i.inner() as usize, true);
+            bitmask.set(i.as_index(), true);
         }
 
         Self {
@@ -302,7 +302,7 @@ impl AggregateSignature {
         if self.bitmask.len() != pks.len() {
             return false;
         }
-        let pks: Vec<_> = self.signers().map(|v| &pks[v.inner() as usize].0).collect();
+        let pks: Vec<_> = self.signers().map(|v| &pks[v.as_index()].0).collect();
         let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
@@ -323,7 +323,7 @@ impl AggregateSignature {
     pub fn is_signer(&self, validator_id: ValidatorId) -> bool {
         *self
             .bitmask
-            .get(validator_id.inner() as usize)
+            .get(validator_id.as_index())
             .as_deref()
             .unwrap_or(&false)
     }

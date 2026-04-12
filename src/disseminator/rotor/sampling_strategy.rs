@@ -110,7 +110,7 @@ impl SamplingStrategy for UniformSampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.validators[index]
     }
 
@@ -147,7 +147,7 @@ impl SamplingStrategy for StakeWeightedSampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.validators[index]
     }
 
@@ -200,9 +200,9 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
             let mut sample_count = self.sample_count.lock().unwrap();
-            let p_reject = sample_count[sample.inner() as usize] as f64 / self.max_samples;
+            let p_reject = sample_count[sample.as_index()] as f64 / self.max_samples;
             if rng.random::<f64>() >= p_reject {
-                sample_count[sample.inner() as usize] += 1;
+                sample_count[sample.as_index()] += 1;
                 return sample;
             }
         }
@@ -211,7 +211,7 @@ impl SamplingStrategy for DecayingAcceptanceSampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.stake_weighted.validators[index]
     }
 
@@ -276,7 +276,7 @@ impl TurbineSampler {
                 }
                 let prob = prob * root.stake as f64 / stake_left as f64;
                 let root_work = (turbine_fanout as f64).min(validators_left as f64);
-                expected_work[root.id.inner() as usize] += prob * root_work;
+                expected_work[root.id.as_index()] += prob * root_work;
                 let stake_left = stake_left - root.stake;
                 let validators_left = validators_left.saturating_sub(turbine_fanout);
                 for maybe_level1 in &validators {
@@ -288,12 +288,11 @@ impl TurbineSampler {
                     let prob_full =
                         prob * (1.0 - (1.0 - select_prob).powi(full_level1_slots as i32));
                     let full_level1_work = turbine_fanout as f64;
-                    expected_work[maybe_level1.id.inner() as usize] += prob_full * full_level1_work;
+                    expected_work[maybe_level1.id.as_index()] += prob_full * full_level1_work;
                     let prob_partial =
                         prob * (1.0 - select_prob).powi(full_level1_slots as i32) * select_prob;
                     let partial_level1_work = (validators_left % turbine_fanout) as f64;
-                    expected_work[maybe_level1.id.inner() as usize] +=
-                        prob_partial * partial_level1_work;
+                    expected_work[maybe_level1.id.as_index()] += prob_partial * partial_level1_work;
                 }
             }
         }
@@ -333,7 +332,7 @@ impl SamplingStrategy for TurbineSampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.stake_weighted.validators[index]
     }
 
@@ -425,7 +424,7 @@ impl SamplingStrategy for PartitionSampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.validators[index]
     }
 
@@ -526,7 +525,7 @@ impl<F: SamplingStrategy> SamplingStrategy for FaitAccompli1Sampler<F> {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.validators[index]
     }
 
@@ -651,7 +650,7 @@ impl SamplingStrategy for FaitAccompli2Sampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).inner() as usize;
+        let index = self.sample(rng).as_index();
         &self.validators[index]
     }
 
@@ -905,18 +904,18 @@ mod tests {
             // leader work
             let leader = validator_ids.next().unwrap();
             if leader == ValidatorId::new(0) || leader == ValidatorId::new(1) {
-                turbine_work[leader.inner() as usize] += 1;
+                turbine_work[leader.as_index()] += 1;
             }
             // root work
             assert!(validators.len() > DEFAULT_FANOUT + 2);
             let root = validator_ids.next().unwrap();
             if root == ValidatorId::new(0) || root == ValidatorId::new(1) {
-                turbine_work[root.inner() as usize] += DEFAULT_FANOUT;
+                turbine_work[root.as_index()] += DEFAULT_FANOUT;
             }
             // layer-1 work
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
             for _ in 0..DEFAULT_FANOUT {
-                let parent = validator_ids.next().unwrap().inner() as usize;
+                let parent = validator_ids.next().unwrap().as_index();
                 if parent == 0 || parent == 1 {
                     let work = DEFAULT_FANOUT.min(validators_left);
                     turbine_work[parent] += work;
@@ -982,15 +981,15 @@ mod tests {
 
             // leader work
             let leader = validator_ids.next().unwrap();
-            turbine_workload[leader.inner() as usize] += 1;
+            turbine_workload[leader.as_index()] += 1;
             // root work
             assert!(validators.len() > DEFAULT_FANOUT + 2);
             let root = validator_ids.next().unwrap();
-            turbine_workload[root.inner() as usize] += DEFAULT_FANOUT;
+            turbine_workload[root.as_index()] += DEFAULT_FANOUT;
             // level-1 work
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
             for _ in 0..DEFAULT_FANOUT {
-                let parent = validator_ids.next().unwrap().inner() as usize;
+                let parent = validator_ids.next().unwrap().as_index();
                 turbine_workload[parent] += DEFAULT_FANOUT.min(validators_left);
                 if validators_left < DEFAULT_FANOUT {
                     break;

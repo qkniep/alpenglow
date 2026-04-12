@@ -142,8 +142,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let repair_request_network = repair_request_networks.pop_front().unwrap();
             let txs_receiver = tx_receivers.pop_front().unwrap();
             Alpenglow::new(
-                sks[v.id.inner() as usize].clone(),
-                voting_sks[v.id.inner() as usize].clone(),
+                sks[v.id.as_index()].clone(),
+                voting_sks[v.id.as_index()].clone(),
                 all2all,
                 disseminator,
                 repair_network,

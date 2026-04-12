@@ -223,13 +223,13 @@ impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
     pub fn run_one(&mut self, rng: &mut impl Rng) {
         let leader = self.leader_sampler.sample(rng);
         self.leader_workload += self.num_shreds as u64;
-        self.workload[leader.inner() as usize] += self.num_shreds as u64;
+        self.workload[leader.as_index()] += self.num_shreds as u64;
         let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
         for relay in relays {
             if leader == relay {
-                self.workload[relay.inner() as usize] += self.validators.len() as u64 - 1;
+                self.workload[relay.as_index()] += self.validators.len() as u64 - 1;
             } else {
-                self.workload[relay.inner() as usize] += self.validators.len() as u64 - 2;
+                self.workload[relay.as_index()] += self.validators.len() as u64 - 2;
             }
         }
     }

@@ -24,6 +24,7 @@ use wincode::{SchemaRead, SchemaWrite};
     Serialize,
     Deserialize,
 )]
+#[serde(transparent)]
 pub struct ValidatorId(u64);
 
 impl ValidatorId {
@@ -35,6 +36,11 @@ impl ValidatorId {
     /// Returns the inner `u64`.
     pub fn inner(self) -> u64 {
         self.0
+    }
+
+    /// Returns the ID as a `usize` for use as an array index.
+    pub fn as_index(self) -> usize {
+        self.0 as usize
     }
 }
 

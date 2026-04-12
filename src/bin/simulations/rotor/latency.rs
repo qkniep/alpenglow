@@ -159,7 +159,7 @@ impl Event for LatencyEvent {
                     resources
                         .network
                         .schedule(instance.leader, SimTime::ZERO, tx_time);
-                timings[instance.leader.inner() as usize] += finished_sending_time;
+                timings[instance.leader.as_index()] += finished_sending_time;
                 timings
             }
             Self::Direct(slice) => {
@@ -172,14 +172,14 @@ impl Event for LatencyEvent {
                     let shred_send_index = slice * instance.params.shreds + relay_offset + 1;
                     let tx_delay = environment
                         .transmission_delay(shred_send_index * MAX_DATA_PER_SHRED, instance.leader);
-                    timings[relay.inner() as usize] += tx_delay;
+                    timings[relay.as_index()] += tx_delay;
                 }
                 timings
             }
             Self::StartForwarding(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 for &relay in &instance.relays[*slice] {
-                    let timing = &mut timings[relay.inner() as usize];
+                    let timing = &mut timings[relay.as_index()];
                     let total_bytes = environment.num_validators() * MAX_DATA_PER_SHRED;
                     let total_tx_delay = environment.transmission_delay(total_bytes, relay);
                     let start_time = resources.network.time_next_free_after(relay, *timing);
@@ -198,7 +198,7 @@ impl Event for LatencyEvent {
                                 .propagation_delay(*relay, ValidatorId::new(recipient as u64));
                             let tx_delay = environment
                                 .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
-                            dependency_timings[0][relay.inner() as usize] + prop_delay + tx_delay
+                            dependency_timings[0][relay.as_index()] + prop_delay + tx_delay
                         })
                         .min()
                         .unwrap();
@@ -211,7 +211,7 @@ impl Event for LatencyEvent {
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.shreds];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
                     for (i, relay) in instance.relays[*slice].iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][relay.inner() as usize]
+                        shred_timings[i] = dependency_timings[0][relay.as_index()]
                             + environment
                                 .propagation_delay(*relay, ValidatorId::new(recipient as u64))
                             + environment

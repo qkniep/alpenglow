@@ -264,14 +264,14 @@ impl SimulationEnvironment {
         let Some(bandwidths) = &self.bandwidths else {
             return SimTime::ZERO;
         };
-        let latency_secs = bytes as f64 * 8.0 / bandwidths[validator.inner() as usize] as f64;
+        let latency_secs = bytes as f64 * 8.0 / bandwidths[validator.as_index()] as f64;
         SimTime::from_secs(latency_secs)
     }
 
     /// Finds the latency between the `sender` and `receiver` validators.
     pub fn propagation_delay(&self, sender: ValidatorId, receiver: ValidatorId) -> SimTime {
-        let sender_server = self.ping_servers[sender.inner() as usize].id;
-        let receiver_server = self.ping_servers[receiver.inner() as usize].id;
+        let sender_server = self.ping_servers[sender.as_index()].id;
+        let receiver_server = self.ping_servers[receiver.as_index()].id;
         let rtt_ping_ms = get_ping(sender_server, receiver_server).unwrap();
         let one_way_ping_secs = rtt_ping_ms / 2.0 / 1e3;
         SimTime::from_secs(one_way_ping_secs)
@@ -401,7 +401,7 @@ pub fn broadcast_stake_threshold(
         let mut stake_so_far = 0;
         for (arrival_timing, sender) in arrival_timings {
             *recipient_timing = arrival_timing;
-            stake_so_far += environment.validators[sender.inner() as usize].stake;
+            stake_so_far += environment.validators[sender.as_index()].stake;
             if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
                 break;
             }

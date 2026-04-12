@@ -156,7 +156,7 @@ impl SlotState {
     pub fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
         let slot = vote.slot();
         let voter = vote.signer();
-        let v = voter.inner() as usize;
+        let v = voter.as_index();
 
         let (certs_created, mut votor_events, mut blocks_to_repair) = match vote.kind() {
             VoteKind::Notar(_, block_hash) => {
@@ -291,7 +291,7 @@ impl SlotState {
         }
         if !self.sent_safe_to_skip
             && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id.inner() as usize].is_some()
+            && self.votes.notar[self.epoch_info.own_id.as_index()].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -380,7 +380,7 @@ impl SlotState {
         }
         if !self.sent_safe_to_skip
             && self.is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id.inner() as usize].is_some()
+            && self.votes.notar[self.epoch_info.own_id.as_index()].is_some()
         {
             votor_events.push(VotorEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
@@ -410,7 +410,7 @@ impl SlotState {
     pub fn check_slashable_offence(&self, vote: &Vote) -> Option<SlashableOffence> {
         let slot = vote.slot();
         let voter = vote.signer();
-        let v = voter.inner() as usize;
+        let v = voter.as_index();
         match vote.kind() {
             VoteKind::Notar(_, block_hash) => {
                 if self.votes.skip[v].is_some() {
@@ -455,7 +455,7 @@ impl SlotState {
     /// Votes for which this returns `true` should never be counted.
     /// Doing so could lead to double counting.
     pub fn should_ignore_vote(&self, vote: &Vote) -> bool {
-        let v = vote.signer().inner() as usize;
+        let v = vote.signer().as_index();
         match vote.kind() {
             VoteKind::Notar(_, _) => self.votes.notar[v].is_some(),
             VoteKind::NotarFallback(_, block_hash) => {
@@ -492,8 +492,8 @@ impl SlotState {
 
         // check own vote
         let own_id = self.epoch_info.own_id;
-        let skip = &self.votes.skip[own_id.inner() as usize];
-        let notar = &self.votes.notar[own_id.inner() as usize];
+        let skip = &self.votes.skip[own_id.as_index()];
+        let notar = &self.votes.notar[own_id.as_index()];
 
         match (skip, notar) {
             (Some(_), _) => {

@@ -200,7 +200,7 @@ impl NotarCert {
         let agg_sig = aggsig_from_votes(votes, validators);
         let stake: Stake = votes
             .iter()
-            .map(|v| validators[v.signer().inner() as usize].stake)
+            .map(|v| validators[v.signer().as_index()].stake)
             .sum();
 
         Ok(Self {
@@ -288,7 +288,7 @@ impl NotarFallbackCert {
 
         let stake: Stake = votes
             .iter()
-            .map(|v| validators[v.signer().inner() as usize].stake)
+            .map(|v| validators[v.signer().as_index()].stake)
             .sum();
 
         let mut notar_votes = votes.iter().filter(|v| v.is_notar()).peekable();
@@ -409,7 +409,7 @@ impl SkipCert {
 
         let stake: Stake = votes
             .iter()
-            .map(|v| validators[v.signer().inner() as usize].stake)
+            .map(|v| validators[v.signer().as_index()].stake)
             .sum();
 
         let mut skip_votes = votes.iter().filter(|v| v.is_skip()).peekable();
@@ -528,7 +528,7 @@ impl FastFinalCert {
         let agg_sig = aggsig_from_votes(votes, validators);
         let stake: Stake = votes
             .iter()
-            .map(|v| validators[v.signer().inner() as usize].stake)
+            .map(|v| validators[v.signer().as_index()].stake)
             .sum();
 
         Ok(Self {
@@ -611,7 +611,7 @@ impl FinalCert {
         let agg_sig = aggsig_from_votes(votes, validators);
         let stake: Stake = votes
             .iter()
-            .map(|v| validators[v.signer().inner() as usize].stake)
+            .map(|v| validators[v.signer().as_index()].stake)
             .sum();
 
         Ok(Self {

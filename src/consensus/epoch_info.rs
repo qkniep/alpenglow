@@ -24,7 +24,7 @@ impl EpochInfo {
     /// Panics if the validator ID is out of range.
     #[must_use]
     pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
-        &self.validators[id.inner() as usize]
+        &self.validators[id.as_index()]
     }
 
     /// Gives the validator info for the leader for the given slot.

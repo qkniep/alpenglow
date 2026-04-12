@@ -269,19 +269,19 @@ impl PoolImpl {
         let mut votes = Vec::new();
         let own_id = self.epoch_info.own_id;
         for (_, slot_state) in self.slot_states.range(slots) {
-            if let Some(vote) = &slot_state.votes.finalize[own_id.inner() as usize] {
+            if let Some(vote) = &slot_state.votes.finalize[own_id.as_index()] {
                 votes.push(vote.clone());
             }
-            if let Some(vote) = &slot_state.votes.notar[own_id.inner() as usize] {
+            if let Some(vote) = &slot_state.votes.notar[own_id.as_index()] {
                 votes.push(vote.clone());
             }
-            for vote in slot_state.votes.notar_fallback[own_id.inner() as usize].values() {
+            for vote in slot_state.votes.notar_fallback[own_id.as_index()].values() {
                 votes.push(vote.clone());
             }
-            if let Some(vote) = &slot_state.votes.skip[own_id.inner() as usize] {
+            if let Some(vote) = &slot_state.votes.skip[own_id.as_index()] {
                 votes.push(vote.clone());
             }
-            if let Some(vote) = &slot_state.votes.skip_fallback[own_id.inner() as usize] {
+            if let Some(vote) = &slot_state.votes.skip_fallback[own_id.as_index()] {
                 votes.push(vote.clone());
             }
         }

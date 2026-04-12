@@ -89,7 +89,7 @@ where
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let addr = self.validators[root.inner() as usize].disseminator_address;
+        let addr = self.validators[root.as_index()].disseminator_address;
         self.network.send(shred, addr).await
     }
 
@@ -106,7 +106,7 @@ where
         let addrs = tree
             .get_children()
             .iter()
-            .map(|child| self.validators[child.inner() as usize].disseminator_address);
+            .map(|child| self.validators[child.as_index()].disseminator_address);
         self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
@@ -304,11 +304,11 @@ mod tests {
             }
             // parent-child compatibility
             for child in tree.get_children() {
-                let childs_parent = trees[child.inner() as usize].1.get_parent();
+                let childs_parent = trees[child.as_index()].1.get_parent();
                 assert_eq!(childs_parent, Some(*v));
             }
             if let Some(parent) = tree.get_parent() {
-                let parents_children = trees[parent.inner() as usize].1.get_children();
+                let parents_children = trees[parent.as_index()].1.get_children();
                 assert!(parents_children.contains(v));
             }
         }

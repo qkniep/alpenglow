@@ -135,7 +135,7 @@ impl<E: Event> Timings<E> {
     /// Records the latency for the given event and validator.
     pub fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
         let vec = self.event_timings.get_mut(&event).unwrap();
-        let entry = vec.get_mut(validator.inner() as usize).unwrap();
+        let entry = vec.get_mut(validator.as_index()).unwrap();
         if timing < *entry {
             *entry = timing;
         }
