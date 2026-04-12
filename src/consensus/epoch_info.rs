@@ -20,13 +20,13 @@ impl EpochInfo {
     /// or if any validator's `id` does not match its position in the vector.
     pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
         assert!(
-            (own_id as usize) < validators.len(),
+            own_id.as_index() < validators.len(),
             "own_id {own_id} is out of range for {} validators",
             validators.len()
         );
         for (i, v) in validators.iter().enumerate() {
             assert!(
-                v.id == i as u64,
+                v.id.as_index() == i,
                 "validator at index {i} has id {}, expected {i}",
                 v.id
             );

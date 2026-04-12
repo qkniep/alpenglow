@@ -271,8 +271,9 @@ mod tests {
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
-            let network = core.join_unlimited(i as ValidatorId).await;
-            let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(i as u64), validators.to_vec()));
+            let v = ValidatorId::new(i as u64);
+            let network = core.join_unlimited(v).await;
+            let epoch_info = Arc::new(EpochInfo::new(v, validators.to_vec()));
             let turbine = Turbine::new(network, epoch_info);
             disseminators.push(turbine);
         }
