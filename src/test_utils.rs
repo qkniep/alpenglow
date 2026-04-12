@@ -38,8 +38,8 @@ pub enum PingOrPong {
 
 /// Generates [`ValidatorInfo`] for the given number of validators.
 ///
-/// Returns the voting secret keys of all validators and the [`EpochInfo`] of validator 0.
-pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
+/// Returns the voting secret keys of all validators and the shared [`EpochInfo`].
+pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
     let mut rng = rand::rng();
     let mut sks = Vec::new();
     let mut voting_sks = Vec::new();
@@ -58,7 +58,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
             repair_response_address: localhost_ip_sockaddr(0),
         });
     }
-    let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(0), validators));
+    let epoch_info = EpochInfo::new(validators);
     (voting_sks, epoch_info)
 }
 

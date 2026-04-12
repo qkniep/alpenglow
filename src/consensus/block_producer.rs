@@ -17,7 +17,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use wincode::config::DefaultConfig;
 
-use crate::consensus::{Blockstore, EpochInfo, Pool};
+use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -36,7 +36,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// This is not the same as the voting secret key, which is held by [`super::Votor`].
     secret_key: signature::SecretKey,
     /// Other validators' info.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -67,7 +67,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         disseminator: Arc<D>,
         txs_receiver: T,
         blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -103,7 +103,7 @@ where
             let last_slot_in_window = first_slot_in_window.last_slot_in_window();
 
             // don't do anything if we are not the leader
-            let leader = self.epoch_info.leader(first_slot_in_window);
+            let leader = self.epoch_info.epoch_info().leader(first_slot_in_window);
             if leader.id != self.epoch_info.own_id() {
                 debug!(
                     "[val {}] not producing in window {first_slot_in_window}..{last_slot_in_window}, not leader",
@@ -514,15 +514,15 @@ mod tests {
     use mockall::{Sequence, predicate};
 
     use super::*;
-    use crate::Transaction;
-    use crate::consensus::BlockInfo;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
+    use crate::consensus::{BlockInfo, ValidatorEpochInfo};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
+    use crate::{Transaction, ValidatorId};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -639,6 +639,7 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info));
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
         let blockstore = Arc::new(RwLock::new(blockstore));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);

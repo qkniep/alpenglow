@@ -41,7 +41,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use self::cert::{Cert, NotarCert};
-pub use self::epoch_info::EpochInfo;
+pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
 pub use self::vote::Vote;
 use self::votor::Votor;
@@ -102,7 +102,7 @@ where
     T: TransactionNetwork + 'static,
 {
     /// Other validators' info.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -142,7 +142,7 @@ where
         disseminator: D,
         repair_network: RN,
         repair_request_network: RR,
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
     ) -> Self
     where
@@ -260,7 +260,9 @@ where
     }
 
     pub fn get_info(&self) -> &ValidatorInfo {
-        self.epoch_info.validator(self.epoch_info.own_id())
+        self.epoch_info
+            .epoch_info()
+            .validator(self.epoch_info.own_id())
     }
 
     pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
@@ -333,7 +335,7 @@ where
 
         // if we are the leader, we already have the shred
         let slot = shred.payload().header.slot;
-        if self.epoch_info.leader(slot).id == self.epoch_info.own_id() {
+        if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
 

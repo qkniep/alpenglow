@@ -22,7 +22,7 @@ use rand::prelude::*;
 use self::sampling_strategy::PartitionSampler;
 pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
 use super::Disseminator;
-use crate::consensus::EpochInfo;
+use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 use crate::{Slot, ValidatorId};
@@ -31,7 +31,7 @@ use crate::{Slot, ValidatorId};
 pub struct Rotor<N: Network, S: SamplingStrategy> {
     network: N,
     sampler: S,
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 }
 
 impl<N: Network> Rotor<N, StakeWeightedSampler> {
@@ -39,8 +39,8 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
-        let validators = epoch_info.validators().to_vec();
+    pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
+        let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             network,
@@ -55,8 +55,8 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new_fa1(network: N, epoch_info: Arc<EpochInfo>) -> Self {
-        let validators = epoch_info.validators().to_vec();
+    pub fn new_fa1(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
+        let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler =
             FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
         Self {
@@ -80,14 +80,18 @@ where
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
-        let v = self.epoch_info.validator(relay);
+        let v = self.epoch_info.epoch_info().validator(relay);
         self.network.send(shred, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
-        let leader = self.epoch_info.leader(shred.payload().header.slot).id;
+        let leader = self
+            .epoch_info
+            .epoch_info()
+            .leader(shred.payload().header.slot)
+            .id;
 
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
@@ -98,6 +102,7 @@ where
         // otherwise, broadcast
         let to = self
             .epoch_info
+            .epoch_info()
             .validators()
             .iter()
             .filter(|v| v.id != leader && v.id != relay)
@@ -147,6 +152,7 @@ mod tests {
     use tokio::task;
 
     use super::*;
+    use crate::consensus::EpochInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
@@ -175,11 +181,13 @@ mod tests {
             });
         }
 
+        let epoch_info = EpochInfo::new(validators.clone());
         let mut rotors = Vec::new();
         for i in 0..count {
-            let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(i), validators.clone()));
+            let v = ValidatorId::new(i);
+            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
-            rotors.push(Rotor::new(network, epoch_info));
+            rotors.push(Rotor::new(network, validator_epoch_info));
         }
         (sks, rotors)
     }

@@ -18,7 +18,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::consensus::EpochInfo;
+use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
@@ -34,7 +34,7 @@ const MAX_CACHED_TREES: u64 = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
 pub struct Turbine<N: Network> {
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
     network: N,
     fanout: usize,
     tree_cache: Cache<(Slot, usize), TurbineTree>,
@@ -57,7 +57,7 @@ where
     N: ShredNetwork,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
-    pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
+    pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             epoch_info,
             network,
@@ -90,7 +90,11 @@ where
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let addr = self.epoch_info.validator(root).disseminator_address;
+        let addr = self
+            .epoch_info
+            .epoch_info()
+            .validator(root)
+            .disseminator_address;
         self.network.send(shred, addr).await
     }
 
@@ -104,10 +108,12 @@ where
         let tree = self
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
-        let addrs = tree
-            .get_children()
-            .iter()
-            .map(|child| self.epoch_info.validator(*child).disseminator_address);
+        let addrs = tree.get_children().iter().map(|child| {
+            self.epoch_info
+                .epoch_info()
+                .validator(*child)
+                .disseminator_address
+        });
         self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
@@ -119,7 +125,7 @@ where
             return tree;
         }
         let tree = TurbineTree::new(
-            self.epoch_info.validators(),
+            self.epoch_info.epoch_info().validators(),
             self.fanout,
             self.epoch_info.own_id(),
             slot,
@@ -231,6 +237,7 @@ mod tests {
 
     use super::*;
     use crate::Stake;
+    use crate::consensus::EpochInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
@@ -274,7 +281,8 @@ mod tests {
         for i in 0..validators.len() {
             let v = ValidatorId::new(i as u64);
             let network = core.join_unlimited(v).await;
-            let epoch_info = Arc::new(EpochInfo::new(v, validators.to_vec()));
+            let epoch_info = EpochInfo::new(validators.to_vec());
+            let epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info));
             let turbine = Turbine::new(network, epoch_info);
             disseminators.push(turbine);
         }
