@@ -110,7 +110,7 @@ impl ValidatorEpochInfo {
     /// Panics if `own_id` is not a valid validator index.
     pub fn new(own_id: ValidatorId, epoch: EpochInfo) -> Self {
         assert!(
-            (own_id as usize) < epoch.validators.len(),
+            own_id.as_index() < epoch.validators.len(),
             "own_id {own_id} is out of range for {} validators",
             epoch.validators.len()
         );

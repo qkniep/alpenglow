@@ -514,7 +514,6 @@ mod tests {
     use mockall::{Sequence, predicate};
 
     use super::*;
-    use crate::Transaction;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
     use crate::consensus::{BlockInfo, ValidatorEpochInfo};
@@ -523,6 +522,7 @@ mod tests {
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
+    use crate::{Transaction, ValidatorId};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -639,7 +639,7 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(0, epoch_info));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info));
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
         let blockstore = Arc::new(RwLock::new(blockstore));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);

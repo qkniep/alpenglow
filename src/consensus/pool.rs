@@ -549,7 +549,7 @@ mod tests {
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
     fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
-        Arc::new(ValidatorEpochInfo::new(0, epoch_info))
+        Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info))
     }
 
     #[tokio::test]

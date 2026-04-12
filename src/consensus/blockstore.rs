@@ -369,8 +369,9 @@ mod tests {
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+        let id = ValidatorId::new(0);
         let info = ValidatorInfo {
-            id: ValidatorId::new(0),
+            id,
             stake: Stake::new(1),
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
@@ -380,7 +381,7 @@ mod tests {
             repair_response_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), EpochInfo::new(validators)));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(id, EpochInfo::new(validators)));
         (sk, BlockstoreImpl::new(epoch_info, tx))
     }
 

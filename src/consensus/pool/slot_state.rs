@@ -617,7 +617,7 @@ mod tests {
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
     fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
-        Arc::new(ValidatorEpochInfo::new(0, epoch_info))
+        Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info))
     }
 
     #[test]
@@ -645,7 +645,10 @@ mod tests {
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
             let vote = Vote::new_notar(slot, hash.clone(), sk, ValidatorId::new(i as u64));
-            let voter_stake = epoch_info.epoch_info().validator(ValidatorId::new(i as u64)).stake;
+            let voter_stake = epoch_info
+                .epoch_info()
+                .validator(ValidatorId::new(i as u64))
+                .stake;
             assert!(slot_state.votes.notar[i].is_none());
             slot_state.add_vote(vote.clone(), voter_stake);
             let notar_vote = &slot_state.votes.notar[i];
