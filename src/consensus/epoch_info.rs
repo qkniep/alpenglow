@@ -18,7 +18,10 @@ impl EpochInfo {
     ///
     /// Panics if our own ID is not in the list of validators.
     pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
-        assert!(validators.iter().any(|v| v.id == own_id));
+        assert!(
+            validators.iter().any(|v| v.id == own_id),
+            "own_id {own_id} is not present in the validator list"
+        );
         Self { own_id, validators }
     }
 
