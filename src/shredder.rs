@@ -342,9 +342,9 @@ impl Shredder for CodingOnlyShredder {
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
         let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
+        let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let (header, _payload) = slice.clone().deconstruct();
         let leader_sig = any_shred.merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
@@ -410,7 +410,6 @@ impl Shredder for PetsShredder {
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root();
-        let header = any_shred.payload().header.clone();
 
         // additional Merkle tree validity check
         let mut raw_shreds = self.0.shred(&buffer)?;
@@ -426,6 +425,7 @@ impl Shredder for PetsShredder {
         cipher.apply_keystream(&mut buffer);
         let payload = SlicePayload::from(buffer.as_slice());
         let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
+        let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = any_shred.merkle_root_sig;
@@ -494,7 +494,6 @@ impl Shredder for AontShredder {
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root();
-        let header = any_shred.payload().header.clone();
 
         // additional Merkle tree validity check
         let raw_shreds = self.0.shred(&buffer)?;
@@ -514,6 +513,7 @@ impl Shredder for AontShredder {
         cipher.apply_keystream(&mut buffer);
         let payload = SlicePayload::from(buffer.as_slice());
         let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
+        let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
         let leader_sig = any_shred.merkle_root_sig;
