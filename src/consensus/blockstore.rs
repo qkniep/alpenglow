@@ -356,7 +356,6 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
