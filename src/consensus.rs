@@ -26,6 +26,7 @@ mod vote;
 pub(crate) mod votor;
 
 use std::marker::{Send, Sync};
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -65,17 +66,17 @@ const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
 
 /// Minimum fraction of total stake required for a weakest quorum (20%).
-pub const WEAKEST_QUORUM_THRESHOLD: Fraction = Fraction::new(1, 5);
+pub const WEAKEST_QUORUM_THRESHOLD: Fraction = Fraction::new(1, NonZeroU64::new(5).unwrap());
 /// Minimum fraction of total stake required for a weak quorum (40%).
-pub const WEAK_QUORUM_THRESHOLD: Fraction = Fraction::new(2, 5);
+pub const WEAK_QUORUM_THRESHOLD: Fraction = Fraction::new(2, NonZeroU64::new(5).unwrap());
 /// Minimum fraction of total stake required for a standard quorum (60%).
 ///
 /// Used for notar, notar-fallback, skip, and final certificates.
-pub const QUORUM_THRESHOLD: Fraction = Fraction::new(3, 5);
+pub const QUORUM_THRESHOLD: Fraction = Fraction::new(3, NonZeroU64::new(5).unwrap());
 /// Minimum fraction of total stake required for a strong quorum (80%).
 ///
 /// Used for fast-final certificates.
-pub const STRONG_QUORUM_THRESHOLD: Fraction = Fraction::new(4, 5);
+pub const STRONG_QUORUM_THRESHOLD: Fraction = Fraction::new(4, NonZeroU64::new(5).unwrap());
 
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ConsensusMessage {

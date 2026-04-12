@@ -5,34 +5,35 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::num::NonZeroU64;
 
 /// A fraction represented as numerator/denominator for exact comparisons.
 ///
 /// This avoids floating-point precision issues when comparing stake thresholds.
-/// The denominator must be non-zero; constructing with a zero denominator panics.
+/// The non-zero denominator invariant is enforced by the type system via [`NonZeroU64`].
 ///
 /// Note: `Eq` uses cross-multiplication (so `1/2 == 2/4`), but `Hash` is not
 /// implemented. Do not use `Fraction` as a hash map key.
 ///
 /// # Examples
 /// ```
+/// use std::num::NonZeroU64;
 /// use alpenglow::types::Fraction;
 ///
-/// const THRESHOLD: Fraction = Fraction::new(3, 5);
+/// const THRESHOLD: Fraction = Fraction::new(3, NonZeroU64::new(5).unwrap());
 /// assert!(THRESHOLD.is_met(6, 10));
 /// assert!(!THRESHOLD.is_met(5, 10));
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Fraction {
     numerator: u64,
-    denominator: u64,
+    denominator: NonZeroU64,
 }
 
 impl Fraction {
-    /// Creates a new fraction. Panics if `denominator` is zero.
+    /// Creates a new fraction.
     #[must_use]
-    pub const fn new(numerator: u64, denominator: u64) -> Self {
-        assert!(denominator != 0, "fraction denominator must be non-zero");
+    pub const fn new(numerator: u64, denominator: NonZeroU64) -> Self {
         Self {
             numerator,
             denominator,
@@ -46,13 +47,14 @@ impl Fraction {
     #[must_use]
     pub const fn is_met(self, value: u64, total: u64) -> bool {
         debug_assert!(total != 0, "is_met called with zero total");
-        (value as u128) * (self.denominator as u128) >= (total as u128) * (self.numerator as u128)
+        (value as u128) * (self.denominator.get() as u128)
+            >= (total as u128) * (self.numerator as u128)
     }
 
     /// Approximates this fraction as an f64.
     #[must_use]
     pub fn approx_f64(self) -> f64 {
-        self.numerator as f64 / self.denominator as f64
+        self.numerator as f64 / self.denominator.get() as f64
     }
 }
 
@@ -72,8 +74,8 @@ impl PartialOrd for Fraction {
 
 impl Ord for Fraction {
     fn cmp(&self, other: &Self) -> Ordering {
-        let lhs = (self.numerator as u128) * (other.denominator as u128);
-        let rhs = (other.numerator as u128) * (self.denominator as u128);
+        let lhs = (self.numerator as u128) * (other.denominator.get() as u128);
+        let rhs = (other.numerator as u128) * (self.denominator.get() as u128);
         lhs.cmp(&rhs)
     }
 }
@@ -88,16 +90,20 @@ impl fmt::Display for Fraction {
 mod tests {
     use super::*;
 
+    const fn frac(n: u64, d: u64) -> Fraction {
+        Fraction::new(n, NonZeroU64::new(d).unwrap())
+    }
+
     #[test]
     fn ordering() {
-        assert!(Fraction::new(1, 3) < Fraction::new(1, 2));
-        assert!(Fraction::new(2, 4) == Fraction::new(1, 2));
-        assert!(Fraction::new(3, 4) > Fraction::new(2, 3));
+        assert!(frac(1, 3) < frac(1, 2));
+        assert!(frac(2, 4) == frac(1, 2));
+        assert!(frac(3, 4) > frac(2, 3));
     }
 
     #[test]
     fn is_met_basic() {
-        let threshold = Fraction::new(3, 5);
+        let threshold = frac(3, 5);
         assert!(threshold.is_met(3, 5));
         assert!(threshold.is_met(6, 10));
         assert!(threshold.is_met(7, 10));
@@ -106,14 +112,14 @@ mod tests {
 
     #[test]
     fn is_met_boundary() {
-        let threshold = Fraction::new(3, 5);
+        let threshold = frac(3, 5);
         assert!(threshold.is_met(7, 11));
         assert!(!threshold.is_met(6, 11));
     }
 
     #[test]
     fn is_met_strong_threshold() {
-        let threshold = Fraction::new(4, 5);
+        let threshold = frac(4, 5);
         assert!(threshold.is_met(9, 11));
         assert!(!threshold.is_met(8, 11));
     }
@@ -126,24 +132,16 @@ mod tests {
         let f64_ratio = stake as f64 / total_stake as f64;
         assert!(f64_ratio <= 0.6, "f64 loses precision here");
 
-        let threshold = Fraction::new(3, 5);
-        assert!(threshold.is_met(stake, total_stake));
+        assert!(frac(3, 5).is_met(stake, total_stake));
     }
 
     #[test]
     fn display() {
-        assert_eq!(Fraction::new(3, 5).to_string(), "3/5");
-    }
-
-    #[test]
-    #[should_panic(expected = "fraction denominator must be non-zero")]
-    fn zero_denominator_panics() {
-        let _ = Fraction::new(1, 0);
+        assert_eq!(frac(3, 5).to_string(), "3/5");
     }
 
     #[test]
     fn approx_f64() {
-        let f = Fraction::new(3, 5);
-        assert!((f.approx_f64() - 0.6).abs() < f64::EPSILON);
+        assert!((frac(3, 5).approx_f64() - 0.6).abs() < f64::EPSILON);
     }
 }
