@@ -171,7 +171,7 @@ where
         );
 
         let mut votor = Votor::new(
-            epoch_info.own_id,
+            epoch_info.own_id(),
             voting_secret_key,
             votor_tx.clone(),
             votor_rx,
@@ -245,7 +245,7 @@ where
     }
 
     pub fn get_info(&self) -> &ValidatorInfo {
-        self.epoch_info.validator(self.epoch_info.own_id)
+        self.epoch_info.validator(self.epoch_info.own_id())
     }
 
     pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
@@ -318,7 +318,7 @@ where
 
         // if we are the leader, we already have the shred
         let slot = shred.payload().header.slot;
-        if self.epoch_info.leader(slot).id == self.epoch_info.own_id {
+        if self.epoch_info.leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
 
