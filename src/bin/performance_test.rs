@@ -15,7 +15,7 @@ use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
-use alpenglow::{Alpenglow, Stake, Transaction, ValidatorInfo, logging};
+use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 
@@ -54,24 +54,51 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let mut all2all_networks = VecDeque::new();
     let mut disseminator_networks = VecDeque::new();
     for i in 0..count {
-        all2all_networks.push_back(core.join_unlimited(i).await);
-        disseminator_networks.push_back(core.join_unlimited(i + count).await);
+        all2all_networks.push_back(core.join_unlimited(ValidatorId::new(i)).await);
+        disseminator_networks.push_back(core.join_unlimited(ValidatorId::new(i + count)).await);
     }
 
     for a in 0..count {
         for b in 0..count {
             if a < 6 && b < 6 {
-                core.set_latency(a, b, Duration::from_millis(20)).await;
-                core.set_latency(a + count, b + count, Duration::from_millis(20))
-                    .await;
+                core.set_latency(
+                    ValidatorId::new(a),
+                    ValidatorId::new(b),
+                    Duration::from_millis(20),
+                )
+                .await;
+                core.set_latency(
+                    ValidatorId::new(a + count),
+                    ValidatorId::new(b + count),
+                    Duration::from_millis(20),
+                )
+                .await;
             } else if (6..10).contains(&a) && (6..10).contains(&b) {
-                core.set_latency(a, b, Duration::from_millis(60)).await;
-                core.set_latency(a + count, b + count, Duration::from_millis(60))
-                    .await;
+                core.set_latency(
+                    ValidatorId::new(a),
+                    ValidatorId::new(b),
+                    Duration::from_millis(60),
+                )
+                .await;
+                core.set_latency(
+                    ValidatorId::new(a + count),
+                    ValidatorId::new(b + count),
+                    Duration::from_millis(60),
+                )
+                .await;
             } else {
-                core.set_latency(a, b, Duration::from_millis(100)).await;
-                core.set_latency(a + count, b + count, Duration::from_millis(100))
-                    .await;
+                core.set_latency(
+                    ValidatorId::new(a),
+                    ValidatorId::new(b),
+                    Duration::from_millis(100),
+                )
+                .await;
+                core.set_latency(
+                    ValidatorId::new(a + count),
+                    ValidatorId::new(b + count),
+                    Duration::from_millis(100),
+                )
+                .await;
             }
         }
     }
@@ -89,7 +116,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
-            id,
+            id: ValidatorId::new(id),
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
@@ -116,8 +143,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let repair_request_network = repair_request_networks.pop_front().unwrap();
             let txs_receiver = tx_receivers.pop_front().unwrap();
             Alpenglow::new(
-                sks[v.id as usize].clone(),
-                voting_sks[v.id as usize].clone(),
+                sks[v.id.as_index()].clone(),
+                voting_sks[v.id.as_index()].clone(),
                 all2all,
                 disseminator,
                 repair_network,

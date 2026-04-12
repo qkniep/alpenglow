@@ -158,7 +158,7 @@ mod tests {
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-    use crate::{Stake, ValidatorInfo};
+    use crate::{Stake, ValidatorId, ValidatorInfo};
 
     type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
 
@@ -170,7 +170,7 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: i,
+                id: ValidatorId::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
@@ -184,7 +184,7 @@ mod tests {
         let epoch_info = EpochInfo::new(validators.clone());
         let mut rotors = Vec::new();
         for i in 0..count {
-            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(i, epoch_info.clone()));
+            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(i, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
             rotors.push(Rotor::new(network, validator_epoch_info));
         }
