@@ -115,7 +115,7 @@ pub enum ShredPayloadType {
 /// Shreds are crafted to fit into an MTU size packet.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
-    pub(crate) payload_type: ShredPayloadType,
+    payload_type: ShredPayloadType,
     merkle_root_sig: Signature,
     merkle_path: SliceProof,
 }
