@@ -184,7 +184,8 @@ mod tests {
         let epoch_info = EpochInfo::new(validators.clone());
         let mut rotors = Vec::new();
         for i in 0..count {
-            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(i, epoch_info.clone()));
+            let v = ValidatorId::new(i);
+            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
             rotors.push(Rotor::new(network, validator_epoch_info));
         }
