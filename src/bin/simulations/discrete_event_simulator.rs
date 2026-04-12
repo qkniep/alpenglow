@@ -398,11 +398,11 @@ pub fn broadcast_stake_threshold(
 
         // find time the stake threshold is first reached
         arrival_timings.sort_unstable();
-        let mut stake_so_far = 0;
+        let mut stake_so_far = Stake::new(0);
         for (arrival_timing, sender) in arrival_timings {
             *recipient_timing = arrival_timing;
             stake_so_far += environment.validators[sender.as_index()].stake;
-            if stake_so_far as f64 >= threshold * environment.total_stake as f64 {
+            if stake_so_far.inner() as f64 >= threshold * environment.total_stake.inner() as f64 {
                 break;
             }
         }

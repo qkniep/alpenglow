@@ -15,7 +15,7 @@ use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
-use alpenglow::{Alpenglow, Transaction, ValidatorId, ValidatorInfo, logging};
+use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
 use color_eyre::Result;
 use log::info;
 
@@ -117,7 +117,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id: ValidatorId::new(id),
-            stake: 1,
+            stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address,

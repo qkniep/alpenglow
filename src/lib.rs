@@ -43,14 +43,12 @@ use crate::disseminator::rotor::StakeWeightedSampler;
 use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
+pub use self::types::{Stake, ValidatorId};
 
 // NOTE: In many places we assume that `usize` is 64 bits wide.
 // So, for now, we only support 64-bit architectures.
 const_assert_eq!(std::mem::size_of::<usize>(), 8);
 
-pub use self::types::ValidatorId;
-/// Validator stake type.
-pub type Stake = u64;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
@@ -140,7 +138,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
         validators.push(ValidatorInfo {
             id: ValidatorId::new(id as u64),
-            stake: 1,
+            stake: Stake::new(1),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,

@@ -8,6 +8,7 @@ use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use alpenglow::types::Stake;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
 use alpenglow::{ValidatorId, ValidatorInfo};
 use divan::counter::ItemsCount;
@@ -30,7 +31,7 @@ fn turbine_tree(bencher: divan::Bencher) {
             let validators: Vec<_> = (0..2)
                 .map(|i| ValidatorInfo {
                     id: ValidatorId::new(i),
-                    stake: 1,
+                    stake: Stake::new(1),
                     pubkey: SecretKey::new(&mut rng).to_pk(),
                     voting_pubkey: alpenglow::crypto::aggsig::SecretKey::new(&mut rng).to_pk(),
                     all2all_address: addr,

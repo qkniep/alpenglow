@@ -363,14 +363,14 @@ mod tests {
     use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
     use crate::test_utils::create_random_shredded_block;
     use crate::types::SliceIndex;
-    use crate::{ValidatorId, ValidatorInfo};
+    use crate::{Stake, ValidatorId, ValidatorInfo};
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         let info = ValidatorInfo {
             id: ValidatorId::new(0),
-            stake: 1,
+            stake: Stake::new(1),
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
             all2all_address: dontcare_sockaddr(),

@@ -167,7 +167,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let mut byzantine_stake = 0.0;
         let mut crashed_stake = 0.0;
         for v in &validators_to_corrupt {
-            let rel_stake = v.stake as f64 / self.total_stake as f64;
+            let rel_stake = v.stake.inner() as f64 / self.total_stake.inner() as f64;
             if byzantine_stake + rel_stake < adversary_strength.byzantine {
                 byzantine[v.id.as_index()] = true;
                 byzantine_stake += rel_stake;
@@ -209,7 +209,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         let mut byzantine_stake = 0.0;
         let mut crashed_stake = 0.0;
         for v in &validators_to_corrupt {
-            let rel_stake = v.stake as f64 / self.total_stake as f64;
+            let rel_stake = v.stake.inner() as f64 / self.total_stake.inner() as f64;
             if byzantine_stake + rel_stake < adversary_strength.byzantine {
                 byzantine[v.id.as_index()] = true;
                 byzantine_stake += rel_stake;
@@ -252,7 +252,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             let mut byzantine_stake = 0.0;
             let mut crashed_stake = 0.0;
             for v in &validators_to_corrupt {
-                let rel_stake = v.stake as f64 / self.total_stake as f64;
+                let rel_stake = v.stake.inner() as f64 / self.total_stake.inner() as f64;
                 if byzantine_stake + rel_stake < adversary_strength.byzantine {
                     byzantine[v.id.as_index()] = true;
                     byzantine_stake += rel_stake;
@@ -293,7 +293,7 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             adversary_strength.byzantine / (vals.len() as f64 / self.quorum_sizes[0] as f64);
         let _crashed_bins =
             adversary_strength.crashed / (vals.len() as f64 / self.quorum_sizes[0] as f64);
-        let stake_per_bin = self.total_stake as f64 / self.quorum_sizes[0] as f64;
+        let stake_per_bin = self.total_stake.inner() as f64 / self.quorum_sizes[0] as f64;
 
         (0..PARALLELISM).into_par_iter().for_each(|_| {
             // greedily corrupt less than `attack_frac` of validators
@@ -307,26 +307,26 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 entries.sort_by_key(|(s, _)| **s);
                 for (stake, id) in &entries {
                     if corrupted[id.as_index()] {
-                        corrupted_stake += **stake as f64;
+                        corrupted_stake += (**stake).inner() as f64;
                     }
                 }
                 for (stake, id) in entries {
-                    let val_stake = self.validators[id.as_index()].stake as f64;
+                    let val_stake = self.validators[id.as_index()].stake.inner() as f64;
                     if corrupted[id.as_index()] {
                         continue;
                     }
-                    if corrupted_stake + (*stake as f64)
+                    if corrupted_stake + ((*stake).inner() as f64)
                         < stake_per_bin * byzantine_bins
                         // && val_stake < stake_per_bin
-                        && total_corrupted_stake + val_stake < self.total_stake as f64 * adversary_strength.byzantine
+                        && total_corrupted_stake + val_stake < self.total_stake.inner() as f64 * adversary_strength.byzantine
                     {
                         corrupted[id.as_index()] = true;
-                        corrupted_stake += *stake as f64;
+                        corrupted_stake += (*stake).inner() as f64;
                         total_corrupted_stake += val_stake;
                     }
                 }
             }
-            assert!(total_corrupted_stake < self.total_stake as f64 * adversary_strength.byzantine);
+            assert!(total_corrupted_stake < self.total_stake.inner() as f64 * adversary_strength.byzantine);
 
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =

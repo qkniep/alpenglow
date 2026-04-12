@@ -9,7 +9,7 @@ use alpenglow::network::localhost_ip_sockaddr;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
-use alpenglow::{ValidatorId, ValidatorInfo};
+use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use divan::counter::{BytesCount, ItemsCount};
 
 fn main() {
@@ -161,7 +161,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<Validato
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
             id: ValidatorId::new(i),
-            stake: 1,
+            stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(0),

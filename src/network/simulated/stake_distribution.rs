@@ -96,7 +96,7 @@ impl ValidatorData {
         if !self.is_active || self.delinquent {
             return None;
         }
-        self.active_stake.filter(|stake| *stake > 0)
+        self.active_stake.filter(|stake| *stake > Stake::new(0))
     }
 }
 
@@ -117,7 +117,7 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
             ValidatorData {
                 name: Some(v.name),
                 is_active: true,
-                active_stake: Some((v.stake.round() * 100.0) as Stake),
+                active_stake: Some(Stake::new((v.stake.round() * 100.0) as u64)),
                 delinquent: false,
                 ip: v.ip.unwrap_or_else(|| v.address.clone()),
                 data_center_key: Some(format!(
@@ -219,7 +219,7 @@ pub fn validators_from_validator_data(
     // assign closest ping servers to validators
     let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
     let mut validators_with_ping_data = Vec::new();
-    let mut stake_with_ping_server = 0;
+    let mut stake_with_ping_server = Stake::new(0);
     for v in validator_data {
         let Some(stake) = v.active_stake() else {
             continue;
@@ -245,7 +245,8 @@ pub fn validators_from_validator_data(
             ping_server,
         ));
     }
-    let frac_wo_ping_server = 100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64;
+    let frac_wo_ping_server =
+        100.0 - stake_with_ping_server.inner() as f64 * 100.0 / total_stake.inner() as f64;
     warn!("discarding {frac_wo_ping_server:.2}% of validators w/o ping server");
 
     // determine pings of validator pairs
@@ -287,7 +288,7 @@ pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     for (city, frac_stake) in hubs {
         let (lat, lon) = coordinates_for_city(&city).unwrap();
         for _ in 0..30 {
-            let stake = (frac_stake * 100.0 * 10_000.0 / 30.0).round() as Stake;
+            let stake = Stake::new((frac_stake * 100.0 * 10_000.0 / 30.0).round() as u64);
             validators.push(ValidatorData {
                 is_active: true,
                 active_stake: Some(stake),

@@ -58,7 +58,7 @@ mod tests {
     use tokio::task::JoinSet;
 
     use super::*;
-    use crate::ValidatorId;
+    use crate::{Stake, ValidatorId};
     use crate::consensus::Vote;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
@@ -88,7 +88,7 @@ mod tests {
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
                 id: ValidatorId::new(i),
-                stake: 1,
+                stake: Stake::new(1),
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),

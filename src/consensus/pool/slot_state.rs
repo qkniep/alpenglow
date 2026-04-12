@@ -255,7 +255,7 @@ impl SlotState {
             .voted_stakes
             .notar
             .entry(block_hash.clone())
-            .or_insert(0);
+            .or_default();
         *notar_stake += stake;
         self.voted_stakes.notar_or_skip += stake;
         let notar_stake = *notar_stake;
@@ -286,7 +286,7 @@ impl SlotState {
             .voted_stakes
             .notar_fallback
             .get(block_hash)
-            .unwrap_or(&0);
+            .unwrap_or(&Stake::default());
         if self.epoch_info.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash)
         {
             let mut votes = self.votes.notar_votes(block_hash);
@@ -321,10 +321,14 @@ impl SlotState {
     ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
         let nf_stakes = &mut self.voted_stakes.notar_fallback;
-        let nf_stake = nf_stakes.entry(block_hash.clone()).or_insert(0);
+        let nf_stake = nf_stakes.entry(block_hash.clone()).or_default();
         *nf_stake += stake;
         let nf_stake = *nf_stake;
-        let notar_stake = *self.voted_stakes.notar.get(block_hash).unwrap_or(&0);
+        let notar_stake = *self
+            .voted_stakes
+            .notar
+            .get(block_hash)
+            .unwrap_or(&Stake::default());
         if self.epoch_info.is_quorum(nf_stake + notar_stake) && !self.is_notar_fallback(block_hash)
         {
             let mut votes = self.votes.notar_votes(block_hash);
@@ -464,7 +468,11 @@ impl SlotState {
 
     fn check_safe_to_notar(&mut self, block_hash: BlockHash) -> SafeToNotarStatus {
         // check general voted stake conditions
-        let notar_stake = *self.voted_stakes.notar.get(&block_hash).unwrap_or(&0);
+        let notar_stake = *self
+            .voted_stakes
+            .notar
+            .get(&block_hash)
+            .unwrap_or(&Stake::default());
         let skip_stake = self.voted_stakes.skip;
         if !self.epoch_info.is_weakest_quorum(notar_stake) {
             return SafeToNotarStatus::AwaitingVotes;
@@ -614,9 +622,8 @@ mod tests {
             assert!(notar_vote.is_some());
             assert_eq!(
                 slot_state.voted_stakes.notar.get(&hash),
-                Some(&((i + 1) as Stake))
+                Some(&Stake::new(i as u64 + 1))
             );
-            assert_eq!(slot_state.voted_stakes.notar_or_skip, (i + 1) as Stake);
         }
     }
 

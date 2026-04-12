@@ -681,7 +681,7 @@ mod tests {
             voting_sks.push(SecretKey::new(&mut rand::rng()));
             info.push(ValidatorInfo {
                 id: ValidatorId::new(i),
-                stake: 1,
+                stake: Stake::new(1),
                 pubkey: sks.last().unwrap().to_pk(),
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
                 all2all_address: dontcare_sockaddr(),
