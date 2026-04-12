@@ -17,13 +17,26 @@ pub struct EpochInfo {
 
 impl EpochInfo {
     /// Creates a new `EpochInfo` instance with the given validators.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `own_id` is not a valid index into `validators`,
+    /// or if any validator's `id` does not match its position in the vector.
     pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
-        let total_stake = validators.iter().map(|v| v.stake).sum();
-        Self {
-            own_id,
-            validators,
-            total_stake,
+        assert!(
+            (own_id as usize) < validators.len(),
+            "own_id {own_id} is out of range for {} validators",
+            validators.len()
+        );
+        for (i, v) in validators.iter().enumerate() {
+            assert!(
+                v.id == i as u64,
+                "validator at index {i} has id {}, expected {i}",
+                v.id
+            );
         }
+        let total_stake = validators.iter().map(|v| v.stake).sum();
+        Self { own_id, validators, total_stake }
     }
 
     /// Gives the validator info for the given validator ID.
