@@ -218,7 +218,7 @@ fn write_bitvec<C: Config>(
     bitmask: &BitVec,
 ) -> wincode::WriteResult<()> {
     <usize as SchemaWrite<C>>::write(&mut *writer, &bitmask.len())?;
-    <&[usize] as SchemaWrite<C>>::write(&mut *writer, bitmask.as_raw_slice())?;
+    <[usize] as SchemaWrite<C>>::write(&mut *writer, bitmask.as_raw_slice())?;
     Ok(())
 }
 
