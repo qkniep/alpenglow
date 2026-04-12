@@ -15,7 +15,7 @@ use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 /// Constructed once per epoch and shared via [`std::sync::Arc`].
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
-    pub(crate) validators: Vec<ValidatorInfo>,
+    validators: Vec<ValidatorInfo>,
     total_stake: Stake,
 }
 
@@ -24,7 +24,7 @@ pub struct EpochInfo {
 /// Adds the node's own identity on top of the shared epoch data.
 #[derive(Clone, Debug)]
 pub struct ValidatorEpochInfo {
-    pub(crate) own_id: ValidatorId,
+    own_id: ValidatorId,
     epoch: EpochInfo,
 }
 
