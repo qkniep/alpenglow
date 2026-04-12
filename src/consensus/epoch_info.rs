@@ -36,7 +36,11 @@ impl EpochInfo {
             );
         }
         let total_stake = validators.iter().map(|v| v.stake).sum();
-        Self { own_id, validators, total_stake }
+        Self {
+            own_id,
+            validators,
+            total_stake,
+        }
     }
 
     /// Gives the validator info for the given validator ID.
