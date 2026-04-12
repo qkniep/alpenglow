@@ -151,7 +151,7 @@ where
                 else {
                     return Ok(());
                 };
-                RepairResponse::LastSliceRoot(request.req_type, last_slice, root, proof)
+                RepairResponse::LastSliceRoot(request.req_type, last_slice, root.clone(), proof)
             }
             RepairRequestType::SliceRoot(block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
@@ -161,7 +161,7 @@ where
                 let Some(proof) = blockstore.create_double_merkle_proof(block_id, *slice) else {
                     return Ok(());
                 };
-                RepairResponse::SliceRoot(request.req_type, root, proof)
+                RepairResponse::SliceRoot(request.req_type, root.clone(), proof)
             }
             RepairRequestType::Shred(block_id, slice, shred) => {
                 let blockstore = self.blockstore.read().await;
