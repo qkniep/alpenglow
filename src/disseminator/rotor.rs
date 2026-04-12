@@ -40,7 +40,7 @@ impl<N: Network> Rotor<N, StakeWeightedSampler> {
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
     pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
-        let validators = epoch_info.validators.clone();
+        let validators = epoch_info.validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             network,
@@ -56,7 +56,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
     pub fn new_fa1(network: N, epoch_info: Arc<EpochInfo>) -> Self {
-        let validators = epoch_info.validators.clone();
+        let validators = epoch_info.validators().to_vec();
         let sampler =
             FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
         Self {
@@ -91,14 +91,14 @@ where
 
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
-        if self.epoch_info.own_id != relay {
+        if self.epoch_info.own_id() != relay {
             return Ok(());
         }
 
         // otherwise, broadcast
         let to = self
             .epoch_info
-            .validators
+            .validators()
             .iter()
             .filter(|v| v.id != leader && v.id != relay)
             .map(|v| v.disseminator_address);
@@ -147,12 +147,12 @@ mod tests {
     use tokio::task;
 
     use super::*;
-    use crate::ValidatorInfo;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
+    use crate::{Stake, ValidatorId, ValidatorInfo};
 
     type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
 
@@ -164,8 +164,8 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: i,
-                stake: 1,
+                id: ValidatorId::new(i),
+                stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
@@ -177,7 +177,7 @@ mod tests {
 
         let mut rotors = Vec::new();
         for i in 0..count {
-            let epoch_info = Arc::new(EpochInfo::new(i, validators.clone()));
+            let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(i), validators.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
             rotors.push(Rotor::new(network, epoch_info));
         }

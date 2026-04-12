@@ -33,6 +33,7 @@ pub use self::consensus::votor::VotorEvent;
 use self::crypto::{aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;
+pub use self::types::{Stake, ValidatorId};
 pub use self::validator::Validator;
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
@@ -48,10 +49,6 @@ use crate::shredder::Shred;
 // So, for now, we only support 64-bit architectures.
 const_assert_eq!(std::mem::size_of::<usize>(), 8);
 
-/// Validator ID number type.
-pub type ValidatorId = u64;
-/// Validator stake type.
-pub type Stake = u64;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
@@ -140,8 +137,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         let repair_response_address = localhost_ip_sockaddr(network.repair.port());
         let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
         validators.push(ValidatorInfo {
-            id: id as u64,
-            stake: 1,
+            id: ValidatorId::new(id as u64),
+            stake: Stake::new(1),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,
@@ -156,7 +153,10 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .into_iter()
         .enumerate()
         .map(|(id, network)| {
-            let epoch_info = Arc::new(EpochInfo::new(id as u64, validators.clone()));
+            let epoch_info = Arc::new(EpochInfo::new(
+                ValidatorId::new(id as u64),
+                validators.clone(),
+            ));
             let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
             let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
             let repair_network = network.repair;

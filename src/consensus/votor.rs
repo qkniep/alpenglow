@@ -377,11 +377,17 @@ mod tests {
 
     async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, Arc<EpochInfo>) {
         let (sks, epoch_info) = generate_validators(2);
-        let mut a2a = generate_all2all_instances(epoch_info.validators.clone()).await;
+        let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
         let (tx, rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
+        let mut votor = Votor::new(
+            ValidatorId::new(0),
+            sks[0].clone(),
+            tx.clone(),
+            rx,
+            Arc::new(votor_a2a),
+        );
         tokio::spawn(async move {
             votor.voting_loop().await.unwrap();
         });
@@ -432,7 +438,7 @@ mod tests {
         assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
-        let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], &epoch_info.validators));
+        let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], epoch_info.validators()));
         let event = VotorEvent::CertCreated(Box::new(cert));
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {

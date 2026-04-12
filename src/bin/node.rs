@@ -15,7 +15,7 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
-use alpenglow::{Transaction, ValidatorInfo, logging};
+use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
@@ -117,7 +117,10 @@ type Node = Alpenglow<
 
 fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
-    let epoch_info = Arc::new(EpochInfo::new(config.id, config.gossip.clone()));
+    let epoch_info = Arc::new(EpochInfo::new(
+        ValidatorId::new(config.id),
+        config.gossip.clone(),
+    ));
     let start_port = config.port;
     let network = UdpNetwork::new(start_port);
     let all2all = TrivialAll2All::new(config.gossip, network);
@@ -161,8 +164,8 @@ async fn create_node_configs(
         ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id,
-            stake: 1,
+            id: ValidatorId::new(id),
+            stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: sockaddr,
