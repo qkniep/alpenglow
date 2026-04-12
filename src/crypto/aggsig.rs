@@ -10,6 +10,7 @@
 //!
 //! ```
 //! use alpenglow::crypto::aggsig::{AggregateSignature, SecretKey};
+//! use alpenglow::ValidatorId;
 //!
 //! let msg = b"hello world";
 //!
@@ -21,7 +22,7 @@
 //! let pk2 = sk2.to_pk();
 //! let sig2 = sk2.sign(msg);
 //!
-//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [0, 1], 2);
+//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
 //! assert!(aggsig.verify(msg, &[pk1, pk2]));
 //! ```
 
@@ -148,42 +149,12 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
         mut reader: impl wincode::io::Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        // read raw data
         let sig_bytes = reader.take_borrowed(UNCOMPRESSED_SIG_SIZE)?;
-        let num_bits = <usize as SchemaRead<'de, C>>::get(&mut reader)?;
-        let bitmask_raw_vec = <Vec<usize> as SchemaRead<'de, C>>::get(&mut reader)?;
-
-        // map BLS signature
         let sig = BlstSignature::from_bytes(sig_bytes).map_err(|e| {
             warn!("encountered invalid BLS sig: {e:?}");
             wincode::ReadError::Custom("invalid BLS encoding")
         })?;
-
-        // map bitmask
-        if bitmask_raw_vec.len() > MAX_SIGNERS.div_ceil(usize::BITS as usize) {
-            warn!(
-                "bitmask too long: {} bits > {} max signers",
-                bitmask_raw_vec.len() * usize::BITS as usize,
-                MAX_SIGNERS
-            );
-            return Err(wincode::ReadError::Custom("bitmask too long"));
-        }
-        if num_bits > usize::BITS as usize * bitmask_raw_vec.len() {
-            warn!(
-                "want to use too many bits: {} bits > {} bits allocated",
-                num_bits,
-                bitmask_raw_vec.len() * usize::BITS as usize,
-            );
-            return Err(wincode::ReadError::Custom("want to use too many bits"));
-        }
-        let mut bitmask =
-            BitVec::try_from_vec(bitmask_raw_vec).expect("bitmask vector should never be too big");
-
-        // the `BitVec` is now initialized with some `usize` elements
-        // we only want to use the first `num_bits` bits, as this is the intended length
-        // some last bits may be uninitialized and will be ignored by `BitVec`
-        bitmask.truncate(num_bits);
-
+        let bitmask = read_bitvec::<C>(&mut reader, MAX_SIGNERS)?;
         dst.write(AggregateSignature { sig, bitmask });
         wincode::ReadResult::Ok(())
     }
@@ -193,21 +164,63 @@ unsafe impl<C: Config> SchemaWrite<C> for AggregateSignature {
     type Src = AggregateSignature;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        let bitslice_num_elements = src.bitmask.as_bitslice().len();
-        // sig + num_bits + num_usizes + usize_len * num_usizes
-        Ok(UNCOMPRESSED_SIG_SIZE + 8 + 8 + 8 * bitslice_num_elements)
+        Ok(UNCOMPRESSED_SIG_SIZE + bitvec_size(&src.bitmask))
     }
 
     fn write(mut writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         writer.write(&src.sig.serialize())?;
-        <usize as SchemaWrite<C>>::write(&mut writer, &src.bitmask.as_bitslice().len())?;
-        let data = src.bitmask.as_bitslice().domain();
-        <usize as SchemaWrite<C>>::write(&mut writer, &data.len())?;
-        for elem in data {
-            <usize as SchemaWrite<C>>::write(&mut writer, &elem)?;
-        }
-        Ok(())
+        write_bitvec::<C>(&mut writer, &src.bitmask)
     }
+}
+
+/// Returns the serialized byte size of a [`BitVec`].
+fn bitvec_size(bitmask: &BitVec) -> usize {
+    // num_bits (usize) + num_usizes (usize) + usize_data
+    8 + 8 + 8 * bitmask.as_raw_slice().len()
+}
+
+/// Deserializes a [`BitVec`] from a wincode reader, rejecting inputs exceeding `max_bits`.
+fn read_bitvec<'de, C: Config>(
+    reader: &mut impl wincode::io::Reader<'de>,
+    max_bits: usize,
+) -> wincode::ReadResult<BitVec> {
+    let num_bits = <usize as SchemaRead<'de, C>>::get(&mut *reader)?;
+    let bitmask_raw_vec = <Vec<usize> as SchemaRead<'de, C>>::get(&mut *reader)?;
+
+    if bitmask_raw_vec.len() > max_bits.div_ceil(usize::BITS as usize) {
+        warn!(
+            "bitmask too long: {} bits > {} max signers",
+            bitmask_raw_vec.len() * usize::BITS as usize,
+            max_bits
+        );
+        return Err(wincode::ReadError::Custom("bitmask too long"));
+    }
+    if num_bits > usize::BITS as usize * bitmask_raw_vec.len() {
+        warn!(
+            "want to use too many bits: {} bits > {} bits allocated",
+            num_bits,
+            bitmask_raw_vec.len() * usize::BITS as usize,
+        );
+        return Err(wincode::ReadError::Custom("want to use too many bits"));
+    }
+
+    // the `BitVec` is now initialized with some `usize` elements
+    // we only want to use the first `num_bits` bits, as this is the intended length
+    // some last bits may be uninitialized and will be ignored by `BitVec`
+    let mut bitmask =
+        BitVec::try_from_vec(bitmask_raw_vec).expect("bitmask vector should never be too big");
+    bitmask.truncate(num_bits);
+    Ok(bitmask)
+}
+
+/// Serializes a [`BitVec`] into a wincode writer.
+fn write_bitvec<C: Config>(
+    writer: &mut impl wincode::io::Writer,
+    bitmask: &BitVec,
+) -> wincode::WriteResult<()> {
+    <usize as SchemaWrite<C>>::write(&mut *writer, &bitmask.len())?;
+    <[usize] as SchemaWrite<C>>::write(&mut *writer, bitmask.as_raw_slice())?;
+    Ok(())
 }
 
 impl SecretKey {
@@ -286,7 +299,7 @@ impl AggregateSignature {
 
         let mut bitmask = bitvec::bitvec![0; num_bits];
         for i in indices {
-            bitmask.set(i as usize, true);
+            bitmask.set(i.as_index(), true);
         }
 
         Self {
@@ -301,7 +314,7 @@ impl AggregateSignature {
         if self.bitmask.len() != pks.len() {
             return false;
         }
-        let pks: Vec<_> = self.signers().map(|v| &pks[v as usize].0).collect();
+        let pks: Vec<_> = self.signers().map(|v| &pks[v.as_index()].0).collect();
         let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
@@ -322,14 +335,14 @@ impl AggregateSignature {
     pub fn is_signer(&self, validator_id: ValidatorId) -> bool {
         *self
             .bitmask
-            .get(validator_id as usize)
+            .get(validator_id.as_index())
             .as_deref()
             .unwrap_or(&false)
     }
 
     /// Iterates over all signers of this aggregate signature.
     pub fn signers(&self) -> impl Iterator<Item = ValidatorId> {
-        self.bitmask.iter_ones().map(|i| i as ValidatorId)
+        self.bitmask.iter_ones().map(|i| ValidatorId::new(i as u64))
     }
 }
 
@@ -362,7 +375,8 @@ mod tests {
         assert!(sig1.verify(msg, &pk1));
         assert!(sig2.verify(msg, &pk2));
 
-        let mut aggsig = AggregateSignature::new(&[sig1, sig2], [0, 1], 2);
+        let mut aggsig =
+            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
 
         // check aggregate signature
         assert!(aggsig.verify(msg, &[pk1, pk2]));
@@ -415,14 +429,15 @@ mod tests {
         assert!(sig3.verify(msg, &pk3));
 
         // only aggregate over 2/3 signatures
-        let aggsig = AggregateSignature::new(&[sig1, sig3], [0, 2], 3);
+        let aggsig =
+            AggregateSignature::new(&[sig1, sig3], [ValidatorId::new(0), ValidatorId::new(2)], 3);
 
         // check signers bitmask
         let signers: Vec<_> = aggsig.signers().collect();
         assert_eq!(signers.len(), 2);
-        assert!(signers.contains(&0));
-        assert!(!signers.contains(&1));
-        assert!(signers.contains(&2));
+        assert!(signers.contains(&ValidatorId::new(0)));
+        assert!(!signers.contains(&ValidatorId::new(1)));
+        assert!(signers.contains(&ValidatorId::new(2)));
 
         // check aggregate signature
         assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk3]));

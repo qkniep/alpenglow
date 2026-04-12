@@ -381,7 +381,13 @@ mod tests {
         let (tx, rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
+        let mut votor = Votor::new(
+            ValidatorId::new(0),
+            sks[0].clone(),
+            tx.clone(),
+            rx,
+            Arc::new(votor_a2a),
+        );
         tokio::spawn(async move {
             votor.voting_loop().await.unwrap();
         });

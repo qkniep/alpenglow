@@ -277,9 +277,14 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(0).await;
-        let net2 = core.join_unlimited(1).await;
-        core.set_latency(0, 1, Duration::from_millis(10)).await;
+        let net1 = core.join_unlimited(ValidatorId::new(0)).await;
+        let net2 = core.join_unlimited(ValidatorId::new(1)).await;
+        core.set_latency(
+            ValidatorId::new(0),
+            ValidatorId::new(1),
+            Duration::from_millis(10),
+        )
+        .await;
 
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
@@ -314,12 +319,20 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(0).await;
-        let net2 = core.join_unlimited(1).await;
-        core.set_asymmetric_latency(0, 1, Duration::from_millis(10))
-            .await;
-        core.set_asymmetric_latency(1, 0, Duration::from_millis(100))
-            .await;
+        let net1 = core.join_unlimited(ValidatorId::new(0)).await;
+        let net2 = core.join_unlimited(ValidatorId::new(1)).await;
+        core.set_asymmetric_latency(
+            ValidatorId::new(0),
+            ValidatorId::new(1),
+            Duration::from_millis(10),
+        )
+        .await;
+        core.set_asymmetric_latency(
+            ValidatorId::new(1),
+            ValidatorId::new(0),
+            Duration::from_millis(100),
+        )
+        .await;
 
         // one direction
         net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
@@ -352,12 +365,25 @@ mod tests {
     async fn latency_order() {
         // set up network with three nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-        let net1: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(1).await;
-        let net3: SimulatedNetwork<PingOrPong, PingOrPong> = core.join_unlimited(2).await;
+        let net1: SimulatedNetwork<PingOrPong, PingOrPong> =
+            core.join_unlimited(ValidatorId::new(0)).await;
+        let net2: SimulatedNetwork<PingOrPong, PingOrPong> =
+            core.join_unlimited(ValidatorId::new(1)).await;
+        let net3: SimulatedNetwork<PingOrPong, PingOrPong> =
+            core.join_unlimited(ValidatorId::new(2)).await;
         let sock0 = localhost_ip_sockaddr(0);
-        core.set_latency(0, 1, Duration::from_millis(10)).await;
-        core.set_latency(0, 2, Duration::from_millis(20)).await;
+        core.set_latency(
+            ValidatorId::new(0),
+            ValidatorId::new(1),
+            Duration::from_millis(10),
+        )
+        .await;
+        core.set_latency(
+            ValidatorId::new(0),
+            ValidatorId::new(2),
+            Duration::from_millis(20),
+        )
+        .await;
 
         // send ping on faster link
         let msg = PingOrPong::Ping([0; 32]);
@@ -389,8 +415,8 @@ mod tests {
     async fn packet_loss() {
         // set up network with two nodes and 50% packet loss
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.5));
-        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(0).await;
-        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(1).await;
+        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorId::new(0)).await;
+        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorId::new(1)).await;
 
         // send 1000 pings
         let msg = Ping::default();

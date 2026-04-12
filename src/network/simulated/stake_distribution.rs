@@ -200,7 +200,7 @@ pub fn validators_from_validator_data(
     let mut validators = Vec::new();
     for v in validator_data {
         if let Some(stake) = v.active_stake() {
-            let id = validators.len() as ValidatorId;
+            let id = ValidatorId::new(validators.len() as u64);
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
@@ -233,7 +233,7 @@ pub fn validators_from_validator_data(
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         validators_with_ping_data.push((
             ValidatorInfo {
-                id: validators_with_ping_data.len() as ValidatorId,
+                id: ValidatorId::new(validators_with_ping_data.len() as u64),
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
@@ -271,7 +271,7 @@ pub fn validators_from_validator_data(
 
     // give validators with ping data consecutive IDs
     for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
-        v.0.id = i as ValidatorId;
+        v.0.id = ValidatorId::new(i as u64);
     }
 
     (validators, validators_with_ping_data)

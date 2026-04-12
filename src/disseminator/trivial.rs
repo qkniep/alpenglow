@@ -58,12 +58,12 @@ mod tests {
     use tokio::task;
 
     use super::*;
-    use crate::Stake;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
+    use crate::{Stake, ValidatorId};
 
     fn create_disseminator_instances(
         count: u64,
@@ -79,7 +79,7 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: i,
+                id: ValidatorId::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),

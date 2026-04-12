@@ -48,7 +48,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: i,
+            id: ValidatorId::new(i),
             stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
@@ -58,7 +58,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
             repair_response_address: localhost_ip_sockaddr(0),
         });
     }
-    let epoch_info = Arc::new(EpochInfo::new(0, validators));
+    let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(0), validators));
     (voting_sks, epoch_info)
 }
 
@@ -78,7 +78,7 @@ pub async fn generate_all2all_instances(
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {
-        let network = core.join_unlimited(i as ValidatorId).await;
+        let network = core.join_unlimited(ValidatorId::new(i as u64)).await;
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all

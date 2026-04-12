@@ -21,7 +21,7 @@ fn generate_vote() -> Vote {
     let mut rng = rand::rng();
     let hash = GENESIS_BLOCK_HASH;
     let sk = aggsig::SecretKey::new(&mut rng);
-    Vote::new_notar(Slot::new(0), hash, &sk, 0)
+    Vote::new_notar(Slot::new(0), hash, &sk, ValidatorId::new(0))
 }
 
 #[divan::bench]
@@ -52,7 +52,7 @@ fn generate_cert() -> Cert {
     let votes = sks
         .iter()
         .enumerate()
-        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash.clone(), sk, v as ValidatorId))
+        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash.clone(), sk, ValidatorId::new(v as u64)))
         .collect::<Vec<_>>();
     let notar_cert = NotarCert::try_new(&votes, &val_info).unwrap();
     Cert::Notar(notar_cert)
@@ -160,7 +160,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<Validato
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: i,
+            id: ValidatorId::new(i),
             stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
