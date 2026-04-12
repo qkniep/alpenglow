@@ -26,7 +26,7 @@ use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
 use self::slot_state::SlotState;
 use super::votor::VotorEvent;
-use super::{Cert, EpochInfo, Vote};
+use super::{Cert, ValidatorEpochInfo, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::{BlockHash, MerkleRoot};
@@ -103,7 +103,7 @@ pub struct PoolImpl {
     s2n_waiting_parent_cert: BTreeMap<BlockId, BlockId>,
 
     /// Information about all active validators.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<VotorEvent>,
     /// Channel for sending repair requests to the repair loop.
@@ -115,7 +115,7 @@ impl PoolImpl {
     ///
     /// Any later emitted events will be sent on provided `votor_event_channel`.
     pub fn new(
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         votor_event_channel: Sender<VotorEvent>,
         repair_channel: Sender<BlockId>,
     ) -> Self {
@@ -376,9 +376,9 @@ impl Pool for PoolImpl {
         }
 
         // verify stake threshold & signature
-        if !cert.check_threshold(&self.epoch_info) {
+        if !cert.check_threshold(self.epoch_info.epoch_info()) {
             return Err(AddCertError::ThresholdNotMet);
-        } else if !cert.check_sig(self.epoch_info.validators()) {
+        } else if !cert.check_sig(self.epoch_info.epoch_info().validators()) {
             return Err(AddCertError::InvalidSignature);
         }
 
@@ -416,14 +416,18 @@ impl Pool for PoolImpl {
         }
 
         // verify signature
-        let pk = &self.epoch_info.validator(vote.signer()).voting_pubkey;
+        let pk = &self
+            .epoch_info
+            .epoch_info()
+            .validator(vote.signer())
+            .voting_pubkey;
         if !vote.check_sig(pk) {
             return Err(AddVoteError::InvalidSignature);
         }
 
         // check if vote is valid and should be counted
         let voter = vote.signer();
-        let voter_stake = self.epoch_info.validator(voter).stake;
+        let voter_stake = self.epoch_info.epoch_info().validator(voter).stake;
         if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if self.slot_state(slot).should_ignore_vote(&vote) {
@@ -534,6 +538,7 @@ mod tests {
 
     use super::*;
     use crate::ValidatorId;
+    use crate::consensus::EpochInfo;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::VoteKind;
     use crate::crypto::Hash;
@@ -542,9 +547,15 @@ mod tests {
     use crate::test_utils::generate_validators;
     use crate::types::SLOTS_PER_WINDOW;
 
+    /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
+    fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
+        Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info))
+    }
+
     #[tokio::test]
     async fn handle_invalid_votes() {
         let (_, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -565,6 +576,7 @@ mod tests {
     #[tokio::test]
     async fn notarize_block() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -612,6 +624,7 @@ mod tests {
     #[tokio::test]
     async fn skip_block() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -644,6 +657,7 @@ mod tests {
     #[tokio::test]
     async fn finalize_block() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -700,6 +714,7 @@ mod tests {
     #[tokio::test]
     async fn fast_finalize_block() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -750,6 +765,7 @@ mod tests {
     #[tokio::test]
     async fn simple_branch_certified() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -778,6 +794,7 @@ mod tests {
     #[tokio::test]
     async fn branch_certified_notar_fallback() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -815,6 +832,7 @@ mod tests {
     #[tokio::test]
     async fn branch_certified_out_of_order() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -852,6 +870,7 @@ mod tests {
     #[tokio::test]
     async fn branch_certified_late_cert() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx);
@@ -882,7 +901,7 @@ mod tests {
                 ValidatorId::new(v),
             ));
         }
-        let cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
+        let cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
@@ -892,6 +911,7 @@ mod tests {
     #[tokio::test]
     async fn regular_handover() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -926,6 +946,7 @@ mod tests {
     #[tokio::test]
     async fn one_skip_handover() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -969,6 +990,7 @@ mod tests {
     #[tokio::test]
     async fn two_skip_handover() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -1020,6 +1042,7 @@ mod tests {
     #[tokio::test]
     async fn skip_window_handover() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -1065,6 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn pruning() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -1136,6 +1160,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_votes() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -1168,6 +1193,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_certs() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx);
@@ -1184,7 +1210,7 @@ mod tests {
                 ValidatorId::new(v),
             ));
         }
-        let notar_cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
+        let notar_cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
 
         // insert a skip cert for slot 1
@@ -1197,7 +1223,7 @@ mod tests {
                 ValidatorId::new(v),
             ));
         }
-        let skip_cert = SkipCert::try_new(&votes, epoch_info.validators()).unwrap();
+        let skip_cert = SkipCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
 
         // inserting same certs again should fail
@@ -1214,6 +1240,7 @@ mod tests {
     #[tokio::test]
     async fn out_of_bounds_votes() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -1256,6 +1283,7 @@ mod tests {
     #[tokio::test]
     async fn out_of_bounds_certs() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, _votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx);
@@ -1271,7 +1299,7 @@ mod tests {
                 ValidatorId::new(v),
             ));
         }
-        let ff_cert = FastFinalCert::try_new(&votes, epoch_info.validators()).unwrap();
+        let ff_cert = FastFinalCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
             Ok(())
@@ -1287,7 +1315,8 @@ mod tests {
                     ValidatorId::new(v),
                 ));
             }
-            let skip_cert = SkipCert::try_new(&votes, epoch_info.validators()).unwrap();
+            let skip_cert =
+                SkipCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
             assert_eq!(
                 pool.add_cert(Cert::Skip(skip_cert.clone())).await,
                 Err(AddCertError::SlotOutOfBounds)
@@ -1300,7 +1329,7 @@ mod tests {
         for v in 0..11 {
             votes.push(Vote::new_skip(slot, &sks[v as usize], ValidatorId::new(v)));
         }
-        let skip_cert = SkipCert::try_new(&votes, epoch_info.validators()).unwrap();
+        let skip_cert = SkipCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
@@ -1310,6 +1339,7 @@ mod tests {
     #[tokio::test]
     async fn standstill_recovery() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, mut votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
@@ -1384,6 +1414,7 @@ mod tests {
     #[tokio::test]
     async fn parent_ready_upon_finalization() {
         let (sks, epoch_info) = generate_validators(11);
+        let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, mut votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
         let mut pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
