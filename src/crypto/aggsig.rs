@@ -202,7 +202,7 @@ fn read_bitvec<'de, C: Config>(
         );
         return Err(wincode::ReadError::Custom("want to use too many bits"));
     }
-    
+
     // the `BitVec` is now initialized with some `usize` elements
     // we only want to use the first `num_bits` bits, as this is the intended length
     // some last bits may be uninitialized and will be ignored by `BitVec`
