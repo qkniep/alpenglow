@@ -24,13 +24,13 @@ impl EpochInfo {
     /// or if any validator's `id` does not match its position in the vector.
     pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
         assert!(
-            (own_id as usize) < validators.len(),
+            own_id.as_index() < validators.len(),
             "own_id {own_id} is out of range for {} validators",
             validators.len()
         );
         for (i, v) in validators.iter().enumerate() {
             assert!(
-                v.id == i as u64,
+                v.id.as_index() == i,
                 "validator at index {i} has id {}, expected {i}",
                 v.id
             );
@@ -62,7 +62,7 @@ impl EpochInfo {
     /// Panics if the validator ID is out of range.
     #[must_use]
     pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
-        &self.validators[id as usize]
+        &self.validators[id.as_index()]
     }
 
     /// Gives the validator info for the leader for the given slot.
@@ -70,7 +70,7 @@ impl EpochInfo {
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot.inner() / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
-        self.validator(leader_id)
+        self.validator(ValidatorId::new(leader_id))
     }
 
     /// Gives the total stake over all validators.

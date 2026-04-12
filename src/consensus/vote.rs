@@ -209,23 +209,24 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
-        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sk, 0);
+        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
         assert!(vote.is_notar());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_notar_fallback(Slot::new(0), GENESIS_BLOCK_HASH, &sk, 0);
+        let vote =
+            Vote::new_notar_fallback(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
         assert!(vote.is_notar_fallback());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_skip(Slot::new(0), &sk, 0);
+        let vote = Vote::new_skip(Slot::new(0), &sk, ValidatorId::new(0));
         assert!(vote.is_skip());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_skip_fallback(Slot::new(0), &sk, 0);
+        let vote = Vote::new_skip_fallback(Slot::new(0), &sk, ValidatorId::new(0));
         assert!(vote.is_skip_fallback());
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_final(Slot::new(0), &sk, 0);
+        let vote = Vote::new_final(Slot::new(0), &sk, ValidatorId::new(0));
         assert!(vote.is_final());
         assert!(vote.check_sig(&pk));
     }
