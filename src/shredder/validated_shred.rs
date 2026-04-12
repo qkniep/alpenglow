@@ -6,7 +6,7 @@
 use std::collections::btree_map::Entry;
 use std::ops::{Deref, DerefMut};
 
-use crate::crypto::merkle::{SliceMerkleTree, SliceRoot};
+use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
 use crate::shredder::Shred;
 use crate::types::SliceIndex;
@@ -14,12 +14,9 @@ use crate::types::SliceIndex;
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
 pub enum ShredVerifyError {
-    /// The shred contained an invalid Merkle proof.
-    InvalidProof,
     /// The signature verification failed.
     InvalidSignature,
-    /// Leader showed equivocation.
-    /// The Merkle root does not match the root from a previous shred.
+    /// Leader showed equivocation: a valid signature was seen on a different Merkle root.
     Equivocation,
 }
 
@@ -45,29 +42,22 @@ impl ValidatedShred {
         cached_merkle_root: Entry<SliceIndex, SliceRoot>,
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
-        if !SliceMerkleTree::check_proof(
-            &shred.payload().data,
-            *shred.payload().shred_index,
-            &shred.merkle_root,
-            &shred.merkle_path,
-        ) {
-            return Err(ShredVerifyError::InvalidProof);
-        }
+        let derived_root = shred.merkle_root();
 
         match cached_merkle_root {
             Entry::Occupied(entry) => {
-                if entry.get() == &shred.merkle_root {
+                if entry.get() == &derived_root {
                     return Ok(Self(shred));
                 }
-                if shred.merkle_root_sig.verify(shred.merkle_root.as_ref(), pk) {
+                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             Entry::Vacant(entry) => {
-                if shred.merkle_root_sig.verify(shred.merkle_root.as_ref(), pk) {
-                    entry.insert(shred.merkle_root.clone());
+                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                    entry.insert(derived_root);
                     Ok(Self(shred))
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
