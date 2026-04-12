@@ -13,7 +13,12 @@ pub struct EpochInfo {
 
 impl EpochInfo {
     /// Creates a new `EpochInfo` instance with the given validators.
-    pub const fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Panics if our own ID is not in the list of validators.
+    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+        assert!(validators.iter().any(|v| v.id == own_id));
         Self { own_id, validators }
     }
 
