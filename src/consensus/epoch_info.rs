@@ -7,17 +7,23 @@ use crate::consensus::{
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 
-/// Epoch-specfic validator information.
+/// Epoch-specific validator information.
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
     pub(crate) own_id: ValidatorId,
     pub(crate) validators: Vec<ValidatorInfo>,
+    total_stake: Stake,
 }
 
 impl EpochInfo {
     /// Creates a new `EpochInfo` instance with the given validators.
-    pub const fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
-        Self { own_id, validators }
+    pub fn new(own_id: ValidatorId, validators: Vec<ValidatorInfo>) -> Self {
+        let total_stake = validators.iter().map(|v| v.stake).sum();
+        Self {
+            own_id,
+            validators,
+            total_stake,
+        }
     }
 
     /// Gives the validator info for the given validator ID.
@@ -41,7 +47,7 @@ impl EpochInfo {
     /// Gives the total stake over all validators.
     #[must_use]
     pub fn total_stake(&self) -> Stake {
-        self.validators.iter().map(|v| v.stake).sum()
+        self.total_stake
     }
 
     /// Returns `true` if `stake` meets the weakest quorum threshold (20%).
@@ -66,5 +72,27 @@ impl EpochInfo {
     #[must_use]
     pub fn is_strong_quorum(&self, stake: Stake) -> bool {
         STRONG_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::generate_validators;
+
+    #[test]
+    fn quorums() {
+        let (_, epoch_info) = generate_validators(6);
+        assert!(epoch_info.is_weak_quorum(3));
+        assert!(!epoch_info.is_quorum(3));
+        assert!(epoch_info.is_quorum(4));
+        assert!(!epoch_info.is_strong_quorum(4));
+        assert!(epoch_info.is_strong_quorum(5));
+
+        let (_, epoch_info) = generate_validators(11);
+        assert!(epoch_info.is_weak_quorum(5));
+        assert!(!epoch_info.is_quorum(5));
+        assert!(epoch_info.is_quorum(7));
+        assert!(!epoch_info.is_strong_quorum(7));
+        assert!(epoch_info.is_strong_quorum(9));
     }
 }
