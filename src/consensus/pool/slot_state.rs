@@ -645,7 +645,7 @@ mod tests {
             assert!(notar_vote.is_some());
             assert_eq!(
                 slot_state.voted_stakes.notar.get(&hash),
-                Some(&Stake::new((i + 1) as u64))
+                Some(&Stake::new(i as u64 + 1))
             );
         }
     }
