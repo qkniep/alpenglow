@@ -119,9 +119,9 @@ where
             return tree;
         }
         let tree = TurbineTree::new(
-            &self.epoch_info.validators,
+            self.epoch_info.validators(),
             self.fanout,
-            self.epoch_info.own_id,
+            self.epoch_info.own_id(),
             slot,
             shred,
         );

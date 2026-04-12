@@ -267,7 +267,7 @@ impl PoolImpl {
     /// Fetches all votes cast by myself for the provided range of `slots`.
     fn get_own_votes(&self, slots: impl RangeBounds<Slot>) -> Vec<Vote> {
         let mut votes = Vec::new();
-        let own_id = self.epoch_info.own_id;
+        let own_id = self.epoch_info.own_id();
         for (_, slot_state) in self.slot_states.range(slots) {
             if let Some(vote) = &slot_state.votes.finalize[own_id as usize] {
                 votes.push(vote.clone());
@@ -378,7 +378,7 @@ impl Pool for PoolImpl {
         // verify stake threshold & signature
         if !cert.check_threshold(&self.epoch_info) {
             return Err(AddCertError::ThresholdNotMet);
-        } else if !cert.check_sig(&self.epoch_info.validators) {
+        } else if !cert.check_sig(self.epoch_info.validators()) {
             return Err(AddCertError::InvalidSignature);
         }
 
@@ -835,7 +835,7 @@ mod tests {
         for v in 0..7 {
             votes.push(Vote::new_notar(slot1, hash1.clone(), &sks[v as usize], v));
         }
-        let cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
@@ -1104,7 +1104,7 @@ mod tests {
                 v,
             ));
         }
-        let notar_cert = NotarCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let notar_cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
         assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
 
         // insert a skip cert for slot 1
@@ -1113,7 +1113,7 @@ mod tests {
         for v in 0..11 {
             votes.push(Vote::new_skip(second_slot, &sks[v as usize], v));
         }
-        let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let skip_cert = SkipCert::try_new(&votes, epoch_info.validators()).unwrap();
         assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
 
         // inserting same certs again should fail
@@ -1182,7 +1182,7 @@ mod tests {
                 v,
             ));
         }
-        let ff_cert = FastFinalCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let ff_cert = FastFinalCert::try_new(&votes, epoch_info.validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
             Ok(())
@@ -1194,7 +1194,7 @@ mod tests {
             for v in 0..11 {
                 votes.push(Vote::new_skip(Slot::new(slot), &sks[v as usize], v));
             }
-            let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+            let skip_cert = SkipCert::try_new(&votes, epoch_info.validators()).unwrap();
             assert_eq!(
                 pool.add_cert(Cert::Skip(skip_cert.clone())).await,
                 Err(AddCertError::SlotOutOfBounds)
@@ -1207,7 +1207,7 @@ mod tests {
         for v in 0..11 {
             votes.push(Vote::new_skip(slot, &sks[v as usize], v));
         }
-        let skip_cert = SkipCert::try_new(&votes, &epoch_info.validators).unwrap();
+        let skip_cert = SkipCert::try_new(&votes, epoch_info.validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)

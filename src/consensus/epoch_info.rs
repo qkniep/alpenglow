@@ -10,8 +10,8 @@ use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
 /// Epoch-specific validator information.
 #[derive(Clone, Debug)]
 pub struct EpochInfo {
-    pub(crate) own_id: ValidatorId,
-    pub(crate) validators: Vec<ValidatorInfo>,
+    own_id: ValidatorId,
+    validators: Vec<ValidatorInfo>,
     total_stake: Stake,
 }
 
@@ -41,6 +41,18 @@ impl EpochInfo {
             validators,
             total_stake,
         }
+    }
+
+    /// Returns our own validator ID.
+    #[must_use]
+    pub fn own_id(&self) -> ValidatorId {
+        self.own_id
+    }
+
+    /// Returns all validators in this epoch.
+    #[must_use]
+    pub fn validators(&self) -> &[ValidatorInfo] {
+        &self.validators
     }
 
     /// Gives the validator info for the given validator ID.
