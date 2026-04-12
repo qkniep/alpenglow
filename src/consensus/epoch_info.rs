@@ -82,25 +82,25 @@ impl EpochInfo {
     /// Returns `true` if `stake` meets the weakest quorum threshold (20%).
     #[must_use]
     pub fn is_weakest_quorum(&self, stake: Stake) -> bool {
-        WEAKEST_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        WEAKEST_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 
     /// Returns `true` if `stake` meets the weak quorum threshold (40%).
     #[must_use]
     pub fn is_weak_quorum(&self, stake: Stake) -> bool {
-        WEAK_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        WEAK_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 
     /// Returns `true` if `stake` meets the standard quorum threshold (60%).
     #[must_use]
     pub fn is_quorum(&self, stake: Stake) -> bool {
-        QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 
     /// Returns `true` if `stake` meets the strong quorum threshold (80%).
     #[must_use]
     pub fn is_strong_quorum(&self, stake: Stake) -> bool {
-        STRONG_QUORUM_THRESHOLD.is_met(stake, self.total_stake())
+        STRONG_QUORUM_THRESHOLD.is_met(stake.inner(), self.total_stake().inner())
     }
 }
 
@@ -136,22 +136,23 @@ impl Deref for ValidatorEpochInfo {
 
 #[cfg(test)]
 mod tests {
+    use crate::Stake;
     use crate::test_utils::generate_validators;
 
     #[test]
     fn quorums() {
         let (_, epoch_info) = generate_validators(6);
-        assert!(epoch_info.is_weak_quorum(3));
-        assert!(!epoch_info.is_quorum(3));
-        assert!(epoch_info.is_quorum(4));
-        assert!(!epoch_info.is_strong_quorum(4));
-        assert!(epoch_info.is_strong_quorum(5));
+        assert!(epoch_info.is_weak_quorum(Stake::new(3)));
+        assert!(!epoch_info.is_quorum(Stake::new(3)));
+        assert!(epoch_info.is_quorum(Stake::new(4)));
+        assert!(!epoch_info.is_strong_quorum(Stake::new(4)));
+        assert!(epoch_info.is_strong_quorum(Stake::new(5)));
 
         let (_, epoch_info) = generate_validators(11);
-        assert!(epoch_info.is_weak_quorum(5));
-        assert!(!epoch_info.is_quorum(5));
-        assert!(epoch_info.is_quorum(7));
-        assert!(!epoch_info.is_strong_quorum(7));
-        assert!(epoch_info.is_strong_quorum(9));
+        assert!(epoch_info.is_weak_quorum(Stake::new(5)));
+        assert!(!epoch_info.is_quorum(Stake::new(5)));
+        assert!(epoch_info.is_quorum(Stake::new(7)));
+        assert!(!epoch_info.is_strong_quorum(Stake::new(7)));
+        assert!(epoch_info.is_strong_quorum(Stake::new(9)));
     }
 }

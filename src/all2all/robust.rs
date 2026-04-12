@@ -74,6 +74,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+    use crate::Stake;
     use crate::consensus::Vote;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
@@ -99,7 +100,7 @@ mod tests {
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
                 id: i,
-                stake: 1,
+                stake: Stake::new(1),
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),

@@ -15,7 +15,7 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
-use alpenglow::{Transaction, ValidatorInfo, logging};
+use alpenglow::{Stake, Transaction, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
@@ -165,7 +165,7 @@ async fn create_node_configs(
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
             id,
-            stake: 1,
+            stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: sockaddr,
