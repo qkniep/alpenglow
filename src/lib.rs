@@ -23,7 +23,6 @@ pub mod validator;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use derive_more::{Add, From, Into, Sum};
 use serde::{Deserialize, Serialize};
 use static_assertions::const_assert_eq;
 use wincode::{SchemaRead, SchemaWrite};
@@ -51,26 +50,7 @@ const_assert_eq!(std::mem::size_of::<usize>(), 8);
 
 /// Validator ID number type.
 pub type ValidatorId = u64;
-/// Validator stake type.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Add,
-    Sum,
-    From,
-    Into,
-    SchemaRead,
-    SchemaWrite,
-    Serialize,
-    Deserialize,
-)]
-#[repr(transparent)]
-pub struct Stake(u64);
+pub use self::types::Stake;
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);
 
