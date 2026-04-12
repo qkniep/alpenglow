@@ -10,12 +10,15 @@
 
 mod weighted_shuffle;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use moka::future::Cache;
 use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
+use crate::consensus::EpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorId, ValidatorInfo};
@@ -31,8 +34,7 @@ const MAX_CACHED_TREES: u64 = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
 pub struct Turbine<N: Network> {
-    validator_id: ValidatorId,
-    validators: Vec<ValidatorInfo>,
+    epoch_info: Arc<EpochInfo>,
     network: N,
     fanout: usize,
     tree_cache: Cache<(Slot, usize), TurbineTree>,
@@ -55,10 +57,9 @@ where
     N: ShredNetwork,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
-    pub fn new(validator_id: ValidatorId, validators: Vec<ValidatorInfo>, network: N) -> Self {
+    pub fn new(network: N, epoch_info: Arc<EpochInfo>) -> Self {
         Self {
-            validator_id,
-            validators,
+            epoch_info,
             network,
             fanout: DEFAULT_FANOUT,
             tree_cache: Cache::new(MAX_CACHED_TREES),
@@ -89,7 +90,7 @@ where
             .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
             .await;
         let root = tree.get_root();
-        let addr = self.validators[root as usize].disseminator_address;
+        let addr = self.epoch_info.validator(root).disseminator_address;
         self.network.send(shred, addr).await
     }
 
@@ -106,7 +107,7 @@ where
         let addrs = tree
             .get_children()
             .iter()
-            .map(|child| self.validators[*child as usize].disseminator_address);
+            .map(|child| self.epoch_info.validator(*child).disseminator_address);
         self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
@@ -118,9 +119,9 @@ where
             return tree;
         }
         let tree = TurbineTree::new(
-            &self.validators,
+            &self.epoch_info.validators,
             self.fanout,
-            self.validator_id,
+            self.epoch_info.own_id,
             slot,
             shred,
         );
@@ -271,7 +272,8 @@ mod tests {
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
             let network = core.join_unlimited(i as ValidatorId).await;
-            let turbine = Turbine::new(i as ValidatorId, validators.to_vec(), network);
+            let epoch_info = Arc::new(EpochInfo::new(i as ValidatorId, validators.to_vec()));
+            let turbine = Turbine::new(network, epoch_info);
             disseminators.push(turbine);
         }
         disseminators
