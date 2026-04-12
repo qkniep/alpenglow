@@ -132,8 +132,8 @@ pub struct StakeWeightedSampler {
 impl StakeWeightedSampler {
     /// Creates a new `StakeWeightedSampler` instance.
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
-        let stakes: Vec<u64> = validators.iter().map(|v| v.stake.inner()).collect();
-        let stake_index = WeightedIndex::new(&stakes).unwrap();
+        let stakes = validators.iter().map(|v| v.stake.inner());
+        let stake_index = WeightedIndex::new(stakes).unwrap();
         Self {
             validators,
             stake_index,
