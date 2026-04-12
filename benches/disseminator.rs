@@ -1,7 +1,10 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::ValidatorId;
+use std::sync::Arc;
+
+use alpenglow::{ValidatorId, ValidatorInfo};
+use alpenglow::consensus::EpochInfo;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
@@ -22,8 +25,24 @@ fn turbine_tree(bencher: divan::Bencher) {
         .with_inputs(|| {
             let net1 = UdpNetwork::new_with_any_port();
             let net2 = UdpNetwork::new_with_any_port();
-            let turbine1 = Turbine::new(ValidatorId::new(0), Vec::new(), net1);
-            let turbine2 = Turbine::new(ValidatorId::new(1), Vec::new(), net2);
+            let mut rng = rand::rng();
+            let addr = alpenglow::network::dontcare_sockaddr();
+            let validators: Vec<_> = (0..2)
+                .map(|i| ValidatorInfo {
+                    id: i,
+                    stake: 1,
+                    pubkey: SecretKey::new(&mut rng).to_pk(),
+                    voting_pubkey: alpenglow::crypto::aggsig::SecretKey::new(&mut rng).to_pk(),
+                    all2all_address: addr,
+                    disseminator_address: addr,
+                    repair_request_address: addr,
+                    repair_response_address: addr,
+                })
+                .collect();
+            let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(0), validators));
+            let turbine1 = Turbine::new(net1, epoch_info);
+            let epoch_info = Arc::new(EpochInfo::new(ValidatorId::new(1), validators));
+            let turbine2 = Turbine::new(net2, epoch_info);
 
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
