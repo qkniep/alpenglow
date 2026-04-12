@@ -58,11 +58,16 @@ impl Slice {
     }
 
     /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
+    ///
+    /// Also takes an already-computed Merkle root to avoid recomputing it.
     #[must_use]
-    pub(crate) fn from_shreds(payload: SlicePayload, any_shred: &ValidatedShred) -> Self {
+    pub(crate) fn from_shreds_with_root(
+        payload: SlicePayload,
+        any_shred: &ValidatedShred,
+        root: SliceRoot,
+    ) -> Self {
         let header = any_shred.payload().header.clone();
-        let merkle_root = Some(any_shred.merkle_root.clone());
-        Self::from_parts(header, payload, merkle_root)
+        Self::from_parts(header, payload, Some(root))
     }
 
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].

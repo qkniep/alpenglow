@@ -37,9 +37,7 @@ pub enum AddShredError {
 impl From<ShredVerifyError> for AddShredError {
     fn from(src: ShredVerifyError) -> Self {
         match src {
-            ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
-                AddShredError::InvalidSignature
-            }
+            ShredVerifyError::InvalidSignature => AddShredError::InvalidSignature,
             ShredVerifyError::Equivocation => AddShredError::Equivocation,
         }
     }
