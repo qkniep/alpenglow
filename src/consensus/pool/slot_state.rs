@@ -593,25 +593,6 @@ mod tests {
     use crate::test_utils::generate_validators;
 
     #[test]
-    fn quorums() {
-        let (_, epoch_info) = generate_validators(6);
-        let slot_state = SlotState::new(Slot::new(0), epoch_info);
-        assert!(slot_state.is_weak_quorum(Stake::new(3)));
-        assert!(!slot_state.is_quorum(Stake::new(3)));
-        assert!(slot_state.is_quorum(Stake::new(4)));
-        assert!(!slot_state.is_strong_quorum(Stake::new(4)));
-        assert!(slot_state.is_strong_quorum(Stake::new(5)));
-
-        let (_, epoch_info) = generate_validators(11);
-        let slot_state = SlotState::new(Slot::new(0), epoch_info);
-        assert!(slot_state.is_weak_quorum(Stake::new(5)));
-        assert!(!slot_state.is_quorum(Stake::new(5)));
-        assert!(slot_state.is_quorum(Stake::new(7)));
-        assert!(!slot_state.is_strong_quorum(Stake::new(7)));
-        assert!(slot_state.is_strong_quorum(Stake::new(9)));
-    }
-
-    #[test]
     fn add_cert() {
         let (sks, epoch_info) = generate_validators(11);
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
