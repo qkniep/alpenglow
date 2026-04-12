@@ -13,6 +13,7 @@ wincode = "0.5"
 
 [dependencies.alpenglow]
 path = ".."
+features = ["arbitrary"]
 
 # --- Fuzz Targets ---
 
@@ -61,6 +62,20 @@ bench = false
 [[bin]]
 name = "consensus_message_roundtrip"
 path = "fuzz_targets/consensus_message_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shred_roundtrip"
+path = "fuzz_targets/shred_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vote_sig_verify"
+path = "fuzz_targets/vote_sig_verify.rs"
 test = false
 doc = false
 bench = false

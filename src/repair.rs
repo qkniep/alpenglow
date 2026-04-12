@@ -33,6 +33,7 @@ use crate::{BlockId, ValidatorId};
 const REPAIR_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
 
 /// Different types of [`RepairRequest`] messages.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum RepairRequestType {
     /// Request for the total number of slices in block with a given hash.
@@ -56,6 +57,7 @@ impl RepairRequestType {
 }
 
 /// Request messages for the repair sub-protocol.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequest {
     /// The validator that sent the message.
@@ -69,6 +71,7 @@ pub struct RepairRequest {
 /// Each response type corresponds to a specific request message type.
 /// Each response contains the request message that it is a response to.
 /// If well-formed, it thus contains the corresponding variant of [`RepairRequest`].
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum RepairResponse {
     /// Response with the last slice's Merkle root hash, plus corresponding proof.

@@ -12,6 +12,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 /// Validator stake type.
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(
     Clone,
     Copy,

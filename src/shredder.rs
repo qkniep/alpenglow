@@ -105,6 +105,7 @@ impl From<ReedSolomonShredError> for DeshredError {
     }
 }
 
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
@@ -113,6 +114,7 @@ pub enum ShredPayloadType {
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
 /// Shreds are crafted to fit into an MTU size packet.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     payload_type: ShredPayloadType,
@@ -170,6 +172,7 @@ impl Shred {
 }
 
 /// Base payload of a shred, regardless of its type.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct ShredPayload {
     /// Slice header replicated in each shred.

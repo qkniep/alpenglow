@@ -10,6 +10,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 /// Validator ID number type.
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(
     Clone,
     Copy,

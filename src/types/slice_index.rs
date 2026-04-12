@@ -126,6 +126,14 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for SliceIndex {
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for SliceIndex {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let index = u.int_in_range(0..=(MAX_SLICES_PER_BLOCK - 1))?;
+        Ok(Self(index))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -103,6 +103,7 @@ impl Slice {
 /// Struct to hold all the header payload of a [`Slice`].
 ///
 /// This information is included in each shred after shredding.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
@@ -116,6 +117,7 @@ pub(crate) struct SliceHeader {
 /// Struct to hold all the actual payload of a [`Slice`].
 ///
 /// This is what actually gets "shredded" into different shreds.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
     /// Same as [`Slice::parent`].

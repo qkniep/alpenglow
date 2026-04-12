@@ -78,6 +78,7 @@ pub const QUORUM_THRESHOLD: Fraction = Fraction::new(3, NonZeroU64::new(5).unwra
 /// Used for fast-final certificates.
 pub const STRONG_QUORUM_THRESHOLD: Fraction = Fraction::new(4, NonZeroU64::new(5).unwrap());
 
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ConsensusMessage {
     Vote(Vote),

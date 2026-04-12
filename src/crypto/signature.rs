@@ -85,6 +85,14 @@ impl Signature {
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for Signature {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let bytes: [u8; 64] = u.arbitrary()?;
+        Ok(Signature(ed25519_consensus::Signature::from(bytes)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
