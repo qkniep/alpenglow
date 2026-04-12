@@ -202,8 +202,10 @@ fn read_bitvec<'de, C: Config>(
         );
         return Err(wincode::ReadError::Custom("want to use too many bits"));
     }
-    // The `BitVec` is initialized from the backing storage words. We truncate to
-    // `num_bits` because the last word may contain unused trailing bits.
+    
+    // the `BitVec` is now initialized with some `usize` elements
+    // we only want to use the first `num_bits` bits, as this is the intended length
+    // some last bits may be uninitialized and will be ignored by `BitVec`
     let mut bitmask =
         BitVec::try_from_vec(bitmask_raw_vec).expect("bitmask vector should never be too big");
     bitmask.truncate(num_bits);
