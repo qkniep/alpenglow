@@ -4,10 +4,13 @@
 //! Vote types used for the consensus protocol.
 //!
 //! Each vote kind is represented by its own concrete struct:
-//! [`NotarVote`], [`NotarFallbackVote`], [`SkipVote`], [`SkipFallbackVote`], [`FinalVote`].
+//! - [`NotarVote`]
+//! - [`NotarFallbackVote`]
+//! - [`SkipVote`]
+//! - [`SkipFallbackVote`]
+//! - [`FinalVote`]
 //!
-//! The [`Vote`] enum is a sum type over all vote kinds, used in contexts where the
-//! kind is not statically known (e.g. network messages, standstill re-broadcast).
+//! The [`Vote`] enum is a sum type over all these vote kinds.
 
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -406,39 +409,6 @@ mod tests {
 
     #[test]
     fn basic() {
-        let sk = SecretKey::new(&mut rand::rng());
-        let pk = sk.to_pk();
-
-        let vote = NotarVote::new(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
-        assert!(matches!(Vote::Notar(vote.clone()), Vote::Notar(_)));
-        assert!(vote.check_sig(&pk));
-
-        let vote =
-            NotarFallbackVote::new(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
-        assert!(matches!(
-            Vote::NotarFallback(vote.clone()),
-            Vote::NotarFallback(_)
-        ));
-        assert!(vote.check_sig(&pk));
-
-        let vote = SkipVote::new(Slot::new(0), &sk, ValidatorId::new(0));
-        assert!(matches!(Vote::Skip(vote.clone()), Vote::Skip(_)));
-        assert!(vote.check_sig(&pk));
-
-        let vote = SkipFallbackVote::new(Slot::new(0), &sk, ValidatorId::new(0));
-        assert!(matches!(
-            Vote::SkipFallback(vote.clone()),
-            Vote::SkipFallback(_)
-        ));
-        assert!(vote.check_sig(&pk));
-
-        let vote = FinalVote::new(Slot::new(0), &sk, ValidatorId::new(0));
-        assert!(matches!(Vote::Final(vote.clone()), Vote::Final(_)));
-        assert!(vote.check_sig(&pk));
-    }
-
-    #[test]
-    fn vote_enum_constructors() {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
