@@ -66,7 +66,7 @@ impl Slice {
         any_shred: &ValidatedShred,
         root: SliceRoot,
     ) -> Self {
-        let header = any_shred.payload().header.clone();
+        let header = any_shred.payload().header;
         Self::from_parts(header, payload, Some(root))
     }
 
@@ -103,7 +103,7 @@ impl Slice {
 /// Struct to hold all the header payload of a [`Slice`].
 ///
 /// This information is included in each shred after shredding.
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SliceHeader {
     /// Same as [`Slice::slot`].
     pub(crate) slot: Slot,
