@@ -10,10 +10,7 @@ use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
 use static_assertions::const_assert;
 use thiserror::Error;
 
-use super::{
-    DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
-    TOTAL_SHREDS,
-};
+use super::{DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING, TOTAL_SHREDS};
 use crate::shredder::MAX_DATA_PER_SHRED;
 use crate::shredder::validated_shreds::ValidatedShreds;
 

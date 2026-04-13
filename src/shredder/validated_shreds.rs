@@ -55,7 +55,10 @@ impl<'a> ValidatedShreds<'a> {
             }
         }
 
-        Some(Self { shreds, data_shreds })
+        Some(Self {
+            shreds,
+            data_shreds,
+        })
     }
 
     /// Returns the number of present (non-`None`) shreds.
@@ -89,16 +92,13 @@ impl<'a> ValidatedShreds<'a> {
     /// The index is adjusted to be relative to the start of the coding section.
     pub(super) fn coding_shred_payloads(self) -> impl Iterator<Item = (usize, &'a [u8])> {
         let data_shreds = self.data_shreds;
-        self.shreds
-            .iter()
-            .skip(data_shreds)
-            .filter_map(move |s| {
-                s.as_ref().map(|s| match &s.payload_type {
-                    ShredPayloadType::Coding(c) => (*c.shred_index - data_shreds, c.data.as_slice()),
-                    // SAFETY: ValidatedShreds ensures all shreds after data_shreds are coding
-                    ShredPayloadType::Data(_) => panic!("should be a coding shred"),
-                })
+        self.shreds.iter().skip(data_shreds).filter_map(move |s| {
+            s.as_ref().map(|s| match &s.payload_type {
+                ShredPayloadType::Coding(c) => (*c.shred_index - data_shreds, c.data.as_slice()),
+                // SAFETY: ValidatedShreds ensures all shreds after data_shreds are coding
+                ShredPayloadType::Data(_) => panic!("should be a coding shred"),
             })
+        })
     }
 }
 
