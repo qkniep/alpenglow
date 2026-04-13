@@ -73,11 +73,6 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         }
     }
 
-    /// Returns the number of shreds per slice (quorum size from the sampler).
-    pub fn num_shreds(&self) -> usize {
-        self.workload_test.num_shreds()
-    }
-
     /// Runs multiple iterations of the workload test.
     ///
     /// Each iteration corresponds to distributing one slice, sampling leader

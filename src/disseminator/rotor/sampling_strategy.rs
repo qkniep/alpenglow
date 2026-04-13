@@ -619,7 +619,7 @@ impl<F: QuorumSamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
 pub struct FaitAccompli2Sampler {
     required_samples: Vec<ValidatorId>,
     medium_nodes: Vec<(ValidatorId, f64)>,
-    fallback_sampler: IidQuorumSampler<StakeWeightedSampler>,
+    fallback_sampler: StakeWeightedSampler,
     k: usize,
 }
 
@@ -673,13 +673,10 @@ impl FaitAccompli2Sampler {
                 v
             })
             .collect();
-        // The fallback quorum size is an upper bound; FA2's sample_quorum may request
-        // fewer samples depending on how many medium nodes were included.
-        let fallback_k = k as usize - required_samples.len();
         let fallback_sampler = if r == 0.0 {
-            StakeWeightedSampler::new(validators).into_quorum_strategy(fallback_k)
+            StakeWeightedSampler::new(validators)
         } else {
-            StakeWeightedSampler::new(new_stake_distribution).into_quorum_strategy(fallback_k)
+            StakeWeightedSampler::new(new_stake_distribution)
         };
 
         Self {
@@ -724,7 +721,7 @@ impl QuorumSamplingStrategy for FaitAccompli2Sampler {
         if result.len() < self.k {
             let k_prime = self.k - result.len();
             let additional_samples: Vec<_> = (0..k_prime)
-                .map(|_| self.fallback_sampler.inner.sample(rng))
+                .map(|_| self.fallback_sampler.sample(rng))
                 .collect();
             result.extend_from_slice(&additional_samples);
         }
