@@ -102,6 +102,7 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     let test = QuorumRobustnessTest::new(
         validators,
         "solana".to_string(),
+        "fa1_iid".to_string(),
         vec![leader_sampler, proposer_sampler, relay_sampler],
         vec![0, 1, 2],
         vec![1, params.num_proposers as usize, params.num_relays as usize],

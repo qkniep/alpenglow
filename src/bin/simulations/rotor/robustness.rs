@@ -58,6 +58,7 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Res
     let test = QuorumRobustnessTest::new(
         validators,
         "solana".to_string(),
+        "stake_weighted".to_string(),
         vec![leader_sampler, rotor_sampler],
         vec![1; params.slices],
         vec![params.shreds; params.slices],

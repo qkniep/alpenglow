@@ -68,11 +68,6 @@ pub trait SamplingStrategy {
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo;
 
-    /// Returns a printable name of the sampling strategy.
-    fn name() -> &'static str {
-        std::any::type_name::<Self>()
-    }
-
     /// Wraps this sampler into an [`IidQuorumSampler`] with the given quorum size.
     ///
     /// The returned adapter implements [`QuorumSamplingStrategy`] by calling
@@ -98,11 +93,6 @@ pub trait QuorumSamplingStrategy {
 
     /// Samples a quorum of [`Self::quorum_size()`] validators.
     fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId>;
-
-    /// Returns a printable name of the sampling strategy.
-    fn name() -> &'static str {
-        std::any::type_name::<Self>()
-    }
 }
 
 /// Adapter that turns any [`SamplingStrategy`] into a [`QuorumSamplingStrategy`]
@@ -130,10 +120,6 @@ impl<S: SamplingStrategy> SamplingStrategy for IidQuorumSampler<S> {
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         self.inner.sample_info(rng)
     }
-
-    fn name() -> &'static str {
-        S::name()
-    }
 }
 
 impl<S: SamplingStrategy> QuorumSamplingStrategy for IidQuorumSampler<S> {
@@ -143,10 +129,6 @@ impl<S: SamplingStrategy> QuorumSamplingStrategy for IidQuorumSampler<S> {
 
     fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
         (0..self.k).map(|_| self.inner.sample(rng)).collect()
-    }
-
-    fn name() -> &'static str {
-        S::name()
     }
 }
 
@@ -161,10 +143,6 @@ impl SamplingStrategy for AllSameSampler {
 
     fn sample_info<R: Rng>(&self, _rng: &mut R) -> &ValidatorInfo {
         &self.0
-    }
-
-    fn name() -> &'static str {
-        "all_same"
     }
 }
 
@@ -191,10 +169,6 @@ impl SamplingStrategy for UniformSampler {
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng).as_index();
         &self.validators[index]
-    }
-
-    fn name() -> &'static str {
-        "uniform"
     }
 }
 
@@ -228,10 +202,6 @@ impl SamplingStrategy for StakeWeightedSampler {
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
         let index = self.sample(rng).as_index();
         &self.validators[index]
-    }
-
-    fn name() -> &'static str {
-        "stake_weighted"
     }
 }
 
@@ -334,10 +304,6 @@ impl SamplingStrategy for TurbineSampler {
         let index = self.sample(rng).as_index();
         &self.stake_weighted.validators[index]
     }
-
-    fn name() -> &'static str {
-        "turbine"
-    }
 }
 
 /// A hybrid sampler between weighted sampling with and without replacement.
@@ -414,10 +380,6 @@ impl QuorumSamplingStrategy for DecayingAcceptanceSampler {
         let samples = (0..self.k).map(|_| self.sample_one(rng)).collect();
         self.reset();
         samples
-    }
-
-    fn name() -> &'static str {
-        "decaying_acceptance"
     }
 }
 
@@ -521,10 +483,6 @@ impl QuorumSamplingStrategy for PartitionSampler {
         }
         samples
     }
-
-    fn name() -> &'static str {
-        "partition"
-    }
 }
 
 /// A sampler that uses the FA1-F committee sampling strategy.
@@ -624,16 +582,6 @@ impl<F: QuorumSamplingStrategy> QuorumSamplingStrategy for FaitAccompli1Sampler<
             result.extend_from_slice(&additional_samples);
         }
         result
-    }
-
-    fn name() -> &'static str {
-        if F::name() == "stake_weighted" {
-            "fa1_iid"
-        } else if F::name() == "partition" {
-            "fa1_partition"
-        } else {
-            "fa1"
-        }
     }
 }
 
@@ -764,10 +712,6 @@ impl QuorumSamplingStrategy for FaitAccompli2Sampler {
         }
 
         result
-    }
-
-    fn name() -> &'static str {
-        "fa2"
     }
 }
 

@@ -56,6 +56,7 @@ pub struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     total_stake: Stake,
     stake_distribution: String,
+    sampling_strategy: String,
 }
 
 impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
@@ -63,6 +64,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     pub fn new(
         validators: Vec<ValidatorInfo>,
         stake_distribution: String,
+        sampling_strategy: String,
         samplers: Vec<S>,
         quorum_samplers: Vec<usize>,
         quorum_sizes: Vec<usize>,
@@ -84,6 +86,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             validators,
             total_stake,
             stake_distribution,
+            sampling_strategy,
         }
     }
 
@@ -134,10 +137,9 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         vec_max(&mut attack_probs, &large_attack_probs);
 
         // write results to CSV
-        let sampling_strategy = S::name();
         let mut row = vec![
             self.stake_distribution.clone(),
-            sampling_strategy.to_string(),
+            self.sampling_strategy.clone(),
             adversary_strength.byzantine.to_string(),
             adversary_strength.crashed.to_string(),
             // self.params().num_data_shreds.to_string(),
