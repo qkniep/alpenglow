@@ -33,7 +33,11 @@ pub struct PyjamaInstance {
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
-pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
+pub struct PyjamaInstanceBuilder<
+    L: SamplingStrategy,
+    P: QuorumSamplingStrategy,
+    R: QuorumSamplingStrategy,
+> {
     leader_sampler: L,
     proposer_sampler: P,
     relay_sampler: R,

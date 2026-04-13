@@ -28,7 +28,8 @@ use crate::quorum_robustness::{AdversaryStrength, QuorumRobustnessTest, QuorumTh
 pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler = StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(1);
-    let rotor_sampler = StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(total_shreds);
+    let rotor_sampler =
+        StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(total_shreds);
 
     let params = RotorParams {
         data_shreds,

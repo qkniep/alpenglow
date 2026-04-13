@@ -25,7 +25,11 @@ use crate::rotor::RotorParams;
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct PyjamaLatencySimulation<L: SamplingStrategy, P: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
+pub struct PyjamaLatencySimulation<
+    L: SamplingStrategy,
+    P: QuorumSamplingStrategy,
+    R: QuorumSamplingStrategy,
+> {
     _leader_sampler: PhantomData<L>,
     _proposer_sampler: PhantomData<P>,
     _rotor_sampler: PhantomData<R>,

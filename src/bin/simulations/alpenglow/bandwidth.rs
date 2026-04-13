@@ -55,8 +55,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         leader_sampler: L,
         rotor_sampler: R,
     ) -> Self {
-        let workload_test =
-            WorkloadTest::new(validators, leader_sampler, rotor_sampler);
+        let workload_test = WorkloadTest::new(validators, leader_sampler, rotor_sampler);
         Self::from_workload_test(validators, leader_bandwidth, bandwidths, workload_test)
     }
 
@@ -178,11 +177,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
 
 impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
     /// Creates a new instance with the given stake distribution.
-    pub fn new(
-        validators: &[ValidatorInfo],
-        leader_sampler: L,
-        rotor_sampler: R,
-    ) -> Self {
+    pub fn new(validators: &[ValidatorInfo], leader_sampler: L, rotor_sampler: R) -> Self {
         let num_val = validators.len();
         Self {
             validators: validators.to_vec(),

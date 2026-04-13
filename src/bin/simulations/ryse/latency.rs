@@ -33,7 +33,9 @@ pub struct RyseLatencySimulation<L: QuorumSamplingStrategy, R: QuorumSamplingStr
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Protocol for RyseLatencySimulation<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Protocol
+    for RyseLatencySimulation<L, R>
+{
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = LatencySimParams;
@@ -370,7 +372,9 @@ impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> LatencySimInstanceBui
     }
 }
 
-impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Builder for LatencySimInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Builder
+    for LatencySimInstanceBuilder<L, R>
+{
     type Params = LatencySimParams;
     type Instance = LatencySimInstance;
 
