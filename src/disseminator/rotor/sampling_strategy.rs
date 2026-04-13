@@ -23,6 +23,7 @@
 //! - [`AllSameSampler`] always returns the same validator (for testing).
 //! - [`UniformSampler`] picks all validators with equal probability.
 //! - [`StakeWeightedSampler`] picks validators proportional to their stake.
+//! - [`DecayingAcceptanceSampler`] hybrid between with/without replacement.
 //! - [`TurbineSampler`] simulates the workload of Turbine.
 //!
 //! Quorum strategies ([`QuorumSamplingStrategy`]):
@@ -31,6 +32,12 @@
 //! - [`PartitionSampler`] splits validators into bins and samples from each bin.
 //! - [`FaitAccompli1Sampler`] uses the FA1-F committee sampling strategy.
 //! - [`FaitAccompli2Sampler`] uses the FA2 committee sampling strategy.
+//!
+//! Note that [`DecayingAcceptanceSampler`] implements both traits.
+//! When used as a single-node strategy, it needs to be manually reset.
+//! When used as a quorum strategy, it automatically resets after each call to [`sample_quorum`].
+//!
+//! [`sample_quorum`]: QuorumSamplingStrategy::sample_quorum
 
 use std::sync::Mutex;
 
@@ -322,7 +329,7 @@ impl SamplingStrategy for TurbineSampler {
 /// [`sample_quorum`]: QuorumSamplingStrategy::sample_quorum
 pub struct DecayingAcceptanceSampler {
     stake_weighted: StakeWeightedSampler,
-    pub max_samples: f64,
+    max_samples: f64,
     sample_count: Mutex<Vec<usize>>,
     k: usize,
 }
@@ -368,6 +375,17 @@ impl DecayingAcceptanceSampler {
         }
 
         panic!("rejected all {MAX_TRIES_PER_SAMPLE} samples");
+    }
+}
+
+impl SamplingStrategy for DecayingAcceptanceSampler {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
+        self.sample_one(rng)
+    }
+
+    fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
+        let index = self.sample(rng).as_index();
+        &self.stake_weighted.validators[index]
     }
 }
 
