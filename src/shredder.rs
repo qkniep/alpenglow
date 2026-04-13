@@ -40,7 +40,7 @@ use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
-use crate::types::{DeshredSlice, Slice, SliceHeader, SlicePayload};
+use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -239,7 +239,7 @@ pub trait Shredder: Default {
     fn deshred(
         &mut self,
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
-    ) -> Result<(DeshredSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let shreds =
             ValidatedShreds::try_new(shreds, Self::DATA_OUTPUT_SHREDS, Self::CODING_OUTPUT_SHREDS)
                 .ok_or(DeshredError::InvalidLayout)?;
@@ -252,7 +252,7 @@ pub trait Shredder: Default {
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
-    ) -> Result<(DeshredSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;
+    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;
 }
 
 /// A shredder that augments the [`DATA_SHREDS`] data shreds with
@@ -277,7 +277,7 @@ impl Shredder for RegularShredder {
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
-    ) -> Result<(DeshredSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
@@ -287,7 +287,7 @@ impl Shredder for RegularShredder {
         // additional Merkle tree validity check
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
-        let slice = DeshredSlice::from_shreds(payload, any_shred, merkle_root);
+        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
@@ -328,7 +328,7 @@ impl Shredder for CodingOnlyShredder {
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
-    ) -> Result<(DeshredSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
@@ -339,7 +339,7 @@ impl Shredder for CodingOnlyShredder {
         raw_shreds.data = vec![];
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
-        let slice = DeshredSlice::from_shreds(payload, any_shred, merkle_root);
+        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
@@ -400,7 +400,7 @@ impl Shredder for PetsShredder {
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
-    ) -> Result<(DeshredSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (mut buffer, mut raw_shreds) = self.0.deshred(shreds)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
@@ -421,7 +421,7 @@ impl Shredder for PetsShredder {
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
         let payload = SlicePayload::from(buffer.as_slice());
-        let slice = DeshredSlice::from_shreds(payload, any_shred, merkle_root);
+        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
@@ -483,7 +483,7 @@ impl Shredder for AontShredder {
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
-    ) -> Result<(DeshredSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (mut buffer, raw_shreds) = self.0.deshred(shreds)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
@@ -508,7 +508,7 @@ impl Shredder for AontShredder {
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
         let payload = SlicePayload::from(buffer.as_slice());
-        let slice = DeshredSlice::from_shreds(payload, any_shred, merkle_root);
+        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)

@@ -9,7 +9,7 @@ pub mod stake;
 pub mod validator_id;
 
 pub use self::fraction::Fraction;
-pub use self::slice::{DeshredSlice, Slice};
+pub use self::slice::{ReconstructedSlice, Slice};
 pub(crate) use self::slice::{SliceHeader, SlicePayload};
 pub use self::slice_index::SliceIndex;
 pub use self::slot::{SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Slot};

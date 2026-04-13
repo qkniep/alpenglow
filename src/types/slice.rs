@@ -90,13 +90,13 @@ impl Slice {
 ///
 /// All [`Slice`] fields and methods are accessible directly via [`Deref`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DeshredSlice {
+pub struct ReconstructedSlice {
     inner: Slice,
     /// Merkle root hash over all shreds in this slice.
     merkle_root: SliceRoot,
 }
 
-impl DeshredSlice {
+impl ReconstructedSlice {
     /// Creates a [`DeshredSlice`] from raw payload bytes, shred metadata, and the Merkle root.
     #[must_use]
     pub(crate) fn from_shreds(
@@ -118,7 +118,7 @@ impl DeshredSlice {
     }
 }
 
-impl Deref for DeshredSlice {
+impl Deref for ReconstructedSlice {
     type Target = Slice;
 
     fn deref(&self) -> &Slice {
