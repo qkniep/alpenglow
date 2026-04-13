@@ -51,6 +51,7 @@ pub struct RotorInstanceBuilder<L: SamplingStrategy, R: QuorumSamplingStrategy> 
 impl<L: SamplingStrategy, R: QuorumSamplingStrategy> RotorInstanceBuilder<L, R> {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(leader_sampler: L, rotor_sampler: R, params: RotorParams) -> Self {
+        assert_eq!(rotor_sampler.quorum_size(), params.shreds);
         Self {
             leader_sampler,
             rotor_sampler,

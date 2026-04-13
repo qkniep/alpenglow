@@ -45,6 +45,7 @@ pub struct RyseInstanceBuilder<L: QuorumSamplingStrategy, R: QuorumSamplingStrat
 impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> RyseInstanceBuilder<L, R> {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(leader_sampler: L, relay_sampler: R, params: RyseParameters) -> Self {
+        assert_eq!(relay_sampler.quorum_size(), params.num_relays as usize);
         Self {
             leader_sampler,
             relay_sampler,

@@ -57,6 +57,11 @@ where
         relay_sampler: R,
         params: PyjamaParameters,
     ) -> Self {
+        assert_eq!(
+            proposer_sampler.quorum_size(),
+            params.num_proposers as usize
+        );
+        assert_eq!(relay_sampler.quorum_size(), params.num_relays as usize);
         Self {
             leader_sampler,
             proposer_sampler,
