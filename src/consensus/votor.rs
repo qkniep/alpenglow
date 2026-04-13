@@ -438,9 +438,7 @@ mod tests {
         assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
-        let notar_vote = if let Vote::Notar(v) = vote {
-            v
-        } else {
+        let Vote::Notar(notar_vote) = vote else {
             unreachable!()
         };
         let cert = Cert::Notar(NotarCert::new_unchecked(
