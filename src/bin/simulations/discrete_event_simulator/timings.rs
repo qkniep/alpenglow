@@ -21,7 +21,12 @@ use alpenglow::ValidatorId;
 
 use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, Stage};
 
-/// Simulated time in nanoseconds.
+/// Simulated time with nanosecond precision.
+///
+/// Its 64-bit representation supports durations of more than 548 years.
+/// This type is currently used to represent both:
+/// - a point in time, in nanoseconds since the start of the simulation
+/// - a duration, in nanoseconds
 // TODO: maybe split into a duration and an instant type?
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SimTime(u64);
@@ -29,7 +34,7 @@ pub struct SimTime(u64);
 impl SimTime {
     /// Start of the simulation.
     pub const ZERO: Self = Self(0);
-    /// Infinite time, used to represent a point in time that is never reached.
+    /// Infinite time, used to indicate that an event has not happened yet.
     pub const NEVER: Self = Self(u64::MAX);
 
     /// Constructs a new [`SimTime`] from the given number of nanoseconds.
