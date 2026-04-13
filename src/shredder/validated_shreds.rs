@@ -3,7 +3,7 @@
 
 //! Defines the [`ValidatedShreds`] type.
 
-use crate::shredder::{TOTAL_SHREDS, ValidatedShred};
+use super::{TOTAL_SHREDS, ValidatedShred};
 
 /// Validated shreds array type.
 ///
@@ -17,9 +17,14 @@ pub struct ValidatedShreds<'a>(&'a [Option<ValidatedShred>; TOTAL_SHREDS]);
 impl<'a> ValidatedShreds<'a> {
     /// Creates a new [`ValidatedShreds`].
     ///
+    /// Returns `None` if the input array contains:
+    /// - a shred with the wrong type for the index, or
+    /// - shreds of different sizes.
+    ///
     /// # Panics
     ///
-    /// Panics if the input array contains a shred at the wrong index.
+    /// - Panics if the input array contains a shred at the wrong index.
+    /// - Panics if `shreds` contains no shreds.
     pub(super) fn try_new(
         shreds: &'a [Option<ValidatedShred>; TOTAL_SHREDS],
         data_shreds: usize,
@@ -28,8 +33,8 @@ impl<'a> ValidatedShreds<'a> {
         assert_eq!(data_shreds + coding_shreds, TOTAL_SHREDS);
 
         // check all shred sizes match
-        let some_shred = shreds.iter().flatten().next();
-        let shred_size = some_shred.map_or(0, |s| s.payload().data.len());
+        let any_shred = shreds.iter().flatten().next().unwrap();
+        let shred_size = any_shred.payload().data.len();
         for s in shreds.iter().flatten() {
             if s.payload().data.len() != shred_size {
                 return None;
@@ -53,6 +58,12 @@ impl<'a> ValidatedShreds<'a> {
     /// Returns the inner reference to an array of [`ValidatedShred`]s.
     pub(super) fn to_shreds(self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
         self.0
+    }
+
+    /// Returns a reference to any shred in this set.
+    pub(super) fn any_shred(self) -> &'a ValidatedShred {
+        // this unwrap is safe because constructor ensures at least one shred
+        self.0.iter().flatten().next().unwrap()
     }
 }
 
