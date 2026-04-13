@@ -179,7 +179,9 @@ where
             }
             RepairRequestType::Shred(block_id, slice, shred_index) => {
                 let blockstore = self.blockstore.read().await;
-                let shred = blockstore.get_shred(block_id, *slice, *shred_index).cloned()?;
+                let shred = blockstore
+                    .get_shred(block_id, *slice, *shred_index)
+                    .cloned()?;
                 Some(RepairResponse::Shred(
                     request.req_type.clone(),
                     shred.into_shred(),
