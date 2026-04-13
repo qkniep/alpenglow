@@ -164,6 +164,7 @@ impl ReedSolomonCoder {
             .filter_map(|s| {
                 s.as_ref().map(|s| match &s.payload_type {
                     ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
+                    // SAFETY: ValidatedShreds ensures all shreds up to coding_offset are data
                     ShredPayloadType::Coding(_) => panic!("should be a data shred"),
                 })
             })
@@ -172,6 +173,7 @@ impl ReedSolomonCoder {
         let coding = shreds.iter().skip(coding_offset).filter_map(|s| {
             s.as_ref().map(|s| match &s.payload_type {
                 ShredPayloadType::Coding(c) => (*c.shred_index - coding_offset, &c.data),
+                // SAFETY: ValidatedShreds ensures all shreds after coding_offset are coding
                 ShredPayloadType::Data(_) => panic!("should be a coding shred"),
             })
         });
