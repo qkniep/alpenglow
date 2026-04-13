@@ -18,7 +18,7 @@ use crate::crypto::signature::PublicKey;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
-use crate::types::{Slice, SliceIndex};
+use crate::types::{DeshredSlice, Slice, SliceIndex};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
@@ -147,7 +147,7 @@ pub struct BlockData {
     /// Any shreds of this block stored so far, indexed by slice index.
     pub(super) shreds: BTreeMap<SliceIndex, [Option<ValidatedShred>; TOTAL_SHREDS]>,
     /// Any already reconstructed slices of this block.
-    pub(super) slices: BTreeMap<SliceIndex, Slice>,
+    pub(super) slices: BTreeMap<SliceIndex, DeshredSlice>,
     /// Index of the slice marked as last, if any.
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
@@ -306,10 +306,7 @@ impl BlockData {
         }
 
         // calculate double-Merkle tree & block hash
-        let merkle_roots = self
-            .slices
-            .values()
-            .map(|s| s.merkle_root.as_ref().unwrap());
+        let merkle_roots = self.slices.values().map(|s| &s.merkle_root);
         let tree = DoubleMerkleTree::new(merkle_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);

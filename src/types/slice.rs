@@ -12,11 +12,12 @@ use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, Slot};
 
-/// A slice is the unit of data between block and shred.
+/// A slice is the unit of data between block and shred, before shredding.
 ///
-/// It corresponds to a single batch of data that is disseminated by the leader.
+/// It corresponds to a single batch of data that the leader is about to disseminate.
 /// During shredding, a slice is turned into multiple shreds.
-/// During deshredding, multiple shreds are turned into a slice.
+/// The result of de-shredding is a [`DeshredSlice`], which additionally carries
+/// the Merkle root that is only computable after shredding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slice {
     /// Slot number this slice is part of.
@@ -25,8 +26,6 @@ pub struct Slice {
     pub slice_index: SliceIndex,
     /// Indicates whether this is the last slice in the slot.
     pub is_last: bool,
-    /// Merkle root hash over all shreds in this slice.
-    pub merkle_root: Option<SliceRoot>,
     /// If first slice in the block or parent changed due to optimistic handover,
     /// then indicates which block is the parent of the block this slice is part of.
     pub parent: Option<(Slot, BlockHash)>,
@@ -36,11 +35,7 @@ pub struct Slice {
 
 impl Slice {
     /// Constructs a [`Slice`] from its component parts.
-    pub(crate) fn from_parts(
-        header: SliceHeader,
-        payload: SlicePayload,
-        merkle_root: Option<SliceRoot>,
-    ) -> Self {
+    pub(crate) fn from_parts(header: SliceHeader, payload: SlicePayload) -> Self {
         let SliceHeader {
             slot,
             slice_index,
@@ -51,23 +46,9 @@ impl Slice {
             slot,
             slice_index,
             is_last,
-            merkle_root,
             parent,
             data,
         }
-    }
-
-    /// Creates a [`Slice`] from raw payload bytes and the metadata extracted from a shred.
-    ///
-    /// Also takes an already-computed Merkle root to avoid recomputing it.
-    #[must_use]
-    pub(crate) fn from_shreds_with_root(
-        payload: SlicePayload,
-        any_shred: &ValidatedShred,
-        root: SliceRoot,
-    ) -> Self {
-        let header = any_shred.payload().header;
-        Self::from_parts(header, payload, Some(root))
     }
 
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
@@ -76,7 +57,6 @@ impl Slice {
             slot,
             slice_index,
             is_last,
-            merkle_root: _,
             parent,
             data,
         } = self;
@@ -96,6 +76,73 @@ impl Slice {
             slot: self.slot,
             slice_index: self.slice_index,
             is_last: self.is_last,
+        }
+    }
+}
+
+/// A slice recovered after de-shredding.
+///
+/// Unlike [`Slice`], this type always carries the Merkle root over all shreds in the slice,
+/// which is only computable after shredding and verified during de-shredding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeshredSlice {
+    /// Slot number this slice is part of.
+    pub slot: Slot,
+    /// Index of the slice within its slot.
+    pub slice_index: SliceIndex,
+    /// Indicates whether this is the last slice in the slot.
+    pub is_last: bool,
+    /// If first slice in the block or parent changed due to optimistic handover,
+    /// then indicates which block is the parent of the block this slice is part of.
+    pub parent: Option<(Slot, BlockHash)>,
+    /// Payload bytes.
+    pub data: Vec<u8>,
+    /// Merkle root hash over all shreds in this slice.
+    pub merkle_root: SliceRoot,
+}
+
+impl DeshredSlice {
+    /// Creates a [`DeshredSlice`] from raw payload bytes, shred metadata, and the Merkle root.
+    #[must_use]
+    pub(crate) fn from_shreds(
+        payload: SlicePayload,
+        any_shred: &ValidatedShred,
+        merkle_root: SliceRoot,
+    ) -> Self {
+        let header = any_shred.payload().header;
+        let SliceHeader {
+            slot,
+            slice_index,
+            is_last,
+        } = header;
+        let SlicePayload { parent, data } = payload;
+        Self {
+            slot,
+            slice_index,
+            is_last,
+            parent,
+            data,
+            merkle_root,
+        }
+    }
+
+    /// Extracts the [`SliceHeader`] from this slice.
+    pub(crate) fn to_header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
+
+    /// Strips the Merkle root, returning the underlying [`Slice`].
+    pub(crate) fn into_slice(self) -> Slice {
+        Slice {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+            parent: self.parent,
+            data: self.data,
         }
     }
 }
@@ -192,5 +239,5 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
         slice_index: SliceIndex::first(),
         is_last: true,
     };
-    Slice::from_parts(header, payload, None)
+    Slice::from_parts(header, payload)
 }

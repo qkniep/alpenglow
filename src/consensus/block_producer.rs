@@ -345,7 +345,7 @@ where
     ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
         let is_last = header.is_last;
-        let slice = Slice::from_parts(header, payload, None);
+        let slice = Slice::from_parts(header, payload);
         let mut maybe_block_hash = None;
         // PERF: new shredder every time!
         let shreds = RegularShredder::default()
