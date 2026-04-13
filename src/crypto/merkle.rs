@@ -179,6 +179,7 @@ impl MerkleRoot for Hash {
 impl MerkleProof for Vec<Hash> {}
 
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(
     Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
 )]
@@ -196,6 +197,7 @@ impl AsRef<[u8]> for SliceRoot {
 }
 
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct SliceProof(Vec<Hash>);
 impl MerkleProof for SliceProof {}
@@ -207,6 +209,7 @@ impl AsRef<[Hash]> for SliceProof {
 }
 
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(
     Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
 )]
@@ -218,6 +221,7 @@ impl MerkleRoot for DoubleMerkleRoot {
 }
 
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct DoubleMerkleProof(Vec<Hash>);
 impl MerkleProof for DoubleMerkleProof {}

@@ -27,6 +27,7 @@ pub enum CertError {
 }
 
 /// Certificate types used for the consensus protocol.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum Cert {
     Notar(NotarCert),
@@ -164,6 +165,7 @@ impl Cert {
 }
 
 /// A notarization certificate is an aggregate of a quorum of notar votes.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NotarCert {
     slot: Slot,
@@ -250,6 +252,7 @@ impl NotarCert {
 }
 
 /// A notar-fallback certificate is an aggregate of a quorum of notar(-fallback) votes.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NotarFallbackCert {
     slot: Slot,
@@ -374,6 +377,7 @@ impl NotarFallbackCert {
 }
 
 /// A skip certificate is an aggregate of a quorum of skip(-fallback) votes.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SkipCert {
     slot: Slot,
@@ -486,6 +490,7 @@ impl SkipCert {
 }
 
 /// A fast finalization certificate is an aggregate of a strong quorun of notar votes.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct FastFinalCert {
     slot: Slot,
@@ -572,6 +577,7 @@ impl FastFinalCert {
 }
 
 /// A finalization certificate is an aggregate of a quorum of finalization votes.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct FinalCert {
     slot: Slot,

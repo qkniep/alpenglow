@@ -13,6 +13,7 @@ use wincode::{SchemaRead, SchemaWrite};
 ///
 /// This provides 256-bit resistance against (second) preimage attacks.
 /// It also provides 128-bit resistance against collision attacks.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, SchemaRead, SchemaWrite)]
 pub struct Hash(pub(super) [u8; 32]);
 

@@ -18,6 +18,7 @@ use crate::{Slot, ValidatorId};
 /// allowing type-specific data to be authenticated and verified.
 ///
 /// This struct is produced by signing the bytes of a `VoteKind` instance.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Vote {
     kind: VoteKind,
@@ -26,6 +27,7 @@ pub struct Vote {
 }
 
 /// Represents the type-specific vote payload as per the protocol.
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum VoteKind {
     /// A notarization vote for a given block hash in a given slot.

@@ -18,6 +18,7 @@ pub const SLOTS_PER_EPOCH: u64 = 18_000;
 
 /// Slot number type.
 #[repr(transparent)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, SchemaRead, SchemaWrite)]
 pub struct Slot(u64);
 

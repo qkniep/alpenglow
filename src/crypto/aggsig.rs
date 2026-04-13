@@ -346,6 +346,34 @@ impl AggregateSignature {
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for IndividualSignature {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let ikm: [u8; 32] = u.arbitrary()?;
+        let sk = BlstSecretKey::key_gen(&ikm, &[])
+            .unwrap_or_else(|_| BlstSecretKey::key_gen(&[1u8; 32], &[]).unwrap());
+        let msg: Vec<u8> = u.arbitrary()?;
+        Ok(Self(sk.sign(&msg, DST, &[])))
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for AggregateSignature {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let ikm: [u8; 32] = u.arbitrary()?;
+        let sk = BlstSecretKey::key_gen(&ikm, &[])
+            .unwrap_or_else(|_| BlstSecretKey::key_gen(&[1u8; 32], &[]).unwrap());
+        let msg: Vec<u8> = u.arbitrary()?;
+        let sig = sk.sign(&msg, DST, &[]);
+        let num_bits: u8 = u.arbitrary()?;
+        let mut bitmask = bitvec::bitvec![0; 0];
+        for _ in 0..num_bits {
+            bitmask.push(u.arbitrary::<bool>()?);
+        }
+        Ok(Self { sig, bitmask })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

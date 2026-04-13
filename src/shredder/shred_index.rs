@@ -98,6 +98,14 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for ShredIndex {
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for ShredIndex {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let index = u.int_in_range(0..=(TOTAL_SHREDS - 1))?;
+        Ok(Self(index))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
