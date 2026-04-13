@@ -25,10 +25,10 @@ pub use self::sampling_strategy::{
     StakeWeightedSampler,
 };
 use super::Disseminator;
+use crate::ValidatorId;
 use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
-use crate::{Slot, ValidatorId};
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
 ///
@@ -84,7 +84,7 @@ where
 
     /// Sends the shred to the correct relay.
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
-        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred);
         let v = self.epoch_info.epoch_info().validator(relay);
         self.network.send(shred, v.disseminator_address).await
     }
@@ -99,7 +99,7 @@ where
             .id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred);
         if self.epoch_info.own_id() != relay {
             return Ok(());
         }
@@ -120,21 +120,21 @@ where
     ///
     /// Seeds an RNG per slice and calls [`QuorumSamplingStrategy::sample_quorum`]
     /// to get all relays for that slice, then picks the one at the shred's position.
-    fn sample_relay(&self, slot: Slot, shred_index_in_slot: usize) -> ValidatorId {
-        let quorum_size = self.sampler.quorum_size();
-        let slice_index = shred_index_in_slot / quorum_size;
-        let position_in_slice = shred_index_in_slot % quorum_size;
+    fn sample_relay(&self, shred: &Shred) -> ValidatorId {
+        let slot = shred.payload().header.slot;
+        let slice = shred.payload().header.slice_index.inner();
+        let shred = shred.payload().shred_index.inner();
 
         let seed = [
             slot.inner().to_be_bytes(),
-            slice_index.to_be_bytes(),
+            slice.to_be_bytes(),
             [0; 8],
             [0; 8],
         ]
         .concat();
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
         let relays = self.sampler.sample_quorum(&mut rng);
-        relays[position_in_slice]
+        relays[shred]
     }
 }
 
