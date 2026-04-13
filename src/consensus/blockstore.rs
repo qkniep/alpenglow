@@ -236,9 +236,17 @@ impl Blockstore for BlockstoreImpl {
             shred,
             leader_pk,
             &mut shredder,
-        )? {
-            Some(event) => Ok(self.send_votor_event(event).await),
-            None => Ok(None),
+        ) {
+            Ok(Some(event)) => Ok(self.send_votor_event(event).await),
+            Ok(None) => Ok(None),
+            Err(AddShredError::InvalidShred) => {
+                self.votor_channel
+                    .send(VotorEvent::InvalidBlock(slot))
+                    .await
+                    .unwrap();
+                Err(AddShredError::InvalidShred)
+            }
+            Err(e) => Err(e),
         }
     }
 
