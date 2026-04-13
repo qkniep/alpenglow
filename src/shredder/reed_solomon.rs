@@ -155,7 +155,6 @@ impl ReedSolomonCoder {
 
         let data_refs = shreds.data_shred_payloads();
         let coding = shreds.coding_shred_payloads();
-
         for &(i, d) in &data_refs {
             self.decoder
                 .add_original_shard(i, d)
