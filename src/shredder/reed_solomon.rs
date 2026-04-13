@@ -11,7 +11,7 @@ use static_assertions::const_assert;
 use thiserror::Error;
 
 use super::{
-    DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING, ShredPayloadType,
+    DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING,
     TOTAL_SHREDS,
 };
 use crate::shredder::MAX_DATA_PER_SHRED;
@@ -143,40 +143,18 @@ impl ReedSolomonCoder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Vec<u8>, RawShreds), ReedSolomonDeshredError> {
-        let shreds = shreds.to_shreds();
-        let shreds_cnt = shreds.iter().filter(|s| s.is_some()).count();
-        if shreds_cnt < DATA_SHREDS {
+        if shreds.shred_count() < DATA_SHREDS {
             return Err(ReedSolomonDeshredError::NotEnoughShreds);
         }
 
         // configure decoder for shred size
-        let shred_bytes = shreds.iter().flatten().next().unwrap().payload().data.len();
+        let shred_bytes = shreds.any_shred().payload().data.len();
         self.decoder
             .reset(DATA_SHREDS, self.num_coding, shred_bytes)
             .expect("size of validated shred should be supported");
 
-        let coding_offset = TOTAL_SHREDS - self.num_coding;
-
-        // collect data shred indices+refs and feed to decoder
-        let data_refs: Vec<(usize, &[u8])> = shreds
-            .iter()
-            .take(coding_offset)
-            .filter_map(|s| {
-                s.as_ref().map(|s| match &s.payload_type {
-                    ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
-                    // SAFETY: ValidatedShreds ensures all shreds up to coding_offset are data
-                    ShredPayloadType::Coding(_) => panic!("should be a data shred"),
-                })
-            })
-            .collect();
-
-        let coding = shreds.iter().skip(coding_offset).filter_map(|s| {
-            s.as_ref().map(|s| match &s.payload_type {
-                ShredPayloadType::Coding(c) => (*c.shred_index - coding_offset, &c.data),
-                // SAFETY: ValidatedShreds ensures all shreds after coding_offset are coding
-                ShredPayloadType::Data(_) => panic!("should be a coding shred"),
-            })
-        });
+        let data_refs = shreds.data_shred_payloads();
+        let coding = shreds.coding_shred_payloads();
 
         for &(i, d) in &data_refs {
             self.decoder
