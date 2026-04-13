@@ -232,11 +232,10 @@ impl Blockstore for BlockstoreImpl {
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self.slot_data_mut(slot).add_shred_from_disseminator(
-            shred,
-            leader_pk,
-            &mut shredder,
-        ) {
+        match self
+            .slot_data_mut(slot)
+            .add_shred_from_disseminator(shred, leader_pk, &mut shredder)
+        {
             Ok(Some(event)) => Ok(self.send_votor_event(event).await),
             Ok(None) => Ok(None),
             Err(AddShredError::InvalidShred) => {
