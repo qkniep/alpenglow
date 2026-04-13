@@ -48,6 +48,10 @@ pub trait Blockstore {
         &mut self,
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
+    async fn add_own_shred_as_leader(
+        &mut self,
+        shred: ValidatedShred,
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
@@ -233,6 +237,32 @@ impl Blockstore for BlockstoreImpl {
             leader_pk,
             &mut shredder,
         )? {
+            Some(event) => Ok(self.send_votor_event(event).await),
+            None => Ok(None),
+        }
+    }
+
+    /// Stores a pre-validated shred produced by this node as leader.
+    ///
+    /// Skips signature verification since the leader produced the shred itself.
+    ///
+    /// Reconstructs the corresponding slice and block if possible and necessary.
+    ///
+    /// Returns `Some(block_info)` if a block was reconstructed, `None` otherwise.
+    #[fastrace::trace(short_name = true)]
+    async fn add_own_shred_as_leader(
+        &mut self,
+        shred: ValidatedShred,
+    ) -> Result<Option<BlockInfo>, AddShredError> {
+        let slot = shred.payload().header.slot;
+        let mut shredder = self
+            .shredders
+            .checkout()
+            .expect("should have a shredder because of exclusive access");
+        match self
+            .slot_data_mut(slot)
+            .add_own_shred_as_leader(shred, &mut shredder)?
+        {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
         }
