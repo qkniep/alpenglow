@@ -79,9 +79,8 @@ pub enum RepairResponse {
     Shred(RepairRequestType, Shred),
     /// Negative acknowledgment indicating the requested data cannot be served.
     ///
-    /// Sent when a node cannot fulfil a repair request because it does not have
-    /// the requested data. This lets the requester immediately try another peer
-    /// instead of waiting for a timeout.
+    /// Sent when a node cannot fulfil a repair request.
+    /// This lets the requester immediately try another peer instead of waiting for a timeout.
     Nack(RepairRequestType),
 }
 
@@ -141,8 +140,8 @@ where
 
     /// Tries to answer the given repair request.
     ///
-    /// If we do not have the necessary information in blockstore, a [`RepairResponse::Nack`]
-    /// is sent back to the requester. Otherwise, the correct response is sent.
+    /// If we have the information in blockstore, it is sent to the requester.
+    /// Otherwise, a [`RepairResponse::Nack`] is sent back to the requester.
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
         let nack = RepairResponse::Nack(request.req_type.clone());
