@@ -63,24 +63,25 @@ impl<'a> ValidatedShreds<'a> {
 
     /// Returns the number of present (non-`None`) shreds.
     pub(super) fn shred_count(self) -> usize {
-        self.shreds.iter().filter(|s| s.is_some()).count()
+        self.shreds.iter().flatten().count()
     }
 
     /// Returns a reference to any shred in this set.
     pub(super) fn any_shred(self) -> &'a ValidatedShred {
-        // this unwrap is safe because constructor ensures at least one shred
+        // constructor ensures at least one shred
         self.shreds.iter().flatten().next().unwrap()
     }
 
     /// Returns `(index, payload)` pairs for all present data shreds.
     pub(super) fn data_shred_payloads(self) -> Vec<(usize, &'a [u8])> {
+        let data_shreds = self.data_shreds;
         self.shreds
             .iter()
-            .take(self.data_shreds)
+            .take(data_shreds)
             .filter_map(|s| {
                 s.as_ref().map(|s| match &s.payload_type {
                     ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
-                    // SAFETY: ValidatedShreds ensures all shreds up to data_shreds are data
+                    // constructor ensures all shreds up to data_shreds are data
                     ShredPayloadType::Coding(_) => panic!("should be a data shred"),
                 })
             })
@@ -95,7 +96,7 @@ impl<'a> ValidatedShreds<'a> {
         self.shreds.iter().skip(data_shreds).filter_map(move |s| {
             s.as_ref().map(|s| match &s.payload_type {
                 ShredPayloadType::Coding(c) => (*c.shred_index - data_shreds, c.data.as_slice()),
-                // SAFETY: ValidatedShreds ensures all shreds after data_shreds are coding
+                // constructor ensures all shreds after data_shreds are coding
                 ShredPayloadType::Data(_) => panic!("should be a coding shred"),
             })
         })
