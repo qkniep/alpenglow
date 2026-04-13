@@ -95,7 +95,7 @@ impl SlotBlockData {
     ///
     /// Unlike [`Self::add_shred_from_disseminator`], this skips shred validation and
     /// equivocation checks since the leader produced the shred itself.
-    pub fn add_validated_shred_from_leader(
+    pub fn add_own_shred_as_leader(
         &mut self,
         validated_shred: ValidatedShred,
         shredder: &mut RegularShredder,

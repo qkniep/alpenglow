@@ -48,7 +48,7 @@ pub trait Blockstore {
         &mut self,
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    async fn add_validated_shred_from_leader(
+    async fn add_own_shred_as_leader(
         &mut self,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
@@ -250,7 +250,7 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// Returns `Some(block_info)` if a block was reconstructed, `None` otherwise.
     #[fastrace::trace(short_name = true)]
-    async fn add_validated_shred_from_leader(
+    async fn add_own_shred_as_leader(
         &mut self,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
@@ -261,7 +261,7 @@ impl Blockstore for BlockstoreImpl {
             .expect("should have a shredder because of exclusive access");
         match self
             .slot_data_mut(slot)
-            .add_validated_shred_from_leader(shred, &mut shredder)?
+            .add_own_shred_as_leader(shred, &mut shredder)?
         {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),

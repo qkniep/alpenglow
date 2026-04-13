@@ -358,7 +358,7 @@ where
                 .blockstore
                 .write()
                 .await
-                .add_validated_shred_from_leader(s)
+                .add_own_shred_as_leader(s)
                 .await;
             if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
@@ -677,13 +677,13 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
         blockstore
-            .expect_add_validated_shred_from_leader()
+            .expect_add_own_shred_as_leader()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_validated_shred_from_leader()
+            .expect_add_own_shred_as_leader()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
@@ -743,12 +743,12 @@ mod tests {
 
         // handle first slice
         blockstore
-            .expect_add_validated_shred_from_leader()
+            .expect_add_own_shred_as_leader()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         blockstore
-            .expect_add_validated_shred_from_leader()
+            .expect_add_own_shred_as_leader()
             .times(1)
             .in_sequence(&mut seq)
             .return_once(move |_| {
@@ -762,13 +762,13 @@ mod tests {
 
         // handle second slice
         blockstore
-            .expect_add_validated_shred_from_leader()
+            .expect_add_own_shred_as_leader()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_validated_shred_from_leader()
+            .expect_add_own_shred_as_leader()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
