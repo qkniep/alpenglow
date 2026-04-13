@@ -158,16 +158,12 @@ impl ReedSolomonCoder {
         let coding_offset = TOTAL_SHREDS - self.num_coding;
 
         // collect data shred indices+refs and feed to decoder
-        let data_refs: Vec<(usize, &[u8])> = shreds
-            .iter()
-            .take(coding_offset)
-            .filter_map(|s| {
-                s.as_ref().map(|s| match &s.payload_type {
-                    ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
-                    ShredPayloadType::Coding(_) => panic!("should be a data shred"),
-                })
+        let data_refs = shreds.iter().take(coding_offset).filter_map(|s| {
+            s.as_ref().map(|s| match &s.payload_type {
+                ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
+                ShredPayloadType::Coding(_) => panic!("should be a data shred"),
             })
-            .collect();
+        });
 
         let coding = shreds.iter().skip(coding_offset).filter_map(|s| {
             s.as_ref().map(|s| match &s.payload_type {
@@ -176,7 +172,7 @@ impl ReedSolomonCoder {
             })
         });
 
-        for &(i, d) in &data_refs {
+        for (i, d) in data_refs.clone() {
             self.decoder
                 .add_original_shard(i, d)
                 .expect("validated shred should have correct index and size");
