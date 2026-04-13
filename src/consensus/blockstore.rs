@@ -14,7 +14,7 @@ use mockall::automock;
 use tokio::sync::mpsc::Sender;
 
 use self::slot_block_data::{AddShredError, SlotBlockData};
-use super::epoch_info::EpochInfo;
+use super::epoch_info::ValidatorEpochInfo;
 use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, MerkleRoot, SliceRoot};
@@ -48,6 +48,10 @@ pub trait Blockstore {
         &mut self,
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
+    async fn add_own_shred_as_leader(
+        &mut self,
+        shred: ValidatedShred,
+    ) -> Result<Option<BlockInfo>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
@@ -58,6 +62,7 @@ pub trait Blockstore {
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
+    #[allow(clippy::needless_lifetimes)]
     fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
     -> Option<&'a SliceRoot>;
     #[allow(clippy::needless_lifetimes)]
@@ -84,7 +89,7 @@ pub struct BlockstoreImpl {
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<VotorEvent>,
     /// Information about all active validators.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 }
 
 impl BlockstoreImpl {
@@ -94,7 +99,7 @@ impl BlockstoreImpl {
     /// - [`VotorEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`VotorEvent::Block`] for any reconstructed block
-    pub fn new(epoch_info: Arc<EpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
+    pub fn new(epoch_info: Arc<ValidatorEpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
@@ -222,7 +227,7 @@ impl Blockstore for BlockstoreImpl {
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.leader(slot).pubkey;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
         let mut shredder = self
             .shredders
             .checkout()
@@ -232,6 +237,32 @@ impl Blockstore for BlockstoreImpl {
             leader_pk,
             &mut shredder,
         )? {
+            Some(event) => Ok(self.send_votor_event(event).await),
+            None => Ok(None),
+        }
+    }
+
+    /// Stores a pre-validated shred produced by this node as leader.
+    ///
+    /// Skips signature verification since the leader produced the shred itself.
+    ///
+    /// Reconstructs the corresponding slice and block if possible and necessary.
+    ///
+    /// Returns `Some(block_info)` if a block was reconstructed, `None` otherwise.
+    #[fastrace::trace(short_name = true)]
+    async fn add_own_shred_as_leader(
+        &mut self,
+        shred: ValidatedShred,
+    ) -> Result<Option<BlockInfo>, AddShredError> {
+        let slot = shred.payload().header.slot;
+        let mut shredder = self
+            .shredders
+            .checkout()
+            .expect("should have a shredder because of exclusive access");
+        match self
+            .slot_data_mut(slot)
+            .add_own_shred_as_leader(shred, &mut shredder)?
+        {
             Some(event) => Ok(self.send_votor_event(event).await),
             None => Ok(None),
         }
@@ -256,7 +287,7 @@ impl Blockstore for BlockstoreImpl {
         shred: Shred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
         let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.leader(slot).pubkey;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
         let mut shredder = self
             .shredders
             .checkout()
@@ -312,10 +343,13 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold any shred for that slice.
-    fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<&SliceRoot> {
+    fn get_slice_root<'a>(
+        &'a self,
+        block_id: &BlockId,
+        slice_index: SliceIndex,
+    ) -> Option<&'a SliceRoot> {
         let block_data = self.get_block_data(block_id)?;
-        let slice_shreds = block_data.shreds.get(&slice_index)?;
-        slice_shreds.iter().flatten().next().map(|s| &s.merkle_root)
+        block_data.merkle_root_cache.get(&slice_index)
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
@@ -352,21 +386,23 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ValidatorInfo;
+    use crate::consensus::EpochInfo;
+    use crate::crypto::aggsig;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::crypto::{Hash, aggsig};
     use crate::network::dontcare_sockaddr;
     use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
     use crate::test_utils::create_random_shredded_block;
     use crate::types::SliceIndex;
+    use crate::{Stake, ValidatorId, ValidatorInfo};
 
     fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
+        let id = ValidatorId::new(0);
         let info = ValidatorInfo {
-            id: 0,
-            stake: 1,
+            id,
+            stake: Stake::new(1),
             pubkey: sk.to_pk(),
             voting_pubkey: voting_sk.to_pk(),
             all2all_address: dontcare_sockaddr(),
@@ -375,8 +411,8 @@ mod tests {
             repair_response_address: dontcare_sockaddr(),
         };
         let validators = vec![info];
-        let epoch_info = EpochInfo::new(0, validators);
-        (sk, BlockstoreImpl::new(Arc::new(epoch_info), tx))
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(id, EpochInfo::new(validators)));
+        (sk, BlockstoreImpl::new(epoch_info, tx))
     }
 
     async fn add_shred_ignore_duplicate(
@@ -401,7 +437,7 @@ mod tests {
         let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &sk);
         let block_id = (slot, block_hash);
 
-        let slice_hash = &shreds[0][0].merkle_root;
+        let slice_hash = shreds[0][0].merkle_root();
         for shred in &shreds[0] {
             // store shred
             add_shred_ignore_duplicate(&mut blockstore, shred.clone().into_shred()).await?;
@@ -424,7 +460,7 @@ mod tests {
         let slot_data = blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
-        assert!(DoubleMerkleTree::check_proof(slice_hash, 0, &root, &proof));
+        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
 
         Ok(())
     }
@@ -628,10 +664,10 @@ mod tests {
         let (sk, mut blockstore) = test_setup(tx);
         let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &sk);
 
-        // insert shreds with wrong Merkle root
+        // insert shreds with corrupted data (derived Merkle root won't match signature)
         for shred in slices[0].clone() {
             let mut shred = shred.into_shred();
-            shred.merkle_root = Hash::random_for_test().into();
+            shred.payload_mut().data.fill(0);
             let res = add_shred_ignore_duplicate(&mut blockstore, shred).await;
             assert!(res.is_err());
             assert_eq!(res.err(), Some(AddShredError::InvalidSignature));

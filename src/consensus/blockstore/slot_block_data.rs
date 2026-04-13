@@ -18,7 +18,7 @@ use crate::crypto::signature::PublicKey;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
-use crate::types::{Slice, SliceIndex};
+use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
@@ -37,9 +37,7 @@ pub enum AddShredError {
 impl From<ShredVerifyError> for AddShredError {
     fn from(src: ShredVerifyError) -> Self {
         match src {
-            ShredVerifyError::InvalidProof | ShredVerifyError::InvalidSignature => {
-                AddShredError::InvalidSignature
-            }
+            ShredVerifyError::InvalidSignature => AddShredError::InvalidSignature,
             ShredVerifyError::Equivocation => AddShredError::Equivocation,
         }
     }
@@ -91,6 +89,19 @@ impl SlotBlockData {
                 }
                 _ => (),
             })
+    }
+
+    /// Adds a pre-validated shred produced by this node as leader.
+    ///
+    /// Unlike [`Self::add_shred_from_disseminator`], this skips shred validation and
+    /// equivocation checks since the leader produced the shred itself.
+    pub fn add_own_shred_as_leader(
+        &mut self,
+        validated_shred: ValidatedShred,
+        shredder: &mut RegularShredder,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        self.disseminated
+            .add_validated_shred(validated_shred, shredder)
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -149,7 +160,7 @@ pub struct BlockData {
     /// Any shreds of this block stored so far, indexed by slice index.
     pub(super) shreds: BTreeMap<SliceIndex, [Option<ValidatedShred>; TOTAL_SHREDS]>,
     /// Any already reconstructed slices of this block.
-    pub(super) slices: BTreeMap<SliceIndex, Slice>,
+    pub(super) slices: BTreeMap<SliceIndex, ReconstructedSlice>,
     /// Index of the slice marked as last, if any.
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
@@ -180,7 +191,7 @@ impl BlockData {
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
-        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
+        let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
         let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
         self.add_validated_shred(validated_shred, shredder)
     }
@@ -193,6 +204,13 @@ impl BlockData {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
+
+        // populate Merkle root cache
+        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
+        if let Entry::Vacant(entry) = cached_merkle_root {
+            let derived_root = validated_shred.merkle_root();
+            entry.insert(derived_root);
+        }
 
         match (header.is_last, self.last_slice) {
             (true, None) => {
@@ -308,10 +326,7 @@ impl BlockData {
         }
 
         // calculate double-Merkle tree & block hash
-        let merkle_roots = self
-            .slices
-            .values()
-            .map(|s| s.merkle_root.as_ref().unwrap());
+        let merkle_roots = self.slices.values().map(|s| s.merkle_root());
         let tree = DoubleMerkleTree::new(merkle_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
@@ -375,6 +390,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
+    use crate::types::Slice;
 
     fn handle_slice(
         block_data: &mut BlockData,

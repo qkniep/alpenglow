@@ -64,6 +64,7 @@ mod tests {
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::types::Slot;
+    use crate::{Stake, ValidatorId};
 
     #[tokio::test]
     async fn simple_broadcast() {
@@ -74,20 +75,20 @@ mod tests {
                 .with_packet_loss(0.0),
         );
         let net_sender: SimulatedNetwork<ConsensusMessage, ConsensusMessage> =
-            core.join_unlimited(0).await;
+            core.join_unlimited(ValidatorId::new(0)).await;
         let mut net_others = Vec::new();
         let mut validators = Vec::new();
-        for i in 0..20 {
+        for i in 0..20u64 {
             if i > 0 {
                 let net: SimulatedNetwork<ConsensusMessage, ConsensusMessage> =
-                    core.join_unlimited(i).await;
+                    core.join_unlimited(ValidatorId::new(i)).await;
                 net_others.push(net);
             }
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
-                id: i,
-                stake: 1,
+                id: ValidatorId::new(i),
+                stake: Stake::new(1),
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),
@@ -108,7 +109,7 @@ mod tests {
         let mut tasks = JoinSet::new();
         tasks.spawn(async move {
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, 0);
+            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, ValidatorId::new(0));
             let msg = ConsensusMessage::Vote(vote);
             all2all_sender.broadcast(&msg).await.unwrap();
         });

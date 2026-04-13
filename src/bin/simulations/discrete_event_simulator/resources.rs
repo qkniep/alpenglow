@@ -49,7 +49,7 @@ impl Resource {
 
     /// Returns the next time this resource will be free.
     pub fn time_next_free(&self, validator: ValidatorId) -> SimTime {
-        self.next_free[validator as usize]
+        self.next_free[validator.as_index()]
     }
 
     /// Returns the next time this resource will be free, after `time`.
@@ -79,7 +79,7 @@ impl Resource {
         duration: SimTime,
     ) -> SimTime {
         let end_time = start_time + duration;
-        self.next_free[validator as usize] = end_time;
+        self.next_free[validator.as_index()] = end_time;
         end_time
     }
 }
@@ -91,27 +91,30 @@ mod tests {
     #[test]
     fn basic() {
         let mut resource = Resource::new(2);
-        assert_eq!(resource.time_next_free(0), SimTime::ZERO);
-        assert_eq!(resource.time_next_free(1), SimTime::ZERO);
+        assert_eq!(resource.time_next_free(ValidatorId::new(0)), SimTime::ZERO);
+        assert_eq!(resource.time_next_free(ValidatorId::new(1)), SimTime::ZERO);
 
         // schedule resource on validator 0 for time 1-11
         assert_eq!(
-            resource.schedule(0, SimTime::new(1), SimTime::new(10)),
+            resource.schedule(ValidatorId::new(0), SimTime::new(1), SimTime::new(10)),
             SimTime::new(11)
         );
 
         // next free works
-        assert_eq!(resource.time_next_free(0), SimTime::new(11));
         assert_eq!(
-            resource.time_next_free_after(0, SimTime::new(10)),
+            resource.time_next_free(ValidatorId::new(0)),
             SimTime::new(11)
         );
         assert_eq!(
-            resource.time_next_free_after(0, SimTime::new(20)),
+            resource.time_next_free_after(ValidatorId::new(0), SimTime::new(10)),
+            SimTime::new(11)
+        );
+        assert_eq!(
+            resource.time_next_free_after(ValidatorId::new(0), SimTime::new(20)),
             SimTime::new(20)
         );
 
         // resource still free on other validator
-        assert_eq!(resource.time_next_free(1), SimTime::ZERO);
+        assert_eq!(resource.time_next_free(ValidatorId::new(1)), SimTime::ZERO);
     }
 }

@@ -26,6 +26,7 @@ mod vote;
 pub(crate) mod votor;
 
 use std::marker::{Send, Sync};
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -40,7 +41,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use self::cert::{Cert, NotarCert};
-pub use self::epoch_info::EpochInfo;
+pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
 pub use self::vote::Vote;
 use self::votor::Votor;
@@ -49,6 +50,7 @@ use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
+use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
@@ -62,6 +64,19 @@ const_assert!(DELTA_FIRST_SLICE.as_nanos() <= DELTA_BLOCK.as_nanos());
 const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.
 const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);
+
+/// Minimum fraction of total stake required for a weakest quorum (20%).
+pub const WEAKEST_QUORUM_THRESHOLD: Fraction = Fraction::new(1, NonZeroU64::new(5).unwrap());
+/// Minimum fraction of total stake required for a weak quorum (40%).
+pub const WEAK_QUORUM_THRESHOLD: Fraction = Fraction::new(2, NonZeroU64::new(5).unwrap());
+/// Minimum fraction of total stake required for a standard quorum (60%).
+///
+/// Used for notar, notar-fallback, skip, and final certificates.
+pub const QUORUM_THRESHOLD: Fraction = Fraction::new(3, NonZeroU64::new(5).unwrap());
+/// Minimum fraction of total stake required for a strong quorum (80%).
+///
+/// Used for fast-final certificates.
+pub const STRONG_QUORUM_THRESHOLD: Fraction = Fraction::new(4, NonZeroU64::new(5).unwrap());
 
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ConsensusMessage {
@@ -87,7 +102,7 @@ where
     T: TransactionNetwork + 'static,
 {
     /// Other validators' info.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -127,7 +142,7 @@ where
         disseminator: D,
         repair_network: RN,
         repair_request_network: RR,
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
     ) -> Self
     where
@@ -171,7 +186,7 @@ where
         );
 
         let mut votor = Votor::new(
-            epoch_info.own_id,
+            epoch_info.own_id(),
             voting_secret_key,
             votor_tx.clone(),
             votor_rx,
@@ -245,7 +260,9 @@ where
     }
 
     pub fn get_info(&self) -> &ValidatorInfo {
-        self.epoch_info.validator(self.epoch_info.own_id)
+        self.epoch_info
+            .epoch_info()
+            .validator(self.epoch_info.own_id())
     }
 
     pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
@@ -318,7 +335,7 @@ where
 
         // if we are the leader, we already have the shred
         let slot = shred.payload().header.slot;
-        if self.epoch_info.leader(slot).id == self.epoch_info.own_id {
+        if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
 

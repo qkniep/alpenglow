@@ -18,7 +18,7 @@ use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
-    BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
+    BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
 };
 
 /// A simple ping network message.
@@ -38,8 +38,8 @@ pub enum PingOrPong {
 
 /// Generates [`ValidatorInfo`] for the given number of validators.
 ///
-/// Returns the voting secret keys of all validators and the [`EpochInfo`] of validator 0.
-pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
+/// Returns the voting secret keys of all validators and the shared [`EpochInfo`].
+pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
     let mut rng = rand::rng();
     let mut sks = Vec::new();
     let mut voting_sks = Vec::new();
@@ -48,8 +48,8 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: i,
-            stake: 1,
+            id: ValidatorId::new(i),
+            stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(0),
@@ -58,7 +58,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
             repair_response_address: localhost_ip_sockaddr(0),
         });
     }
-    let epoch_info = Arc::new(EpochInfo::new(0, validators));
+    let epoch_info = EpochInfo::new(validators);
     (voting_sks, epoch_info)
 }
 
@@ -78,7 +78,7 @@ pub async fn generate_all2all_instances(
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {
-        let network = core.join_unlimited(i as ValidatorId).await;
+        let network = core.join_unlimited(ValidatorId::new(i as u64)).await;
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all
@@ -99,7 +99,7 @@ pub fn create_random_shredded_block(
     }
     let merkle_roots = shreds
         .iter()
-        .map(|slice_shreds| slice_shreds[0].merkle_root.clone())
+        .map(|slice_shreds| slice_shreds[0].merkle_root())
         .collect::<Vec<_>>();
     let tree = DoubleMerkleTree::new(&merkle_roots);
     let block_hash = tree.get_root();
@@ -128,7 +128,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
             slice_index,
             is_last: slice_index == final_slice_index,
         };
-        slices.push(Slice::from_parts(header, payload, None));
+        slices.push(Slice::from_parts(header, payload));
     }
     slices
 }
