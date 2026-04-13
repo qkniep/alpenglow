@@ -91,6 +91,19 @@ impl SlotBlockData {
             })
     }
 
+    /// Adds a pre-validated shred produced by this node as leader.
+    ///
+    /// Unlike [`Self::add_shred_from_disseminator`], this skips shred validation and
+    /// equivocation checks since the leader produced the shred itself.
+    pub fn add_own_shred_as_leader(
+        &mut self,
+        validated_shred: ValidatedShred,
+        shredder: &mut RegularShredder,
+    ) -> Result<Option<VotorEvent>, AddShredError> {
+        self.disseminated
+            .add_validated_shred(validated_shred, shredder)
+    }
+
     /// Adds a shred received via repair to the spot given by block hash.
     ///
     /// Performs the necessary validity checks, all but leader equivocation.
@@ -178,7 +191,7 @@ impl BlockData {
     ) -> Result<Option<VotorEvent>, AddShredError> {
         assert!(shred.payload().header.slot == self.slot);
         let slice_index = shred.payload().header.slice_index;
-        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
+        let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
         let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
         self.add_validated_shred(validated_shred, shredder)
     }
@@ -191,6 +204,13 @@ impl BlockData {
         let header = &validated_shred.payload().header;
         assert!(header.slot == self.slot);
         let slice_index = header.slice_index;
+
+        // populate Merkle root cache
+        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
+        if let Entry::Vacant(entry) = cached_merkle_root {
+            let derived_root = validated_shred.merkle_root();
+            entry.insert(derived_root);
+        }
 
         match (header.is_last, self.last_slice) {
             (true, None) => {
