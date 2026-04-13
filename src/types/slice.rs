@@ -18,8 +18,9 @@ use crate::{BlockId, Slot};
 ///
 /// It corresponds to a single batch of data that the leader is about to disseminate.
 /// During shredding, a slice is turned into multiple shreds.
-/// The result of de-shredding is a [`DeshredSlice`], which additionally carries
-/// the Merkle root that is only computable after shredding.
+///
+/// Deshredding results in a [`DeshredSlice`] instead.
+/// It carries the Merkle root, which is only computable after shredding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slice {
     /// Slot number this slice is part of.
@@ -82,10 +83,10 @@ impl Slice {
     }
 }
 
-/// A slice recovered after de-shredding.
+/// A slice recovered after deshredding.
 ///
-/// Unlike [`Slice`], this type always carries the Merkle root over all shreds in the slice,
-/// which is only computable after shredding and verified during de-shredding.
+/// Unlike [`Slice`], this type carries the Merkle root over the slice's shreds,
+/// which is only computable after shredding and is verified during deshredding.
 ///
 /// All [`Slice`] fields and methods are accessible directly via [`Deref`].
 #[derive(Clone, Debug, PartialEq, Eq)]
