@@ -406,7 +406,7 @@ mod tests {
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
                     ConsensusMessage::Vote(v) => {
-                        assert!(v.is_skip());
+                        assert!(matches!(v, Vote::Skip(_)));
                         skipped_slots.push(v.slot());
                     }
                     m => panic!("other msg: {m:?}"),
@@ -434,16 +434,17 @@ mod tests {
             ConsensusMessage::Vote(v) => v,
             m => panic!("other msg: {m:?}"),
         };
-        assert!(vote.is_notar());
+        assert!(matches!(vote, Vote::Notar(_)));
         assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
-        let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], epoch_info.validators()));
+        let notar_vote = if let Vote::Notar(v) = vote { v } else { unreachable!() };
+        let cert = Cert::Notar(NotarCert::new_unchecked(&[notar_vote], epoch_info.validators()));
         let event = VotorEvent::CertCreated(Box::new(cert));
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
-                assert!(v.is_final());
+                assert!(matches!(v, Vote::Final(_)));
                 assert_eq!(v.slot(), slot);
             }
             m => panic!("other msg: {m:?}"),
@@ -493,7 +494,7 @@ mod tests {
         for _ in 0..2 {
             match other_a2a.receive().await.unwrap() {
                 ConsensusMessage::Vote(vote) => {
-                    assert!(vote.is_notar());
+                    assert!(matches!(vote, Vote::Notar(_)));
                     assert!(vote.slot() == slot1 || vote.slot() == slot2);
                 }
                 m => panic!("other msg: {m:?}"),
@@ -513,7 +514,7 @@ mod tests {
             }
             if let Ok(msg) = other_a2a.receive().await {
                 match msg {
-                    ConsensusMessage::Vote(v) => assert!(v.is_skip()),
+                    ConsensusMessage::Vote(v) => assert!(matches!(v, Vote::Skip(_))),
                     m => panic!("other msg: {m:?}"),
                 }
             }
@@ -525,7 +526,7 @@ mod tests {
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
-                assert!(v.is_notar_fallback());
+                assert!(matches!(v, Vote::NotarFallback(_)));
                 assert_eq!(v.slot(), slot);
                 assert_eq!(v.block_hash(), Some(&hash.into()));
             }
@@ -551,7 +552,7 @@ mod tests {
             ConsensusMessage::Vote(v) => v,
             m => panic!("other msg: {m:?}"),
         };
-        assert!(vote.is_notar());
+        assert!(matches!(vote, Vote::Notar(_)));
         assert_eq!(vote.slot(), slot);
 
         // vote skip-fallback after safe-to-skip
@@ -559,7 +560,7 @@ mod tests {
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
-                assert!(v.is_skip_fallback());
+                assert!(matches!(v, Vote::SkipFallback(_)));
                 assert_eq!(v.slot(), slot);
             }
             m => panic!("other msg: {m:?}"),
