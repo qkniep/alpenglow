@@ -65,7 +65,12 @@ impl NotarVote {
     pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorId) -> Self {
         let kind = VoteKind::Notar(slot, block_hash.clone());
         let sig = sk.sign(&kind.bytes_to_sign());
-        Self { slot, block_hash, sig, signer }
+        Self {
+            slot,
+            block_hash,
+            sig,
+            signer,
+        }
     }
 
     /// Returns the slot this vote is for.
@@ -115,7 +120,12 @@ impl NotarFallbackVote {
     pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorId) -> Self {
         let kind = VoteKind::NotarFallback(slot, block_hash.clone());
         let sig = sk.sign(&kind.bytes_to_sign());
-        Self { slot, block_hash, sig, signer }
+        Self {
+            slot,
+            block_hash,
+            sig,
+            signer,
+        }
     }
 
     /// Returns the slot this vote is for.
@@ -403,13 +413,12 @@ mod tests {
         assert!(matches!(Vote::Notar(vote.clone()), Vote::Notar(_)));
         assert!(vote.check_sig(&pk));
 
-        let vote = NotarFallbackVote::new(
-            Slot::new(0),
-            GENESIS_BLOCK_HASH,
-            &sk,
-            ValidatorId::new(0),
-        );
-        assert!(matches!(Vote::NotarFallback(vote.clone()), Vote::NotarFallback(_)));
+        let vote =
+            NotarFallbackVote::new(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
+        assert!(matches!(
+            Vote::NotarFallback(vote.clone()),
+            Vote::NotarFallback(_)
+        ));
         assert!(vote.check_sig(&pk));
 
         let vote = SkipVote::new(Slot::new(0), &sk, ValidatorId::new(0));
@@ -417,7 +426,10 @@ mod tests {
         assert!(vote.check_sig(&pk));
 
         let vote = SkipFallbackVote::new(Slot::new(0), &sk, ValidatorId::new(0));
-        assert!(matches!(Vote::SkipFallback(vote.clone()), Vote::SkipFallback(_)));
+        assert!(matches!(
+            Vote::SkipFallback(vote.clone()),
+            Vote::SkipFallback(_)
+        ));
         assert!(vote.check_sig(&pk));
 
         let vote = FinalVote::new(Slot::new(0), &sk, ValidatorId::new(0));

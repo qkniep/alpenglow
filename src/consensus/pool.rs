@@ -893,9 +893,7 @@ mod tests {
         let slot1 = Slot::new(1);
         let hash1: BlockHash = Hash::random_for_test().into();
         let votes: Vec<NotarVote> = (0..7)
-            .map(|v| {
-                NotarVote::new(slot1, hash1.clone(), &sks[v as usize], ValidatorId::new(v))
-            })
+            .map(|v| NotarVote::new(slot1, hash1.clone(), &sks[v as usize], ValidatorId::new(v)))
             .collect();
         let cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
@@ -1198,7 +1196,14 @@ mod tests {
         let first_slot = Slot::genesis().next();
         let hash: BlockHash = Hash::random_for_test().into();
         let notar_votes: Vec<NotarVote> = (0..11)
-            .map(|v| NotarVote::new(first_slot, hash.clone(), &sks[v as usize], ValidatorId::new(v)))
+            .map(|v| {
+                NotarVote::new(
+                    first_slot,
+                    hash.clone(),
+                    &sks[v as usize],
+                    ValidatorId::new(v),
+                )
+            })
             .collect();
         let notar_cert =
             NotarCert::try_new(&notar_votes, epoch_info.epoch_info().validators()).unwrap();
@@ -1278,10 +1283,16 @@ mod tests {
         // insert a notar cert for last slot of 3rd leader window
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         let votes: Vec<NotarVote> = (0..11)
-            .map(|v| NotarVote::new(slot, GENESIS_BLOCK_HASH, &sks[v as usize], ValidatorId::new(v)))
+            .map(|v| {
+                NotarVote::new(
+                    slot,
+                    GENESIS_BLOCK_HASH,
+                    &sks[v as usize],
+                    ValidatorId::new(v),
+                )
+            })
             .collect();
-        let ff_cert =
-            FastFinalCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
+        let ff_cert = FastFinalCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
             Ok(())

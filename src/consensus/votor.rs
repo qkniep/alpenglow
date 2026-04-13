@@ -438,8 +438,15 @@ mod tests {
         assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
-        let notar_vote = if let Vote::Notar(v) = vote { v } else { unreachable!() };
-        let cert = Cert::Notar(NotarCert::new_unchecked(&[notar_vote], epoch_info.validators()));
+        let notar_vote = if let Vote::Notar(v) = vote {
+            v
+        } else {
+            unreachable!()
+        };
+        let cert = Cert::Notar(NotarCert::new_unchecked(
+            &[notar_vote],
+            epoch_info.validators(),
+        ));
         let event = VotorEvent::CertCreated(Box::new(cert));
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {

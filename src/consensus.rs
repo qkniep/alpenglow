@@ -43,9 +43,7 @@ pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use self::cert::{Cert, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
-pub use self::vote::{
-    FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote,
-};
+pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};

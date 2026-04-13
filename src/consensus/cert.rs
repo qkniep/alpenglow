@@ -292,7 +292,11 @@ impl NotarFallbackCert {
         let stake: Stake = notar_votes
             .iter()
             .map(|v| validators[v.signer().as_index()].stake)
-            .chain(nf_votes.iter().map(|v| validators[v.signer().as_index()].stake))
+            .chain(
+                nf_votes
+                    .iter()
+                    .map(|v| validators[v.signer().as_index()].stake),
+            )
             .sum();
 
         let agg_sig_notar = if notar_votes.is_empty() {
@@ -423,7 +427,11 @@ impl SkipCert {
         let stake: Stake = skip_votes
             .iter()
             .map(|v| validators[v.signer().as_index()].stake)
-            .chain(sf_votes.iter().map(|v| validators[v.signer().as_index()].stake))
+            .chain(
+                sf_votes
+                    .iter()
+                    .map(|v| validators[v.signer().as_index()].stake),
+            )
             .sum();
 
         let agg_sig_skip = if skip_votes.is_empty() {
@@ -520,10 +528,7 @@ impl FastFinalCert {
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
     /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
-    pub fn try_new(
-        votes: &[NotarVote],
-        validators: &[ValidatorInfo],
-    ) -> Result<Self, CertError> {
+    pub fn try_new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         let slot = votes[0].slot();
         let block_hash = votes[0].block_hash().clone();
 
@@ -601,10 +606,7 @@ impl FinalCert {
     /// # Errors
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
-    pub fn try_new(
-        votes: &[FinalVote],
-        validators: &[ValidatorInfo],
-    ) -> Result<Self, CertError> {
+    pub fn try_new(votes: &[FinalVote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         let slot = votes[0].slot();
 
         for vote in votes {
@@ -659,7 +661,10 @@ impl FinalCert {
     }
 }
 
-fn aggsig_from_votes<V: SignedVote>(votes: &[V], validators: &[ValidatorInfo]) -> AggregateSignature {
+fn aggsig_from_votes<V: SignedVote>(
+    votes: &[V],
+    validators: &[ValidatorInfo],
+) -> AggregateSignature {
     let sigs = votes.iter().map(SignedVote::sig);
     let indices = votes.iter().map(SignedVote::signer);
     AggregateSignature::new(sigs, indices, validators.len())
@@ -707,7 +712,12 @@ mod tests {
         sks.iter()
             .enumerate()
             .map(|(i, sk)| {
-                NotarVote::new(slot, hash.clone(), sk, ValidatorId::new((i + id_offset) as u64))
+                NotarVote::new(
+                    slot,
+                    hash.clone(),
+                    sk,
+                    ValidatorId::new((i + id_offset) as u64),
+                )
             })
             .collect()
     }
@@ -864,8 +874,7 @@ mod tests {
 
         // slot mismatch: notar vote in different slot than notar-fallback
         let nv = NotarVote::new(Slot::new(2), hash.clone(), &sks[0], ValidatorId::new(0));
-        let nfv =
-            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(1));
+        let nfv = NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(1));
         let res = NotarFallbackCert::try_new(&[nv], &[nfv], &info);
         assert_eq!(res.err(), Some(CertError::SlotMismatch));
 
@@ -1043,15 +1052,13 @@ mod tests {
 
         // valid sig
         let nv = NotarVote::new(Slot::new(1), hash.clone(), &sks[0], ValidatorId::new(0));
-        let nfv =
-            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(1));
+        let nfv = NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(1));
         let cert = NotarFallbackCert::try_new(&[nv], &[nfv], &info).unwrap();
         assert!(cert.check_sig(&info));
 
         // invalid sig (wrong key for validator 0)
         let nv = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(0));
-        let nfv =
-            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(1));
+        let nfv = NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorId::new(1));
         let cert = NotarFallbackCert::try_new(&[nv], &[nfv], &info).unwrap();
         assert!(!cert.check_sig(&info));
     }
