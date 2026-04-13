@@ -19,7 +19,7 @@ use crate::{BlockId, Slot};
 /// It corresponds to a single batch of data that the leader is about to disseminate.
 /// During shredding, a slice is turned into multiple shreds.
 ///
-/// Deshredding results in a [`DeshredSlice`] instead.
+/// Deshredding results in a [`ReconstructedSlice`] instead.
 /// It carries the Merkle root, which is only computable after shredding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slice {
@@ -90,14 +90,14 @@ impl Slice {
 ///
 /// All [`Slice`] fields and methods are accessible directly via [`Deref`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DeshredSlice {
+pub struct ReconstructedSlice {
     inner: Slice,
     /// Merkle root hash over all shreds in this slice.
     merkle_root: SliceRoot,
 }
 
-impl DeshredSlice {
-    /// Creates a [`DeshredSlice`] from raw payload bytes, shred metadata, and the Merkle root.
+impl ReconstructedSlice {
+    /// Creates a [`ReconstructedSlice`] from its component parts.
     #[must_use]
     pub(crate) fn from_shreds(
         payload: SlicePayload,
@@ -118,7 +118,7 @@ impl DeshredSlice {
     }
 }
 
-impl Deref for DeshredSlice {
+impl Deref for ReconstructedSlice {
     type Target = Slice;
 
     fn deref(&self) -> &Slice {
