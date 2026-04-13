@@ -178,6 +178,11 @@ impl NotarCert {
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
     /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if `votes` is empty.
+    /// - Panics if a signer of a vote is missing from `validators`.
     pub fn try_new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         let slot = votes[0].slot();
         let block_hash = votes[0].block_hash().clone();
@@ -262,6 +267,11 @@ impl NotarFallbackCert {
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
     /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if both `notar_votes` and `nf_votes` are empty.
+    /// - Panics if a signer of a vote is missing from `validators`.
     pub fn try_new(
         notar_votes: &[NotarVote],
         nf_votes: &[NotarFallbackVote],
@@ -402,6 +412,11 @@ impl SkipCert {
     /// # Errors
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if both `skip_votes` and `sf_votes` are empty.
+    /// - Panics if a signer of a vote is missing from `validators`.
     pub fn try_new(
         skip_votes: &[SkipVote],
         sf_votes: &[SkipFallbackVote],
@@ -528,6 +543,11 @@ impl FastFinalCert {
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
     /// - [`CertError::BlockHashMismatch`] if the votes have different block hashes.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if `votes` is empty.
+    /// - Panics if a signer of a vote is missing from `validators`.
     pub fn try_new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         let slot = votes[0].slot();
         let block_hash = votes[0].block_hash().clone();
@@ -606,6 +626,11 @@ impl FinalCert {
     /// # Errors
     ///
     /// - [`CertError::SlotMismatch`] if the votes have different slots.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if `votes` is empty.
+    /// - Panics if a signer of a vote is missing from `validators`.
     pub fn try_new(votes: &[FinalVote], validators: &[ValidatorInfo]) -> Result<Self, CertError> {
         let slot = votes[0].slot();
 

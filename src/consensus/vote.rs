@@ -292,12 +292,16 @@ impl SignedVote for FinalVote {
 
 /// A signed vote in consensus.
 ///
-/// This is a sum type over all concrete vote kinds: [`NotarVote`], [`NotarFallbackVote`],
-/// [`SkipVote`], [`SkipFallbackVote`], and [`FinalVote`].
+/// This is a sum type over all concrete vote kinds:
+/// - [`NotarVote`]
+/// - [`NotarFallbackVote`]
+/// - [`SkipVote`]
+/// - [`SkipFallbackVote`]
+/// - [`FinalVote`]
 ///
-/// Use this type in contexts where the kind is not statically known, such as when
-/// receiving a vote over the network or re-broadcasting during standstill recovery.
-/// For type-safe storage or certificate construction, use the concrete vote types directly.
+/// Use this type in contexts where a generic vote is required,
+/// such as when receiving a vote over the network or re-broadcasting during standstill recovery.
+/// For type-safe storage or certificate construction, prefer the concrete vote types.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum Vote {
     /// A notarization vote.
