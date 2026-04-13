@@ -93,14 +93,15 @@ impl SlotBlockData {
 
     /// Adds a pre-validated shred produced by this node as leader.
     ///
-    /// Unlike [`add_shred_from_disseminator`], this skips signature verification and
+    /// Unlike [`Self::add_shred_from_disseminator`], this skips shred validation and
     /// equivocation checks since the leader produced the shred itself.
     pub fn add_validated_shred_from_leader(
         &mut self,
         validated_shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<VotorEvent>, AddShredError> {
-        self.disseminated.add_validated_shred(validated_shred, shredder)
+        self.disseminated
+            .add_validated_shred(validated_shred, shredder)
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
