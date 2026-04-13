@@ -3,6 +3,8 @@
 
 //! Defines the [`Slice`] and related data structures.
 
+use std::ops::Deref;
+
 use rand::prelude::*;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
@@ -84,21 +86,13 @@ impl Slice {
 ///
 /// Unlike [`Slice`], this type always carries the Merkle root over all shreds in the slice,
 /// which is only computable after shredding and verified during de-shredding.
+///
+/// All [`Slice`] fields and methods are accessible directly via [`Deref`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeshredSlice {
-    /// Slot number this slice is part of.
-    pub slot: Slot,
-    /// Index of the slice within its slot.
-    pub slice_index: SliceIndex,
-    /// Indicates whether this is the last slice in the slot.
-    pub is_last: bool,
-    /// If first slice in the block or parent changed due to optimistic handover,
-    /// then indicates which block is the parent of the block this slice is part of.
-    pub parent: Option<(Slot, BlockHash)>,
-    /// Payload bytes.
-    pub data: Vec<u8>,
+    inner: Slice,
     /// Merkle root hash over all shreds in this slice.
-    pub merkle_root: SliceRoot,
+    merkle_root: SliceRoot,
 }
 
 impl DeshredSlice {
@@ -110,40 +104,30 @@ impl DeshredSlice {
         merkle_root: SliceRoot,
     ) -> Self {
         let header = any_shred.payload().header;
-        let SliceHeader {
-            slot,
-            slice_index,
-            is_last,
-        } = header;
-        let SlicePayload { parent, data } = payload;
         Self {
-            slot,
-            slice_index,
-            is_last,
-            parent,
-            data,
+            inner: Slice::from_parts(header, payload),
             merkle_root,
         }
     }
 
-    /// Extracts the [`SliceHeader`] from this slice.
-    pub(crate) fn to_header(&self) -> SliceHeader {
-        SliceHeader {
-            slot: self.slot,
-            slice_index: self.slice_index,
-            is_last: self.is_last,
-        }
+    /// Returns the Merkle root hash over all shreds in this slice.
+    #[must_use]
+    pub fn merkle_root(&self) -> &SliceRoot {
+        &self.merkle_root
     }
 
     /// Strips the Merkle root, returning the underlying [`Slice`].
+    #[cfg(test)]
     pub(crate) fn into_slice(self) -> Slice {
-        Slice {
-            slot: self.slot,
-            slice_index: self.slice_index,
-            is_last: self.is_last,
-            parent: self.parent,
-            data: self.data,
-        }
+        self.inner
+    }
+}
+
+impl Deref for DeshredSlice {
+    type Target = Slice;
+
+    fn deref(&self) -> &Slice {
+        &self.inner
     }
 }
 

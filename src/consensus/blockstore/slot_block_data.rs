@@ -18,7 +18,7 @@ use crate::crypto::signature::PublicKey;
 use crate::shredder::{
     DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
-use crate::types::{DeshredSlice, Slice, SliceIndex};
+use crate::types::{DeshredSlice, SliceIndex};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
@@ -306,7 +306,7 @@ impl BlockData {
         }
 
         // calculate double-Merkle tree & block hash
-        let merkle_roots = self.slices.values().map(|s| &s.merkle_root);
+        let merkle_roots = self.slices.values().map(|s| s.merkle_root());
         let tree = DoubleMerkleTree::new(merkle_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
@@ -370,6 +370,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
     use crate::test_utils::{assert_votor_events_match, create_random_block};
+    use crate::types::Slice;
 
     fn handle_slice(
         block_data: &mut BlockData,
