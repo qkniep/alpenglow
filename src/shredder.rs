@@ -685,35 +685,35 @@ mod tests {
         // restore from all shreds
         let all = into_array(&shreds);
         let (slice_restored, _) = shredder.deshred(&all)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore only from data shreds
         let coding = into_array(&shreds[..DATA_SHREDS]);
         let (slice_restored, _) = shredder.deshred(&coding)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore using as many coding shreds as possible
         let data = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
         let (slice_restored, _) = shredder.deshred(&data)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
         let nc_shreds = into_array(&nc_shreds);
         let (slice_restored, _) = shredder.deshred(&nc_shreds)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from half coding / half data shreds
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
         let input = into_array(&shreds[start..end]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from all but one shred
         let input = into_array(&shreds[1..]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // cannot restore from one shred
         let input = into_array(&shreds[..1]);
@@ -739,23 +739,23 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from just enough shreds
         let input = into_array(&shreds[..DATA_SHREDS]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
         let input = into_array(&nc_shreds);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from all but one shred
         let input = into_array(&shreds[1..]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // cannot restore from one shred
         let input = into_array(&shreds[..1]);
@@ -781,30 +781,30 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from just enough shreds
         let input = into_array(&shreds[..DATA_SHREDS]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
         let input = into_array(&nc_shreds);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from half coding / half data shreds
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
         let input = into_array(&shreds[start..end]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from all but one shred
         let input = into_array(&shreds[1..]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // cannot restore from one shred
         let input = into_array(&shreds[..1]);
@@ -830,30 +830,30 @@ mod tests {
         // restore from all shreds
         let input = into_array(&shreds);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from just enough shreds
         let input = into_array(&shreds[..DATA_SHREDS]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
         let input = into_array(&nc_shreds);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from half coding / half data shreds
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
         let input = into_array(&shreds[start..end]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // restore from all but one shred
         let input = into_array(&shreds[1..]);
         let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(slice_restored.into_slice(), slice);
+        assert_eq!(*slice_restored, slice);
 
         // cannot restore from one shred
         let input = into_array(&shreds[..1]);

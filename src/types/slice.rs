@@ -116,12 +116,6 @@ impl DeshredSlice {
     pub fn merkle_root(&self) -> &SliceRoot {
         &self.merkle_root
     }
-
-    /// Strips the Merkle root, returning the underlying [`Slice`].
-    #[cfg(test)]
-    pub(crate) fn into_slice(self) -> Slice {
-        self.inner
-    }
 }
 
 impl Deref for DeshredSlice {
