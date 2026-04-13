@@ -278,14 +278,13 @@ impl Shredder for RegularShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let payload_bytes = self.0.deshred(shreds)?;
+        let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root();
 
         // additional Merkle tree validity check
-        let raw_shreds = self.0.shred(&payload_bytes)?;
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
         let slice = Slice::from_shreds_with_root(payload, any_shred, merkle_root);
@@ -330,14 +329,13 @@ impl Shredder for CodingOnlyShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let payload_bytes = self.0.deshred(shreds)?;
+        let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root();
 
         // additional Merkle tree validity check
-        let mut raw_shreds = self.0.shred(&payload_bytes)?;
         raw_shreds.data = vec![];
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
@@ -403,7 +401,7 @@ impl Shredder for PetsShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut buffer = self.0.deshred(shreds)?;
+        let (mut buffer, mut raw_shreds) = self.0.deshred(shreds)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -412,7 +410,6 @@ impl Shredder for PetsShredder {
         let merkle_root = any_shred.merkle_root();
 
         // additional Merkle tree validity check
-        let mut raw_shreds = self.0.shred(&buffer)?;
         raw_shreds.data.pop();
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
@@ -487,7 +484,7 @@ impl Shredder for AontShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Slice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut buffer = self.0.deshred(shreds)?;
+        let (mut buffer, raw_shreds) = self.0.deshred(shreds)?;
         if buffer.len() < 16 {
             return Err(DeshredError::BadEncoding);
         }
@@ -496,7 +493,6 @@ impl Shredder for AontShredder {
         let merkle_root = any_shred.merkle_root();
 
         // additional Merkle tree validity check
-        let raw_shreds = self.0.shred(&buffer)?;
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
         // decrypt slice
@@ -546,7 +542,7 @@ fn data_and_coding_to_output_shreds(
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
-            header: header.clone(),
+            header,
             shred_index,
             data,
         };
@@ -601,7 +597,7 @@ fn create_output_shreds_for_other_leader(
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
-            header: header.clone(),
+            header,
             shred_index,
             data,
         };
