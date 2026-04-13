@@ -737,12 +737,8 @@ mod tests {
         sks.iter()
             .enumerate()
             .map(|(i, sk)| {
-                NotarVote::new(
-                    slot,
-                    hash.clone(),
-                    sk,
-                    ValidatorId::new((i + id_offset) as u64),
-                )
+                let v = ValidatorId::new((i + id_offset) as u64);
+                NotarVote::new(slot, hash.clone(), sk, v)
             })
             .collect()
     }
@@ -756,12 +752,8 @@ mod tests {
         sks.iter()
             .enumerate()
             .map(|(i, sk)| {
-                NotarFallbackVote::new(
-                    slot,
-                    hash.clone(),
-                    sk,
-                    ValidatorId::new((i + id_offset) as u64),
-                )
+                let v = ValidatorId::new((i + id_offset) as u64);
+                NotarFallbackVote::new(slot, hash.clone(), sk, v)
             })
             .collect()
     }
