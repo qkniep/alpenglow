@@ -116,7 +116,7 @@ where
         Ok(())
     }
 
-    /// Deterministically samples the relay for a given shred within a slot.
+    /// Deterministically samples the relay for a given shred.
     ///
     /// Seeds an RNG per slice and calls [`QuorumSamplingStrategy::sample_quorum`]
     /// to get all relays for that slice, then picks the one at the shred's position.
