@@ -128,7 +128,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
             slice_index,
             is_last: slice_index == final_slice_index,
         };
-        slices.push(Slice::from_parts(header, payload, None));
+        slices.push(Slice::from_parts(header, payload));
     }
     slices
 }
