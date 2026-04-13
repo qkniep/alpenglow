@@ -19,7 +19,7 @@ use std::fs::File;
 use std::sync::{Arc, Mutex};
 
 use alpenglow::ValidatorInfo;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use rand::prelude::*;
 
@@ -27,7 +27,7 @@ use rand::prelude::*;
 ///
 /// This is a wrapper around [`WorkloadTest`].
 /// It augments the workload test with bandwidth information.
-pub struct BandwidthTest<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct BandwidthTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     leader_bandwidth: u64,
     bandwidths: Vec<u64>,
     workload_test: WorkloadTest<L, R>,
@@ -37,17 +37,16 @@ pub struct BandwidthTest<L: SamplingStrategy, R: SamplingStrategy> {
 ///
 /// This simulates the distribution of shreds via Rotor.
 /// It tracks the workload (number of shreds/datagrams sent) for each validator.
-pub struct WorkloadTest<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct WorkloadTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     leader_sampler: L,
     rotor_sampler: R,
-    num_shreds: usize,
 
     leader_workload: u64,
     workload: Vec<u64>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
     /// Creates a new instance with the given stake and bandwidth distribution.
     pub fn new(
         validators: &[ValidatorInfo],
@@ -55,10 +54,9 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         bandwidths: Vec<u64>,
         leader_sampler: L,
         rotor_sampler: R,
-        num_shreds: usize,
     ) -> Self {
         let workload_test =
-            WorkloadTest::new(validators, leader_sampler, rotor_sampler, num_shreds);
+            WorkloadTest::new(validators, leader_sampler, rotor_sampler);
         Self::from_workload_test(validators, leader_bandwidth, bandwidths, workload_test)
     }
 
@@ -76,11 +74,9 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         }
     }
 
-    /// Sets the number of shreds per slice to `num_shreds`.
-    ///
-    /// Should usually call [`BandwidthTest::reset`] after this.
-    pub fn set_num_shreds(&mut self, num_shreds: usize) {
-        self.workload_test.set_num_shreds(num_shreds);
+    /// Returns the number of shreds per slice (quorum size from the sampler).
+    pub fn num_shreds(&self) -> usize {
+        self.workload_test.num_shreds()
     }
 
     /// Runs multiple iterations of the workload test.
@@ -120,7 +116,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
                 stake_distribution.to_string(),
                 sampling_strategy.to_string(),
                 self.leader_bandwidth.to_string(),
-                self.workload_test.num_shreds.to_string(),
+                self.workload_test.num_shreds().to_string(),
                 (min_supported_bandwidth / 2.0).to_string(),
             ])
             .unwrap();
@@ -162,7 +158,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
                     stake_distribution.to_string(),
                     sampling_strategy.to_string(),
                     self.leader_bandwidth.to_string(),
-                    self.workload_test.num_shreds.to_string(),
+                    self.workload_test.num_shreds().to_string(),
                     validator.to_string(),
                     32_270_000.0.to_string(),
                     bandwidth.to_string(),
@@ -180,31 +176,27 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
     /// Creates a new instance with the given stake distribution.
     pub fn new(
         validators: &[ValidatorInfo],
         leader_sampler: L,
         rotor_sampler: R,
-        num_shreds: usize,
     ) -> Self {
         let num_val = validators.len();
         Self {
             validators: validators.to_vec(),
             leader_sampler,
             rotor_sampler,
-            num_shreds,
 
             leader_workload: 0,
             workload: vec![0; num_val],
         }
     }
 
-    /// Sets the number of shreds per slice to `num_shreds`.
-    ///
-    /// Should usually call [`WorkloadTest::reset`] after this.
-    pub fn set_num_shreds(&mut self, num_shreds: usize) {
-        self.num_shreds = num_shreds;
+    /// Returns the number of shreds per slice (quorum size from the sampler).
+    pub fn num_shreds(&self) -> usize {
+        self.rotor_sampler.quorum_size()
     }
 
     /// Simulates distribution of `slices` slices via Rotor.
@@ -221,10 +213,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
     ///
     /// Adds the workload from this iteration to the running totals.
     pub fn run_one(&mut self, rng: &mut impl Rng) {
+        let num_shreds = self.rotor_sampler.quorum_size();
         let leader = self.leader_sampler.sample(rng);
-        self.leader_workload += self.num_shreds as u64;
-        self.workload[leader.as_index()] += self.num_shreds as u64;
-        let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
+        self.leader_workload += num_shreds as u64;
+        self.workload[leader.as_index()] += num_shreds as u64;
+        let relays = self.rotor_sampler.sample_quorum(rng);
         for relay in relays {
             if leader == relay {
                 self.workload[relay.as_index()] += self.validators.len() as u64 - 1;

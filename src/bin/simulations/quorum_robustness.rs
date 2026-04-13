@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use std::fs::File;
 use std::sync::RwLock;
 
-use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, SamplingStrategy};
+use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, QuorumSamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
 use color_eyre::Result;
 use log::debug;
@@ -44,7 +44,7 @@ pub struct AdversaryStrength {
 }
 
 /// Test harness for quorum robustness testing.
-pub struct QuorumRobustnessTest<S: SamplingStrategy> {
+pub struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
     samplers: Vec<S>,
     quorum_samplers: Vec<usize>,
     quorum_sizes: Vec<usize>,
@@ -58,7 +58,7 @@ pub struct QuorumRobustnessTest<S: SamplingStrategy> {
     stake_distribution: String,
 }
 
-impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
+impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Creates a new instance of the test harness.
     pub fn new(
         validators: Vec<ValidatorInfo>,
@@ -355,9 +355,9 @@ impl<S: SamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 .iter()
                 .copied()
                 .enumerate()
-                .map(|(quorum_index, quorum_size)| {
+                .map(|(quorum_index, _quorum_size)| {
                     let sampler = &self.samplers[self.quorum_samplers[quorum_index]];
-                    let sampled = sampler.sample_multiple(quorum_size, &mut rng);
+                    let sampled = sampler.sample_quorum(&mut rng);
                     let byzantine_samples =
                         sampled.iter().filter(|v| byzantine[v.as_index()]).count();
                     let crashed_samples = sampled.iter().filter(|v| crashed[v.as_index()]).count();

@@ -8,7 +8,7 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy, StakeWeightedSampler};
 use rand::prelude::*;
 
 use crate::discrete_event_simulator::{
@@ -23,12 +23,12 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
 /// Marker type for the Alpenglow latency simulation.
-pub struct AlpenglowLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct AlpenglowLatencySimulation<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for AlpenglowLatencySimulation<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Protocol for AlpenglowLatencySimulation<L, R> {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = LatencySimParams;
@@ -144,9 +144,12 @@ impl Event for LatencyEvent {
         match self {
             Self::Block => {
                 // TODO: find better way of integrating sub-protocol
+                let rotor_shreds = instance.params.rotor_params.shreds;
                 let builder = RotorInstanceBuilder::new(
-                    StakeWeightedSampler::new(environment.validators.clone()),
-                    StakeWeightedSampler::new(environment.validators.clone()),
+                    StakeWeightedSampler::new(environment.validators.clone())
+                        .into_quorum_strategy(1),
+                    StakeWeightedSampler::new(environment.validators.clone())
+                        .into_quorum_strategy(rotor_shreds),
                     instance.params.rotor_params,
                 );
                 let engine = SimulationEngine::<RotorLatencySimulation<_, _>>::new(
@@ -193,12 +196,12 @@ impl LatencySimParams {
 }
 
 /// A builder for Alpenglow latency simulation instances.
-pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     rotor_builder: RotorInstanceBuilder<L, R>,
     params: LatencySimParams,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> LatencySimInstanceBuilder<L, R> {
     /// Creates a new builder instance from a builder for Rotor instances.
     pub fn new(rotor_builder: RotorInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
         Self {
@@ -208,7 +211,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBuilder<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Builder for LatencySimInstanceBuilder<L, R> {
     type Params = LatencySimParams;
     type Instance = LatencySimInstance;
 

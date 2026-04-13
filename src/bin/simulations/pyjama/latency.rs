@@ -8,7 +8,9 @@
 use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
+use alpenglow::disseminator::rotor::{
+    QuorumSamplingStrategy, SamplingStrategy, StakeWeightedSampler,
+};
 use alpenglow::shredder::{DATA_SHREDS, MAX_DATA_PER_SHRED, TOTAL_SHREDS};
 
 use super::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParams};
@@ -23,7 +25,7 @@ use crate::rotor::RotorParams;
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct PyjamaLatencySimulation<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+pub struct PyjamaLatencySimulation<L: SamplingStrategy, P: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _proposer_sampler: PhantomData<P>,
     _rotor_sampler: PhantomData<R>,
@@ -32,8 +34,8 @@ pub struct PyjamaLatencySimulation<L: SamplingStrategy, P: SamplingStrategy, R: 
 impl<L, P, R> Protocol for PyjamaLatencySimulation<L, P, R>
 where
     L: SamplingStrategy,
-    P: SamplingStrategy,
-    R: SamplingStrategy,
+    P: QuorumSamplingStrategy,
+    R: QuorumSamplingStrategy,
 {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
@@ -200,8 +202,10 @@ impl Event for LatencyEvent {
                     slices: slices_required,
                 };
                 let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
-                    StakeWeightedSampler::new(environment.validators.clone()),
-                    StakeWeightedSampler::new(environment.validators.clone()),
+                    StakeWeightedSampler::new(environment.validators.clone())
+                        .into_quorum_strategy(1),
+                    StakeWeightedSampler::new(environment.validators.clone())
+                        .into_quorum_strategy(TOTAL_SHREDS),
                     rotor_params,
                 );
                 let builder = crate::alpenglow::LatencySimInstanceBuilder::new(
