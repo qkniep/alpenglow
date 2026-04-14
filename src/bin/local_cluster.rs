@@ -14,6 +14,7 @@ use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
