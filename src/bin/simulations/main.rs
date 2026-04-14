@@ -119,9 +119,9 @@ fn main() -> Result<()> {
     crate::ryse::run_robustness_tests();
     crate::pyjama::run_robustness_tests();
 
-    for k in [64, 128, 256, 512] {
-        run_ryse_robustness_test(k)?;
-        run_pyjama_robustness_test(k)?;
+    for k in SHRED_COUNTS {
+        run_ryse_robustness_test(k as u64)?;
+        run_pyjama_robustness_test(k as u64)?;
     }
 
     if RUN_BANDWIDTH_TESTS {

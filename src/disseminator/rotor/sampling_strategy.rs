@@ -718,12 +718,8 @@ impl QuorumSamplingStrategy for FaitAccompli2Sampler {
         }
 
         // sample remaining validators IID stake-weighted
-        if result.len() < self.k {
-            let k_prime = self.k - result.len();
-            let additional_samples: Vec<_> = (0..k_prime)
-                .map(|_| self.fallback_sampler.sample(rng))
-                .collect();
-            result.extend_from_slice(&additional_samples);
+        for _ in result.len()..self.k {
+            result.push(self.fallback_sampler.sample(rng));
         }
 
         result
