@@ -1,12 +1,11 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::crypto::{
-    Hash, IndividualSignature, MerkleTree, Signature, aggsig, hash, signature,
-};
+use alpenglow::crypto::merkle::{SliceMerkleTree, SliceProof};
+use alpenglow::crypto::{IndividualSignature, Signature, aggsig, hash, signature};
 use alpenglow::shredder::{MAX_DATA_PER_SHRED, MAX_DATA_PER_SLICE};
 use divan::counter::{BytesCount, ItemsCount};
-use rand::RngCore;
+use rand::prelude::*;
 
 fn main() {
     // run registered benchmarks.
@@ -34,7 +33,7 @@ fn merkle_tree<const N: usize>(bencher: divan::Bencher) {
             leaves
         })
         .bench_values(|leaves: Vec<Vec<u8>>| {
-            let _ = MerkleTree::new(&leaves);
+            let _ = SliceMerkleTree::new(&leaves);
         });
 }
 
@@ -48,9 +47,9 @@ fn merkle_proof<const N: usize>(bencher: divan::Bencher) {
             for leaf in &mut leaves {
                 rng.fill_bytes(leaf);
             }
-            MerkleTree::new(&leaves)
+            SliceMerkleTree::new(&leaves)
         })
-        .bench_values(|tree: MerkleTree| tree.create_proof(0));
+        .bench_values(|tree: SliceMerkleTree| tree.create_proof(0));
 }
 
 #[divan::bench(consts = [64, 512, 1024])]
@@ -63,13 +62,13 @@ fn merkle_verify<const N: usize>(bencher: divan::Bencher) {
             for leaf in &mut leaves {
                 rng.fill_bytes(leaf);
             }
-            let tree = MerkleTree::new(&leaves);
+            let tree = SliceMerkleTree::new(&leaves);
             let proof = tree.create_proof(0);
             (tree, leaves[0].clone(), 0, proof)
         })
         .bench_values(
-            |(tree, data, index, proof): (MerkleTree, Vec<u8>, usize, Vec<Hash>)| {
-                MerkleTree::check_proof(&data, index, tree.get_root(), &proof)
+            |(tree, data, index, proof): (SliceMerkleTree, Vec<u8>, usize, SliceProof)| {
+                SliceMerkleTree::check_proof(&data, index, &tree.get_root(), &proof)
             },
         );
 }
@@ -135,12 +134,14 @@ fn compress_bls(bencher: divan::Bencher) {
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
             let mut rng = rand::rng();
-            let mut bytes = [0; 128];
-            rng.fill_bytes(&mut bytes);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            sk.sign(&bytes)
+            let mut ikm = [0; 32];
+            let mut msg = [0; 32];
+            rng.fill_bytes(&mut ikm);
+            rng.fill_bytes(&mut msg);
+            let sk = blst::min_sig::SecretKey::key_gen(&ikm, &[]).unwrap();
+            sk.sign(&msg, &[], &[])
         })
-        .bench_values(|sig: IndividualSignature| sig.0.compress());
+        .bench_values(|sig: blst::min_sig::Signature| sig.compress());
 }
 
 #[divan::bench]
@@ -149,11 +150,13 @@ fn uncompress_bls(bencher: divan::Bencher) {
         .counter(ItemsCount::new(1_usize))
         .with_inputs(|| {
             let mut rng = rand::rng();
-            let mut bytes = [0; 128];
-            rng.fill_bytes(&mut bytes);
-            let sk = aggsig::SecretKey::new(&mut rng);
-            let sig = sk.sign(&bytes);
-            sig.0.compress()
+            let mut ikm = [0; 32];
+            let mut msg = [0; 32];
+            rng.fill_bytes(&mut ikm);
+            rng.fill_bytes(&mut msg);
+            let sk = blst::min_sig::SecretKey::key_gen(&ikm, &[]).unwrap();
+            let sig = sk.sign(&msg, &[], &[]);
+            sig.compress()
         })
         .bench_values(|comp: [u8; 48]| blst::min_sig::Signature::uncompress(&comp));
 }

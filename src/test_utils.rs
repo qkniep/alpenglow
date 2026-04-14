@@ -1,36 +1,45 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Utility types and functions for tests and benchmarks.
+
 use std::sync::Arc;
 
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use rand::prelude::*;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::{Hash, MerkleTree, signature};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
+use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
-use crate::network::{BINCODE_CONFIG, SimulatedNetwork, localhost_ip_sockaddr};
+use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
 use crate::{
-    BlockId, MAX_TRANSACTION_SIZE, Slot, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
+    BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Ping;
+/// A simple ping network message.
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
+pub struct Ping(pub [u8; 32]);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Pong;
+/// A simple pong network message.
+#[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
+pub struct Pong(pub [u8; 32]);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A simple network message that can be either a ping or a pong.
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum PingOrPong {
-    Ping,
-    Pong,
+    Ping([u8; 32]),
+    Pong([u8; 32]),
 }
 
-pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInfo>) {
+/// Generates [`ValidatorInfo`] for the given number of validators.
+///
+/// Returns the voting secret keys of all validators and the shared [`EpochInfo`].
+pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
     let mut rng = rand::rng();
     let mut sks = Vec::new();
     let mut voting_sks = Vec::new();
@@ -39,8 +48,8 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: i,
-            stake: 1,
+            id: ValidatorId::new(i),
+            stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(0),
@@ -49,10 +58,13 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Arc<EpochInf
             repair_response_address: localhost_ip_sockaddr(0),
         });
     }
-    let epoch_info = Arc::new(EpochInfo::new(0, validators));
+    let epoch_info = EpochInfo::new(validators);
     (voting_sks, epoch_info)
 }
 
+/// Creates [`TrivialAll2All`] instances for the given validators.
+///
+/// These are connected via a [`SimulatedNetworkCore`].
 pub async fn generate_all2all_instances(
     mut validators: Vec<ValidatorInfo>,
 ) -> Vec<TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>> {
@@ -66,30 +78,39 @@ pub async fn generate_all2all_instances(
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {
-        let network = core.join_unlimited(i as ValidatorId).await;
+        let network = core.join_unlimited(ValidatorId::new(i as u64)).await;
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all
 }
 
+/// Creates a random block with the given number of slices and shreds it.
+///
+/// Returns the block hash, the double-Merkle tree, and all shreds by slice.
 pub fn create_random_shredded_block(
     slot: Slot,
     num_slices: usize,
     sk: &signature::SecretKey,
-) -> (Hash, MerkleTree, Vec<Vec<ValidatedShred>>) {
+) -> (BlockHash, DoubleMerkleTree, Vec<Vec<ValidatedShred>>) {
+    let mut shredder = RegularShredder::default();
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(RegularShredder::shred(slice.clone(), sk).unwrap().to_vec());
+        shreds.push(shredder.shred(slice.clone(), sk).unwrap().to_vec());
     }
     let merkle_roots = shreds
         .iter()
-        .map(|slice_shreds| slice_shreds[0].merkle_root)
+        .map(|slice_shreds| slice_shreds[0].merkle_root())
         .collect::<Vec<_>>();
-    let tree = MerkleTree::new(&merkle_roots);
+    let tree = DoubleMerkleTree::new(&merkle_roots);
     let block_hash = tree.get_root();
     (block_hash, tree, shreds)
 }
 
+/// Creates a random block with the given number of slices.
+///
+/// In most cases, you should use [`create_random_shredded_block`] instead.
+///
+/// Returns all slices, as [`Slice`].
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
     let final_slice_index = SliceIndex::new_unchecked(num_slices - 1);
     let parent_slot = Slot::genesis();
@@ -97,7 +118,7 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
     let mut slices = Vec::new();
     for slice_index in final_slice_index.until() {
         let parent = if slice_index.is_first() {
-            Some((parent_slot, Hash::default()))
+            Some((parent_slot, Hash::random_for_test().into()))
         } else {
             None
         };
@@ -107,11 +128,14 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
             slice_index,
             is_last: slice_index == final_slice_index,
         };
-        slices.push(Slice::from_parts(header, payload, None));
+        slices.push(Slice::from_parts(header, payload));
     }
     slices
 }
 
+/// Asserts that two [`VotorEvent`]s are equal.
+///
+/// Panics if they are not equal.
 pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
     match (ev0, ev1) {
         (
@@ -165,20 +189,20 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
     }
 }
 
-/// Creates a valid [`SlicePayload`] which contains valid transactions that can  be decoded.
-///
-// HACK: Packs manually picked number of maximally sized transactions in the slice that results in creating the largest slice possible without going over the [`MAX_DATA_PER_SLICE`] limit.
+/// Creates a valid [`SlicePayload`] which contains valid transactions that can be decoded.
 fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayload {
+    // HACK: manually picked number of maximally sized transactions that fit in the slice
+    // without going over the [`MAX_DATA_PER_SLICE`] limit.
+    const NUM_TXS_PER_SLICE: usize = 61;
+
     let mut data = vec![0; MAX_TRANSACTION_SIZE];
     rand::rng().fill_bytes(&mut data);
     let tx = Transaction(data);
-    let tx =
-        bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG).expect("serialization should not panic");
-    let txs = vec![tx; 63];
-    let txs =
-        bincode::serde::encode_to_vec(txs, BINCODE_CONFIG).expect("serialization should not panic");
+    let tx = wincode::serialize(&tx).expect("serialization should not panic");
+    let txs = vec![tx; NUM_TXS_PER_SLICE];
+    let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);
-    payload.into()
+    SlicePayload::from(payload.as_slice())
 }

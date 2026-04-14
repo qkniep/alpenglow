@@ -38,7 +38,7 @@ pub struct WeightedShuffle {
     /// Underlying array implementing the tree.
     /// Nodes without children are never accessed and don't need to be
     /// allocated, so `tree.len() < num_nodes`.
-    /// tree[i][j] is the sum of all weights in the j'th sub-tree of node i.
+    /// `tree[i][j]` is the sum of all weights in the `j`-th sub-tree of node `i`.
     tree: Vec<[Stake; FANOUT]>,
     /// Current sum of all weights, excluding already sampled ones.
     weight: Stake,
@@ -57,12 +57,12 @@ impl WeightedShuffle {
         let weights = weights.into_iter();
         let (num_nodes, size) = get_num_nodes_and_tree_size(weights.len());
         debug_assert!(size <= num_nodes);
-        let mut tree = vec![[0; FANOUT]; size];
-        let mut sum: Stake = 0;
+        let mut tree = vec![[Stake::new(0); FANOUT]; size];
+        let mut sum: Stake = Stake::new(0);
         let mut zeros = Vec::default();
         for (k, weight) in weights.enumerate() {
             let weight = *weight.borrow();
-            if weight == 0 {
+            if weight == Stake::new(0) {
                 zeros.push(k);
                 continue;
             }
@@ -147,9 +147,8 @@ impl WeightedShuffle {
 
     pub fn shuffle<'a, R: Rng>(&'a mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
-            if self.weight > 0 {
-                let sample =
-                    <Stake as SampleUniform>::Sampler::sample_single(0, self.weight, rng).unwrap();
+            if self.weight > Stake::new(0) {
+                let sample = Stake::new(rng.random_range(0..self.weight.inner()));
                 let (index, weight) = self.search(sample);
                 self.remove(index, weight);
                 return Some(index);

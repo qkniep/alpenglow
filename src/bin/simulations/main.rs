@@ -26,15 +26,17 @@
 //! - Decaying acceptance (with 3.0 max samples)
 //! - Turbine
 //!
-//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`],
-//! [`RUN_CRASH_ROTOR_TESTS`], and [`RUN_BYZANTINE_ROTOR_TESTS`]
-//! control which tests to run.
+//! The global constants [`RUN_BANDWIDTH_TESTS`], [`RUN_LATENCY_TESTS`], and
+//! [`RUN_ROTOR_ROBUSTNESS_TESTS`] control which tests to run.
 //! Further, the global constants [`SAMPLING_STRATEGIES`], [`MAX_BANDWIDTHS`],
 //! and [`SHRED_COMBINATIONS`] control the parameters for some tests.
+
+#![deny(rustdoc::broken_intra_doc_links)]
 
 mod alpenglow;
 mod discrete_event_simulator;
 mod pyjama;
+mod quorum_robustness;
 mod rotor;
 mod ryse;
 
@@ -61,16 +63,19 @@ use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
 use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
-use crate::pyjama::{PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams};
-use crate::rotor::{
-    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, RotorRobustnessTest,
+use crate::pyjama::{
+    PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
 };
-use crate::ryse::{RyseInstanceBuilder, RyseLatencySimulation, RyseParameters};
+use crate::rotor::{
+    RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
+};
+use crate::ryse::{
+    RyseInstanceBuilder, RyseLatencySimulation, RyseParameters, run_ryse_robustness_test,
+};
 
 const RUN_BANDWIDTH_TESTS: bool = false;
 const RUN_LATENCY_TESTS: bool = true;
-const RUN_CRASH_ROTOR_TESTS: bool = false;
-const RUN_BYZANTINE_ROTOR_TESTS: bool = false;
+const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
@@ -107,8 +112,13 @@ fn main() -> Result<()> {
 
     logging::enable_logforth();
 
-    crate::ryse::run_robustness_tests()?;
-    crate::pyjama::run_robustness_tests()?;
+    crate::ryse::run_robustness_tests();
+    crate::pyjama::run_robustness_tests();
+
+    for k in [64, 128, 256, 512] {
+        run_ryse_robustness_test(k)?;
+        run_pyjama_robustness_test(k)?;
+    }
 
     if RUN_BANDWIDTH_TESTS {
         // create bandwidth evaluation files
@@ -134,7 +144,7 @@ fn main() -> Result<()> {
         let _ = File::create(filename)?;
     }
 
-    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
+    if RUN_ROTOR_ROBUSTNESS_TESTS {
         // create saftey evaluation file
         let filename = PathBuf::from("data")
             .join("output")
@@ -168,7 +178,7 @@ fn run_tests_for_stake_distribution(
     // sort by stake (from highest to lowest)
     validators_and_ping_servers.sort_by_key(|(v, _)| Reverse(v.stake));
     for (i, (v, _)) in validators_and_ping_servers.iter_mut().enumerate() {
-        v.id = i as ValidatorId;
+        v.id = ValidatorId::new(i as u64);
     }
 
     // extract the validators only
@@ -354,7 +364,7 @@ fn run_tests<
                 tester.set_num_shreds(shreds);
                 tester.reset();
                 tester.run_multiple(1_000_000);
-                tester.evaluate_supported(test_name, supported_writer_ref.clone());
+                tester.evaluate_supported(test_name, supported_writer_ref);
                 tester.evaluate_usage(test_name, usage_writer_ref.clone());
             }
         });
@@ -371,7 +381,7 @@ fn run_tests<
         let bandwidths = validators_with_pings
             .iter()
             .map(|v| {
-                ((v.stake as f64 / total_stake as f64
+                ((v.stake.inner() as f64 / total_stake.inner() as f64
                     * (validators_with_pings.len() as u64 * leader_bandwidth) as f64)
                     .round() as u64)
                     .max(min_bandwidth)
@@ -521,41 +531,15 @@ fn run_tests<
                     environment.clone(),
                 );
                 engine.run_many_sequential(1000);
-                let filename = format!("data/output/alpenglow_{}_1000.csv", city);
+                let filename = format!("data/output/alpenglow_{city}_1000.csv");
                 engine.stats().write_to_csv(filename, &params)
             })?;
         }
     }
 
-    if RUN_CRASH_ROTOR_TESTS || RUN_BYZANTINE_ROTOR_TESTS {
-        // TODO: clean up code
-        let filename = PathBuf::from("data")
-            .join("output")
-            .join("simulations")
-            .join("rotor_robustness")
-            .join("rotor_robustness")
-            .with_extension("csv");
-        let file = File::options().append(true).open(filename)?;
-        let mut writer = csv::Writer::from_writer(file);
-
-        if RUN_CRASH_ROTOR_TESTS {
-            // Rotor robustness experiments (Crash + Byz., 40%)
-            for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} robustness test (crash=0.4, n={n}, k={k})");
-                let tester =
-                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-                tester.run(test_name, 0.4, &mut writer);
-            }
-        }
-
-        if RUN_BYZANTINE_ROTOR_TESTS {
-            // Rotor robustness experiments (Byzantine only, 20%)
-            for (n, k) in &SHRED_COMBINATIONS {
-                info!("{test_name} robustness test (byz=0.2, n={n}, k={k})");
-                let tester =
-                    RotorRobustnessTest::new(validators.to_vec(), rotor_sampler.clone(), *n, *k);
-                tester.run(test_name, 0.2, &mut writer);
-            }
+    if RUN_ROTOR_ROBUSTNESS_TESTS {
+        for &(n, k) in &SHRED_COMBINATIONS {
+            run_rotor_robustness_test(n, k)?;
         }
     }
 

@@ -60,16 +60,16 @@ impl Stage for LatencyTestStage {
     fn events(&self, params: &RotorParams) -> Vec<LatencyEvent> {
         match self {
             Self::Direct => {
-                let mut events = Vec::with_capacity(params.num_slices + 1);
+                let mut events = Vec::with_capacity(params.slices + 1);
                 events.push(LatencyEvent::BlockSent);
-                for slice in 0..params.num_slices {
+                for slice in 0..params.slices {
                     events.push(LatencyEvent::Direct(slice));
                 }
                 events
             }
             Self::Rotor => {
-                let mut events = Vec::with_capacity(3 * params.num_slices);
-                for slice in 0..params.num_slices {
+                let mut events = Vec::with_capacity(3 * params.slices);
+                for slice in 0..params.slices {
                     events.push(LatencyEvent::StartForwarding(slice));
                     events.push(LatencyEvent::FirstShredInSlice(slice));
                     events.push(LatencyEvent::Rotor(slice));
@@ -100,10 +100,10 @@ impl Event for LatencyEvent {
     fn name(&self) -> String {
         match self {
             Self::BlockSent => "block_sent".to_owned(),
-            Self::Direct(slice) => format!("direct_{}", slice),
+            Self::Direct(slice) => format!("direct_{slice}"),
             Self::StartForwarding(_) => "start_forwarding".to_owned(),
             Self::FirstShredInSlice(_) => "first_shred_in_slice".to_owned(),
-            Self::Rotor(slice) => format!("rotor_{}", slice),
+            Self::Rotor(slice) => format!("rotor_{slice}"),
             Self::FirstShred => "first_shred".to_owned(),
             Self::Block => "block".to_owned(),
         }
@@ -136,10 +136,8 @@ impl Event for LatencyEvent {
                 vec![Self::StartForwarding(*slice)]
             }
             Self::Rotor(slice) => vec![Self::StartForwarding(*slice)],
-            Self::FirstShred => (0..params.num_slices)
-                .map(Self::FirstShredInSlice)
-                .collect(),
-            Self::Block => (0..params.num_slices).map(Self::Rotor).collect(),
+            Self::FirstShred => (0..params.slices).map(Self::FirstShredInSlice).collect(),
+            Self::Block => (0..params.slices).map(Self::Rotor).collect(),
         }
     }
 
@@ -155,33 +153,33 @@ impl Event for LatencyEvent {
             Self::BlockSent => {
                 let mut timings = vec![start_time; environment.num_validators()];
                 let block_bytes =
-                    instance.params.num_slices * instance.params.num_shreds * MAX_DATA_PER_SHRED;
+                    instance.params.slices * instance.params.shreds * MAX_DATA_PER_SHRED;
                 let tx_time = environment.transmission_delay(block_bytes, instance.leader);
                 let finished_sending_time =
                     resources
                         .network
                         .schedule(instance.leader, SimTime::ZERO, tx_time);
-                timings[instance.leader as usize] += finished_sending_time;
+                timings[instance.leader.as_index()] += finished_sending_time;
                 timings
             }
             Self::Direct(slice) => {
                 let mut timings = vec![start_time; environment.num_validators()];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
-                    *timing +=
-                        environment.propagation_delay(instance.leader, recipient as ValidatorId);
+                    *timing += environment
+                        .propagation_delay(instance.leader, ValidatorId::new(recipient as u64));
                 }
                 for (relay_offset, &relay) in instance.relays[*slice].iter().enumerate() {
-                    let shred_send_index = slice * instance.params.num_shreds + relay_offset + 1;
+                    let shred_send_index = slice * instance.params.shreds + relay_offset + 1;
                     let tx_delay = environment
                         .transmission_delay(shred_send_index * MAX_DATA_PER_SHRED, instance.leader);
-                    timings[relay as usize] += tx_delay;
+                    timings[relay.as_index()] += tx_delay;
                 }
                 timings
             }
             Self::StartForwarding(slice) => {
                 let mut timings = dependency_timings[0].to_vec();
                 for &relay in &instance.relays[*slice] {
-                    let timing = &mut timings[relay as usize];
+                    let timing = &mut timings[relay.as_index()];
                     let total_bytes = environment.num_validators() * MAX_DATA_PER_SHRED;
                     let total_tx_delay = environment.transmission_delay(total_bytes, relay);
                     let start_time = resources.network.time_next_free_after(relay, *timing);
@@ -196,11 +194,11 @@ impl Event for LatencyEvent {
                     let first_shred_time = instance.relays[*slice]
                         .iter()
                         .map(|relay| {
-                            let prop_delay =
-                                environment.propagation_delay(*relay, recipient as ValidatorId);
+                            let prop_delay = environment
+                                .propagation_delay(*relay, ValidatorId::new(recipient as u64));
                             let tx_delay = environment
                                 .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
-                            dependency_timings[0][*relay as usize] + prop_delay + tx_delay
+                            dependency_timings[0][relay.as_index()] + prop_delay + tx_delay
                         })
                         .min()
                         .unwrap();
@@ -210,16 +208,17 @@ impl Event for LatencyEvent {
             }
             Self::Rotor(slice) => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
-                let mut shred_timings = vec![SimTime::NEVER; instance.params.num_shreds];
+                let mut shred_timings = vec![SimTime::NEVER; instance.params.shreds];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
                     for (i, relay) in instance.relays[*slice].iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][*relay as usize]
-                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                        shred_timings[i] = dependency_timings[0][relay.as_index()]
+                            + environment
+                                .propagation_delay(*relay, ValidatorId::new(recipient as u64))
                             + environment
                                 .transmission_delay((recipient + 1) * MAX_DATA_PER_SHRED, *relay);
                     }
                     shred_timings.sort_unstable();
-                    *timing = shred_timings[instance.params.num_data_shreds - 1];
+                    *timing = shred_timings[instance.params.data_shreds - 1];
                 }
                 timings
             }

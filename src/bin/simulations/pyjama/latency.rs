@@ -141,7 +141,7 @@ impl Event for LatencyEvent {
         match self {
             Self::Propose => {
                 let mut timings = vec![start_time; environment.num_validators()];
-                for &proposer in instance.proposers.iter() {
+                for &proposer in &instance.proposers {
                     let block_bytes = instance.params.num_slices as usize
                         * instance.params.num_relays as usize
                         * MAX_DATA_PER_SHRED;
@@ -149,7 +149,7 @@ impl Event for LatencyEvent {
                     let start_sending_time =
                         resources.network.time_next_free_after(proposer, start_time);
                     resources.network.schedule(proposer, start_time, tx_time);
-                    timings[proposer as usize] = start_sending_time;
+                    timings[proposer.as_index()] = start_sending_time;
                 }
                 timings
             }
@@ -161,7 +161,7 @@ impl Event for LatencyEvent {
                         .proposers
                         .iter()
                         .map(|proposer| {
-                            let start_send_time = dependency_timings[0][*proposer as usize];
+                            let start_send_time = dependency_timings[0][proposer.as_index()];
                             let prop_delay = environment.propagation_delay(*proposer, relay);
                             let shred_send_index = relay_offset + 1;
                             let tx_delay = environment.transmission_delay(
@@ -172,8 +172,8 @@ impl Event for LatencyEvent {
                         })
                         .max()
                         .unwrap();
-                    timings[relay as usize] =
-                        timings[relay as usize].max(shreds_from_all_proposers);
+                    timings[relay.as_index()] =
+                        timings[relay.as_index()].max(shreds_from_all_proposers);
                 }
                 timings
             }
@@ -181,23 +181,23 @@ impl Event for LatencyEvent {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (i, relay) in instance.relays.iter().enumerate() {
-                    shred_timings[i] = dependency_timings[0][*relay as usize]
+                    shred_timings[i] = dependency_timings[0][relay.as_index()]
                         + environment.propagation_delay(*relay, instance.leader)
                         + environment.transmission_delay(MAX_DATA_PER_SHRED, *relay);
                 }
                 shred_timings.sort_unstable();
-                timings[instance.leader as usize] =
+                timings[instance.leader.as_index()] =
                     shred_timings[instance.params.attestations_threshold as usize - 1];
                 timings
             }
             Self::Consensus => {
-                let consensus_start_time = dependency_timings[0][instance.leader as usize];
+                let consensus_start_time = dependency_timings[0][instance.leader.as_index()];
                 // TODO: find better way of integrating sub-protocol
                 let slices_required = 3;
                 let rotor_params = RotorParams {
-                    num_data_shreds: DATA_SHREDS,
-                    num_shreds: TOTAL_SHREDS,
-                    num_slices: slices_required,
+                    data_shreds: DATA_SHREDS,
+                    shreds: TOTAL_SHREDS,
+                    slices: slices_required,
                 };
                 let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
                     StakeWeightedSampler::new(environment.validators.clone()),
@@ -223,7 +223,7 @@ impl Event for LatencyEvent {
             Self::Release => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 for relay in &instance.relays {
-                    let dep_time = dependency_timings[0][*relay as usize];
+                    let dep_time = dependency_timings[0][relay.as_index()];
                     let block_bytes = environment.num_validators()
                         * instance.params.num_proposers as usize
                         * MAX_DATA_PER_SHRED;
@@ -231,7 +231,7 @@ impl Event for LatencyEvent {
                     let start_sending_time =
                         resources.network.time_next_free_after(*relay, dep_time);
                     resources.network.schedule(*relay, dep_time, tx_time);
-                    timings[*relay as usize] = start_sending_time;
+                    timings[relay.as_index()] = start_sending_time;
                 }
                 timings
             }
@@ -240,8 +240,9 @@ impl Event for LatencyEvent {
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
                     for (i, relay) in instance.relays.iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][*relay as usize]
-                            + environment.propagation_delay(*relay, recipient as ValidatorId)
+                        shred_timings[i] = dependency_timings[0][relay.as_index()]
+                            + environment
+                                .propagation_delay(*relay, ValidatorId::new(recipient as u64))
                             + environment.transmission_delay(
                                 (recipient + 1)
                                     * instance.params.num_proposers as usize

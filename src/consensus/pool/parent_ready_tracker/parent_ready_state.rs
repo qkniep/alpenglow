@@ -1,15 +1,20 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Implements the [`ParentReadyState`] data structure.
+//!
+//! It holds the necessary state for a given slot to track the parent-ready condition.
+//! This is used by the [`super::ParentReadyTracker`].
+
 use either::Either;
 use log::warn;
 use smallvec::{SmallVec, smallvec};
 use tokio::sync::oneshot;
 
 use crate::BlockId;
-use crate::crypto::Hash;
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 
-/// Tracks the status of whether an individual slot has a parent ready.
+/// Status of whether an individual slot has a parent ready.
 enum IsReady {
     /// Do not have a parent ready for this slot yet.
     ///
@@ -32,14 +37,12 @@ impl Default for IsReady {
 #[derive(Default)]
 pub(super) struct ParentReadyState {
     /// Whether this slot is skip-certified.
-    // XXX: consider making this field private
-    pub(super) skip: bool,
+    skip: bool,
     /// Blocks that are notarized-fallback for this slot, if any.
     ///
     /// We can potentially have multiple notar fallbacks per slot,
     /// but we optimize for the common case where there will only be one.
-    // XXX: consider making this field private
-    pub(super) notar_fallbacks: SmallVec<[Hash; 1]>,
+    notar_fallbacks: SmallVec<[BlockHash; 1]>,
     /// Current status of the parent-ready condition for this slot.
     // NOTE: Do not make this field more visible.
     // Updating it must sometimes produce additional actions.
@@ -47,6 +50,49 @@ pub(super) struct ParentReadyState {
 }
 
 impl ParentReadyState {
+    /// Creates a new [`ParentReadyState`] for the genesis block.
+    pub(super) fn genesis() -> Self {
+        Self {
+            skip: false,
+            notar_fallbacks: SmallVec::from([GENESIS_BLOCK_HASH]),
+            is_ready: IsReady::default(),
+        }
+    }
+
+    /// Marks this slot as skip-certified.
+    ///
+    /// Returns `true` iff this slot was not already skip-certified.
+    pub(super) fn mark_skip(&mut self) -> bool {
+        if self.skip {
+            false
+        } else {
+            self.skip = true;
+            true
+        }
+    }
+
+    /// Returns `true` iff this slot is skip-certified.
+    pub(super) fn is_skip_certified(&self) -> bool {
+        self.skip
+    }
+
+    /// Marks the given block as notarized-fallback.
+    ///
+    /// Returns `true` iff this block was not already marked as notarized-fallback.
+    pub(super) fn mark_notar_fallback(&mut self, hash: BlockHash) -> bool {
+        if self.notar_fallbacks.contains(&hash) {
+            false
+        } else {
+            self.notar_fallbacks.push(hash);
+            true
+        }
+    }
+
+    /// Returns an iterator over the notarized-fallback block hashes for this slot.
+    pub(super) fn notar_fallback_blocks(&self) -> impl Iterator<Item = BlockHash> {
+        self.notar_fallbacks.iter().cloned()
+    }
+
     /// Adds a [`BlockId`] to the parents ready list.
     ///
     /// Additionally, will inform any waiters.
@@ -60,7 +106,7 @@ impl ParentReadyState {
                 let sender = sender.take();
                 match sender {
                     None => (),
-                    Some(sender) => match sender.send(id) {
+                    Some(sender) => match sender.send(id.clone()) {
                         Ok(()) => (),
                         Err(id) => {
                             warn!("sending {id:?} failed, receiver deallocated");
@@ -71,7 +117,7 @@ impl ParentReadyState {
             }
             IsReady::Ready(ready_ids) => {
                 assert!(!ready_ids.contains(&id));
-                ready_ids.push(id)
+                ready_ids.push(id);
             }
         }
     }
@@ -95,7 +141,7 @@ impl ParentReadyState {
             IsReady::Ready(block_ids) => {
                 assert!(!block_ids.is_empty());
                 block_ids.sort();
-                Either::Left(block_ids[0])
+                Either::Left(block_ids[0].clone())
             }
             IsReady::NotReady(maybe_waiter) => {
                 assert!(maybe_waiter.is_none());
@@ -111,13 +157,14 @@ impl ParentReadyState {
 mod tests {
     use super::*;
     use crate::Slot;
+    use crate::crypto::Hash;
 
     #[test]
     fn wait_for_parent_ready_no_blocking() {
         let mut state = ParentReadyState::default();
         assert_eq!(state.ready_block_ids().len(), 0);
-        let block_id = (Slot::new(0), [1; 32]);
-        state.add_to_ready(block_id);
+        let block_id = (Slot::new(1), Hash::random_for_test().into());
+        state.add_to_ready(block_id.clone());
         let res = state.wait_for_parent_ready();
         let Either::Left(received_block_id) = res else {
             panic!("unexpected result {res:?}");
@@ -134,8 +181,8 @@ mod tests {
         let Either::Right(rx) = res else {
             panic!("unexpected result {res:?}");
         };
-        let block_id = (Slot::new(0), [1; 32]);
-        state.add_to_ready(block_id);
+        let block_id = (Slot::new(1), Hash::random_for_test().into());
+        state.add_to_ready(block_id.clone());
         let received_block_id = rx.await.unwrap();
         assert_eq!(received_block_id, block_id);
         assert_eq!(state.ready_block_ids().len(), 1);

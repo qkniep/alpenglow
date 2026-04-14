@@ -21,8 +21,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use super::blockstore::BlockInfo;
 use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
-use crate::crypto::Hash;
 use crate::crypto::aggsig::SecretKey;
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::{All2All, Slot, ValidatorId};
 
 /// Events that Votor is interested in.
@@ -38,10 +38,10 @@ pub enum VotorEvent {
     ParentReady {
         slot: Slot,
         parent_slot: Slot,
-        parent_hash: Hash,
+        parent_hash: BlockHash,
     },
     /// The given block has reached the safe-to-notar status.
-    SafeToNotar(Slot, Hash),
+    SafeToNotar(Slot, BlockHash),
     /// The given slot has reached the safe-to-skip status.
     SafeToSkip(Slot),
     /// New certificated created in pool (should then be broadcast by Votor).
@@ -56,6 +56,8 @@ pub enum VotorEvent {
     FirstShred(Slot),
     /// New (complete) block was received in blockstore.
     Block { slot: Slot, block_info: BlockInfo },
+    /// Blockstore detected an invalid block from the leader for this slot.
+    InvalidBlock(Slot),
 
     /// Regular timeout for the given slot has fired.
     Timeout(Slot),
@@ -75,13 +77,13 @@ pub struct Votor<A: All2All> {
     /// Indicates for which slots we already voted notar or skip.
     voted: BTreeSet<Slot>,
     /// Indicates for which slots we already voted notar and for what hash.
-    voted_notar: BTreeMap<Slot, Hash>,
+    voted_notar: BTreeMap<Slot, BlockHash>,
     /// Indicates for which slots we set the 'bad window' flag.
     bad_window: BTreeSet<Slot>,
     /// Blocks that have a notarization certificate (not notar-fallback).
-    block_notarized: BTreeMap<Slot, Hash>,
+    block_notarized: BTreeMap<Slot, BlockHash>,
     /// Indicates for which slots the given (slot, hash) pair is a valid parent.
-    parents_ready: BTreeSet<(Slot, Slot, Hash)>,
+    parents_ready: BTreeSet<(Slot, Slot, BlockHash)>,
     /// Indicates for which slots we received at least one shred.
     received_shred: BTreeSet<Slot>,
     /// Blocks that are waiting for previous slots to be notarized.
@@ -112,9 +114,13 @@ impl<A: All2All> Votor<A> {
     ) -> Self {
         // add dummy genesis block to some of the data structures
         let voted = [Slot::genesis()].into_iter().collect();
-        let voted_notar = [(Slot::genesis(), Hash::default())].into_iter().collect();
-        let block_notarized = [(Slot::genesis(), Hash::default())].into_iter().collect();
-        let parents_ready = [(Slot::genesis(), Slot::genesis(), Hash::default())]
+        let voted_notar = [(Slot::genesis(), GENESIS_BLOCK_HASH)]
+            .into_iter()
+            .collect();
+        let block_notarized = [(Slot::genesis(), GENESIS_BLOCK_HASH)]
+            .into_iter()
+            .collect();
+        let parents_ready = [(Slot::genesis(), Slot::genesis(), GENESIS_BLOCK_HASH)]
             .into_iter()
             .collect();
         let retired_slots = [Slot::genesis()].into_iter().collect();
@@ -156,7 +162,7 @@ impl<A: All2All> Votor<A> {
                     parent_slot,
                     parent_hash,
                 } => {
-                    let h = &hex::encode(parent_hash)[..8];
+                    let h = &hex::encode(parent_hash.as_hash())[..8];
                     trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
                     self.parents_ready.insert((slot, parent_slot, parent_hash));
                     self.check_pending_blocks().await;
@@ -181,8 +187,8 @@ impl<A: All2All> Votor<A> {
                     match cert.as_ref() {
                         Cert::Notar(_) => {
                             self.block_notarized
-                                .insert(cert.slot(), cert.block_hash().unwrap());
-                            self.try_final(cert.slot(), cert.block_hash().unwrap())
+                                .insert(cert.slot(), cert.block_hash().cloned().unwrap());
+                            self.try_final(cert.slot(), cert.block_hash().cloned().unwrap())
                                 .await;
                         }
                         Cert::Final(_) | Cert::FastFinal(_) => {
@@ -206,13 +212,17 @@ impl<A: All2All> Votor<A> {
                 VotorEvent::FirstShred(slot) => {
                     self.received_shred.insert(slot);
                 }
+                VotorEvent::InvalidBlock(slot) => {
+                    warn!("invalid block from leader for slot {slot}, skipping window");
+                    self.try_skip_window(slot).await;
+                }
                 VotorEvent::Block { slot, block_info } => {
                     if self.voted.contains(&slot) {
-                        let h = &hex::encode(block_info.hash)[..8];
+                        let h = &hex::encode(block_info.hash.as_hash())[..8];
                         warn!("not voting for block {h} in slot {slot}, already voted");
                         continue;
                     }
-                    if self.try_notar(slot, block_info).await {
+                    if self.try_notar(slot, block_info.clone()).await {
                         self.check_pending_blocks().await;
                     } else {
                         self.pending_blocks.insert(slot, block_info);
@@ -245,11 +255,10 @@ impl<A: All2All> Votor<A> {
     /// Panics if `slot` is not the first slot of a window.
     fn set_timeouts(&self, slot: Slot) {
         assert!(slot.is_start_of_window());
-        // TODO: set timeouts only once?
 
         trace!(
-            "setting timeouts for slots {:?}",
-            slot.slots_in_window().collect::<Vec<_>>()
+            "setting timeouts for slots {slot}-{}",
+            slot.last_slot_in_window()
         );
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
@@ -279,10 +288,10 @@ impl<A: All2All> Votor<A> {
         } = block_info;
         let first_slot_in_window = slot.first_slot_in_window();
         if slot == first_slot_in_window {
-            let valid_parent = self
-                .parents_ready
-                .contains(&(slot, parent_slot, parent_hash));
-            let h = &hex::encode(parent_hash)[..8];
+            let valid_parent =
+                self.parents_ready
+                    .contains(&(slot, parent_slot, parent_hash.clone()));
+            let h = &hex::encode(parent_hash.as_hash())[..8];
             trace!(
                 "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
             );
@@ -295,17 +304,17 @@ impl<A: All2All> Votor<A> {
             return false;
         }
         debug!("voted notar for slot {slot}");
-        let vote = Vote::new_notar(slot, hash, &self.voting_key, self.validator_id);
+        let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_id);
         self.all2all.broadcast(&vote.into()).await.unwrap();
         self.voted.insert(slot);
-        self.voted_notar.insert(slot, hash);
+        self.voted_notar.insert(slot, hash.clone());
         self.pending_blocks.remove(&slot);
         self.try_final(slot, hash).await;
         true
     }
 
     /// Sends a finalization vote for the given block if the conditions are met.
-    async fn try_final(&mut self, slot: Slot, hash: Hash) {
+    async fn try_final(&mut self, slot: Slot, hash: BlockHash) {
         let notarized = self.block_notarized.get(&slot) == Some(&hash);
         let voted_notar = self.voted_notar.get(&slot) == Some(&hash);
         let not_bad = !self.bad_window.contains(&slot);
@@ -334,7 +343,7 @@ impl<A: All2All> Votor<A> {
         let slots: Vec<_> = self.pending_blocks.keys().copied().collect();
         for slot in &slots {
             if let Some(block_info) = self.pending_blocks.get(slot) {
-                self.try_notar(*slot, *block_info).await;
+                self.try_notar(*slot, block_info.clone()).await;
             }
         }
     }
@@ -349,6 +358,7 @@ impl VotorEvent {
             | Self::Standstill(slot, _, _)
             | Self::FirstShred(slot)
             | Self::Block { slot, .. }
+            | Self::InvalidBlock(slot)
             | Self::Timeout(slot)
             | Self::TimeoutCrashedLeader(slot) => *slot,
             Self::CertCreated(cert) => cert.slot(),
@@ -366,18 +376,25 @@ mod tests {
     use crate::all2all::TrivialAll2All;
     use crate::consensus::cert::NotarCert;
     use crate::consensus::{ConsensusMessage, EpochInfo};
+    use crate::crypto::Hash;
     use crate::network::SimulatedNetwork;
     use crate::test_utils::{generate_all2all_instances, generate_validators};
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
-    async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, Arc<EpochInfo>) {
+    async fn start_votor() -> (A2A, mpsc::Sender<VotorEvent>, EpochInfo) {
         let (sks, epoch_info) = generate_validators(2);
-        let mut a2a = generate_all2all_instances(epoch_info.validators.clone()).await;
+        let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
         let (tx, rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let mut votor = Votor::new(0, sks[0].clone(), tx.clone(), rx, Arc::new(votor_a2a));
+        let mut votor = Votor::new(
+            ValidatorId::new(0),
+            sks[0].clone(),
+            tx.clone(),
+            rx,
+            Arc::new(votor_a2a),
+        );
         tokio::spawn(async move {
             votor.voting_loop().await.unwrap();
         });
@@ -415,8 +432,8 @@ mod tests {
         let event = VotorEvent::FirstShred(slot);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
-            hash: [1u8; 32],
-            parent: (Slot::genesis(), Hash::default()),
+            hash: Hash::random_for_test().into(),
+            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();
@@ -428,7 +445,7 @@ mod tests {
         assert_eq!(vote.slot(), slot);
 
         // vote finalize after seeing branch-certified
-        let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], &epoch_info.validators));
+        let cert = Cert::Notar(NotarCert::new_unchecked(&[vote], epoch_info.validators()));
         let event = VotorEvent::CertCreated(Box::new(cert));
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
@@ -443,15 +460,15 @@ mod tests {
     #[tokio::test]
     async fn notar_out_of_order() {
         let (other_a2a, tx, _) = start_votor().await;
-        let (slot1, hash1) = (Slot::genesis().next(), [1u8; 32]);
-        let (slot2, hash2) = (slot1.next(), [2u8; 32]);
+        let (slot1, hash1) = (Slot::genesis().next(), Hash::random_for_test());
+        let (slot2, hash2) = (slot1.next(), Hash::random_for_test());
 
         // give later block to votor first
         let event = VotorEvent::FirstShred(slot2);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
-            hash: hash2,
-            parent: (slot1, hash1),
+            hash: hash2.into(),
+            parent: (slot1, hash1.clone().into()),
         };
         let event = VotorEvent::Block {
             slot: slot2,
@@ -470,8 +487,8 @@ mod tests {
         let event = VotorEvent::FirstShred(slot1);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
-            hash: hash1,
-            parent: (Slot::genesis(), Hash::default()),
+            hash: hash1.into(),
+            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
         let event = VotorEvent::Block {
             slot: slot1,
@@ -510,13 +527,14 @@ mod tests {
         }
 
         // vote notar-fallback after safe-to-notar
-        let event = VotorEvent::SafeToNotar(slot, [1; 32]);
+        let hash = Hash::random_for_test();
+        let event = VotorEvent::SafeToNotar(slot, hash.clone().into());
         tx.send(event).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(v.is_notar_fallback());
                 assert_eq!(v.slot(), slot);
-                assert_eq!(v.block_hash(), Some([1; 32]));
+                assert_eq!(v.block_hash(), Some(&hash.into()));
             }
             m => panic!("other msg: {m:?}"),
         }
@@ -531,8 +549,8 @@ mod tests {
         let event = VotorEvent::FirstShred(slot);
         tx.send(event).await.unwrap();
         let block_info = BlockInfo {
-            hash: [1u8; 32],
-            parent: (Slot::genesis(), Hash::default()),
+            hash: Hash::random_for_test().into(),
+            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
         let event = VotorEvent::Block { slot, block_info };
         tx.send(event).await.unwrap();

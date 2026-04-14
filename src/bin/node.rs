@@ -8,14 +8,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::{Alpenglow, ConsensusMessage, EpochInfo};
+use alpenglow::consensus::{Alpenglow, ConsensusMessage, EpochInfo, ValidatorEpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::StakeWeightedSampler;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
-use alpenglow::{Transaction, ValidatorInfo, logging};
+use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
 
     // start the node with the provided config
-    let node = create_node(config)?;
+    let node = create_node(config);
     let cancel_token = node.get_cancel_token();
     let node_task = tokio::spawn(node.run().in_span(root_span));
 
@@ -115,9 +115,12 @@ type Node = Alpenglow<
     UdpNetwork<Transaction, Transaction>,
 >;
 
-fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
+fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
-    let epoch_info = Arc::new(EpochInfo::new(config.id, config.gossip.clone()));
+    let epoch_info = Arc::new(ValidatorEpochInfo::new(
+        ValidatorId::new(config.id),
+        EpochInfo::new(config.gossip.clone()),
+    ));
     let start_port = config.port;
     let network = UdpNetwork::new(start_port);
     let all2all = TrivialAll2All::new(config.gossip, network);
@@ -126,7 +129,7 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
     let repair_network = UdpNetwork::new(start_port + 2);
     let repair_request_network = UdpNetwork::new(start_port + 3);
     let txs_receiver = UdpNetwork::new(start_port + 4);
-    Ok(Alpenglow::new(
+    Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
@@ -135,7 +138,7 @@ fn create_node(config: ConfigFile) -> color_eyre::Result<Node> {
         repair_request_network,
         epoch_info,
         txs_receiver,
-    ))
+    )
 }
 
 async fn create_node_configs(
@@ -161,8 +164,8 @@ async fn create_node_configs(
         ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id,
-            stake: 1,
+            id: ValidatorId::new(id),
+            stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: sockaddr,

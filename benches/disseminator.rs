@@ -1,11 +1,16 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
+use alpenglow::consensus::{EpochInfo, ValidatorEpochInfo};
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use alpenglow::types::Stake;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
+use alpenglow::{ValidatorId, ValidatorInfo};
 use divan::counter::ItemsCount;
 
 fn main() {
@@ -21,13 +26,37 @@ fn turbine_tree(bencher: divan::Bencher) {
         .with_inputs(|| {
             let net1 = UdpNetwork::new_with_any_port();
             let net2 = UdpNetwork::new_with_any_port();
-            let turbine1 = Turbine::new(0, Vec::new(), net1);
-            let turbine2 = Turbine::new(1, Vec::new(), net2);
+            let mut rng = rand::rng();
+            let addr = alpenglow::network::dontcare_sockaddr();
+            let validators: Vec<_> = (0..2)
+                .map(|i| ValidatorInfo {
+                    id: ValidatorId::new(i),
+                    stake: Stake::new(1),
+                    pubkey: SecretKey::new(&mut rng).to_pk(),
+                    voting_pubkey: alpenglow::crypto::aggsig::SecretKey::new(&mut rng).to_pk(),
+                    all2all_address: addr,
+                    disseminator_address: addr,
+                    repair_request_address: addr,
+                    repair_response_address: addr,
+                })
+                .collect();
+            let epoch_info = EpochInfo::new(validators);
+            let turbine1 = Turbine::new(
+                net1,
+                Arc::new(ValidatorEpochInfo::new(
+                    ValidatorId::new(0),
+                    epoch_info.clone(),
+                )),
+            );
+            let turbine2 = Turbine::new(
+                net2,
+                Arc::new(ValidatorEpochInfo::new(ValidatorId::new(1), epoch_info)),
+            );
 
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
-            let shreds = RegularShredder::shred(slice, &sk).unwrap();
+            let shreds = RegularShredder::default().shred(slice, &sk).unwrap();
             let shred = shreds[shreds.len() - 1].clone();
 
             (shred, turbine1, turbine2)

@@ -63,6 +63,7 @@ mod tests {
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
+    use crate::{Stake, ValidatorId};
 
     fn create_disseminator_instances(
         count: u64,
@@ -78,8 +79,8 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: i,
-                stake: 1,
+                id: ValidatorId::new(i),
+                stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
@@ -101,7 +102,7 @@ mod tests {
     async fn dissemination() {
         let (sks, mut disseminators) = create_disseminator_instances(20, 5000);
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = RegularShredder::shred(slice, &sks[0]).unwrap();
+        let shreds = RegularShredder::default().shred(slice, &sks[0]).unwrap();
 
         let shreds_received = Arc::new(Mutex::new(0_usize));
         let mut tasks = Vec::new();
