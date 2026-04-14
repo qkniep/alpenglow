@@ -31,7 +31,7 @@ futures = "0.3"
 geo = "0.32"
 hex = "0.4"
 hex-literal = "1"
-hotpath = { version = "0.15", optional = true }
+hotpath = "0.15"
 log = "0.4"
 logforth = { version = "0.29", features = ["append-fastrace", "starter-log"] }
 mockall = "0.14"
@@ -59,7 +59,7 @@ wincode = { version = "0.5", features = ["derive"] }
 divan = "0.1"
 
 [features]
-hotpath = ["dep:hotpath", "hotpath/hotpath"]
+hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 
 [lints.clippy]
