@@ -44,9 +44,10 @@ pub use self::cert::{Cert, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
 pub use self::vote::Vote;
-use self::votor::Votor;
+use self::votor::{Votor, VotorEvent};
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
+use crate::execution::ExecutionEvent;
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::Shred;
@@ -117,6 +118,12 @@ where
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
 
+    /// Sender side of the votor event channel.
+    ///
+    /// Exposed so that [`crate::validator::Validator`] can forward execution
+    /// results (block valid / invalid) back into the votor.
+    votor_tx: mpsc::Sender<VotorEvent>,
+
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
     /// Votor task handle.
@@ -144,6 +151,7 @@ where
         repair_request_network: RR,
         epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
+        exec_tx: Option<mpsc::Sender<ExecutionEvent>>,
     ) -> Self
     where
         RR: RepairRequestNetwork + 'static,
@@ -154,8 +162,11 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore: Box<dyn Blockstore + Send + Sync> =
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone()));
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(BlockstoreImpl::new(
+            epoch_info.clone(),
+            votor_tx.clone(),
+            exec_tx.clone(),
+        ));
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
@@ -209,6 +220,7 @@ where
             cancel_token.clone(),
             DELTA_BLOCK,
             DELTA_FIRST_SLICE,
+            exec_tx,
         ));
 
         Self {
@@ -218,6 +230,7 @@ where
             block_producer,
             all2all,
             disseminator,
+            votor_tx,
             cancel_token,
             votor_handle,
         }
@@ -271,6 +284,14 @@ where
 
     pub fn get_cancel_token(&self) -> CancellationToken {
         self.cancel_token.clone()
+    }
+
+    /// Returns a sender for the votor event channel.
+    ///
+    /// Used by the execution loop in [`crate::validator::Validator`] to forward
+    /// block validation results (valid/invalid) back into the votor.
+    pub fn get_votor_tx(&self) -> mpsc::Sender<VotorEvent> {
+        self.votor_tx.clone()
     }
 
     /// Handles incoming messages on all the different network interfaces.
@@ -339,18 +360,14 @@ where
             return Ok(());
         }
 
-        // otherwise, ingest into blockstore
-        let res = self
+        // otherwise, ingest into blockstore; pool.add_block is called by the
+        // execution loop after the state hash is validated.
+        let _ = self
             .blockstore
             .write()
             .await
             .add_shred_from_disseminator(shred)
             .await;
-        if let Ok(Some(block_info)) = res {
-            let mut guard = self.pool.write().await;
-            let block_id = (slot, block_info.hash);
-            guard.add_block(block_id, block_info.parent).await;
-        }
         Ok(())
     }
 }

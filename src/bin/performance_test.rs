@@ -151,6 +151,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 repair_request_network,
                 epoch_info,
                 txs_receiver,
+                None,
             )
         })
         .collect()
