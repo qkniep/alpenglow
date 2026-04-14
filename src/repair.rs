@@ -142,6 +142,7 @@ where
     ///
     /// If we have the information in blockstore, it is sent to the requester.
     /// Otherwise, a [`RepairResponse::Nack`] is sent back to the requester.
+    #[hotpath::measure]
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
         let response = self
@@ -191,6 +192,7 @@ where
         }
     }
 
+    #[hotpath::measure]
     async fn send_response(
         &self,
         response: RepairResponse,
@@ -299,6 +301,7 @@ where
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
+    #[hotpath::measure]
     async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
         let request_hash = response.request_type().hash();
@@ -411,6 +414,7 @@ where
         }
     }
 
+    #[hotpath::measure]
     async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
         let hash = req_type.hash();
 

@@ -43,7 +43,7 @@ pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
 pub use self::cert::{Cert, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolImpl};
-pub use self::vote::Vote;
+pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
@@ -329,6 +329,7 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
+    #[hotpath::measure]
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // potentially forward shred
         self.disseminator.forward(&shred).await?;

@@ -8,7 +8,7 @@
 use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 
 use super::{RotorInstance, RotorInstanceBuilder, RotorParams};
@@ -20,12 +20,12 @@ use crate::discrete_event_simulator::{
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct RotorLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct RotorLatencySimulation<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RotorLatencySimulation<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Protocol for RotorLatencySimulation<L, R> {
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = RotorParams;

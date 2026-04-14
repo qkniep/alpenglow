@@ -11,7 +11,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::QuorumSamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
 use log::debug;
 use rand::prelude::*;
@@ -28,12 +28,14 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
 /// Marker type for the Ryse latency simulation.
-pub struct RyseLatencySimulation<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct RyseLatencySimulation<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Protocol for RyseLatencySimulation<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Protocol
+    for RyseLatencySimulation<L, R>
+{
     type Event = LatencyEvent;
     type Stage = LatencyTestStage;
     type Params = LatencySimParams;
@@ -355,12 +357,12 @@ impl LatencySimParams {
 }
 
 /// A builder for Ryse latency simulation instances.
-pub struct LatencySimInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct LatencySimInstanceBuilder<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     ryse_builder: RyseInstanceBuilder<L, R>,
     params: LatencySimParams,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> LatencySimInstanceBuilder<L, R> {
     /// Creates a new builder instance from a builder for Rotor instances.
     pub fn new(ryse_builder: RyseInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
         Self {
@@ -370,7 +372,9 @@ impl<L: SamplingStrategy, R: SamplingStrategy> LatencySimInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for LatencySimInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Builder
+    for LatencySimInstanceBuilder<L, R>
+{
     type Params = LatencySimParams;
     type Instance = LatencySimInstance;
 
