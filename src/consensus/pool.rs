@@ -270,19 +270,19 @@ impl PoolImpl {
         let own_id = self.epoch_info.own_id();
         for (_, slot_state) in self.slot_states.range(slots) {
             if let Some(vote) = &slot_state.votes.finalize[own_id.as_index()] {
-                votes.push(vote.clone());
+                votes.push(Vote::Final(vote.clone()));
             }
             if let Some(vote) = &slot_state.votes.notar[own_id.as_index()] {
-                votes.push(vote.clone());
+                votes.push(Vote::Notar(vote.clone()));
             }
             for vote in slot_state.votes.notar_fallback[own_id.as_index()].values() {
-                votes.push(vote.clone());
+                votes.push(Vote::NotarFallback(vote.clone()));
             }
             if let Some(vote) = &slot_state.votes.skip[own_id.as_index()] {
-                votes.push(vote.clone());
+                votes.push(Vote::Skip(vote.clone()));
             }
             if let Some(vote) = &slot_state.votes.skip_fallback[own_id.as_index()] {
-                votes.push(vote.clone());
+                votes.push(Vote::SkipFallback(vote.clone()));
             }
         }
         votes
@@ -542,7 +542,7 @@ mod tests {
     use crate::ValidatorId;
     use crate::consensus::EpochInfo;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
-    use crate::consensus::vote::VoteKind;
+    use crate::consensus::vote::{NotarVote, SkipVote};
     use crate::crypto::Hash;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
@@ -894,15 +894,9 @@ mod tests {
         // then receive notarization cert for slot 1
         let slot1 = Slot::new(1);
         let hash1: BlockHash = Hash::random_for_test().into();
-        let mut votes = Vec::new();
-        for v in 0..7 {
-            votes.push(Vote::new_notar(
-                slot1,
-                hash1.clone(),
-                &sks[v as usize],
-                ValidatorId::new(v),
-            ));
-        }
+        let votes: Vec<NotarVote> = (0..7)
+            .map(|v| NotarVote::new(slot1, hash1.clone(), &sks[v as usize], ValidatorId::new(v)))
+            .collect();
         let cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
@@ -1201,31 +1195,29 @@ mod tests {
         let mut pool = PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx);
 
         // insert a notar cert for first slot
-        let mut votes = Vec::new();
         let first_slot = Slot::genesis().next();
         let hash: BlockHash = Hash::random_for_test().into();
-        for v in 0..11 {
-            votes.push(Vote::new_notar(
-                first_slot,
-                hash.clone(),
-                &sks[v as usize],
-                ValidatorId::new(v),
-            ));
-        }
-        let notar_cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
+        let notar_votes: Vec<NotarVote> = (0..11)
+            .map(|v| {
+                NotarVote::new(
+                    first_slot,
+                    hash.clone(),
+                    &sks[v as usize],
+                    ValidatorId::new(v),
+                )
+            })
+            .collect();
+        let notar_cert =
+            NotarCert::try_new(&notar_votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(pool.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
 
         // insert a skip cert for slot 1
-        let mut votes = Vec::new();
         let second_slot = first_slot.next();
-        for v in 0..11 {
-            votes.push(Vote::new_skip(
-                second_slot,
-                &sks[v as usize],
-                ValidatorId::new(v),
-            ));
-        }
-        let skip_cert = SkipCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
+        let skip_votes: Vec<SkipVote> = (0..11)
+            .map(|v| SkipVote::new(second_slot, &sks[v as usize], ValidatorId::new(v)))
+            .collect();
+        let skip_cert =
+            SkipCert::try_new(&skip_votes, &[], epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(pool.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
 
         // inserting same certs again should fail
@@ -1292,15 +1284,16 @@ mod tests {
 
         // insert a notar cert for last slot of 3rd leader window
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
-        let mut votes = Vec::new();
-        for v in 0..11 {
-            votes.push(Vote::new_notar(
-                slot,
-                GENESIS_BLOCK_HASH,
-                &sks[v as usize],
-                ValidatorId::new(v),
-            ));
-        }
+        let votes: Vec<NotarVote> = (0..11)
+            .map(|v| {
+                NotarVote::new(
+                    slot,
+                    GENESIS_BLOCK_HASH,
+                    &sks[v as usize],
+                    ValidatorId::new(v),
+                )
+            })
+            .collect();
         let ff_cert = FastFinalCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
@@ -1309,16 +1302,11 @@ mod tests {
 
         // dismiss old certs
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
-            let mut votes = Vec::new();
-            for v in 0..11 {
-                votes.push(Vote::new_skip(
-                    Slot::new(slot),
-                    &sks[v as usize],
-                    ValidatorId::new(v),
-                ));
-            }
+            let skip_votes: Vec<SkipVote> = (0..11)
+                .map(|v| SkipVote::new(Slot::new(slot), &sks[v as usize], ValidatorId::new(v)))
+                .collect();
             let skip_cert =
-                SkipCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
+                SkipCert::try_new(&skip_votes, &[], epoch_info.epoch_info().validators()).unwrap();
             assert_eq!(
                 pool.add_cert(Cert::Skip(skip_cert.clone())).await,
                 Err(AddCertError::SlotOutOfBounds)
@@ -1327,11 +1315,11 @@ mod tests {
 
         // dismiss far-in-the-future certs
         let slot = Slot::new(3 * SLOTS_PER_EPOCH);
-        let mut votes = Vec::new();
-        for v in 0..11 {
-            votes.push(Vote::new_skip(slot, &sks[v as usize], ValidatorId::new(v)));
-        }
-        let skip_cert = SkipCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
+        let skip_votes: Vec<SkipVote> = (0..11)
+            .map(|v| SkipVote::new(slot, &sks[v as usize], ValidatorId::new(v)))
+            .collect();
+        let skip_cert =
+            SkipCert::try_new(&skip_votes, &[], epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
             pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
@@ -1403,10 +1391,10 @@ mod tests {
         assert_eq!(votes.len(), 2);
         for vote in votes {
             assert_eq!(vote.signer(), ValidatorId::new(0));
-            if matches!(vote.kind(), VoteKind::Final(_)) {
-                assert_eq!(vote.kind().slot(), slot2);
-            } else if matches!(vote.kind(), VoteKind::Notar(_, _)) {
-                assert_eq!(vote.kind().slot(), slot3);
+            if matches!(vote, Vote::Final(_)) {
+                assert_eq!(vote.slot(), slot2);
+            } else if matches!(vote, Vote::Notar(_)) {
+                assert_eq!(vote.slot(), slot3);
             } else {
                 unreachable!("unexpected vote {vote:?}");
             }
