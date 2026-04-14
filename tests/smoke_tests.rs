@@ -18,8 +18,6 @@ use std::time::Duration;
 
 use assert_cmd::cargo_bin_cmd;
 
-// ─── Help tests ────────────────────────────────────────────────────────────────
-
 #[test]
 fn local_cluster_help() {
     cargo_bin_cmd!("local_cluster")
@@ -65,8 +63,6 @@ fn performance_test_help() {
         .success();
 }
 
-// ─── Functional tests (fast, always run) ───────────────────────────────────────
-
 /// Generates per-node config files from an IP list and checks the files exist.
 #[test]
 fn node_generate_config_files() {
@@ -90,8 +86,6 @@ fn node_generate_config_files() {
     assert!(dir.path().join("node_0.toml").exists());
     assert!(dir.path().join("node_1.toml").exists());
 }
-
-// ─── Launch tests (slow, ignored by default) ───────────────────────────────────
 
 /// Launches a 2-node local cluster and verifies it keeps running and finalizes
 /// at least one slot within 15 seconds.
@@ -160,7 +154,6 @@ fn performance_test_short() {
     );
 }
 
-// Note: `simulations` does not have a launch smoke test. The binary runs 1000+
-// discrete-event simulations on ~1000 validators and takes many minutes to
-// complete — far too long for a smoke test. The help test above is sufficient
-// to verify the binary compiles and its CLI parses correctly.
+// NOTE: `simulations` does not have a launch smoke test.
+// The binary takes many minutes to complete - too long for this test.
+// The help test above verifies the binary compiles adn starts up correctly.
