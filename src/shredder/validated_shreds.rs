@@ -3,7 +3,7 @@
 
 //! Defines the [`ValidatedShreds`] type.
 
-use super::{TOTAL_SHREDS, ValidatedShred};
+use super::{ShredPayloadType, TOTAL_SHREDS, ValidatedShred};
 
 /// Validated shreds array type.
 ///
@@ -12,7 +12,10 @@ use super::{TOTAL_SHREDS, ValidatedShred};
 /// - Shred indices match expected shred type.
 /// - Shreds are all the same size.
 #[derive(Clone, Copy)]
-pub struct ValidatedShreds<'a>(&'a [Option<ValidatedShred>; TOTAL_SHREDS]);
+pub struct ValidatedShreds<'a> {
+    shreds: &'a [Option<ValidatedShred>; TOTAL_SHREDS],
+    data_shreds: usize,
+}
 
 impl<'a> ValidatedShreds<'a> {
     /// Creates a new [`ValidatedShreds`].
@@ -52,18 +55,51 @@ impl<'a> ValidatedShreds<'a> {
             }
         }
 
-        Some(Self(shreds))
+        Some(Self {
+            shreds,
+            data_shreds,
+        })
     }
 
-    /// Returns the inner reference to an array of [`ValidatedShred`]s.
-    pub(super) fn to_shreds(self) -> &'a [Option<ValidatedShred>; TOTAL_SHREDS] {
-        self.0
+    /// Returns the number of present (non-`None`) shreds.
+    pub(super) fn shred_count(self) -> usize {
+        self.shreds.iter().flatten().count()
     }
 
     /// Returns a reference to any shred in this set.
     pub(super) fn any_shred(self) -> &'a ValidatedShred {
-        // this unwrap is safe because constructor ensures at least one shred
-        self.0.iter().flatten().next().unwrap()
+        // constructor ensures at least one shred
+        self.shreds.iter().flatten().next().unwrap()
+    }
+
+    /// Returns `(index, payload)` pairs for all present data shreds.
+    pub(super) fn data_shred_payloads(self) -> Vec<(usize, &'a [u8])> {
+        let data_shreds = self.data_shreds;
+        self.shreds
+            .iter()
+            .take(data_shreds)
+            .filter_map(|s| {
+                s.as_ref().map(|s| match &s.payload_type {
+                    ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
+                    // constructor ensures all shreds up to data_shreds are data
+                    ShredPayloadType::Coding(_) => panic!("should be a data shred"),
+                })
+            })
+            .collect()
+    }
+
+    /// Returns `(adjusted_index, payload)` pairs for all present coding shreds.
+    ///
+    /// The index is adjusted to be relative to the start of the coding section.
+    pub(super) fn coding_shred_payloads(self) -> impl Iterator<Item = (usize, &'a [u8])> {
+        let data_shreds = self.data_shreds;
+        self.shreds.iter().skip(data_shreds).filter_map(move |s| {
+            s.as_ref().map(|s| match &s.payload_type {
+                ShredPayloadType::Coding(c) => (*c.shred_index - data_shreds, c.data.as_slice()),
+                // constructor ensures all shreds after data_shreds are coding
+                ShredPayloadType::Data(_) => panic!("should be a coding shred"),
+            })
+        })
     }
 }
 

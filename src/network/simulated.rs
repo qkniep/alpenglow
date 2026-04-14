@@ -179,7 +179,7 @@ mod tests {
                 slice_index,
                 is_last: slice_index == final_slice_index,
             };
-            let slice = Slice::from_parts(header, payload, None);
+            let slice = Slice::from_parts(header, payload);
             let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
@@ -241,7 +241,7 @@ mod tests {
                 slice_index,
                 is_last: slice_index == final_slice_index,
             };
-            let slice = Slice::from_parts(header, payload, None);
+            let slice = Slice::from_parts(header, payload);
             let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
@@ -299,7 +299,7 @@ mod tests {
                 slice_index,
                 is_last: slice_index == final_slice_index,
             };
-            let slice = Slice::from_parts(header, payload, None);
+            let slice = Slice::from_parts(header, payload);
             let slice_shreds = shredder.shred(slice, &sk).unwrap();
             shreds.extend(slice_shreds);
         }
