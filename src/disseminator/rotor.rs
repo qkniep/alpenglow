@@ -83,6 +83,7 @@ where
     }
 
     /// Sends the shred to the correct relay.
+    #[hotpath::measure]
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred);
         let v = self.epoch_info.epoch_info().validator(relay);
@@ -91,6 +92,7 @@ where
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
+    #[hotpath::measure]
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
         let leader = self
             .epoch_info

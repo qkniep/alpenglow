@@ -53,6 +53,7 @@ struct Args {
 }
 
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;

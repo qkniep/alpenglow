@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, Vote};
+use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, NotarVote, Vote};
 use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::crypto::merkle::GENESIS_BLOCK_HASH;
 use alpenglow::crypto::{aggsig, signature};
@@ -52,7 +52,7 @@ fn generate_cert() -> Cert {
     let votes = sks
         .iter()
         .enumerate()
-        .map(|(v, sk)| Vote::new_notar(Slot::new(0), hash.clone(), sk, ValidatorId::new(v as u64)))
+        .map(|(v, sk)| NotarVote::new(Slot::new(0), hash.clone(), sk, ValidatorId::new(v as u64)))
         .collect::<Vec<_>>();
     let notar_cert = NotarCert::try_new(&votes, &val_info).unwrap();
     Cert::Notar(notar_cert)

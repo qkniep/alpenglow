@@ -167,6 +167,7 @@ where
     /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
     ///
     /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
+    #[hotpath::measure]
     pub(super) async fn produce_block_parent_not_ready(
         &self,
         slot: Slot,
@@ -285,6 +286,7 @@ where
     /// Produces a block in the situation where we have already seen the `ParentReady` event.
     ///
     /// The `parent_block_id` refers to the block that is the ready parent.
+    #[hotpath::measure]
     pub(crate) async fn produce_block_parent_ready(
         &self,
         slot: Slot,
@@ -338,6 +340,7 @@ where
     ///
     /// Returns Ok(Some(hash of the block)) if this is the last slice.
     /// Returns Ok(None) otherwise.
+    #[hotpath::measure]
     async fn shred_and_disseminate(
         &self,
         header: SliceHeader,
