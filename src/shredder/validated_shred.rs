@@ -35,6 +35,7 @@ impl ValidatedShred {
     /// # Errors
     ///
     /// Returns [`ShredVerifyError`] if the [`Shred`] does not pass all verification checks.
+    #[hotpath::measure]
     pub fn try_new(
         shred: Shred,
         cached_merkle_root: Option<&SliceRoot>,
