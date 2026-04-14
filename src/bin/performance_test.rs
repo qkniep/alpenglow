@@ -10,7 +10,7 @@ use alpenglow::consensus::{ConsensusMessage, EpochInfo, ValidatorEpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
-use alpenglow::disseminator::rotor::StakeWeightedSampler;
+use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
@@ -30,6 +30,7 @@ struct Args {
 }
 
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
@@ -44,7 +45,7 @@ async fn main() -> Result<()> {
 
 type TestNode = Alpenglow<
     TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<SimulatedNetwork<Shred, Shred>, StakeWeightedSampler>,
+    Rotor<SimulatedNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>,
     UdpNetwork<Transaction, Transaction>,
 >;
 

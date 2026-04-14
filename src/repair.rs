@@ -77,6 +77,11 @@ pub enum RepairResponse {
     SliceRoot(RepairRequestType, SliceRoot, DoubleMerkleProof),
     /// Response with a specific shred.
     Shred(RepairRequestType, Shred),
+    /// Negative acknowledgment indicating the requested data cannot be served.
+    ///
+    /// Sent when a node cannot fulfil a repair request.
+    /// This lets the requester immediately try another peer instead of waiting for a timeout.
+    Nack(RepairRequestType),
 }
 
 impl RepairResponse {
@@ -86,7 +91,8 @@ impl RepairResponse {
         match self {
             Self::LastSliceRoot(req_type, _, _, _)
             | Self::SliceRoot(req_type, _, _)
-            | Self::Shred(req_type, _) => req_type,
+            | Self::Shred(req_type, _)
+            | Self::Nack(req_type) => req_type,
         }
     }
 }
@@ -134,46 +140,59 @@ where
 
     /// Tries to answer the given repair request.
     ///
-    /// If we do not have the necessary information in blockstore, the request is ignored.
-    /// Otherwise, the correct response is sent back to the sender of the request.
+    /// If we have the information in blockstore, it is sent to the requester.
+    /// Otherwise, a [`RepairResponse::Nack`] is sent back to the requester.
+    #[hotpath::measure]
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
-        let response = match &request.req_type {
-            RepairRequestType::LastSliceRoot(block_id) => {
-                let blockstore = self.blockstore.read().await;
-                let Some(last_slice) = blockstore.get_last_slice_index(block_id) else {
-                    return Ok(());
-                };
-                let Some(root) = blockstore.get_slice_root(block_id, last_slice) else {
-                    return Ok(());
-                };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, last_slice)
-                else {
-                    return Ok(());
-                };
-                RepairResponse::LastSliceRoot(request.req_type, last_slice, root.clone(), proof)
-            }
-            RepairRequestType::SliceRoot(block_id, slice) => {
-                let blockstore = self.blockstore.read().await;
-                let Some(root) = blockstore.get_slice_root(block_id, *slice) else {
-                    return Ok(());
-                };
-                let Some(proof) = blockstore.create_double_merkle_proof(block_id, *slice) else {
-                    return Ok(());
-                };
-                RepairResponse::SliceRoot(request.req_type, root.clone(), proof)
-            }
-            RepairRequestType::Shred(block_id, slice, shred) => {
-                let blockstore = self.blockstore.read().await;
-                let Some(shred) = blockstore.get_shred(block_id, *slice, *shred).cloned() else {
-                    return Ok(());
-                };
-                RepairResponse::Shred(request.req_type, shred.into_shred())
-            }
-        };
+        let response = self
+            .try_build_response(&request)
+            .await
+            .unwrap_or_else(|| RepairResponse::Nack(request.req_type.clone()));
         self.send_response(response, request.sender).await
     }
 
+    /// Tries to build a positive response for the given repair request.
+    ///
+    /// Returns `None` if the requested data is not available in the blockstore.
+    async fn try_build_response(&self, request: &RepairRequest) -> Option<RepairResponse> {
+        match &request.req_type {
+            RepairRequestType::LastSliceRoot(block_id) => {
+                let blockstore = self.blockstore.read().await;
+                let last_slice = blockstore.get_last_slice_index(block_id)?;
+                let root = blockstore.get_slice_root(block_id, last_slice)?;
+                let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
+                Some(RepairResponse::LastSliceRoot(
+                    request.req_type.clone(),
+                    last_slice,
+                    root.clone(),
+                    proof,
+                ))
+            }
+            RepairRequestType::SliceRoot(block_id, slice) => {
+                let blockstore = self.blockstore.read().await;
+                let root = blockstore.get_slice_root(block_id, *slice)?;
+                let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
+                Some(RepairResponse::SliceRoot(
+                    request.req_type.clone(),
+                    root.clone(),
+                    proof,
+                ))
+            }
+            RepairRequestType::Shred(block_id, slice, shred_index) => {
+                let blockstore = self.blockstore.read().await;
+                let shred = blockstore
+                    .get_shred(block_id, *slice, *shred_index)
+                    .cloned()?;
+                Some(RepairResponse::Shred(
+                    request.req_type.clone(),
+                    shred.into_shred(),
+                ))
+            }
+        }
+    }
+
+    #[hotpath::measure]
     async fn send_response(
         &self,
         response: RepairResponse,
@@ -282,6 +301,7 @@ where
     /// If the response contains a shred, it will be stored in the [`Blockstore`].
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
+    #[hotpath::measure]
     async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
         let request_hash = response.request_type().hash();
@@ -293,6 +313,10 @@ where
         };
 
         match response {
+            RepairResponse::Nack(req_type) => {
+                debug!("received NACK for repair request {req_type:?}, retrying immediately");
+                self.send_request(req_type).await.unwrap();
+            }
             RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
                 // check validity of response
                 let RepairRequestType::LastSliceRoot(block_id) = &req_type else {
@@ -390,6 +414,7 @@ where
         }
     }
 
+    #[hotpath::measure]
     async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
         let hash = req_type.hash();
 

@@ -31,6 +31,7 @@ futures = "0.3"
 geo = "0.32"
 hex = "0.4"
 hex-literal = "1"
+hotpath = "0.15"
 log = "0.4"
 logforth = { version = "0.29", features = ["append-fastrace", "starter-log"] }
 mockall = "0.14"
@@ -58,6 +59,10 @@ wincode = { version = "0.5", features = ["derive"] }
 assert_cmd = "2"
 divan = "0.1"
 tempfile = "3"
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
 
 [lints.clippy]
 cast_possible_truncation = "allow"

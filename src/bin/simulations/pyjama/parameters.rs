@@ -6,7 +6,7 @@
 //!
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use log::info;
 use rand::prelude::*;
 use statrs::distribution::{Binomial, DiscreteCDF};
@@ -33,7 +33,11 @@ pub struct PyjamaInstance {
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
-pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: SamplingStrategy> {
+pub struct PyjamaInstanceBuilder<
+    L: SamplingStrategy,
+    P: QuorumSamplingStrategy,
+    R: QuorumSamplingStrategy,
+> {
     leader_sampler: L,
     proposer_sampler: P,
     relay_sampler: R,
@@ -43,8 +47,8 @@ pub struct PyjamaInstanceBuilder<L: SamplingStrategy, P: SamplingStrategy, R: Sa
 impl<L, P, R> PyjamaInstanceBuilder<L, P, R>
 where
     L: SamplingStrategy,
-    P: SamplingStrategy,
-    R: SamplingStrategy,
+    P: QuorumSamplingStrategy,
+    R: QuorumSamplingStrategy,
 {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(
@@ -53,6 +57,11 @@ where
         relay_sampler: R,
         params: PyjamaParameters,
     ) -> Self {
+        assert_eq!(
+            proposer_sampler.quorum_size(),
+            params.num_proposers as usize
+        );
+        assert_eq!(relay_sampler.quorum_size(), params.num_relays as usize);
         Self {
             leader_sampler,
             proposer_sampler,
@@ -65,8 +74,8 @@ where
 impl<L, P, R> Builder for PyjamaInstanceBuilder<L, P, R>
 where
     L: SamplingStrategy,
-    P: SamplingStrategy,
-    R: SamplingStrategy,
+    P: QuorumSamplingStrategy,
+    R: QuorumSamplingStrategy,
 {
     type Params = PyjamaParameters;
     type Instance = PyjamaInstance;
@@ -74,12 +83,8 @@ where
     fn build(&self, rng: &mut impl Rng) -> PyjamaInstance {
         PyjamaInstance {
             leader: self.leader_sampler.sample(rng),
-            proposers: self
-                .proposer_sampler
-                .sample_multiple(self.params.num_proposers as usize, rng),
-            relays: self
-                .relay_sampler
-                .sample_multiple(self.params.num_relays as usize, rng),
+            proposers: self.proposer_sampler.sample_quorum(rng),
+            relays: self.relay_sampler.sample_quorum(rng),
             params: self.params,
         }
     }
