@@ -11,7 +11,7 @@ pub mod latency;
 pub mod robustness;
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use rand::prelude::*;
 
 pub use self::latency::{LatencyEvent, RotorLatencySimulation};
@@ -42,15 +42,16 @@ impl RotorParams {
 
 /// Builder for Rotor instances with a specific set of parameters.
 #[derive(Debug)]
-pub struct RotorInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct RotorInstanceBuilder<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     pub leader_sampler: L,
     pub rotor_sampler: R,
     pub params: RotorParams,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> RotorInstanceBuilder<L, R> {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(leader_sampler: L, rotor_sampler: R, params: RotorParams) -> Self {
+        assert_eq!(rotor_sampler.quorum_size(), params.shreds);
         Self {
             leader_sampler,
             rotor_sampler,
@@ -59,7 +60,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
     type Params = RotorParams;
     type Instance = RotorInstance;
 
@@ -67,7 +68,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
             relays: (0..self.params.slices)
-                .map(|_| self.rotor_sampler.sample_multiple(self.params.shreds, rng))
+                .map(|_| self.rotor_sampler.sample_quorum(rng))
                 .collect(),
             params: self.params,
         }
