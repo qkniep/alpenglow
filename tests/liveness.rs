@@ -93,7 +93,7 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
 
     // let `num_crashes` nodes crash after random delays
     let mut rng = rand::rng();
-    let to_kill = (0..num_nodes).choose_multiple(&mut rng, num_crashes);
+    let to_kill = (0..num_nodes).sample(&mut rng, num_crashes);
     for id in to_kill {
         let millis = rng.random_range(0..10_000);
         let delay = tokio::time::Duration::from_millis(millis);

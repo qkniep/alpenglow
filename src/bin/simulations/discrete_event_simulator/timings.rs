@@ -135,7 +135,7 @@ impl<E: Event> Timings<E> {
     /// Records the latency for the given event and validator.
     pub fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
         let vec = self.event_timings.get_mut(&event).unwrap();
-        let entry = vec.get_mut(validator as usize).unwrap();
+        let entry = vec.get_mut(validator.as_index()).unwrap();
         if timing < *entry {
             *entry = timing;
         }
@@ -261,11 +261,11 @@ impl EventTimingStats {
             .map(|(v, l)| (*l, v))
             .collect::<Vec<_>>();
         latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
-        let percentile_stake = environment.total_stake as f64 / 100.0;
+        let percentile_stake = environment.total_stake.inner() as f64 / 100.0;
         let mut percentile = 1;
         let mut stake_so_far = 0.0;
         for (latency, v) in latencies {
-            let mut validator_stake = environment.validators[v].stake as f64;
+            let mut validator_stake = environment.validators[v].stake.inner() as f64;
             for _ in 0..100 {
                 let percentile_stake_left = percentile as f64 * percentile_stake - stake_so_far;
                 let abs_stake_contrib = validator_stake.min(percentile_stake_left);
@@ -285,7 +285,7 @@ impl EventTimingStats {
                 }
             }
         }
-        assert!((stake_so_far - environment.total_stake as f64).abs() < 5000.0);
+        assert!((stake_so_far - environment.total_stake.inner() as f64).abs() < 5000.0);
         assert!(percentile >= 100);
         self.count += 1;
     }
@@ -332,7 +332,7 @@ mod tests {
         let mut timings = Timings::<LatencyEvent>::default();
         let event = LatencyEvent::BlockSent;
         timings.initialize(event, 2);
-        timings.record(event, SimTime::new(10), 0);
+        timings.record(event, SimTime::new(10), ValidatorId::new(0));
         assert_eq!(timings.get(event).unwrap()[0], SimTime::new(10));
         assert_eq!(timings.get(event).unwrap()[1], SimTime::NEVER);
     }

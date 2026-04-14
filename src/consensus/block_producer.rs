@@ -15,16 +15,15 @@ use tokio::pin;
 use tokio::sync::{RwLock, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use wincode::config::DefaultConfig;
 
-use crate::consensus::{Blockstore, EpochInfo, Pool};
-use crate::crypto::merkle::{BlockHash, MerkleRoot};
-use crate::crypto::{Hash, signature};
-use crate::network::{BINCODE_CONFIG, Network, TransactionNetwork};
+use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
+use crate::crypto::signature;
+use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
-use crate::{
-    BlockId, Disseminator, MAX_TRANSACTION_SIZE, MAX_TRANSACTIONS_PER_SLICE, highest_non_zero_byte,
-};
+use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
 /// Produces blocks from transactions and dissminates them.
 ///
@@ -34,10 +33,10 @@ use crate::{
 /// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`Votor`].
+    /// This is not the same as the voting secret key, which is held by [`super::Votor`].
     secret_key: signature::SecretKey,
     /// Other validators' info.
-    epoch_info: Arc<EpochInfo>,
+    epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
     blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -52,10 +51,10 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
 
-    /// Should be set to `DELTA_BLOCK` in production.
+    /// Should be set to [`super::DELTA_BLOCK`] in production.
     /// Stored as a field to aid in testing.
     delta_block: Duration,
-    /// Should be set to `DELTA_FIRST_SLICE` in production.
+    /// Should be set to [`super::DELTA_FIRST_SLICE`] in production.
     /// Stored as a field to aid in testing.
     delta_first_slice: Duration,
 }
@@ -68,7 +67,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
-        epoch_info: Arc<EpochInfo>,
+        epoch_info: Arc<ValidatorEpochInfo>,
         disseminator: Arc<D>,
         txs_receiver: T,
         blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
@@ -104,11 +103,11 @@ where
             let last_slot_in_window = first_slot_in_window.last_slot_in_window();
 
             // don't do anything if we are not the leader
-            let leader = self.epoch_info.leader(first_slot_in_window);
-            if leader.id != self.epoch_info.own_id {
+            let leader = self.epoch_info.epoch_info().leader(first_slot_in_window);
+            if leader.id != self.epoch_info.own_id() {
                 debug!(
                     "[val {}] not producing in window {first_slot_in_window}..{last_slot_in_window}, not leader",
-                    self.epoch_info.own_id
+                    self.epoch_info.own_id()
                 );
                 continue;
             }
@@ -133,7 +132,7 @@ where
                 SlotReady::Ready(parent) => {
                     if first_slot_in_window.is_genesis() {
                         // genesis block is already produced so skip it
-                        (first_slot_in_window, Hash::default().into())
+                        (first_slot_in_window, GENESIS_BLOCK_HASH)
                     } else {
                         self.produce_block_parent_ready(first_slot_in_window, parent)
                             .await?
@@ -346,9 +345,11 @@ where
     ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
         let is_last = header.is_last;
-        let slice = Slice::from_parts(header, payload, None);
+        let slice = Slice::from_parts(header, payload);
         let mut maybe_block_hash = None;
-        let shreds = RegularShredder::shred(slice, &self.secret_key)
+        // PERF: new shredder every time!
+        let shreds = RegularShredder::default()
+            .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
             self.disseminator.send(&s).await?;
@@ -357,7 +358,7 @@ where
                 .blockstore
                 .write()
                 .await
-                .add_shred_from_disseminator(s.into_shred())
+                .add_own_shred_as_leader(s)
                 .await;
             if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
@@ -390,19 +391,16 @@ where
     T: TransactionNetwork,
 {
     let start_time = Instant::now();
-    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE);
 
-    let parent_encoded_len = bincode::serde::encode_to_vec(parent.clone(), BINCODE_CONFIG)
-        .unwrap()
-        .len();
+    // each slice should be able hold at least 1 transaction
+    // need 8 bytes to encode number of txs + 8 bytes to encode the length of the tx payload
+    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // HACK: As long as the size of the txs vec fits in a single byte,
-    // bincode encoding seems to take a single byte so account for that here.
-    assert_eq!(highest_non_zero_byte(MAX_TRANSACTIONS_PER_SLICE), 1);
+    // reserve space for parent and 8 bytes to encode number of txs
+    let parent_encoded_len =
+        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len)
-        .unwrap()
-        .checked_sub(1)
+        .checked_sub(parent_encoded_len + 8)
         .unwrap();
     let mut txs = Vec::new();
 
@@ -417,18 +415,19 @@ where
             }
         };
         let tx = res.expect("receiving tx");
-        let tx = bincode::serde::encode_to_vec(&tx, BINCODE_CONFIG)
-            .expect("serialization should not panic");
+        let tx = wincode::serialize(&tx).expect("serialization should not panic");
         slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
         txs.push(tx);
-        if slice_capacity_left < MAX_TRANSACTION_SIZE {
+
+        // if there is not enough space for another tx, break
+        // this needs to account for the 8 bytes to encode the length of the tx payload
+        if slice_capacity_left < MAX_TRANSACTION_SIZE + 8 {
             break duration_left.saturating_sub(start_time.elapsed());
         }
     };
 
     // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
-    let txs = bincode::serde::encode_to_vec(&txs, BINCODE_CONFIG)
-        .expect("serialization should not panic");
+    let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     (payload, ret)
 }
@@ -458,7 +457,7 @@ async fn wait_for_first_slot(
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
     if first_slot_in_window.is_genesis_window() {
-        return SlotReady::Ready((Slot::genesis(), Hash::default().into()));
+        return SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH));
     }
 
     // if already have parent ready, return it, otherwise get a channel to await on
@@ -515,15 +514,15 @@ mod tests {
     use mockall::{Sequence, predicate};
 
     use super::*;
-    use crate::Transaction;
-    use crate::consensus::BlockInfo;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
+    use crate::consensus::{BlockInfo, ValidatorEpochInfo};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
+    use crate::{Transaction, ValidatorId};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -535,16 +534,16 @@ mod tests {
             produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty Vec takes 1 byte
-        assert_eq!(payload.data.len(), 1);
+        // bin encoding an empty Vec takes 8 bytes
+        assert_eq!(payload.data.len(), 8);
 
-        let parent = Some((Slot::genesis(), Hash::default().into()));
+        let parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        // bin encoding an empty Vec takes 1 byte
-        assert_eq!(payload.data.len(), 1);
+        // bin encoding an empty Vec takes 8 bytes
+        assert_eq!(payload.data.len(), 8);
     }
 
     #[tokio::test]
@@ -589,7 +588,7 @@ mod tests {
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default().into());
+        let parent = (slot.prev(), GENESIS_BLOCK_HASH);
 
         let mut pool = MockPool::new();
         let p = parent.clone();
@@ -612,7 +611,7 @@ mod tests {
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let slot = Slot::windows().nth(10).unwrap();
-        let parent = (slot.prev(), Hash::default().into());
+        let parent = (slot.prev(), GENESIS_BLOCK_HASH);
         let (tx, rx) = oneshot::channel();
         tx.send(parent.clone()).unwrap();
 
@@ -640,6 +639,7 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info));
         let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
         let blockstore = Arc::new(RwLock::new(blockstore));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
@@ -664,9 +664,11 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_ready() {
         let slot = Slot::windows().nth(10).unwrap();
+        let hash: BlockHash = Hash::random_for_test().into();
+        let hash_prev: BlockHash = Hash::random_for_test().into();
         let block_info = BlockInfo {
-            hash: [1; 32].into(),
-            parent: (slot.prev(), [2; 32].into()),
+            hash: hash.clone(),
+            parent: (slot.prev(), hash_prev.clone()),
         };
 
         // Handles TOTAL_SHRED number of calls.
@@ -675,13 +677,13 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_own_shred_as_leader()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_own_shred_as_leader()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
@@ -721,9 +723,9 @@ mod tests {
     #[tokio::test]
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
-        let slot_hash: BlockHash = [1; 32].into();
-        let old_parent = (slot.prev(), [2; 32].into());
-        let new_parent = (slot.prev().prev(), [3; 32].into());
+        let slot_hash: BlockHash = Hash::random_for_test().into();
+        let old_parent = (slot.prev(), Hash::random_for_test().into());
+        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,
@@ -741,12 +743,12 @@ mod tests {
 
         // handle first slice
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_own_shred_as_leader()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_own_shred_as_leader()
             .times(1)
             .in_sequence(&mut seq)
             .return_once(move |_| {
@@ -760,13 +762,13 @@ mod tests {
 
         // handle second slice
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_own_shred_as_leader()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_own_shred_as_leader()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {

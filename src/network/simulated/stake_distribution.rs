@@ -10,14 +10,12 @@
 //! # Examples
 //!
 //! ```
-//! use alpenglow::network::simulated::stake_distribution::VALIDATOR_DATA;
+//! use alpenglow::network::simulated::stake_distribution::{VALIDATOR_DATA, ValidatorData};
 //!
-//! let mut stakes = Vec::new();
-//! for validator in VALIDATOR_DATA.iter() {
-//!     if validator.is_active && validator.delinquent == Some(false) {
-//!         stakes.push(validator.active_stake.unwrap());
-//!     }
-//! }
+//! let mut stakes = VALIDATOR_DATA
+//!     .iter()
+//!     .filter_map(ValidatorData::active_stake)
+//!     .collect::<Vec<_>>();
 //! ```
 
 use std::collections::HashSet;
@@ -65,7 +63,7 @@ pub struct ValidatorData {
     authorized_withdrawer_score: i8,
     commission: Option<u8>,
     data_center_concentration_score: i8,
-    delinquent: Option<bool>,
+    delinquent: bool,
     published_information_score: i8,
     root_distance_score: i8,
     security_report_score: i8,
@@ -95,10 +93,10 @@ pub struct ValidatorData {
 impl ValidatorData {
     /// Returns the active stake of a validator, if it has non-zero active stake.
     pub fn active_stake(&self) -> Option<Stake> {
-        if !self.is_active && self.delinquent != Some(false) {
+        if !self.is_active || self.delinquent {
             return None;
         }
-        self.active_stake.filter(|stake| *stake > 0)
+        self.active_stake.filter(|stake| *stake > Stake::new(0))
     }
 }
 
@@ -119,8 +117,8 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
             ValidatorData {
                 name: Some(v.name),
                 is_active: true,
-                active_stake: Some((v.stake.round() * 100.0) as Stake),
-                delinquent: Some(false),
+                active_stake: Some(Stake::new((v.stake.round() * 100.0) as u64)),
+                delinquent: false,
                 ip: v.ip.unwrap_or_else(|| v.address.clone()),
                 data_center_key: Some(format!(
                     "{}-{}-{}",
@@ -201,12 +199,8 @@ pub fn validators_from_validator_data(
 ) {
     let mut validators = Vec::new();
     for v in validator_data {
-        if !(v.is_active && v.delinquent == Some(false)) {
-            continue;
-        }
-        let stake = v.active_stake.unwrap_or(0);
-        if stake > 0 {
-            let id = validators.len() as ValidatorId;
+        if let Some(stake) = v.active_stake() {
+            let id = ValidatorId::new(validators.len() as u64);
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
@@ -225,12 +219,11 @@ pub fn validators_from_validator_data(
     // assign closest ping servers to validators
     let total_stake: Stake = validators.iter().map(|v| v.stake).sum();
     let mut validators_with_ping_data = Vec::new();
-    let mut stake_with_ping_server = 0;
+    let mut stake_with_ping_server = Stake::new(0);
     for v in validator_data {
-        let stake = v.active_stake.unwrap_or(0);
-        if !(v.is_active && v.delinquent == Some(false)) || stake == 0 {
+        let Some(stake) = v.active_stake() else {
             continue;
-        }
+        };
         let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
             continue;
         };
@@ -240,7 +233,7 @@ pub fn validators_from_validator_data(
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         validators_with_ping_data.push((
             ValidatorInfo {
-                id: validators_with_ping_data.len() as ValidatorId,
+                id: ValidatorId::new(validators_with_ping_data.len() as u64),
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
@@ -252,7 +245,8 @@ pub fn validators_from_validator_data(
             ping_server,
         ));
     }
-    let frac_wo_ping_server = 100.0 - stake_with_ping_server as f64 * 100.0 / total_stake as f64;
+    let frac_wo_ping_server =
+        100.0 - stake_with_ping_server.inner() as f64 * 100.0 / total_stake.inner() as f64;
     warn!("discarding {frac_wo_ping_server:.2}% of validators w/o ping server");
 
     // determine pings of validator pairs
@@ -277,7 +271,7 @@ pub fn validators_from_validator_data(
 
     // give validators with ping data consecutive IDs
     for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
-        v.0.id = i as ValidatorId;
+        v.0.id = ValidatorId::new(i as u64);
     }
 
     (validators, validators_with_ping_data)
@@ -294,11 +288,11 @@ pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     for (city, frac_stake) in hubs {
         let (lat, lon) = coordinates_for_city(&city).unwrap();
         for _ in 0..30 {
-            let stake = (frac_stake * 100.0 * 10_000.0 / 30.0).round() as Stake;
+            let stake = Stake::new((frac_stake * 100.0 * 10_000.0 / 30.0).round() as u64);
             validators.push(ValidatorData {
                 is_active: true,
                 active_stake: Some(stake),
-                delinquent: Some(false),
+                delinquent: false,
                 latitude: Some(lat.to_string()),
                 longitude: Some(lon.to_string()),
                 ..Default::default()

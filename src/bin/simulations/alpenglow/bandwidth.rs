@@ -18,9 +18,9 @@
 use std::fs::File;
 use std::sync::{Arc, Mutex};
 
+use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::SamplingStrategy;
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
-use alpenglow::{ValidatorId, ValidatorInfo};
 use rand::prelude::*;
 
 /// Instance of a bandwidth requirements test.
@@ -136,7 +136,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> BandwidthTest<L, R> {
         let mut bandwidth_usage = vec![(0.0, 0); workload.len()];
         for (i, shreds) in workload.iter().enumerate() {
             let ratio = *shreds as f64 / leader_workload as f64;
-            bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i as ValidatorId);
+            bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i);
         }
 
         bandwidth_usage.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -223,13 +223,13 @@ impl<L: SamplingStrategy, R: SamplingStrategy> WorkloadTest<L, R> {
     pub fn run_one(&mut self, rng: &mut impl Rng) {
         let leader = self.leader_sampler.sample(rng);
         self.leader_workload += self.num_shreds as u64;
-        self.workload[leader as usize] += self.num_shreds as u64;
+        self.workload[leader.as_index()] += self.num_shreds as u64;
         let relays = self.rotor_sampler.sample_multiple(self.num_shreds, rng);
         for relay in relays {
             if leader == relay {
-                self.workload[relay as usize] += self.validators.len() as u64 - 1;
+                self.workload[relay.as_index()] += self.validators.len() as u64 - 1;
             } else {
-                self.workload[relay as usize] += self.validators.len() as u64 - 2;
+                self.workload[relay.as_index()] += self.validators.len() as u64 - 2;
             }
         }
     }
