@@ -56,6 +56,8 @@ pub enum VotorEvent {
     FirstShred(Slot),
     /// New (complete) block was received in blockstore.
     Block { slot: Slot, block_info: BlockInfo },
+    /// Blockstore detected an invalid block from the leader for this slot.
+    InvalidBlock(Slot),
 
     /// Regular timeout for the given slot has fired.
     Timeout(Slot),
@@ -210,6 +212,10 @@ impl<A: All2All> Votor<A> {
                 VotorEvent::FirstShred(slot) => {
                     self.received_shred.insert(slot);
                 }
+                VotorEvent::InvalidBlock(slot) => {
+                    warn!("invalid block from leader for slot {slot}, skipping window");
+                    self.try_skip_window(slot).await;
+                }
                 VotorEvent::Block { slot, block_info } => {
                     if self.voted.contains(&slot) {
                         let h = &hex::encode(block_info.hash.as_hash())[..8];
@@ -352,6 +358,7 @@ impl VotorEvent {
             | Self::Standstill(slot, _, _)
             | Self::FirstShred(slot)
             | Self::Block { slot, .. }
+            | Self::InvalidBlock(slot)
             | Self::Timeout(slot)
             | Self::TimeoutCrashedLeader(slot) => *slot,
             Self::CertCreated(cert) => cert.slot(),
