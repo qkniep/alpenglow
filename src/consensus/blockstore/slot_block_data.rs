@@ -267,6 +267,7 @@ impl BlockData {
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
     /// See [`ReconstructSliceResult`] for more info on what the function returns.
+    #[hotpath::measure]
     fn try_reconstruct_slice(
         &mut self,
         index: SliceIndex,
@@ -312,6 +313,7 @@ impl BlockData {
     /// Reconstructs the block if the blockstore contains all slices.
     ///
     /// See [`ReconstructBlockResult`] for more info on what the function returns.
+    #[hotpath::measure]
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);

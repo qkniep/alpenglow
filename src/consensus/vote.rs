@@ -359,6 +359,7 @@ impl Vote {
 
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
+    #[hotpath::measure]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         match self {
             Self::Notar(v) => v.check_sig(pk),

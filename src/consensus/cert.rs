@@ -50,6 +50,7 @@ impl Cert {
 
     /// Checks that the aggregated signatures are valid.
     #[must_use]
+    #[hotpath::measure]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         match self {
             Self::Notar(n) => n.check_sig(validators),

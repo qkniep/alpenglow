@@ -329,6 +329,7 @@ where
     }
 
     #[fastrace::trace(short_name = true)]
+    #[hotpath::measure]
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // potentially forward shred
         self.disseminator.forward(&shred).await?;
