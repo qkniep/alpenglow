@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::execution::Execution;
+use crate::execution::ExecutionEngine;
 use crate::network::Network;
 use crate::{All2All, Alpenglow, Disseminator, Transaction};
 
@@ -14,7 +14,7 @@ where
     A: All2All,
     D: Disseminator,
     T: Network<Recv = Transaction> + 'static,
-    E: Execution,
+    E: ExecutionEngine,
 {
     /// Consensus protocol instance.
     consensus: Alpenglow<A, D, T>,
