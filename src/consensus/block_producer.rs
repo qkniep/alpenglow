@@ -20,10 +20,12 @@ use wincode::config::DefaultConfig;
 use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::crypto::signature;
+use crate::execution::{ExecutionEvent, InProgressBlock};
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::types::slice::STATE_HASH_SIZE;
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
-use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
+use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE, Transaction};
 
 /// Produces blocks from transactions and dissminates them.
 ///
@@ -57,6 +59,9 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Should be set to [`super::DELTA_FIRST_SLICE`] in production.
     /// Stored as a field to aid in testing.
     delta_first_slice: Duration,
+
+    /// Optional channel for streaming execution events to the execution engine.
+    exec_tx: Option<tokio::sync::mpsc::Sender<ExecutionEvent>>,
 }
 
 impl<D, T> BlockProducer<D, T>
@@ -75,6 +80,7 @@ where
         cancel_token: CancellationToken,
         delta_block: Duration,
         delta_first_slice: Duration,
+        exec_tx: Option<tokio::sync::mpsc::Sender<ExecutionEvent>>,
     ) -> Self {
         assert!(delta_block >= delta_first_slice);
         Self {
@@ -87,6 +93,7 @@ where
             cancel_token,
             delta_block,
             delta_first_slice,
+            exec_tx,
         }
     }
 
@@ -184,6 +191,16 @@ where
             *parent_slot,
         );
 
+        if let Some(exec_tx) = &self.exec_tx {
+            exec_tx
+                .send(ExecutionEvent::BeginBlock {
+                    id: InProgressBlock::Pending(slot),
+                    parent: Some(parent_block_id.clone()),
+                })
+                .await
+                .unwrap();
+        }
+
         // only start the DELTA_BLOCK timer once the ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
@@ -265,6 +282,37 @@ where
                     debug!("parent is ready, continuing with same parent");
                 }
             }
+
+            // Stream transactions to the execution engine.
+            if let Some(exec_tx) = &self.exec_tx {
+                let transactions = deserialize_payload_transactions(&payload.data);
+                exec_tx
+                    .send(ExecutionEvent::Transactions {
+                        id: InProgressBlock::Pending(slot),
+                        transactions,
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            // Compute state hash and append as suffix to the last slice.
+            if is_last {
+                let state_hash = if let Some(exec_tx) = &self.exec_tx {
+                    let (reply_tx, reply_rx) = oneshot::channel();
+                    exec_tx
+                        .send(ExecutionEvent::ComputeStateHash {
+                            slot,
+                            reply: reply_tx,
+                        })
+                        .await
+                        .unwrap();
+                    reply_rx.await.unwrap()
+                } else {
+                    crate::crypto::hash::hash(&[])
+                };
+                payload.data.extend_from_slice(state_hash.as_ref());
+            }
+
             let header = SliceHeader {
                 slot,
                 slice_index,
@@ -299,9 +347,19 @@ where
             parent_slot,
         );
 
+        if let Some(exec_tx) = &self.exec_tx {
+            exec_tx
+                .send(ExecutionEvent::BeginBlock {
+                    id: InProgressBlock::Pending(slot),
+                    parent: Some(parent_block_id.clone()),
+                })
+                .await
+                .unwrap();
+        }
+
         let mut duration_left = self.delta_block;
         for slice_index in SliceIndex::all() {
-            let (payload, new_duration_left) = if slice_index.is_first() {
+            let (mut payload, new_duration_left) = if slice_index.is_first() {
                 // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
                 let time_for_slice = self.delta_first_slice;
                 let (payload, slice_duration_left) = produce_slice_payload(
@@ -318,6 +376,37 @@ where
                 produce_slice_payload(&self.txs_receiver, None, duration_left).await
             };
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
+
+            // Stream transactions to the execution engine.
+            if let Some(exec_tx) = &self.exec_tx {
+                let transactions = deserialize_payload_transactions(&payload.data);
+                exec_tx
+                    .send(ExecutionEvent::Transactions {
+                        id: InProgressBlock::Pending(slot),
+                        transactions,
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            // Compute state hash and append as suffix to the last slice.
+            if is_last {
+                let state_hash = if let Some(exec_tx) = &self.exec_tx {
+                    let (reply_tx, reply_rx) = oneshot::channel();
+                    exec_tx
+                        .send(ExecutionEvent::ComputeStateHash {
+                            slot,
+                            reply: reply_tx,
+                        })
+                        .await
+                        .unwrap();
+                    reply_rx.await.unwrap()
+                } else {
+                    crate::crypto::hash::hash(&[])
+                };
+                payload.data.extend_from_slice(state_hash.as_ref());
+            }
+
             let header = SliceHeader {
                 slot,
                 slice_index,
@@ -380,6 +469,17 @@ where
     }
 }
 
+/// Deserializes transactions from a slice payload's data field.
+///
+/// The data field is `wincode::serialize(Vec<Vec<u8>>)` where each inner
+/// `Vec<u8>` is a `wincode::serialize(Transaction)`.
+fn deserialize_payload_transactions(data: &[u8]) -> Vec<Transaction> {
+    let raw: Vec<Vec<u8>> = wincode::deserialize(data).unwrap_or_default();
+    raw.into_iter()
+        .filter_map(|b| wincode::deserialize::<Transaction>(&b).ok())
+        .collect()
+}
+
 // TODO: extend docstring
 /// Returns
 async fn produce_slice_payload<T>(
@@ -396,11 +496,12 @@ where
     // need 8 bytes to encode number of txs + 8 bytes to encode the length of the tx payload
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // reserve space for parent and 8 bytes to encode number of txs
+    // reserve space for: parent, 8 bytes for tx-count encoding, and the
+    // execution state hash suffix that will be appended to the last slice.
     let parent_encoded_len =
         <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len + 8)
+        .checked_sub(parent_encoded_len + 8 + STATE_HASH_SIZE)
         .unwrap();
     let mut txs = Vec::new();
 
@@ -658,6 +759,7 @@ mod tests {
             cancel_token,
             delta_block,
             delta_first_slice,
+            None,
         )
     }
 

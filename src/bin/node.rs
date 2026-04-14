@@ -138,6 +138,7 @@ fn create_node(config: ConfigFile) -> Node {
         repair_request_network,
         epoch_info,
         txs_receiver,
+        None,
     )
 }
 

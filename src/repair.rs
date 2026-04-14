@@ -504,9 +504,12 @@ mod tests {
 
         // set up blockstore
         let (votor_tx, votor_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone())),
-        ));
+        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> =
+            Arc::new(RwLock::new(Box::new(BlockstoreImpl::new(
+                epoch_info.clone(),
+                votor_tx.clone(),
+                None,
+            ))));
 
         // set up pool
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
