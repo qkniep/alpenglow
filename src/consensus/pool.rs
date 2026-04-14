@@ -25,13 +25,49 @@ use tokio::sync::oneshot;
 use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
 use self::slot_state::SlotState;
-use super::votor::VotorEvent;
 use super::{Cert, ValidatorEpochInfo, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::{BlockHash, MerkleRoot};
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
+
+/// Events emitted by [`PoolImpl`] to [`super::votor::Votor`].
+#[derive(Clone, Debug)]
+pub enum PoolEvent {
+    /// The pool has newly marked the given block as a ready parent for `slot`.
+    ///
+    /// This event is only emitted per window, `slot` is always the first slot.
+    /// The parent block is identified by `parent_slot` and `parent_hash`.
+    ParentReady {
+        slot: Slot,
+        parent_slot: Slot,
+        parent_hash: BlockHash,
+    },
+    /// The given block has reached the safe-to-notar status.
+    SafeToNotar(Slot, BlockHash),
+    /// The given slot has reached the safe-to-skip status.
+    SafeToSkip(Slot),
+    /// New certificate created in pool (should then be broadcast by Votor).
+    CertCreated(Box<Cert>),
+    /// Standstill timeout has fired.
+    ///
+    /// The provided slot indicates the highest finalized slot as seen by Pool.
+    /// The provided certificates and votes should be re-broadcast.
+    Standstill(Slot, Vec<Cert>, Vec<Vote>),
+}
+
+impl PoolEvent {
+    pub(crate) const fn slot(&self) -> Slot {
+        match self {
+            Self::ParentReady { slot, .. }
+            | Self::SafeToNotar(slot, _)
+            | Self::SafeToSkip(slot)
+            | Self::Standstill(slot, _, _) => *slot,
+            Self::CertCreated(cert) => cert.slot(),
+        }
+    }
+}
 
 /// Errors the Pool may return when adding a vote.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -105,7 +141,7 @@ pub struct PoolImpl {
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
-    votor_event_channel: Sender<VotorEvent>,
+    votor_event_channel: Sender<PoolEvent>,
     /// Channel for sending repair requests to the repair loop.
     repair_channel: Sender<BlockId>,
 }
@@ -116,7 +152,7 @@ impl PoolImpl {
     /// Any later emitted events will be sent on provided `votor_event_channel`.
     pub fn new(
         epoch_info: Arc<ValidatorEpochInfo>,
-        votor_event_channel: Sender<VotorEvent>,
+        votor_event_channel: Sender<PoolEvent>,
         repair_channel: Sender<BlockId>,
     ) -> Self {
         Self {
@@ -205,7 +241,7 @@ impl PoolImpl {
         }
 
         // send to votor for broadcasting
-        let event = VotorEvent::CertCreated(Box::new(cert));
+        let event = PoolEvent::CertCreated(Box::new(cert));
         self.votor_event_channel.send(event).await.unwrap();
     }
 
@@ -351,7 +387,7 @@ impl PoolImpl {
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
         for (slot, (parent_slot, parent_hash)) in parents {
             debug_assert!(slot.is_start_of_window());
-            let event = VotorEvent::ParentReady {
+            let event = PoolEvent::ParentReady {
                 slot,
                 parent_slot,
                 parent_hash,
@@ -495,7 +531,7 @@ impl Pool for PoolImpl {
     /// Triggers a recovery from a standstill.
     ///
     /// Determines which certificates and votes need to be re-broadcast.
-    /// Emits the corresponding [`VotorEvent::Standstill`] event for Votor.
+    /// Emits the corresponding [`PoolEvent::Standstill`] event for Votor.
     /// Should be called after not seeing any progress for the standstill duration.
     async fn recover_from_standstill(&self) {
         let slot = self.finalized_slot();
@@ -513,7 +549,7 @@ impl Pool for PoolImpl {
 
         // NOTE: This event corresponds to the slot after the last finalized one.
         // This way it is ignored by `Votor` iff a new slot was finalized.
-        let event = VotorEvent::Standstill(slot.next(), certs, votes);
+        let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
         self.votor_event_channel.send(event).await.unwrap();
@@ -1366,10 +1402,10 @@ mod tests {
         let (slot, certs, votes) = loop {
             let event = votor_rx.recv().await.unwrap();
             match event {
-                VotorEvent::CertCreated(_) => {
+                PoolEvent::CertCreated(_) => {
                     continue;
                 }
-                VotorEvent::Standstill(slot, certs, votes) => {
+                PoolEvent::Standstill(slot, certs, votes) => {
                     break (slot, certs, votes);
                 }
                 _ => unreachable!("unexpected event {event:?}"),
@@ -1426,7 +1462,7 @@ mod tests {
         // should construct 3 certs (notar-fallback + notar + fast-final)
         for _ in 0..3 {
             let event = votor_rx.recv().await;
-            assert!(matches!(event, Some(VotorEvent::CertCreated(_))));
+            assert!(matches!(event, Some(PoolEvent::CertCreated(_))));
         }
 
         // no ParentReady yet
@@ -1446,7 +1482,7 @@ mod tests {
             panic!("expected to receive ParentReady event");
         };
         match event {
-            VotorEvent::ParentReady {
+            PoolEvent::ParentReady {
                 slot,
                 parent_slot,
                 parent_hash,

@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 
 use super::SlashableOffence;
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
-use crate::consensus::votor::VotorEvent;
+use crate::consensus::pool::PoolEvent;
 use crate::consensus::{
     Cert, FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, ValidatorEpochInfo,
     Vote,
@@ -111,7 +111,7 @@ pub enum SafeToNotarStatus {
 
 type SlotStateOutputs = (
     SmallVec<[Cert; 2]>,
-    SmallVec<[VotorEvent; 2]>,
+    SmallVec<[PoolEvent; 2]>,
     SmallVec<[(Slot, BlockHash); 1]>,
 );
 
@@ -196,7 +196,7 @@ impl SlotState {
                 }
                 match self.check_safe_to_notar(hash.clone()) {
                     SafeToNotarStatus::SafeToNotar => {
-                        votor_events.push(VotorEvent::SafeToNotar(slot, hash));
+                        votor_events.push(PoolEvent::SafeToNotar(slot, hash));
                     }
                     SafeToNotarStatus::MissingBlock => blocks_to_repair.push((slot, hash)),
                     SafeToNotarStatus::AwaitingVotes => {}
@@ -220,7 +220,7 @@ impl SlotState {
     pub fn notify_parent_certified(
         &mut self,
         hash: BlockHash,
-    ) -> Option<Either<VotorEvent, BlockId>> {
+    ) -> Option<Either<PoolEvent, BlockId>> {
         let Some(parent_info) = self.parents.get_mut(&hash) else {
             panic!("parent not known")
         };
@@ -232,7 +232,7 @@ impl SlotState {
         }
         match self.check_safe_to_notar(hash.clone()) {
             SafeToNotarStatus::SafeToNotar => {
-                Some(Either::Left(VotorEvent::SafeToNotar(self.slot, hash)))
+                Some(Either::Left(PoolEvent::SafeToNotar(self.slot, hash)))
             }
             SafeToNotarStatus::MissingBlock => Some(Either::Right((self.slot, hash))),
             SafeToNotarStatus::AwaitingVotes => None,
@@ -268,7 +268,7 @@ impl SlotState {
         if !self.sent_safe_to_notar.contains(block_hash) {
             match self.check_safe_to_notar(block_hash.clone()) {
                 SafeToNotarStatus::SafeToNotar => {
-                    votor_events.push(VotorEvent::SafeToNotar(slot, block_hash.clone()));
+                    votor_events.push(PoolEvent::SafeToNotar(slot, block_hash.clone()));
                 }
                 SafeToNotarStatus::MissingBlock => {
                     blocks_to_repair.push((slot, block_hash.clone()));
@@ -283,7 +283,7 @@ impl SlotState {
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
             && self.votes.notar[self.epoch_info.own_id().as_index()].is_some()
         {
-            votor_events.push(VotorEvent::SafeToSkip(slot));
+            votor_events.push(PoolEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
         let nf_stake = *self
@@ -381,7 +381,7 @@ impl SlotState {
             }
             match self.check_safe_to_notar(hash.clone()) {
                 SafeToNotarStatus::SafeToNotar => {
-                    votor_events.push(VotorEvent::SafeToNotar(slot, hash));
+                    votor_events.push(PoolEvent::SafeToNotar(slot, hash));
                 }
                 SafeToNotarStatus::MissingBlock => blocks_to_repair.push((slot, hash)),
                 SafeToNotarStatus::AwaitingVotes => {}
@@ -407,7 +407,7 @@ impl SlotState {
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
             && self.votes.notar[self.epoch_info.own_id().as_index()].is_some()
         {
-            votor_events.push(VotorEvent::SafeToSkip(slot));
+            votor_events.push(PoolEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
         (new_certs, votor_events, blocks_to_repair)
@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(blocks.is_empty());
         match &events[0] {
-            VotorEvent::SafeToNotar(s, h) => {
+            PoolEvent::SafeToNotar(s, h) => {
                 assert_eq!(*s, slot);
                 assert_eq!(*h, hash);
             }

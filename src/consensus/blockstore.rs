@@ -15,12 +15,31 @@ use tokio::sync::mpsc::Sender;
 
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::ValidatorEpochInfo;
-use super::votor::VotorEvent;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, MerkleRoot, SliceRoot};
 use crate::shredder::{RegularShredder, Shred, ShredIndex, ShredderPool, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
+
+/// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
+#[derive(Clone, Debug)]
+pub enum BlockstoreEvent {
+    /// First valid shred of the leader's block was received for the slot.
+    FirstShred(Slot),
+    /// New (complete) block was received in blockstore.
+    Block { slot: Slot, block_info: BlockInfo },
+    /// Blockstore detected an invalid block from the leader for this slot.
+    InvalidBlock(Slot),
+}
+
+impl BlockstoreEvent {
+    pub(crate) const fn slot(&self) -> Slot {
+        match self {
+            Self::FirstShred(slot) | Self::InvalidBlock(slot) => *slot,
+            Self::Block { slot, .. } => *slot,
+        }
+    }
+}
 
 /// Information about a block within a slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,7 +106,7 @@ pub struct BlockstoreImpl {
     shredders: ShredderPool<RegularShredder>,
 
     /// Event channel for sending notifications to Votor.
-    votor_channel: Sender<VotorEvent>,
+    votor_channel: Sender<BlockstoreEvent>,
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
 }
@@ -95,11 +114,11 @@ pub struct BlockstoreImpl {
 impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
-    /// Blockstore will send the following [`VotorEvent`]s to the provided `votor_channel`:
-    /// - [`VotorEvent::FirstShred`] when receiving the first shred for a slot
+    /// Blockstore will send the following [`BlockstoreEvent`]s to the provided `votor_channel`:
+    /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
-    /// - [`VotorEvent::Block`] for any reconstructed block
-    pub fn new(epoch_info: Arc<ValidatorEpochInfo>, votor_channel: Sender<VotorEvent>) -> Self {
+    /// - [`BlockstoreEvent::Block`] for any reconstructed block
+    pub fn new(epoch_info: Arc<ValidatorEpochInfo>, votor_channel: Sender<BlockstoreEvent>) -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
@@ -113,13 +132,13 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_votor_event(&self, event: VotorEvent) -> Option<BlockInfo> {
+    async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
         match &event {
-            VotorEvent::FirstShred(_) => {
+            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
                 self.votor_channel.send(event).await.unwrap();
                 None
             }
-            VotorEvent::Block { slot, block_info } => {
+            BlockstoreEvent::Block { slot, block_info } => {
                 let block_info = block_info.clone();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
@@ -132,7 +151,6 @@ impl BlockstoreImpl {
 
                 Some(block_info)
             }
-            ev => panic!("unexpected event {ev:?}"),
         }
     }
 
@@ -237,13 +255,10 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_shred_from_disseminator(shred, leader_pk, &mut shredder)
         {
-            Ok(Some(event)) => Ok(self.send_votor_event(event).await),
+            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
             Ok(None) => Ok(None),
             Err(AddShredError::InvalidShred) => {
-                self.votor_channel
-                    .send(VotorEvent::InvalidBlock(slot))
-                    .await
-                    .unwrap();
+                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot)).await;
                 Err(AddShredError::InvalidShred)
             }
             Err(e) => Err(e),
@@ -271,7 +286,7 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_own_shred_as_leader(shred, &mut shredder)?
         {
-            Some(event) => Ok(self.send_votor_event(event).await),
+            Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
         }
     }
@@ -307,7 +322,7 @@ impl Blockstore for BlockstoreImpl {
             leader_pk,
             &mut shredder,
         )? {
-            Some(event) => Ok(self.send_votor_event(event).await),
+            Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
         }
     }
@@ -405,7 +420,7 @@ mod tests {
     use crate::types::SliceIndex;
     use crate::{Stake, ValidatorId, ValidatorInfo};
 
-    fn test_setup(tx: Sender<VotorEvent>) -> (SecretKey, BlockstoreImpl) {
+    fn test_setup(tx: Sender<BlockstoreEvent>) -> (SecretKey, BlockstoreImpl) {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         let id = ValidatorId::new(0);

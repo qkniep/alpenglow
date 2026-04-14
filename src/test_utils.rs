@@ -17,9 +17,8 @@ use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
-use crate::{
-    BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorId, ValidatorInfo, VotorEvent,
-};
+use crate::consensus::{BlockstoreEvent, PoolEvent};
+use crate::{BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorId, ValidatorInfo};
 
 /// A simple ping network message.
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
@@ -133,18 +132,44 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
     slices
 }
 
-/// Asserts that two [`VotorEvent`]s are equal.
+/// Asserts that two [`BlockstoreEvent`]s are equal.
 ///
 /// Panics if they are not equal.
-pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
+pub fn assert_blockstore_events_match(ev0: BlockstoreEvent, ev1: BlockstoreEvent) {
+    match (ev0, ev1) {
+        (BlockstoreEvent::FirstShred(s0), BlockstoreEvent::FirstShred(s1)) => assert_eq!(s0, s1),
+        (BlockstoreEvent::InvalidBlock(s0), BlockstoreEvent::InvalidBlock(s1)) => {
+            assert_eq!(s0, s1)
+        }
+        (
+            BlockstoreEvent::Block {
+                slot: s0,
+                block_info: b0,
+            },
+            BlockstoreEvent::Block {
+                slot: s1,
+                block_info: b1,
+            },
+        ) => {
+            assert_eq!(s0, s1);
+            assert_eq!(b0, b1);
+        }
+        (ev0, ev1) => panic!("{ev0:?} does not match {ev1:?}"),
+    }
+}
+
+/// Asserts that two [`PoolEvent`]s are equal.
+///
+/// Panics if they are not equal.
+pub fn assert_pool_events_match(ev0: PoolEvent, ev1: PoolEvent) {
     match (ev0, ev1) {
         (
-            VotorEvent::ParentReady {
+            PoolEvent::ParentReady {
                 slot: s0,
                 parent_slot: ps0,
                 parent_hash: ph0,
             },
-            VotorEvent::ParentReady {
+            PoolEvent::ParentReady {
                 slot: s1,
                 parent_slot: ps1,
                 parent_hash: ph1,
@@ -154,38 +179,18 @@ pub fn assert_votor_events_match(ev0: VotorEvent, ev1: VotorEvent) {
             assert_eq!(ps0, ps1);
             assert_eq!(ph0, ph1);
         }
-        (VotorEvent::CertCreated(c0), VotorEvent::CertCreated(c1)) => assert_eq!(c0, c1),
-        (VotorEvent::Standstill(s0, c0, v0), VotorEvent::Standstill(s1, c1, v1)) => {
+        (PoolEvent::CertCreated(c0), PoolEvent::CertCreated(c1)) => assert_eq!(c0, c1),
+        (PoolEvent::Standstill(s0, c0, v0), PoolEvent::Standstill(s1, c1, v1)) => {
             assert_eq!(s0, s1);
             assert_eq!(c0, c1);
             assert_eq!(v0, v1);
         }
-        (VotorEvent::SafeToNotar(s0, h0), VotorEvent::SafeToNotar(s1, h1)) => {
+        (PoolEvent::SafeToNotar(s0, h0), PoolEvent::SafeToNotar(s1, h1)) => {
             assert_eq!(s0, s1);
             assert_eq!(h0, h1);
         }
-        (
-            VotorEvent::Block {
-                slot: s0,
-                block_info: b0,
-            },
-            VotorEvent::Block {
-                slot: s1,
-                block_info: b1,
-            },
-        ) => {
-            assert_eq!(s0, s1);
-            assert_eq!(b0, b1);
-        }
-
-        (VotorEvent::Timeout(s0), VotorEvent::Timeout(s1))
-        | (VotorEvent::TimeoutCrashedLeader(s0), VotorEvent::TimeoutCrashedLeader(s1))
-        | (VotorEvent::SafeToSkip(s0), VotorEvent::SafeToSkip(s1)) => assert_eq!(s0, s1),
-        (VotorEvent::FirstShred(s0), VotorEvent::FirstShred(s1)) => assert_eq!(s0, s1),
-
-        (ev0, ev1) => {
-            panic!("{ev0:?} does not match {ev1:?}");
-        }
+        (PoolEvent::SafeToSkip(s0), PoolEvent::SafeToSkip(s1)) => assert_eq!(s0, s1),
+        (ev0, ev1) => panic!("{ev0:?} does not match {ev1:?}"),
     }
 }
 
