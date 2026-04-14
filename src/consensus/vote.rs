@@ -100,6 +100,7 @@ impl Vote {
 
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
+    #[hotpath::measure]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         let msg = self.kind.bytes_to_sign();
         self.sig.verify(&msg, pk)

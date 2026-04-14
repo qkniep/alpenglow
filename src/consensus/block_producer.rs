@@ -340,6 +340,7 @@ where
     ///
     /// Returns Ok(Some(hash of the block)) if this is the last slice.
     /// Returns Ok(None) otherwise.
+    #[hotpath::measure]
     async fn shred_and_disseminate(
         &self,
         header: SliceHeader,

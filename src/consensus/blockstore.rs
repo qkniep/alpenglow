@@ -221,8 +221,8 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
-    #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
+    #[fastrace::trace(short_name = true)]
     async fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
@@ -288,8 +288,8 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
-    #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
+    #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,

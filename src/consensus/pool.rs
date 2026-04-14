@@ -364,6 +364,7 @@ impl PoolImpl {
 #[async_trait]
 impl Pool for PoolImpl {
     /// Adds a new certificate to the pool. Checks validity of the certificate.
+    #[hotpath::measure]
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
@@ -405,6 +406,7 @@ impl Pool for PoolImpl {
     }
 
     /// Adds a new vote to the pool. Checks validity of the vote.
+    #[hotpath::measure]
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
