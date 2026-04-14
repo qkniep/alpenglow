@@ -144,8 +144,10 @@ where
     /// Otherwise, a [`RepairResponse::Nack`] is sent back to the requester.
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
-        let nack = RepairResponse::Nack(request.req_type.clone());
-        let response = self.try_build_response(&request).await.unwrap_or(nack);
+        let response = self
+            .try_build_response(&request)
+            .await
+            .unwrap_or_else(|| RepairResponse::Nack(request.req_type.clone()));
         self.send_response(response, request.sender).await
     }
 
