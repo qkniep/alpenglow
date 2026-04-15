@@ -35,6 +35,7 @@
 
 mod alpenglow;
 mod discrete_event_simulator;
+mod plot;
 mod pyjama;
 mod quorum_robustness;
 mod rotor;
@@ -78,6 +79,7 @@ use crate::ryse::{
 const RUN_BANDWIDTH_TESTS: bool = true;
 const RUN_LATENCY_TESTS: bool = true;
 const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
+const GENERATE_PLOTS: bool = true;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
@@ -167,6 +169,12 @@ fn main() -> Result<()> {
     // run_tests_for_stake_distribution("sui", &SUI_VALIDATOR_DATA);
     // run_tests_for_stake_distribution("5hubs", &FIVE_HUBS_VALIDATOR_DATA);
     // run_tests_for_stake_distribution("stock_exchanges", &STOCK_EXCHANGES_VALIDATOR_DATA);
+
+    if GENERATE_PLOTS {
+        for &(data_shreds, total_shreds) in &SHRED_COMBINATIONS {
+            plot::generate_all_plots("solana", SAMPLING_STRATEGIES[0], data_shreds, total_shreds);
+        }
+    }
 
     Ok(())
 }
