@@ -118,7 +118,10 @@ impl BlockstoreImpl {
     /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
-    pub fn new(epoch_info: Arc<ValidatorEpochInfo>, votor_channel: Sender<BlockstoreEvent>) -> Self {
+    pub fn new(
+        epoch_info: Arc<ValidatorEpochInfo>,
+        votor_channel: Sender<BlockstoreEvent>,
+    ) -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
@@ -258,7 +261,8 @@ impl Blockstore for BlockstoreImpl {
             Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
             Ok(None) => Ok(None),
             Err(AddShredError::InvalidShred) => {
-                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot)).await;
+                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
+                    .await;
                 Err(AddShredError::InvalidShred)
             }
             Err(e) => Err(e),

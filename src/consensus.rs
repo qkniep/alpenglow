@@ -159,11 +159,8 @@ where
             Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx));
         let blockstore = Arc::new(RwLock::new(blockstore));
 
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
-            epoch_info.clone(),
-            pool_tx,
-            repair_tx,
-        ));
+        let pool: Box<dyn Pool + Send + Sync> =
+            Box::new(PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx));
         let pool = Arc::new(RwLock::new(pool));
 
         let repair_request_handler = RepairRequestHandler::new(

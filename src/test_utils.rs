@@ -9,7 +9,7 @@ use rand::prelude::*;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
-use crate::consensus::{ConsensusMessage, EpochInfo};
+use crate::consensus::{BlockstoreEvent, ConsensusMessage, EpochInfo, PoolEvent};
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
 use crate::crypto::{Hash, signature};
@@ -17,7 +17,6 @@ use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
-use crate::consensus::{BlockstoreEvent, PoolEvent};
 use crate::{BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorId, ValidatorInfo};
 
 /// A simple ping network message.

@@ -582,10 +582,7 @@ mod tests {
         assert_eq!(vote.slot(), slot);
 
         // vote skip-fallback after safe-to-skip
-        pool_tx
-            .send(PoolEvent::SafeToSkip(slot))
-            .await
-            .unwrap();
+        pool_tx.send(PoolEvent::SafeToSkip(slot)).await.unwrap();
         match other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(matches!(v, Vote::SkipFallback(_)));
