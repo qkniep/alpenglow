@@ -58,6 +58,7 @@ use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
 use ::alpenglow::{Stake, ValidatorId, ValidatorInfo, logging};
+use clap::Parser;
 use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
@@ -112,9 +113,16 @@ const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (256, 512),
 ];
 
+/// Alpenglow protocol simulations.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Args {}
+
 fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
+
+    Args::parse();
 
     logging::enable_logforth();
 

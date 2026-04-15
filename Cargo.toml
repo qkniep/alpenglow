@@ -57,7 +57,9 @@ toml = "1"
 wincode = { version = "0.5", features = ["derive"] }
 
 [dev-dependencies]
+assert_cmd = "2"
 divan = "0.1"
+tempfile = "3"
 
 [features]
 hotpath = ["hotpath/hotpath"]

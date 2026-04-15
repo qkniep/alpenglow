@@ -16,8 +16,18 @@ use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use clap::Parser;
 use color_eyre::Result;
 use log::info;
+
+/// Alpenglow performance test with simulated network.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Args {
+    /// Duration of the performance test in seconds.
+    #[arg(long, default_value_t = 60)]
+    duration_secs: u64,
+}
 
 #[tokio::main]
 #[hotpath::main]
@@ -25,9 +35,10 @@ async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
 
-    logging::enable_logforth_stderr();
+    let args = Args::parse();
+    logging::enable_logforth();
 
-    latency_test(11).await;
+    latency_test(11, args.duration_secs).await;
 
     Ok(())
 }
@@ -157,7 +168,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .collect()
 }
 
-async fn latency_test(num_nodes: usize) {
+async fn latency_test(num_nodes: usize, duration_secs: u64) {
     // start `num_nodes` nodes
     let nodes = create_test_nodes(num_nodes as u64).await;
     let mut node_cancel_tokens = Vec::new();
@@ -174,7 +185,7 @@ async fn latency_test(num_nodes: usize) {
         let mut finalized = vec![Slot::new(0); pools.len()];
         let mut times = vec![Instant::now(); pools.len()];
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
             for (i, pool) in pools.iter().enumerate() {
                 if cancel_tokens[i].is_cancelled() {
                     continue;
@@ -195,8 +206,7 @@ async fn latency_test(num_nodes: usize) {
     });
 
     // let it run for a while
-    let delay = tokio::time::Duration::from_secs(60);
-    tokio::time::sleep(delay).await;
+    tokio::time::sleep(Duration::from_secs(duration_secs)).await;
 
     liveness_tester.abort();
     assert!(liveness_tester.await.unwrap_err().is_cancelled());
