@@ -99,7 +99,6 @@ const MAX_BANDWIDTHS: [u64; 4] = [
 
 const SHRED_COUNTS: [usize; 4] = [64, 128, 256, 512];
 
-const TOTAL_SHREDS_FA1: u64 = 64;
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
     (32, 64),
@@ -214,11 +213,11 @@ fn run_tests_for_stake_distribution(
                 UniformSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = UniformSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = UniformSampler::new(validators_with_pings.clone())
-                .into_quorum_strategy(NUM_LEADERS);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler =
                     UniformSampler::new(validators.clone()).into_quorum_strategy(shreds);
+                let ping_rotor_sampler = UniformSampler::new(validators_with_pings.clone())
+                    .into_quorum_strategy(shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
                     &validators,
@@ -234,11 +233,11 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
-                .into_quorum_strategy(NUM_LEADERS);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler =
                     StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(shreds);
+                let ping_rotor_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
+                    .into_quorum_strategy(shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
                     &validators,
@@ -254,13 +253,13 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
-                validators_with_pings.clone(),
-                TOTAL_SHREDS_FA1,
-            );
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
                     validators.clone(),
+                    shreds as u64,
+                );
+                let ping_rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+                    validators_with_pings.clone(),
                     shreds as u64,
                 );
                 run_tests(
@@ -278,10 +277,10 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler =
-                FaitAccompli2Sampler::new(validators_with_pings.clone(), TOTAL_SHREDS_FA1);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = FaitAccompli2Sampler::new(validators.clone(), shreds as u64);
+                let ping_rotor_sampler =
+                    FaitAccompli2Sampler::new(validators_with_pings.clone(), shreds as u64);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
                     &validators,
@@ -297,13 +296,13 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
-                validators_with_pings.clone(),
-                TOTAL_SHREDS_FA1,
-            );
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
                     validators.clone(),
+                    shreds as u64,
+                );
+                let ping_rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
+                    validators_with_pings.clone(),
                     shreds as u64,
                 );
                 run_tests(
@@ -321,13 +320,10 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = DecayingAcceptanceSampler::new(
-                validators_with_pings.clone(),
-                3.0,
-                TOTAL_SHREDS_FA1 as usize,
-            );
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = DecayingAcceptanceSampler::new(validators.clone(), 3.0, shreds);
+                let ping_rotor_sampler =
+                    DecayingAcceptanceSampler::new(validators_with_pings.clone(), 3.0, shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
                     &validators,
@@ -343,11 +339,11 @@ fn run_tests_for_stake_distribution(
                 TurbineSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = TurbineSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = TurbineSampler::new(validators_with_pings.clone())
-                .into_quorum_strategy(NUM_LEADERS);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler =
                     TurbineSampler::new(validators.clone()).into_quorum_strategy(shreds);
+                let ping_rotor_sampler = TurbineSampler::new(validators_with_pings.clone())
+                    .into_quorum_strategy(shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
                     &validators,
@@ -443,7 +439,9 @@ fn run_tests<
                 .with_bandwidths(leader_bandwidth, bandwidths);
 
         // Rotor
-        let params = RotorParams::new(32, 64, 40);
+        let q = ping_rotor_sampler.quorum_size();
+        let leader_q = ping_leader_sampler.quorum_size();
+        let params = RotorParams::new(q / 2, q, 40);
         let builder = RotorInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
@@ -463,7 +461,7 @@ fn run_tests<
             .write_to_csv("data/output/rotor_1000.csv", &params)?;
 
         // Ryse
-        let ryse_params = RyseParameters::new(8, 320);
+        let ryse_params = RyseParameters::new(leader_q as u64, q as u64);
         let ryse_builder = RyseInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
@@ -480,7 +478,7 @@ fn run_tests<
             .write_to_csv("data/output/ryse_1000.csv", &params)?;
 
         // Pyjama
-        let params = PyjamaParams::new(8, 640);
+        let params = PyjamaParams::new(leader_q as u64, q as u64);
         let builder = PyjamaInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_leader_sampler.clone(),
@@ -497,7 +495,8 @@ fn run_tests<
 
         // Alpenglow
         // latency experiments with random leaders
-        for (n, k) in SHRED_COMBINATIONS {
+        {
+            let (n, k) = (q / 2, q);
             info!("{test_name} latency tests (random leaders, n={n}, k={k})");
             let rotor_params = RotorParams::new(n, k, 40);
             let rotor_builder = RotorInstanceBuilder::new(
@@ -565,7 +564,8 @@ fn run_tests<
             unimplemented!()
         };
 
-        for (n, k) in SHRED_COMBINATIONS {
+        {
+            let (n, k) = (q / 2, q);
             cities.par_iter().try_for_each(|city| {
                 info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
                 let leader = find_leader_in_city(validators_with_ping_data, city);
