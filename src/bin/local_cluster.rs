@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         let parent = SpanContext::random();
 
         // spawn local cluster
-        let nodes = create_test_nodes(2);
+        let nodes = create_test_nodes(6);
         let mut node_tasks = Vec::new();
         let mut cancel_tokens = Vec::new();
         for (i, node) in nodes.into_iter().enumerate() {
