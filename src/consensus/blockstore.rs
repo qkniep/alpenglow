@@ -33,6 +33,7 @@ pub enum BlockstoreEvent {
 }
 
 impl BlockstoreEvent {
+    /// Returns the slot this event refers to.
     pub(crate) const fn slot(&self) -> Slot {
         match self {
             Self::FirstShred(slot) | Self::InvalidBlock(slot) => *slot,
@@ -118,6 +119,7 @@ impl BlockstoreImpl {
     /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
+    /// - [`BlockstoreEvent::InvalidBlock`] if leader misbehavior is detected for a block
     pub fn new(
         epoch_info: Arc<ValidatorEpochInfo>,
         votor_channel: Sender<BlockstoreEvent>,

@@ -15,9 +15,8 @@ use std::sync::Arc;
 use either::Either;
 use smallvec::SmallVec;
 
-use super::SlashableOffence;
+use super::{PoolEvent, SlashableOffence};
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
-use crate::consensus::pool::PoolEvent;
 use crate::consensus::{
     Cert, FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, ValidatorEpochInfo,
     Vote,

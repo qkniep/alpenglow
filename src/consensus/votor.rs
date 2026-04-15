@@ -4,10 +4,10 @@
 //! Main voting logic for the consensus protocol.
 //!
 //! Besides [`super::Pool`], [`Votor`] is the other main internal component Alpenglow.
-//! It handles the main voting decisions for the consensus protocol. As input it
-//! receives events from [`super::Pool`] (on a [`PoolEvent`] channel), from
-//! [`super::Blockstore`] (on a [`BlockstoreEvent`] channel), and its own internal
-//! timeout events.
+//! It handles the main voting decisions for the consensus protocol.
+//! As input it receives events from [`super::Pool`] (on a [`PoolEvent`] channel),
+//! from [`super::Blockstore`] (on a [`BlockstoreEvent`] channel),
+//! and its own internal timeout events.
 //! Votor keeps its own internal state for each slot based on previous events and votes.
 //!
 //! Votor has access to an instance of [`All2All`] for broadcasting votes.
@@ -37,6 +37,7 @@ enum VotorTimeout {
 }
 
 impl VotorTimeout {
+    /// Returns the slot this event refers to.
     const fn slot(&self) -> Slot {
         match self {
             Self::Timeout(slot) | Self::TimeoutCrashedLeader(slot) => *slot,

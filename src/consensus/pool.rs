@@ -58,6 +58,7 @@ pub enum PoolEvent {
 }
 
 impl PoolEvent {
+    /// Returns the slot this event refers to.
     pub(crate) const fn slot(&self) -> Slot {
         match self {
             Self::ParentReady { slot, .. }
