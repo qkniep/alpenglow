@@ -75,6 +75,9 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Res
         .join("output")
         .join(filename)
         .with_extension("csv");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
     let file = File::create(path).unwrap();
     let mut csv_file = csv::Writer::from_writer(file);
 
