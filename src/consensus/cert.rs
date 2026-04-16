@@ -44,6 +44,31 @@ pub(crate) enum CertKind {
     Final(Slot),
 }
 
+impl CertKind {
+    /// Returns the slot number this certificate is for.
+    #[must_use]
+    pub const fn slot(&self) -> Slot {
+        match self {
+            Self::Notar(s, _) => *s,
+            Self::NotarFallback(s, _) => *s,
+            Self::Skip(s) => *s,
+            Self::FastFinal(s, _) => *s,
+            Self::Final(s) => *s,
+        }
+    }
+
+    /// Returns the block hash this certificate is for.
+    #[must_use]
+    pub const fn block_hash(&self) -> Option<&BlockHash> {
+        match self {
+            Self::Notar(_, h) => Some(h),
+            Self::NotarFallback(_, h) => Some(h),
+            Self::FastFinal(_, h) => Some(h),
+            Self::Skip(_) | Self::Final(_) => None,
+        }
+    }
+}
+
 /// Certificate types used for the consensus protocol.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum Cert {
