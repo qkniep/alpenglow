@@ -28,7 +28,32 @@ use std::collections::BTreeMap;
 use log::{debug, info};
 use tokio::sync::mpsc;
 
+use crate::crypto::Hash;
 use crate::{BlockId, Slot, Transaction};
+
+/// Identifies a block that is currently being executed.
+///
+/// During dissemination, the block hash is unknown until the block is fully
+/// reconstructed. The slot alone identifies it since at most one such block
+/// is in-progress per slot on this path. For blocks received via repair, the
+/// hash is known upfront, so the full [`BlockId`] is available from the start.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InProgressBlock {
+    /// Block received via dissemination (or being produced); hash not yet known.
+    Pending(Slot),
+    /// Block received via repair; hash known upfront.
+    Known(BlockId),
+}
+
+impl InProgressBlock {
+    /// Returns the slot of this block location.
+    pub(crate) fn slot(&self) -> Slot {
+        match self {
+            InProgressBlock::Pending(slot) => *slot,
+            InProgressBlock::Known((slot, _)) => *slot,
+        }
+    }
+}
 
 /// Events emitted by the execution engine.
 ///
@@ -117,7 +142,7 @@ pub trait ExecutionEngine {
     /// [`execute_transactions`] for this `slot` apply against that forked state.
     ///
     /// [`execute_transactions`]: Self::execute_transactions
-    fn begin_block(&mut self, slot: Slot, parent: Option<BlockId>);
+    fn begin_block(&mut self, id: InProgressBlock, parent: Option<BlockId>);
 
     /// Streams transactions from a single decoded slice of `slot`.
     ///
@@ -125,7 +150,7 @@ pub trait ExecutionEngine {
     /// [`begin_block`] must have been called for `slot` beforehand.
     ///
     /// [`begin_block`]: Self::begin_block
-    fn execute_transactions(&mut self, slot: Slot, transactions: Vec<Transaction>);
+    fn execute_transactions(&mut self, id: InProgressBlock, transactions: Vec<Transaction>);
 
     /// Notifies the engine that all slices for `slot` have been received.
     ///
@@ -133,7 +158,7 @@ pub trait ExecutionEngine {
     /// known after the double-Merkle tree has been computed over all slices.
     /// The engine should emit a [`ExecutionEvent`] through its channel to
     /// signal the outcome of execution for this block.
-    fn end_block(&mut self, slot: Slot, block_id: BlockId);
+    fn end_block(&mut self, block_id: BlockId, expected_state_hash: &Hash);
 
     /// Notifies the engine that `block_id` has been finalized by consensus.
     ///
@@ -150,7 +175,7 @@ pub trait ExecutionEngine {
 /// state transitions.
 pub struct DummyExecution {
     /// Running transaction count for each in-flight block, keyed by slot.
-    tx_counts: BTreeMap<Slot, usize>,
+    tx_counts: BTreeMap<InProgressBlock, usize>,
     /// Channel for emitting execution events.
     event_sender: mpsc::Sender<ExecutionEvent>,
 }
@@ -169,29 +194,55 @@ impl DummyExecution {
 }
 
 impl ExecutionEngine for DummyExecution {
-    fn begin_block(&mut self, slot: Slot, parent: Option<BlockId>) {
-        debug!("begin block in slot {slot} on parent {parent:?}");
-        self.tx_counts.insert(slot, 0);
+    fn begin_block(&mut self, id: InProgressBlock, parent: Option<BlockId>) {
+        match &id {
+            InProgressBlock::Pending(slot) => {
+                debug!("begin block in slot {slot} on parent {parent:?}");
+            }
+            InProgressBlock::Known((slot, hash)) => {
+                debug!("begin block in slot {slot} (hash {hash:?}) on parent {parent:?}");
+            }
+        }
+        self.tx_counts.insert(id, 0);
     }
 
-    fn execute_transactions(&mut self, slot: Slot, transactions: Vec<Transaction>) {
-        debug!(
-            "execute {} transactions for slot {slot}",
-            transactions.len()
-        );
-        *self.tx_counts.entry(slot).or_default() += transactions.len();
+    fn execute_transactions(&mut self, id: InProgressBlock, transactions: Vec<Transaction>) {
+        match &id {
+            InProgressBlock::Pending(slot) => {
+                debug!(
+                    "execute {} transactions for block in slot {slot}",
+                    transactions.len()
+                );
+            }
+            InProgressBlock::Known((slot, hash)) => {
+                debug!(
+                    "execute {} transactions for block in slot {slot} (hash {hash:?})",
+                    transactions.len()
+                );
+            }
+        }
+        *self.tx_counts.entry(id).or_default() += transactions.len();
     }
 
-    fn end_block(&mut self, slot: Slot, block_id: BlockId) {
-        let total = self.tx_counts.remove(&slot).unwrap_or(0);
-        let _ = self.event_sender.try_send(ExecutionEvent::BlockExecuted {
-            block_id,
-            result: ExecutionResult { tx_count: total },
-        });
+    fn end_block(&mut self, block_id: BlockId, _expected_state_hash: &Hash) {
+        if let Some(&total) = self
+            .tx_counts
+            .get(&InProgressBlock::Known(block_id.clone()))
+        {
+            let _ = self.event_sender.try_send(ExecutionEvent::BlockExecuted {
+                block_id,
+                result: ExecutionResult { tx_count: total },
+            });
+        } else if let Some(&total) = self.tx_counts.get(&InProgressBlock::Pending(block_id.0)) {
+            let _ = self.event_sender.try_send(ExecutionEvent::BlockExecuted {
+                block_id,
+                result: ExecutionResult { tx_count: total },
+            });
+        }
     }
 
     fn finalize(&mut self, block_id: BlockId) {
-        self.tx_counts.retain(|slot, _| *slot >= block_id.0);
+        self.tx_counts.retain(|id, _| id.slot() >= block_id.0);
         info!("finalized block {block_id:?}");
     }
 }
@@ -199,6 +250,7 @@ impl ExecutionEngine for DummyExecution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::hash;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::types::Slot;
 
@@ -210,20 +262,20 @@ mod tests {
     fn dummy_counts_transactions_across_slices() {
         let (tx, mut rx) = mpsc::channel(16);
         let mut engine = DummyExecution::new(tx);
-        let slot = Slot::new(1);
+        let id = InProgressBlock::Pending(Slot::new(1));
 
-        engine.begin_block(slot, None);
-        engine.execute_transactions(slot, vec![Transaction(vec![1, 2, 3])]);
-        engine.execute_transactions(slot, vec![Transaction(vec![4]), Transaction(vec![5])]);
-        assert_eq!(engine.tx_counts[&slot], 3);
+        engine.begin_block(id.clone(), None);
+        engine.execute_transactions(id.clone(), vec![Transaction(vec![1, 2, 3])]);
+        engine.execute_transactions(id.clone(), vec![Transaction(vec![4]), Transaction(vec![5])]);
+        assert_eq!(engine.tx_counts[&id], 3);
 
-        let id = block_id(1);
-        engine.end_block(slot, id);
+        let bid = block_id(1);
+        engine.end_block(bid.clone(), &hash(&[0; 32]));
 
         let event = rx.try_recv().unwrap();
         match event {
             ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, (Slot::new(1), GENESIS_BLOCK_HASH.clone()));
+                assert_eq!(block_id, bid);
                 assert_eq!(result.tx_count, 3);
             }
             ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
@@ -238,16 +290,28 @@ mod tests {
         let id1 = block_id(1);
         let id2 = block_id(2);
 
-        engine.begin_block(Slot::new(1), None);
-        engine.begin_block(Slot::new(2), Some(id1));
-        engine.begin_block(Slot::new(3), Some(id2.clone()));
+        engine.begin_block(InProgressBlock::Pending(Slot::new(1)), None);
+        engine.begin_block(InProgressBlock::Pending(Slot::new(2)), Some(id1));
+        engine.begin_block(InProgressBlock::Pending(Slot::new(3)), Some(id2.clone()));
 
         // Finalizing slot 2 should prune slot 1, but keep slots 2 and 3.
         engine.finalize(id2);
 
-        assert!(!engine.tx_counts.contains_key(&Slot::new(1)));
-        assert!(engine.tx_counts.contains_key(&Slot::new(2)));
-        assert!(engine.tx_counts.contains_key(&Slot::new(3)));
+        assert!(
+            !engine
+                .tx_counts
+                .contains_key(&InProgressBlock::Pending(Slot::new(1)))
+        );
+        assert!(
+            engine
+                .tx_counts
+                .contains_key(&InProgressBlock::Pending(Slot::new(2)))
+        );
+        assert!(
+            engine
+                .tx_counts
+                .contains_key(&InProgressBlock::Pending(Slot::new(3)))
+        );
     }
 
     #[test]
@@ -255,12 +319,12 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(16);
         let mut engine = DummyExecution::new(tx);
 
-        let slot = Slot::new(5);
-        engine.begin_block(slot, Some(block_id(4)));
-        engine.execute_transactions(slot, vec![Transaction(vec![0]); 7]);
+        let id = InProgressBlock::Pending(Slot::new(5));
+        engine.begin_block(id.clone(), Some(block_id(4)));
+        engine.execute_transactions(id.clone(), vec![Transaction(vec![0]); 7]);
 
         let bid = block_id(5);
-        engine.end_block(slot, bid.clone());
+        engine.end_block(bid.clone(), &hash(&[1; 32]));
 
         let event = rx.try_recv().unwrap();
         match event {
@@ -270,5 +334,39 @@ mod tests {
             }
             ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
         }
+    }
+
+    #[test]
+    fn end_block_with_known_block() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        let bid = block_id(10);
+        let id = InProgressBlock::Known(bid.clone());
+        engine.begin_block(id.clone(), Some(block_id(9)));
+        engine.execute_transactions(id.clone(), vec![Transaction(vec![42]); 2]);
+
+        engine.end_block(bid.clone(), &hash(&[2; 32]));
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            ExecutionEvent::BlockExecuted { block_id, result } => {
+                assert_eq!(block_id, bid);
+                assert_eq!(result.tx_count, 2);
+            }
+            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
+        }
+    }
+
+    #[test]
+    fn end_block_unknown_slot_returns_no_event() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        // end_block for a block we never began should not emit an event
+        let bid = block_id(99);
+        engine.end_block(bid, &hash(&[3; 32]));
+
+        assert!(rx.try_recv().is_err());
     }
 }
