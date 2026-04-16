@@ -25,6 +25,25 @@ pub enum CertError {
     BlockHashMismatch,
 }
 
+/// Payload identifying a certificate type, without signature data.
+///
+/// This type is intentionally not part of the public API.
+/// Each variant of [`Cert`] corresponds to the matching [`CertKind`] variant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum CertKind {
+    /// A notarization certificate for a given block hash in a given slot.
+    Notar(Slot, BlockHash),
+    /// A notar-fallback certificate for a given block hash in a given slot.
+    NotarFallback(Slot, BlockHash),
+    /// A skip certificate for a given slot.
+    Skip(Slot),
+    /// A fast finalization certificate for a given block hash in a given slot.
+    FastFinal(Slot, BlockHash),
+    /// A finalization certificate for a given slot.
+    Final(Slot),
+}
+
 /// Certificate types used for the consensus protocol.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum Cert {
@@ -159,6 +178,19 @@ impl Cert {
             Self::Skip(s) => s.stake,
             Self::FastFinal(s) => s.stake,
             Self::Final(f) => f.stake,
+        }
+    }
+
+    /// Returns the kind of this certificate.
+    #[must_use]
+    #[allow(dead_code)]
+    pub(crate) fn kind(&self) -> CertKind {
+        match self {
+            Self::Notar(n) => CertKind::Notar(n.slot, n.block_hash.clone()),
+            Self::NotarFallback(n) => CertKind::NotarFallback(n.slot, n.block_hash.clone()),
+            Self::Skip(s) => CertKind::Skip(s.slot),
+            Self::FastFinal(f) => CertKind::FastFinal(f.slot, f.block_hash.clone()),
+            Self::Final(f) => CertKind::Final(f.slot),
         }
     }
 }
