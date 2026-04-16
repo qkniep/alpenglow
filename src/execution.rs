@@ -191,8 +191,7 @@ impl ExecutionEngine for DummyExecution {
     }
 
     fn finalize(&mut self, block_id: BlockId) {
-        self.tx_counts.remove(&block_id.0);
-        self.tx_counts.retain(|slot, _| *slot > block_id.0);
+        self.tx_counts.retain(|slot, _| *slot >= block_id.0);
         info!("finalized block {block_id:?}");
     }
 }
