@@ -72,7 +72,7 @@ jobs:
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
-        run: cargo llvm-cov --lcov --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --release --output-path lcov.info nextest
+        run: cargo llvm-cov --lcov --all-features --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --release --output-path lcov.info nextest
 
       - name: Upload coverage to Codecov
         if: github.actor != 'dependabot[bot]'
