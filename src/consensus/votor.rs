@@ -139,121 +139,128 @@ impl<A: All2All> Votor<A> {
     pub async fn voting_loop(&mut self) -> Result<()> {
         loop {
             tokio::select! {
-                Some(event) = self.pool_receiver.recv() => {
-                    let slot = event.slot();
-                    if self.retired_slots.contains(&slot) {
-                        trace!("ignoring pool event for retired slot {slot}");
-                        continue;
-                    }
-                    trace!("votor pool event: {event:?}");
-                    match event {
-                        PoolEvent::ParentReady { slot, parent_slot, parent_hash } => {
-                            let h = &hex::encode(parent_hash.as_hash())[..8];
-                            trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
-                            self.parents_ready.insert((slot, parent_slot, parent_hash));
-                            self.check_pending_blocks().await;
-                            self.set_timeouts(slot);
-                        }
-                        PoolEvent::SafeToNotar(slot, hash) => {
-                            debug!("voted notar-fallback in slot {slot}");
-                            let vote = Vote::new_notar_fallback(
-                                slot, hash, &self.voting_key, self.validator_id,
-                            );
-                            self.all2all.broadcast(&vote.into()).await.unwrap();
-                            self.try_skip_window(slot).await;
-                            self.bad_window.insert(slot);
-                        }
-                        PoolEvent::SafeToSkip(slot) => {
-                            debug!("voted skip-fallback in slot {slot}");
-                            let vote = Vote::new_skip_fallback(
-                                slot, &self.voting_key, self.validator_id,
-                            );
-                            self.all2all.broadcast(&vote.into()).await.unwrap();
-                            self.try_skip_window(slot).await;
-                            self.bad_window.insert(slot);
-                        }
-                        PoolEvent::CertCreated(cert) => {
-                            match cert.as_ref() {
-                                Cert::Notar(_) => {
-                                    self.block_notarized
-                                        .insert(cert.slot(), cert.block_hash().cloned().unwrap());
-                                    self.try_final(cert.slot(), cert.block_hash().cloned().unwrap())
-                                        .await;
-                                }
-                                Cert::Final(_) | Cert::FastFinal(_) => {
-                                    let first_slot_in_window = cert.slot().first_slot_in_window();
-                                    self.set_timeouts(first_slot_in_window);
-                                }
-                                _ => {}
-                            }
-                            self.all2all.broadcast(&(*cert).into()).await.unwrap();
-                        }
-                        PoolEvent::Standstill(_, certs, votes) => {
-                            for cert in certs {
-                                self.all2all.broadcast(&cert.into()).await.unwrap();
-                            }
-                            for vote in votes {
-                                self.all2all.broadcast(&vote.into()).await.unwrap();
-                            }
-                        }
-                    }
-                }
-                Some(event) = self.blockstore_receiver.recv() => {
-                    let slot = event.slot();
-                    if self.retired_slots.contains(&slot) {
-                        trace!("ignoring blockstore event for retired slot {slot}");
-                        continue;
-                    }
-                    trace!("votor blockstore event: {event:?}");
-                    match event {
-                        BlockstoreEvent::FirstShred(slot) => {
-                            self.received_shred.insert(slot);
-                        }
-                        BlockstoreEvent::InvalidBlock(slot) => {
-                            warn!("invalid block from leader for slot {slot}, skipping window");
-                            self.try_skip_window(slot).await;
-                        }
-                        BlockstoreEvent::Block { slot, block_info } => {
-                            if self.voted.contains(&slot) {
-                                let h = &hex::encode(block_info.hash.as_hash())[..8];
-                                warn!("not voting for block {h} in slot {slot}, already voted");
-                                continue;
-                            }
-                            if self.try_notar(slot, block_info.clone()).await {
-                                self.check_pending_blocks().await;
-                            } else {
-                                self.pending_blocks.insert(slot, block_info);
-                            }
-                        }
-                    }
-                }
-                Some(event) = self.timeout_receiver.recv() => {
-                    let slot = event.slot();
-                    if self.retired_slots.contains(&slot) {
-                        trace!("ignoring timeout for retired slot {slot}");
-                        continue;
-                    }
-                    trace!("votor timeout event: {event:?}");
-                    match event {
-                        VotorTimeout::Timeout(slot) => {
-                            trace!("timeout for slot {slot}");
-                            if !self.voted.contains(&slot) {
-                                self.try_skip_window(slot).await;
-                            }
-                        }
-                        VotorTimeout::TimeoutCrashedLeader(slot) => {
-                            trace!("timeout (crashed leader) for slot {slot}");
-                            if !self.received_shred.contains(&slot) && !self.voted.contains(&slot) {
-                                self.try_skip_window(slot).await;
-                            }
-                        }
-                    }
-                }
+                Some(event) = self.pool_receiver.recv() => self.handle_pool_event(event).await,
+                Some(event) = self.blockstore_receiver.recv() => self.handle_blockstore_event(event).await,
+                Some(event) = self.timeout_receiver.recv() => self.handle_timeout_event(event).await,
                 else => break,
             }
         }
 
         Ok(())
+    }
+
+    async fn handle_pool_event(&mut self, event: PoolEvent) {
+        let slot = event.slot();
+        if self.retired_slots.contains(&slot) {
+            trace!("ignoring pool event for retired slot {slot}");
+            return;
+        }
+        trace!("votor pool event: {event:?}");
+        match event {
+            PoolEvent::ParentReady {
+                slot,
+                parent_slot,
+                parent_hash,
+            } => {
+                let h = &hex::encode(parent_hash.as_hash())[..8];
+                trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
+                self.parents_ready.insert((slot, parent_slot, parent_hash));
+                self.check_pending_blocks().await;
+                self.set_timeouts(slot);
+            }
+            PoolEvent::SafeToNotar(slot, hash) => {
+                debug!("voted notar-fallback in slot {slot}");
+                let vote =
+                    Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_id);
+                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.try_skip_window(slot).await;
+                self.bad_window.insert(slot);
+            }
+            PoolEvent::SafeToSkip(slot) => {
+                debug!("voted skip-fallback in slot {slot}");
+                let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_id);
+                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.try_skip_window(slot).await;
+                self.bad_window.insert(slot);
+            }
+            PoolEvent::CertCreated(cert) => {
+                match cert.as_ref() {
+                    Cert::Notar(_) => {
+                        self.block_notarized
+                            .insert(cert.slot(), cert.block_hash().cloned().unwrap());
+                        self.try_final(cert.slot(), cert.block_hash().cloned().unwrap())
+                            .await;
+                    }
+                    Cert::Final(_) | Cert::FastFinal(_) => {
+                        let first_slot_in_window = cert.slot().first_slot_in_window();
+                        self.set_timeouts(first_slot_in_window);
+                    }
+                    _ => {}
+                }
+                self.all2all.broadcast(&(*cert).into()).await.unwrap();
+            }
+            PoolEvent::Standstill(_, certs, votes) => {
+                for cert in certs {
+                    self.all2all.broadcast(&cert.into()).await.unwrap();
+                }
+                for vote in votes {
+                    self.all2all.broadcast(&vote.into()).await.unwrap();
+                }
+            }
+        }
+    }
+
+    async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
+        let slot = event.slot();
+        if self.retired_slots.contains(&slot) {
+            trace!("ignoring blockstore event for retired slot {slot}");
+            return;
+        }
+        trace!("votor blockstore event: {event:?}");
+        match event {
+            BlockstoreEvent::FirstShred(slot) => {
+                self.received_shred.insert(slot);
+            }
+            BlockstoreEvent::InvalidBlock(slot) => {
+                warn!("invalid block from leader for slot {slot}, skipping window");
+                self.try_skip_window(slot).await;
+            }
+            BlockstoreEvent::Block { slot, block_info } => {
+                if self.voted.contains(&slot) {
+                    let h = &hex::encode(block_info.hash.as_hash())[..8];
+                    warn!("not voting for block {h} in slot {slot}, already voted");
+                    return;
+                }
+                if self.try_notar(slot, block_info.clone()).await {
+                    self.check_pending_blocks().await;
+                } else {
+                    self.pending_blocks.insert(slot, block_info);
+                }
+            }
+        }
+    }
+
+    async fn handle_timeout_event(&mut self, event: VotorTimeout) {
+        let slot = event.slot();
+        if self.retired_slots.contains(&slot) {
+            trace!("ignoring timeout for retired slot {slot}");
+            return;
+        }
+        trace!("votor timeout event: {event:?}");
+        match event {
+            VotorTimeout::Timeout(slot) => {
+                trace!("timeout for slot {slot}");
+                if !self.voted.contains(&slot) {
+                    self.try_skip_window(slot).await;
+                }
+            }
+            VotorTimeout::TimeoutCrashedLeader(slot) => {
+                trace!("timeout (crashed leader) for slot {slot}");
+                if !self.received_shred.contains(&slot) && !self.voted.contains(&slot) {
+                    self.try_skip_window(slot).await;
+                }
+            }
+        }
     }
 
     /// Sets timeouts for the leader window starting at the given `slot`.
