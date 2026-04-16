@@ -507,13 +507,13 @@ mod tests {
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(1), epoch_info));
 
         // set up blockstore
-        let (blockstore_tx, _blockstore_rx) = tokio::sync::mpsc::channel(100);
+        let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
         let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
             Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx)),
         ));
 
         // set up pool
-        let (pool_tx, _pool_rx) = tokio::sync::mpsc::channel(100);
+        let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
         let pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>> = Arc::new(RwLock::new(Box::new(
             PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx.clone()),
@@ -529,8 +529,8 @@ mod tests {
         tokio::spawn(async move {
             repair.repair_loop(repair_rx).await;
             // keep event receivers alive so sends from blockstore/pool don't fail
-            drop(_blockstore_rx);
-            drop(_pool_rx);
+            drop(blockstore_rx);
+            drop(pool_rx);
         });
         let repair_request_handler =
             RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_request_network);
