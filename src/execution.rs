@@ -7,19 +7,16 @@
 //! as they arrive from block dissemination.
 //!
 //! The central trait is [`ExecutionEngine`], which supports four operations:
-//! - [`begin_block`]: called when the first slice of a new block arrives,
+//! - [`begin_block`]: Called when the first slice of a new block arrives,
 //!   establishing which parent state to execute on top of.
-//! - [`execute_transactions`]: called once per decoded slice to stream
+//! - [`execute_transactions`]: Called once per decoded slice to stream
 //!   transactions as they arrive from dissemination.
-//! - [`end_block`]: called when all slices of a block have been received,
-//!   providing the block hash and allowing the engine to emit a
-//!   [`ExecutionEvent`].
-//! - [`finalize`]: called when a block is finalized by consensus, allowing the
-//!   engine to commit the corresponding state and prune unreachable forks.
+//! - [`end_block`]: Called when all slices of a block have been received,
+//!   providing the block hash and allowing the engine to emit a [`ExecutionEvent`].
+//! - [`finalize`]: Called when a block is finalized by consensus,
+//!   allowing the engine to commit the corresponding state and prune unreachable forks.
 //!
-//! The engine communicates results asynchronously through an
-//! [`ExecutionEvent`] channel, matching the event-driven architecture used
-//! elsewhere (cf. [`VotorEvent`]).
+//! The engine communicates results asynchronously through an [`ExecutionEvent`] channel.
 //!
 //! [`begin_block`]: ExecutionEngine::begin_block
 //! [`execute_transactions`]: ExecutionEngine::execute_transactions
@@ -95,11 +92,11 @@ pub struct SliceEvent {
 ///
 /// Driven by the consensus layer and blockstore through four operations:
 ///
-/// 1. **Streaming**: [`execute_transactions`] is called once per decoded slice
-///    as data arrives from dissemination, without waiting for the full block.
-/// 2. **Fork awareness**: [`begin_block`] establishes the parent state to
+/// 1. **Fork awareness**: [`begin_block`] establishes the parent state to
 ///    execute on top of, allowing the engine to maintain multiple live heads
 ///    when the block tree branches.
+/// 2. **Streaming**: [`execute_transactions`] is called once per decoded slice
+///    as data arrives from dissemination, without waiting for the full block.
 /// 3. **Completion**: [`end_block`] signals that all slices for a block have
 ///    been received, providing the block hash. The engine should emit a
 ///    [`ExecutionEvent::BlockExecuted`] or [`ExecutionEvent::BlockFailed`]
