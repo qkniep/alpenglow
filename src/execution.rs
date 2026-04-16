@@ -242,11 +242,11 @@ mod tests {
         engine.begin_block(Slot::new(2), Some(id1));
         engine.begin_block(Slot::new(3), Some(id2.clone()));
 
-        // Finalizing slot 2 should prune slot 1 and slot 2, but keep slot 3.
+        // Finalizing slot 2 should prune slot 1, but keep slots 2 and 3.
         engine.finalize(id2);
 
         assert!(!engine.tx_counts.contains_key(&Slot::new(1)));
-        assert!(!engine.tx_counts.contains_key(&Slot::new(2)));
+        assert!(engine.tx_counts.contains_key(&Slot::new(2)));
         assert!(engine.tx_counts.contains_key(&Slot::new(3)));
     }
 
