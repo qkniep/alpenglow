@@ -49,13 +49,13 @@ jobs:
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
-        run: cargo build --all-targets --verbose
+        run: cargo build --all-targets --all-features --verbose
 
       - name: Build (release)
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
-        run: cargo build --all-targets --release --verbose
+        run: cargo build --all-targets --all-features --release --verbose
 
       - name: Linting (clippy)
         run: cargo clippy --all-targets --all-features -- -Dwarnings
