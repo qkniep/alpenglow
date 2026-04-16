@@ -7,14 +7,14 @@
 //! as they arrive from block dissemination.
 //!
 //! The central trait is [`ExecutionEngine`], which supports four operations:
-//! - [`begin_block`]: Called when the first slice of a new block arrives,
-//!   establishing which parent state to execute on top of.
-//! - [`execute_transactions`]: Called once per decoded slice to stream
-//!   transactions as they arrive from dissemination.
-//! - [`end_block`]: Called when all slices of a block have been received,
-//!   providing the block hash and allowing the engine to emit a [`ExecutionEvent`].
-//! - [`finalize`]: Called when a block is finalized by consensus,
-//!   allowing the engine to commit the corresponding state and prune unreachable forks.
+//! - [`begin_block`]: Called when the first slice of a new block arrives.
+//!   Establishes which parent state to execute on top of.
+//! - [`execute_transactions`]: Called once per reconstructed slice.
+//!   Allows pipelined execution of transactions as they arrive from dissemination.
+//! - [`end_block`]: Called when last slice of a block has been received.
+//!   Provides the block hash and allows the engine to emit a [`ExecutionEvent`].
+//! - [`finalize`]: Called when a block is finalized by consensus.
+//!   Allows the engine to commit the state changes and prune unreachable forks.
 //!
 //! The engine communicates results asynchronously through an [`ExecutionEvent`] channel.
 //!
