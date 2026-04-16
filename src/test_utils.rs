@@ -9,7 +9,7 @@ use rand::prelude::*;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::all2all::TrivialAll2All;
-use crate::consensus::{BlockstoreEvent, ConsensusMessage, EpochInfo, PoolEvent};
+use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
 use crate::crypto::{Hash, signature};
@@ -129,68 +129,6 @@ pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
         slices.push(Slice::from_parts(header, payload));
     }
     slices
-}
-
-/// Asserts that two [`BlockstoreEvent`]s are equal.
-///
-/// Panics if they are not equal.
-pub fn assert_blockstore_events_match(ev0: BlockstoreEvent, ev1: BlockstoreEvent) {
-    match (ev0, ev1) {
-        (BlockstoreEvent::FirstShred(s0), BlockstoreEvent::FirstShred(s1)) => assert_eq!(s0, s1),
-        (BlockstoreEvent::InvalidBlock(s0), BlockstoreEvent::InvalidBlock(s1)) => {
-            assert_eq!(s0, s1)
-        }
-        (
-            BlockstoreEvent::Block {
-                slot: s0,
-                block_info: b0,
-            },
-            BlockstoreEvent::Block {
-                slot: s1,
-                block_info: b1,
-            },
-        ) => {
-            assert_eq!(s0, s1);
-            assert_eq!(b0, b1);
-        }
-        (ev0, ev1) => panic!("{ev0:?} does not match {ev1:?}"),
-    }
-}
-
-/// Asserts that two [`PoolEvent`]s are equal.
-///
-/// Panics if they are not equal.
-pub fn assert_pool_events_match(ev0: PoolEvent, ev1: PoolEvent) {
-    match (ev0, ev1) {
-        (
-            PoolEvent::ParentReady {
-                slot: s0,
-                parent_slot: ps0,
-                parent_hash: ph0,
-            },
-            PoolEvent::ParentReady {
-                slot: s1,
-                parent_slot: ps1,
-                parent_hash: ph1,
-            },
-        ) => {
-            assert_eq!(s0, s1);
-            assert_eq!(ps0, ps1);
-            assert_eq!(ph0, ph1);
-        }
-        (PoolEvent::CertCreated(c0), PoolEvent::CertCreated(c1)) => assert_eq!(c0, c1),
-        (PoolEvent::Standstill(s0, c0, v0), PoolEvent::Standstill(s1, c1, v1)) => {
-            assert_eq!(s0, s1);
-            assert_eq!(c0, c1);
-            assert_eq!(v0, v1);
-        }
-        (PoolEvent::SafeToNotar(s0, h0), PoolEvent::SafeToNotar(s1, h1)) => {
-            assert_eq!(s0, s1);
-            assert_eq!(h0, h1);
-        }
-        (PoolEvent::SafeToSkip(s0), PoolEvent::SafeToSkip(s1)) => assert_eq!(s0, s1),
-        (ev0, ev1) => panic!("{ev0:?} does not match {ev1:?}"),
-    }
 }
 
 /// Creates a valid [`SlicePayload`] which contains valid transactions that can be decoded.

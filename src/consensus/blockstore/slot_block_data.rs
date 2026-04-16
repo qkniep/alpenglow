@@ -390,7 +390,7 @@ mod tests {
     use super::*;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, ShredIndex, TOTAL_SHREDS};
-    use crate::test_utils::{assert_blockstore_events_match, create_random_block};
+    use crate::test_utils::create_random_block;
     use crate::types::Slice;
 
     fn handle_slice(
@@ -466,7 +466,7 @@ mod tests {
         let () = res.unwrap();
         assert_eq!(events.len(), 2);
         let first_shred_event = BlockstoreEvent::FirstShred(slot);
-        assert_blockstore_events_match(events[0].clone(), first_shred_event);
+        assert_eq!(events[0].clone(), first_shred_event);
         let hash = get_block_hash_from_votor_event(&events[1]);
         let block_event = BlockstoreEvent::Block {
             slot,
@@ -475,7 +475,7 @@ mod tests {
                 parent: slices[0].parent.clone().unwrap(),
             },
         };
-        assert_blockstore_events_match(events[1].clone(), block_event);
+        assert_eq!(events[1].clone(), block_event);
 
         // do not construct a valid block when slice is invalid
         let mut slices = create_random_block(slot, 1);
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
         assert_eq!(events.len(), 1);
         let first_shred_event = BlockstoreEvent::FirstShred(slot);
-        assert_blockstore_events_match(events[0].clone(), first_shred_event);
+        assert_eq!(events[0].clone(), first_shred_event);
     }
 
     // If a subsequent slice switches parent to the original, the block is not reconstructed.

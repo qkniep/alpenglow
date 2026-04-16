@@ -23,6 +23,7 @@ use crate::{Block, BlockId, Slot};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum BlockstoreEvent {
     /// First valid shred of the leader's block was received for the slot.
     FirstShred(Slot),
