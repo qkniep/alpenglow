@@ -230,7 +230,11 @@ where
             }
 
             let parent = if slice_index.is_first() {
-                Some(parent_correction.take().unwrap_or_else(|| parent_block_id.clone()))
+                Some(
+                    parent_correction
+                        .take()
+                        .unwrap_or_else(|| parent_block_id.clone()),
+                )
             } else {
                 parent_correction.take()
             };
