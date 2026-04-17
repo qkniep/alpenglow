@@ -40,14 +40,14 @@ opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
 opentelemetry_sdk = "0.31"
 rand = "0.10"
-rayon = "1"
+rayon = { version = "1", optional = true }
 reed-solomon-simd = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 smallvec = "1"
 static_assertions = "1"
-statrs = "0.18"
+statrs = { version = "0.18", optional = true }
 thiserror = "2"
 time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
@@ -63,6 +63,7 @@ tempfile = "3"
 [features]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+simulations = ["dep:rayon", "dep:statrs"]
 
 [lints.clippy]
 cast_possible_truncation = "allow"
@@ -92,3 +93,8 @@ harness = false
 [[bench]]
 name = "shredder"
 harness = false
+
+[[bin]]
+name = "simulations"
+path = "src/bin/simulations/main.rs"
+required-features = ["simulations"]
