@@ -507,15 +507,16 @@ mod tests {
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(1), epoch_info));
 
         // set up blockstore
-        let (votor_tx, votor_rx) = tokio::sync::mpsc::channel(100);
+        let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
         let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone())),
+            Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx)),
         ));
 
         // set up pool
+        let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
         let pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>> = Arc::new(RwLock::new(Box::new(
-            PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx.clone()),
+            PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx.clone()),
         )));
 
         // create and start Repair instance
@@ -527,8 +528,9 @@ mod tests {
         );
         tokio::spawn(async move {
             repair.repair_loop(repair_rx).await;
-            // keep votor_rx alive
-            drop(votor_rx);
+            // keep event receivers alive so sends from blockstore/pool don't fail
+            drop(blockstore_rx);
+            drop(pool_rx);
         });
         let repair_request_handler =
             RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_request_network);
