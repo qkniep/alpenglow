@@ -230,33 +230,21 @@ where
                 self.delta_block
             });
 
-            let is_waiting = parent_ready_rx.as_ref().is_some_and(|rx| !rx.is_terminated());
+            let awaiting_parent = parent_ready_rx.as_ref().is_some_and(|rx| !rx.is_terminated());
 
-            let produce_future = produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
-
-            let (payload, new_duration_left) = if is_waiting {
-                let rx = parent_ready_rx.as_mut().unwrap();
-                pin!(produce_future);
-                tokio::select! {
-                    res = &mut produce_future => {
-                        let (payload, _) = res;
-                        // ParentReady not yet seen; do not start DELTA_BLOCK timer yet
-                        (payload, Duration::MAX)
-                    }
-                    res = rx => {
-                        // Got ParentReady while producing this slice; start the timer,
-                        // accounting for the time needed to finish the current slice.
-                        let start = Instant::now();
-                        let (mut payload, _) = produce_future.await;
-                        if let Some(new) = apply_parent_update(&parent_block_id, res.unwrap()) {
-                            payload.parent = Some(new);
-                        }
-                        debug!("starting blocktime timer");
-                        (payload, self.delta_block.saturating_sub(start.elapsed()))
-                    }
-                }
+            let (payload, new_duration_left) = if awaiting_parent {
+                race_slice_against_parent_ready(
+                    &self.txs_receiver,
+                    parent,
+                    time_for_slice,
+                    &parent_block_id,
+                    parent_ready_rx.as_mut().unwrap(),
+                    self.delta_block,
+                )
+                .await
             } else {
-                let (payload, remaining) = produce_future.await;
+                let (payload, remaining) =
+                    produce_slice_payload(&self.txs_receiver, parent, time_for_slice).await;
                 // When the parent was known from the start, deduct the first slice's elapsed
                 // time from the DELTA_BLOCK budget (timer runs from the very beginning).
                 let new_dl = if parent_ready_rx.is_none() && slice_index.is_first() {
@@ -406,6 +394,42 @@ where
     let txs = wincode::serialize(&txs).expect("serialization should not panic");
     let payload = SlicePayload::new(parent, txs);
     (payload, ret)
+}
+
+/// Race slice payload production against a pending `ParentReady` channel.
+///
+/// Returns `(payload, new_duration_left)`:
+/// - If production completes first: `Duration::MAX` is returned (timer not yet started).
+/// - If `ParentReady` arrives during production: updates the payload's parent if it changed,
+///   starts the DELTA_BLOCK timer, and returns the remaining budget after finishing the slice.
+async fn race_slice_against_parent_ready<T: TransactionNetwork>(
+    txs_receiver: &T,
+    parent: Option<BlockId>,
+    time_for_slice: Duration,
+    parent_block_id: &BlockId,
+    rx: &mut oneshot::Receiver<BlockId>,
+    delta_block: Duration,
+) -> (SlicePayload, Duration) {
+    let produce_future = produce_slice_payload(txs_receiver, parent, time_for_slice);
+    pin!(produce_future);
+    tokio::select! {
+        res = &mut produce_future => {
+            let (payload, _) = res;
+            // ParentReady not yet seen; do not start DELTA_BLOCK timer yet
+            (payload, Duration::MAX)
+        }
+        res = rx => {
+            // Got ParentReady while producing this slice; start the timer,
+            // accounting for the time needed to finish the current slice.
+            let start = Instant::now();
+            let (mut payload, _) = produce_future.await;
+            if let Some(new) = apply_parent_update(parent_block_id, res.unwrap()) {
+                payload.parent = Some(new);
+            }
+            debug!("starting blocktime timer");
+            (payload, delta_block.saturating_sub(start.elapsed()))
+        }
+    }
 }
 
 /// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
