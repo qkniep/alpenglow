@@ -206,27 +206,12 @@ where
             // Proactively wait for ParentReady before the last slice, giving it the full
             // DELTA_BLOCK window rather than producing it speculatively and then blocking.
             let mut parent_correction: Option<BlockId> = None;
-            if slice_index.is_max() {
-                if let Some(rx) = &mut parent_ready_rx {
-                    if !rx.is_terminated() {
-                        let (new_slot, new_hash) = rx.await.unwrap();
-                        if new_hash != *parent_hash {
-                            assert_ne!(new_slot, *parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                &hex::encode(parent_hash.as_hash())[..8],
-                                parent_slot,
-                                &hex::encode(new_hash.as_hash())[..8],
-                                new_slot
-                            );
-                            parent_correction = Some((new_slot, new_hash));
-                        } else {
-                            debug!("parent is ready, continuing with same parent");
-                        }
-                        debug!("starting blocktime timer");
-                        duration_left = self.delta_block;
-                    }
-                }
+            if slice_index.is_max()
+                && let Some(rx) = parent_ready_rx.as_mut().filter(|rx| !rx.is_terminated())
+            {
+                parent_correction = apply_parent_update(&parent_block_id, rx.await.unwrap());
+                debug!("starting blocktime timer");
+                duration_left = self.delta_block;
             }
 
             let parent = if slice_index.is_first() {
@@ -245,10 +230,7 @@ where
                 self.delta_block
             });
 
-            let is_waiting = parent_ready_rx
-                .as_ref()
-                .map(|rx| !rx.is_terminated())
-                .unwrap_or(false);
+            let is_waiting = parent_ready_rx.as_ref().is_some_and(|rx| !rx.is_terminated());
 
             let produce_future = produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
 
@@ -265,24 +247,12 @@ where
                         // Got ParentReady while producing this slice; start the timer,
                         // accounting for the time needed to finish the current slice.
                         let start = Instant::now();
-                        let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _) = produce_future.await;
-                        if new_hash != *parent_hash {
-                            assert_ne!(new_slot, *parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                &hex::encode(parent_hash.as_hash())[..8],
-                                parent_slot,
-                                &hex::encode(new_hash.as_hash())[..8],
-                                new_slot
-                            );
-                            payload.parent = Some((new_slot, new_hash));
-                        } else {
-                            debug!("parent is ready, continuing with same parent");
+                        if let Some(new) = apply_parent_update(&parent_block_id, res.unwrap()) {
+                            payload.parent = Some(new);
                         }
                         debug!("starting blocktime timer");
-                        let duration = self.delta_block.saturating_sub(start.elapsed());
-                        (payload, duration)
+                        (payload, self.delta_block.saturating_sub(start.elapsed()))
                     }
                 }
             } else {
@@ -359,6 +329,28 @@ where
             assert!(maybe_block_hash.is_none());
             Ok(None)
         }
+    }
+}
+
+/// Logs and returns the new `BlockId` iff the `ParentReady` event changed the parent.
+///
+/// Returns `None` when the parent is unchanged (caller should keep using the existing one).
+fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
+    let (old_slot, old_hash) = old;
+    let (new_slot, new_hash) = &new;
+    if new_hash != old_hash {
+        assert_ne!(new_slot, old_slot);
+        debug!(
+            "changed parent from {} in slot {} to {} in slot {}",
+            &hex::encode(old_hash.as_hash())[..8],
+            old_slot,
+            &hex::encode(new_hash.as_hash())[..8],
+            new_slot,
+        );
+        Some(new)
+    } else {
+        debug!("parent is ready, continuing with same parent");
+        None
     }
 }
 
