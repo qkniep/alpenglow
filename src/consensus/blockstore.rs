@@ -471,8 +471,8 @@ mod tests {
 
     #[tokio::test]
     async fn store_one_slice_block() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         assert!(ctx.blockstore.slot_data(slot).is_none());
 
         // generate single-slice block
@@ -510,8 +510,8 @@ mod tests {
 
     #[tokio::test]
     async fn store_two_slice_block() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         assert!(ctx.blockstore.slot_data(slot).is_none());
 
         // generate two-slice block
@@ -534,8 +534,8 @@ mod tests {
 
     #[tokio::test]
     async fn store_block_from_repair() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         assert!(ctx.blockstore.slot_data(slot).is_none());
 
         // generate and shred two slices
@@ -566,8 +566,8 @@ mod tests {
 
     #[tokio::test]
     async fn out_of_order_shreds() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // generate a single slice for slot 0
@@ -584,8 +584,8 @@ mod tests {
 
     #[tokio::test]
     async fn just_enough_shreds() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // generate a larger block for slot 0
@@ -646,8 +646,8 @@ mod tests {
 
     #[tokio::test]
     async fn out_of_order_slices() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // generate two slices for slot 0
@@ -679,8 +679,8 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_shreds() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &ctx.sk);
 
         // inserting single shred should not throw errors
@@ -705,8 +705,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_shreds() -> Result<()> {
-        let slot = Slot::genesis().next();
         let mut ctx = setup();
+        let slot = Slot::genesis().next();
         let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &ctx.sk);
 
         // insert shreds with corrupted data (derived Merkle root won't match signature)
@@ -723,12 +723,12 @@ mod tests {
 
     #[tokio::test]
     async fn pruning() -> Result<()> {
+        let mut ctx = setup();
         let block0_slot = Slot::genesis().next();
         let block1_slot = block0_slot.next();
         let block2_slot = block1_slot.next();
         let block3_slot = block2_slot.next();
         let future_slot = block3_slot.next();
-        let mut ctx = setup();
         let block0 = create_random_shredded_block(block0_slot, 1, &ctx.sk);
         let block1 = create_random_shredded_block(block1_slot, 1, &ctx.sk);
         let block2 = create_random_shredded_block(block2_slot, 1, &ctx.sk);
