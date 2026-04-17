@@ -732,6 +732,7 @@ mod tests {
         let block0 = create_random_shredded_block(block0_slot, 1, &ctx.sk);
         let block1 = create_random_shredded_block(block1_slot, 1, &ctx.sk);
         let block2 = create_random_shredded_block(block2_slot, 1, &ctx.sk);
+        let blockstore = &mut ctx.blockstore;
 
         // insert shreds
         let mut shreds = vec![];
@@ -739,57 +740,29 @@ mod tests {
         shreds.extend(block1.2.into_iter().flatten());
         shreds.extend(block2.2.into_iter().flatten());
         for shred in shreds {
-            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(blockstore, shred.into_shred()).await?;
         }
-        assert!(
-            ctx.blockstore
-                .disseminated_block_hash(block0_slot)
-                .is_some()
-        );
-        assert!(
-            ctx.blockstore
-                .disseminated_block_hash(block1_slot)
-                .is_some()
-        );
-        assert!(
-            ctx.blockstore
-                .disseminated_block_hash(block2_slot)
-                .is_some()
-        );
+        assert!(blockstore.disseminated_block_hash(block0_slot).is_some());
+        assert!(blockstore.disseminated_block_hash(block1_slot).is_some());
+        assert!(blockstore.disseminated_block_hash(block2_slot).is_some());
 
         // stored all shreds
-        assert_eq!(
-            ctx.blockstore.stored_shreds_for_slot(block0_slot),
-            TOTAL_SHREDS
-        );
-        assert_eq!(
-            ctx.blockstore.stored_shreds_for_slot(block1_slot),
-            TOTAL_SHREDS
-        );
-        assert_eq!(
-            ctx.blockstore.stored_shreds_for_slot(block2_slot),
-            TOTAL_SHREDS
-        );
+        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), TOTAL_SHREDS);
+        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), TOTAL_SHREDS);
+        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), TOTAL_SHREDS);
 
         // some (and only some) shreds deleted after partial pruning
-        ctx.blockstore.prune(block1_slot);
-        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block0_slot), 0);
-        assert_eq!(
-            ctx.blockstore.stored_shreds_for_slot(block1_slot),
-            TOTAL_SHREDS
-        );
-        assert_eq!(
-            ctx.blockstore.stored_shreds_for_slot(block2_slot),
-            TOTAL_SHREDS
-        );
+        blockstore.prune(block1_slot);
+        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), 0);
+        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), TOTAL_SHREDS);
+        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), TOTAL_SHREDS);
 
         // no shreds left after full pruning
-        ctx.blockstore.prune(future_slot);
-        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block0_slot), 0);
-        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block1_slot), 0);
-        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block2_slot), 0);
-        let shred_count = ctx
-            .blockstore
+        blockstore.prune(future_slot);
+        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), 0);
+        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), 0);
+        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), 0);
+        let shred_count = blockstore
             .block_data
             .values()
             .map(|d| {
