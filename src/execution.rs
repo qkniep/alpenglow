@@ -46,7 +46,7 @@ pub enum InProgressBlock {
 }
 
 impl InProgressBlock {
-    /// Returns the slot of this block location.
+    /// Returns the slot of this in-progress block.
     pub(crate) fn slot(&self) -> Slot {
         match self {
             InProgressBlock::Pending(slot) => *slot,
@@ -174,7 +174,7 @@ pub trait ExecutionEngine {
 /// [`end_block`](ExecutionEngine::end_block). Does not perform any actual
 /// state transitions.
 pub struct DummyExecution {
-    /// Running transaction count for each in-flight block, keyed by slot.
+    /// Running transaction count for each in-flight block.
     tx_counts: BTreeMap<InProgressBlock, usize>,
     /// Channel for emitting execution events.
     event_sender: mpsc::Sender<ExecutionEvent>,
@@ -225,15 +225,11 @@ impl ExecutionEngine for DummyExecution {
     }
 
     fn end_block(&mut self, block_id: BlockId, _expected_state_hash: &Hash) {
-        if let Some(&total) = self
+        let total = self
             .tx_counts
             .get(&InProgressBlock::Known(block_id.clone()))
-        {
-            let _ = self.event_sender.try_send(ExecutionEvent::BlockExecuted {
-                block_id,
-                result: ExecutionResult { tx_count: total },
-            });
-        } else if let Some(&total) = self.tx_counts.get(&InProgressBlock::Pending(block_id.0)) {
+            .or_else(|| self.tx_counts.get(&InProgressBlock::Pending(block_id.0)));
+        if let Some(&total) = total {
             let _ = self.event_sender.try_send(ExecutionEvent::BlockExecuted {
                 block_id,
                 result: ExecutionResult { tx_count: total },
@@ -359,11 +355,43 @@ mod tests {
     }
 
     #[test]
+    fn child_block_can_begin_after_parent_ends() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        let id1 = InProgressBlock::Pending(Slot::new(1));
+        let bid1 = block_id(1);
+        engine.begin_block(id1.clone(), None);
+        engine.execute_transactions(id1, vec![Transaction(vec![1])]);
+        engine.end_block(bid1.clone(), &hash(&[0; 32]));
+        rx.try_recv().unwrap(); // consume the event
+
+        // Slot 2 must be startable with slot 1 as its parent even after end_block.
+        let id2 = InProgressBlock::Pending(Slot::new(2));
+        engine.begin_block(id2.clone(), Some(bid1));
+        engine.execute_transactions(
+            id2.clone(),
+            vec![Transaction(vec![2]), Transaction(vec![3])],
+        );
+
+        let bid2 = block_id(2);
+        engine.end_block(bid2.clone(), &hash(&[1; 32]));
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            ExecutionEvent::BlockExecuted { block_id, result } => {
+                assert_eq!(block_id, bid2);
+                assert_eq!(result.tx_count, 2);
+            }
+            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
+        }
+    }
+
+    #[test]
     fn end_block_unknown_slot_returns_no_event() {
         let (tx, mut rx) = mpsc::channel(16);
         let mut engine = DummyExecution::new(tx);
 
-        // end_block for a block we never began should not emit an event
         let bid = block_id(99);
         engine.end_block(bid, &hash(&[3; 32]));
 
