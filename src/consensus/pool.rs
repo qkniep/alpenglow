@@ -28,7 +28,7 @@ use self::slot_state::SlotState;
 use super::{Cert, ValidatorEpochInfo, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
-use crate::crypto::merkle::{BlockHash, MerkleRoot};
+use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
@@ -187,7 +187,7 @@ impl PoolImpl {
                 let block_id = (slot, block_hash.clone());
                 info!(
                     "notarized(-fallback) block {} in slot {}",
-                    &hex::encode(block_hash.as_hash())[..8],
+                    block_hash.short_hex(),
                     slot
                 );
                 if matches!(cert, Cert::Notar(_)) {

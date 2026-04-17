@@ -16,7 +16,7 @@ use tokio::sync::mpsc::Sender;
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::ValidatorEpochInfo;
 use crate::consensus::blockstore::slot_block_data::BlockData;
-use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, MerkleRoot, SliceRoot};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
 use crate::shredder::{RegularShredder, Shred, ShredIndex, ShredderPool, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
@@ -148,9 +148,9 @@ impl BlockstoreImpl {
                 let block_info = block_info.clone();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
-                    &hex::encode(block_info.hash.as_hash())[..8],
+                    block_info.hash.short_hex(),
                     slot,
-                    &hex::encode(block_info.parent.1.as_hash())[..8],
+                    block_info.parent.1.short_hex(),
                     block_info.parent.0,
                 );
                 self.votor_channel.send(event).await.unwrap();
