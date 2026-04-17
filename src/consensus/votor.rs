@@ -378,12 +378,44 @@ mod tests {
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
-    async fn start_votor() -> (
-        A2A,
-        mpsc::Sender<PoolEvent>,
-        mpsc::Sender<BlockstoreEvent>,
-        EpochInfo,
-    ) {
+    struct TestContext {
+        other_a2a: A2A,
+        pool_tx: mpsc::Sender<PoolEvent>,
+        blockstore_tx: mpsc::Sender<BlockstoreEvent>,
+        epoch_info: EpochInfo,
+    }
+
+    impl TestContext {
+        /// Notifies the votor of a new block and waits for the resulting notar vote.
+        async fn send_block_and_expect_notar(
+            &self,
+            slot: Slot,
+            parent: (Slot, BlockHash),
+        ) -> Vote {
+            self.blockstore_tx
+                .send(BlockstoreEvent::FirstShred(slot))
+                .await
+                .unwrap();
+            let block_info = BlockInfo {
+                hash: Hash::random_for_test().into(),
+                parent,
+            };
+            self.blockstore_tx
+                .send(BlockstoreEvent::Block { slot, block_info })
+                .await
+                .unwrap();
+            match self.other_a2a.receive().await.unwrap() {
+                ConsensusMessage::Vote(v) => {
+                    assert!(matches!(v, Vote::Notar(_)));
+                    assert_eq!(v.slot(), slot);
+                    v
+                }
+                m => panic!("other msg: {m:?}"),
+            }
+        }
+    }
+
+    async fn start_votor() -> TestContext {
         let (sks, epoch_info) = generate_validators(2);
         let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
         let (pool_tx, pool_rx) = mpsc::channel(100);
@@ -400,19 +432,24 @@ mod tests {
         tokio::spawn(async move {
             votor.voting_loop().await.unwrap();
         });
-        (other_a2a, pool_tx, blockstore_tx, epoch_info)
+        TestContext {
+            other_a2a,
+            pool_tx,
+            blockstore_tx,
+            epoch_info,
+        }
     }
 
     #[tokio::test]
     async fn timeouts() {
-        let (other_a2a, _, _, _) = start_votor().await;
+        let ctx = start_votor().await;
 
         // should vote skip for all slots
         let mut skipped_slots = Vec::new();
         let mut slots = Slot::genesis().slots_in_window().collect::<Vec<_>>();
         slots.remove(0);
         for _ in slots.clone() {
-            if let Ok(msg) = other_a2a.receive().await {
+            if let Ok(msg) = ctx.other_a2a.receive().await {
                 match msg {
                     ConsensusMessage::Vote(v) => {
                         assert!(matches!(v, Vote::Skip(_)));
@@ -427,28 +464,13 @@ mod tests {
 
     #[tokio::test]
     async fn notar_and_final() {
-        let (other_a2a, pool_tx, blockstore_tx, epoch_info) = start_votor().await;
+        let ctx = start_votor().await;
+        let slot = Slot::genesis().next();
 
         // vote notar after seeing block
-        let slot = Slot::genesis().next();
-        blockstore_tx
-            .send(BlockstoreEvent::FirstShred(slot))
-            .await
-            .unwrap();
-        let block_info = BlockInfo {
-            hash: Hash::random_for_test().into(),
-            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
-        };
-        blockstore_tx
-            .send(BlockstoreEvent::Block { slot, block_info })
-            .await
-            .unwrap();
-        let vote = match other_a2a.receive().await.unwrap() {
-            ConsensusMessage::Vote(v) => v,
-            m => panic!("other msg: {m:?}"),
-        };
-        assert!(matches!(vote, Vote::Notar(_)));
-        assert_eq!(vote.slot(), slot);
+        let vote = ctx
+            .send_block_and_expect_notar(slot, (Slot::genesis(), GENESIS_BLOCK_HASH))
+            .await;
 
         // vote finalize after seeing branch-certified
         let Vote::Notar(notar_vote) = vote else {
@@ -456,13 +478,13 @@ mod tests {
         };
         let cert = Cert::Notar(NotarCert::new_unchecked(
             &[notar_vote],
-            epoch_info.validators(),
+            ctx.epoch_info.validators(),
         ));
-        pool_tx
+        ctx.pool_tx
             .send(PoolEvent::CertCreated(Box::new(cert)))
             .await
             .unwrap();
-        match other_a2a.receive().await.unwrap() {
+        match ctx.other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(matches!(v, Vote::Final(_)));
                 assert_eq!(v.slot(), slot);
@@ -473,12 +495,12 @@ mod tests {
 
     #[tokio::test]
     async fn notar_out_of_order() {
-        let (other_a2a, _, blockstore_tx, _) = start_votor().await;
+        let ctx = start_votor().await;
         let (slot1, hash1) = (Slot::genesis().next(), Hash::random_for_test());
         let (slot2, hash2) = (slot1.next(), Hash::random_for_test());
 
         // give later block to votor first
-        blockstore_tx
+        ctx.blockstore_tx
             .send(BlockstoreEvent::FirstShred(slot2))
             .await
             .unwrap();
@@ -486,7 +508,7 @@ mod tests {
             hash: hash2.into(),
             parent: (slot1, hash1.clone().into()),
         };
-        blockstore_tx
+        ctx.blockstore_tx
             .send(BlockstoreEvent::Block {
                 slot: slot2,
                 block_info,
@@ -496,13 +518,13 @@ mod tests {
 
         // should not vote yet
         assert!(
-            tokio::time::timeout(Duration::from_secs(1), other_a2a.receive())
+            tokio::time::timeout(Duration::from_secs(1), ctx.other_a2a.receive())
                 .await
                 .is_err()
         );
 
         // now notify votor of earlier block
-        blockstore_tx
+        ctx.blockstore_tx
             .send(BlockstoreEvent::FirstShred(slot1))
             .await
             .unwrap();
@@ -510,7 +532,7 @@ mod tests {
             hash: hash1.into(),
             parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
         };
-        blockstore_tx
+        ctx.blockstore_tx
             .send(BlockstoreEvent::Block {
                 slot: slot1,
                 block_info,
@@ -520,7 +542,7 @@ mod tests {
 
         // should now see notar votes
         for _ in 0..2 {
-            match other_a2a.receive().await.unwrap() {
+            match ctx.other_a2a.receive().await.unwrap() {
                 ConsensusMessage::Vote(vote) => {
                     assert!(matches!(vote, Vote::Notar(_)));
                     assert!(vote.slot() == slot1 || vote.slot() == slot2);
@@ -532,7 +554,7 @@ mod tests {
 
     #[tokio::test]
     async fn safe_to_notar() {
-        let (other_a2a, pool_tx, _, _) = start_votor().await;
+        let ctx = start_votor().await;
         let slot = Slot::genesis().next();
 
         // wait for skip votes
@@ -540,7 +562,7 @@ mod tests {
             if slot.is_genesis() {
                 continue;
             }
-            if let Ok(msg) = other_a2a.receive().await {
+            if let Ok(msg) = ctx.other_a2a.receive().await {
                 match msg {
                     ConsensusMessage::Vote(v) => assert!(matches!(v, Vote::Skip(_))),
                     m => panic!("other msg: {m:?}"),
@@ -550,11 +572,11 @@ mod tests {
 
         // vote notar-fallback after safe-to-notar
         let hash = Hash::random_for_test();
-        pool_tx
+        ctx.pool_tx
             .send(PoolEvent::SafeToNotar(slot, hash.clone().into()))
             .await
             .unwrap();
-        match other_a2a.receive().await.unwrap() {
+        match ctx.other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(matches!(v, Vote::NotarFallback(_)));
                 assert_eq!(v.slot(), slot);
@@ -566,32 +588,19 @@ mod tests {
 
     #[tokio::test]
     async fn safe_to_skip() {
-        let (other_a2a, pool_tx, blockstore_tx, _) = start_votor().await;
+        let ctx = start_votor().await;
         let slot = Slot::genesis().next();
 
         // vote notar after seeing block
-        blockstore_tx
-            .send(BlockstoreEvent::FirstShred(slot))
-            .await
-            .unwrap();
-        let block_info = BlockInfo {
-            hash: Hash::random_for_test().into(),
-            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
-        };
-        blockstore_tx
-            .send(BlockstoreEvent::Block { slot, block_info })
-            .await
-            .unwrap();
-        let vote = match other_a2a.receive().await.unwrap() {
-            ConsensusMessage::Vote(v) => v,
-            m => panic!("other msg: {m:?}"),
-        };
-        assert!(matches!(vote, Vote::Notar(_)));
-        assert_eq!(vote.slot(), slot);
+        ctx.send_block_and_expect_notar(slot, (Slot::genesis(), GENESIS_BLOCK_HASH))
+            .await;
 
         // vote skip-fallback after safe-to-skip
-        pool_tx.send(PoolEvent::SafeToSkip(slot)).await.unwrap();
-        match other_a2a.receive().await.unwrap() {
+        ctx.pool_tx
+            .send(PoolEvent::SafeToSkip(slot))
+            .await
+            .unwrap();
+        match ctx.other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(matches!(v, Vote::SkipFallback(_)));
                 assert_eq!(v.slot(), slot);
