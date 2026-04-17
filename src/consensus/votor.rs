@@ -387,11 +387,7 @@ mod tests {
 
     impl TestContext {
         /// Notifies the votor of a new block and waits for the resulting notar vote.
-        async fn send_block_and_expect_notar(
-            &self,
-            slot: Slot,
-            parent: (Slot, BlockHash),
-        ) -> Vote {
+        async fn send_block_and_expect_notar(&self, slot: Slot, parent: (Slot, BlockHash)) -> Vote {
             self.blockstore_tx
                 .send(BlockstoreEvent::FirstShred(slot))
                 .await
@@ -596,10 +592,7 @@ mod tests {
             .await;
 
         // vote skip-fallback after safe-to-skip
-        ctx.pool_tx
-            .send(PoolEvent::SafeToSkip(slot))
-            .await
-            .unwrap();
+        ctx.pool_tx.send(PoolEvent::SafeToSkip(slot)).await.unwrap();
         match ctx.other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(matches!(v, Vote::SkipFallback(_)));

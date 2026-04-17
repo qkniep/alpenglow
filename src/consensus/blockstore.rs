@@ -427,7 +427,13 @@ mod tests {
     use crate::types::SliceIndex;
     use crate::{Stake, ValidatorId, ValidatorInfo};
 
-    fn test_setup(tx: Sender<BlockstoreEvent>) -> (SecretKey, BlockstoreImpl) {
+    struct TestContext {
+        sk: SecretKey,
+        blockstore: BlockstoreImpl,
+        _rx: mpsc::Receiver<BlockstoreEvent>,
+    }
+
+    fn setup() -> TestContext {
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         let id = ValidatorId::new(0);
@@ -443,7 +449,13 @@ mod tests {
         };
         let validators = vec![info];
         let epoch_info = Arc::new(ValidatorEpochInfo::new(id, EpochInfo::new(validators)));
-        (sk, BlockstoreImpl::new(epoch_info, tx))
+        let (tx, _rx) = mpsc::channel(1000);
+        let blockstore = BlockstoreImpl::new(epoch_info, tx);
+        TestContext {
+            sk,
+            blockstore,
+            _rx,
+        }
     }
 
     async fn add_shred_ignore_duplicate(
@@ -460,21 +472,20 @@ mod tests {
     #[tokio::test]
     async fn store_one_slice_block() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.slot_data(slot).is_none());
+        let mut ctx = setup();
+        assert!(ctx.blockstore.slot_data(slot).is_none());
 
         // generate single-slice block
-        let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &sk);
+        let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &ctx.sk);
         let block_id = (slot, block_hash);
 
         let slice_hash = shreds[0][0].merkle_root();
         for shred in &shreds[0] {
             // store shred
-            add_shred_ignore_duplicate(&mut blockstore, shred.clone().into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.clone().into_shred()).await?;
 
             // check shred is stored
-            let Some(stored_shred) = blockstore.get_disseminated_shred(
+            let Some(stored_shred) = ctx.blockstore.get_disseminated_shred(
                 slot,
                 SliceIndex::first(),
                 shred.payload().shred_index,
@@ -485,10 +496,11 @@ mod tests {
         }
 
         // create and check double-Merkle proof
-        let proof = blockstore
+        let proof = ctx
+            .blockstore
             .create_double_merkle_proof(&block_id, SliceIndex::first())
             .unwrap();
-        let slot_data = blockstore.slot_data(slot).unwrap();
+        let slot_data = ctx.blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
         assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
@@ -499,24 +511,23 @@ mod tests {
     #[tokio::test]
     async fn store_two_slice_block() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.slot_data(slot).is_none());
+        let mut ctx = setup();
+        assert!(ctx.blockstore.slot_data(slot).is_none());
 
         // generate two-slice block
-        let (_hash, _tree, slices) = create_random_shredded_block(slot, 2, &sk);
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 2, &ctx.sk);
 
         // first slice is not enough
         for shred in slices[0].clone() {
-            add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
         }
-        assert!(blockstore.disseminated_block_hash(slot).is_none());
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // after second slice we should have the block
         for shred in slices[1].clone() {
-            add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
         }
-        assert!(blockstore.disseminated_block_hash(slot).is_some());
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         Ok(())
     }
@@ -524,28 +535,31 @@ mod tests {
     #[tokio::test]
     async fn store_block_from_repair() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.slot_data(slot).is_none());
+        let mut ctx = setup();
+        assert!(ctx.blockstore.slot_data(slot).is_none());
 
         // generate and shred two slices
-        let (block_hash, _tree, slices) = create_random_shredded_block(slot, 2, &sk);
+        let (block_hash, _tree, slices) = create_random_shredded_block(slot, 2, &ctx.sk);
 
         // first slice is not enough
         for shred in slices[0].clone().into_iter().take(DATA_SHREDS) {
-            blockstore
+            ctx.blockstore
                 .add_shred_from_repair(block_hash.clone(), shred.into_shred())
                 .await?;
         }
-        assert!(blockstore.get_block(&(slot, block_hash.clone())).is_none());
+        assert!(
+            ctx.blockstore
+                .get_block(&(slot, block_hash.clone()))
+                .is_none()
+        );
 
         // after second slice we should have the block
         for shred in slices[1].clone().into_iter().take(DATA_SHREDS) {
-            blockstore
+            ctx.blockstore
                 .add_shred_from_repair(block_hash.clone(), shred.into_shred())
                 .await?;
         }
-        assert!(blockstore.get_block(&(slot, block_hash)).is_some());
+        assert!(ctx.blockstore.get_block(&(slot, block_hash)).is_some());
 
         Ok(())
     }
@@ -553,18 +567,17 @@ mod tests {
     #[tokio::test]
     async fn out_of_order_shreds() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.disseminated_block_hash(slot).is_none());
+        let mut ctx = setup();
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // generate a single slice for slot 0
-        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &sk);
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &ctx.sk);
 
         // insert shreds in reverse order
         for shred in slices[0].clone().into_iter().rev() {
-            add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
         }
-        assert!(blockstore.disseminated_block_hash(slot).is_some());
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         Ok(())
     }
@@ -572,21 +585,20 @@ mod tests {
     #[tokio::test]
     async fn just_enough_shreds() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.disseminated_block_hash(slot).is_none());
+        let mut ctx = setup();
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // generate a larger block for slot 0
-        let (_hash, _tree, slices) = create_random_shredded_block(slot, 4, &sk);
-        assert_eq!(blockstore.stored_slices_for_slot(slot), 0);
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 4, &ctx.sk);
+        assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 0);
 
         // insert just enough shreds to reconstruct slice 0 (from beginning)
         for shred in slices[0].clone().into_iter().take(DATA_SHREDS) {
-            blockstore
+            ctx.blockstore
                 .add_shred_from_disseminator(shred.into_shred())
                 .await?;
         }
-        assert_eq!(blockstore.stored_slices_for_slot(slot), 1);
+        assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 1);
 
         // insert just enough shreds to reconstruct slice 1 (from end)
         for shred in slices[1]
@@ -594,11 +606,11 @@ mod tests {
             .into_iter()
             .skip(TOTAL_SHREDS - DATA_SHREDS)
         {
-            blockstore
+            ctx.blockstore
                 .add_shred_from_disseminator(shred.into_shred())
                 .await?;
         }
-        assert_eq!(blockstore.stored_slices_for_slot(slot), 2);
+        assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 2);
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
         for shred in slices[2]
@@ -607,11 +619,11 @@ mod tests {
             .skip((TOTAL_SHREDS - DATA_SHREDS) / 2)
             .take(DATA_SHREDS)
         {
-            blockstore
+            ctx.blockstore
                 .add_shred_from_disseminator(shred.into_shred())
                 .await?;
         }
-        assert_eq!(blockstore.stored_slices_for_slot(slot), 3);
+        assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 3);
 
         // insert just enough shreds to reconstruct slice 3 (split)
         for (_, shred) in slices[3]
@@ -620,14 +632,14 @@ mod tests {
             .enumerate()
             .filter(|(i, _)| *i < DATA_SHREDS / 2 || *i >= TOTAL_SHREDS - DATA_SHREDS / 2)
         {
-            blockstore
+            ctx.blockstore
                 .add_shred_from_disseminator(shred.into_shred())
                 .await?;
         }
-        assert!(blockstore.disseminated_block_hash(slot).is_some());
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         // slices are deleted after reconstruction
-        assert_eq!(blockstore.stored_slices_for_slot(slot), 0);
+        assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 0);
 
         Ok(())
     }
@@ -635,30 +647,32 @@ mod tests {
     #[tokio::test]
     async fn out_of_order_slices() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        assert!(blockstore.disseminated_block_hash(slot).is_none());
+        let mut ctx = setup();
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // generate two slices for slot 0
-        let (_hash, _tree, slices) = create_random_shredded_block(slot, 2, &sk);
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 2, &ctx.sk);
 
         // second slice alone is not enough
         for shred in slices[0].clone() {
-            add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
         }
-        assert!(blockstore.disseminated_block_hash(slot).is_none());
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // stored all shreds for slot 0
-        assert_eq!(blockstore.stored_shreds_for_slot(slot), TOTAL_SHREDS);
+        assert_eq!(ctx.blockstore.stored_shreds_for_slot(slot), TOTAL_SHREDS);
 
         // after also also inserting first slice we should have the block
         for shred in slices[1].clone() {
-            add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
         }
-        assert!(blockstore.disseminated_block_hash(slot).is_some());
+        assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         // stored all shreds
-        assert_eq!(blockstore.stored_shreds_for_slot(slot), 2 * TOTAL_SHREDS);
+        assert_eq!(
+            ctx.blockstore.stored_shreds_for_slot(slot),
+            2 * TOTAL_SHREDS
+        );
 
         Ok(())
     }
@@ -666,24 +680,25 @@ mod tests {
     #[tokio::test]
     async fn duplicate_shreds() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &sk);
+        let mut ctx = setup();
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &ctx.sk);
 
         // inserting single shred should not throw errors
-        let res = blockstore
+        let res = ctx
+            .blockstore
             .add_shred_from_disseminator(slices[0][0].clone().into_shred())
             .await;
         assert!(res.is_ok());
 
         // inserting same shred again should give duplicate error
-        let res = blockstore
+        let res = ctx
+            .blockstore
             .add_shred_from_disseminator(slices[0][0].clone().into_shred())
             .await;
         assert_eq!(res, Err(AddShredError::Duplicate));
 
         // should only store one copy
-        assert_eq!(blockstore.stored_shreds_for_slot(slot), 1);
+        assert_eq!(ctx.blockstore.stored_shreds_for_slot(slot), 1);
 
         Ok(())
     }
@@ -691,15 +706,14 @@ mod tests {
     #[tokio::test]
     async fn invalid_shreds() -> Result<()> {
         let slot = Slot::genesis().next();
-        let (tx, _rx) = mpsc::channel(100);
-        let (sk, mut blockstore) = test_setup(tx);
-        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &sk);
+        let mut ctx = setup();
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &ctx.sk);
 
         // insert shreds with corrupted data (derived Merkle root won't match signature)
         for shred in slices[0].clone() {
             let mut shred = shred.into_shred();
             shred.payload_mut().data.fill(0);
-            let res = add_shred_ignore_duplicate(&mut blockstore, shred).await;
+            let res = add_shred_ignore_duplicate(&mut ctx.blockstore, shred).await;
             assert!(res.is_err());
             assert_eq!(res.err(), Some(AddShredError::InvalidSignature));
         }
@@ -714,11 +728,10 @@ mod tests {
         let block2_slot = block1_slot.next();
         let block3_slot = block2_slot.next();
         let future_slot = block3_slot.next();
-        let (tx, _rx) = mpsc::channel(1000);
-        let (sk, mut blockstore) = test_setup(tx);
-        let block0 = create_random_shredded_block(block0_slot, 1, &sk);
-        let block1 = create_random_shredded_block(block1_slot, 1, &sk);
-        let block2 = create_random_shredded_block(block2_slot, 1, &sk);
+        let mut ctx = setup();
+        let block0 = create_random_shredded_block(block0_slot, 1, &ctx.sk);
+        let block1 = create_random_shredded_block(block1_slot, 1, &ctx.sk);
+        let block2 = create_random_shredded_block(block2_slot, 1, &ctx.sk);
 
         // insert shreds
         let mut shreds = vec![];
@@ -726,29 +739,57 @@ mod tests {
         shreds.extend(block1.2.into_iter().flatten());
         shreds.extend(block2.2.into_iter().flatten());
         for shred in shreds {
-            add_shred_ignore_duplicate(&mut blockstore, shred.into_shred()).await?;
+            add_shred_ignore_duplicate(&mut ctx.blockstore, shred.into_shred()).await?;
         }
-        assert!(blockstore.disseminated_block_hash(block0_slot).is_some());
-        assert!(blockstore.disseminated_block_hash(block1_slot).is_some());
-        assert!(blockstore.disseminated_block_hash(block2_slot).is_some());
+        assert!(
+            ctx.blockstore
+                .disseminated_block_hash(block0_slot)
+                .is_some()
+        );
+        assert!(
+            ctx.blockstore
+                .disseminated_block_hash(block1_slot)
+                .is_some()
+        );
+        assert!(
+            ctx.blockstore
+                .disseminated_block_hash(block2_slot)
+                .is_some()
+        );
 
         // stored all shreds
-        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), TOTAL_SHREDS);
-        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), TOTAL_SHREDS);
-        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), TOTAL_SHREDS);
+        assert_eq!(
+            ctx.blockstore.stored_shreds_for_slot(block0_slot),
+            TOTAL_SHREDS
+        );
+        assert_eq!(
+            ctx.blockstore.stored_shreds_for_slot(block1_slot),
+            TOTAL_SHREDS
+        );
+        assert_eq!(
+            ctx.blockstore.stored_shreds_for_slot(block2_slot),
+            TOTAL_SHREDS
+        );
 
         // some (and only some) shreds deleted after partial pruning
-        blockstore.prune(block1_slot);
-        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), 0);
-        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), TOTAL_SHREDS);
-        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), TOTAL_SHREDS);
+        ctx.blockstore.prune(block1_slot);
+        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block0_slot), 0);
+        assert_eq!(
+            ctx.blockstore.stored_shreds_for_slot(block1_slot),
+            TOTAL_SHREDS
+        );
+        assert_eq!(
+            ctx.blockstore.stored_shreds_for_slot(block2_slot),
+            TOTAL_SHREDS
+        );
 
         // no shreds left after full pruning
-        blockstore.prune(future_slot);
-        assert_eq!(blockstore.stored_shreds_for_slot(block0_slot), 0);
-        assert_eq!(blockstore.stored_shreds_for_slot(block1_slot), 0);
-        assert_eq!(blockstore.stored_shreds_for_slot(block2_slot), 0);
-        let shred_count = blockstore
+        ctx.blockstore.prune(future_slot);
+        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block0_slot), 0);
+        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block1_slot), 0);
+        assert_eq!(ctx.blockstore.stored_shreds_for_slot(block2_slot), 0);
+        let shred_count = ctx
+            .blockstore
             .block_data
             .values()
             .map(|d| {
