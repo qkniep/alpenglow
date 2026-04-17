@@ -188,12 +188,9 @@ where
         // only start the DELTA_BLOCK timer once the ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
-            // A rational block producer should never exhaust all slice indices before seeing
-            // the ParentReady event. If we reach the last possible slice index without having
-            // seen ParentReady yet, wait for it first. This gives the last slice the full
-            // DELTA_BLOCK window to collect transactions rather than producing it immediately
-            // and then blocking.
-            let mut proactive_correction: Option<BlockId> = None;
+            // Proactively wait for ParentReady before the last slice, giving it the full
+            // DELTA_BLOCK window rather than producing it speculatively and then blocking.
+            let mut parent_correction: Option<BlockId> = None;
             if slice_index.is_max() && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
                 if new_hash != *parent_hash {
@@ -205,7 +202,7 @@ where
                         &hex::encode(new_hash.as_hash())[..8],
                         new_slot
                     );
-                    proactive_correction = Some((new_slot, new_hash));
+                    parent_correction = Some((new_slot, new_hash));
                 } else {
                     debug!("parent is ready, continuing with same parent");
                 }
@@ -214,9 +211,9 @@ where
             }
 
             let parent = if slice_index.is_first() {
-                Some(parent_block_id.clone())
+                Some(parent_correction.take().unwrap_or_else(|| parent_block_id.clone()))
             } else {
-                None
+                parent_correction.take()
             };
 
             let time_for_slice = if slice_index.is_first() {
@@ -235,7 +232,7 @@ where
                 produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
 
             // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let (mut payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
+            let (payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
                 produce_slice_future.await
             } else {
                 pin!(produce_slice_future);
@@ -273,11 +270,6 @@ where
                   }
                 }
             };
-
-            // Apply parent correction from the proactive ParentReady wait above.
-            if let Some(corrected) = proactive_correction {
-                payload.parent = Some(corrected);
-            }
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             let header = SliceHeader {
