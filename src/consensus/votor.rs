@@ -462,11 +462,10 @@ mod tests {
     async fn notar_and_final() {
         let ctx = start_votor().await;
         let slot = Slot::genesis().next();
+        let parent = (Slot::genesis(), GENESIS_BLOCK_HASH);
 
         // vote notar after seeing block
-        let vote = ctx
-            .send_block_and_expect_notar(slot, (Slot::genesis(), GENESIS_BLOCK_HASH))
-            .await;
+        let vote = ctx.send_block_and_expect_notar(slot, parent).await;
 
         // vote finalize after seeing branch-certified
         let Vote::Notar(notar_vote) = vote else {
@@ -586,10 +585,10 @@ mod tests {
     async fn safe_to_skip() {
         let ctx = start_votor().await;
         let slot = Slot::genesis().next();
+        let parent = (Slot::genesis(), GENESIS_BLOCK_HASH);
 
         // vote notar after seeing block
-        ctx.send_block_and_expect_notar(slot, (Slot::genesis(), GENESIS_BLOCK_HASH))
-            .await;
+        ctx.send_block_and_expect_notar(slot, parent).await;
 
         // vote skip-fallback after safe-to-skip
         ctx.pool_tx.send(PoolEvent::SafeToSkip(slot)).await.unwrap();
