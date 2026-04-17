@@ -1211,13 +1211,8 @@ mod tests {
 
         // we also vote for next slot, see no other votes
         let slot3 = slot2.next();
-        let vote = Vote::new_notar(
-            slot3,
-            Hash::random_for_test().into(),
-            &ctx.sks[0],
-            ValidatorId::new(0),
-        );
-        assert_eq!(ctx.pool.add_vote(vote).await, Ok(()));
+        let hash3: BlockHash = Hash::random_for_test().into();
+        ctx.add_notar_votes(slot3, &hash3, 0..1).await;
 
         // initiate standstill
         ctx.pool.recover_from_standstill().await;
