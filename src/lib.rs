@@ -29,7 +29,6 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::all2all::All2All;
 pub use self::consensus::Alpenglow;
-pub use self::consensus::votor::VotorEvent;
 use self::crypto::{aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;

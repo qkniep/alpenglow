@@ -39,10 +39,10 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreImpl};
+pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
 pub use self::cert::{Cert, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
-pub use self::pool::{AddVoteError, Pool, PoolImpl};
+pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
@@ -150,19 +150,17 @@ where
         RN: RepairNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
-        let (votor_tx, votor_rx) = mpsc::channel(1024);
+        let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
+        let (pool_tx, pool_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
         let blockstore: Box<dyn Blockstore + Send + Sync> =
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), votor_tx.clone()));
+            Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx));
         let blockstore = Arc::new(RwLock::new(blockstore));
 
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(PoolImpl::new(
-            epoch_info.clone(),
-            votor_tx.clone(),
-            repair_tx,
-        ));
+        let pool: Box<dyn Pool + Send + Sync> =
+            Box::new(PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx));
         let pool = Arc::new(RwLock::new(pool));
 
         let repair_request_handler = RepairRequestHandler::new(
@@ -188,8 +186,8 @@ where
         let mut votor = Votor::new(
             epoch_info.own_id(),
             voting_secret_key,
-            votor_tx.clone(),
-            votor_rx,
+            pool_rx,
+            blockstore_rx,
             all2all.clone(),
         );
         let votor_handle = tokio::spawn(
