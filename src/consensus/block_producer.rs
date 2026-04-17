@@ -188,6 +188,31 @@ where
         // only start the DELTA_BLOCK timer once the ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
+            // A rational block producer should never exhaust all slice indices before seeing
+            // the ParentReady event. If we reach the last possible slice index without having
+            // seen ParentReady yet, wait for it first. This gives the last slice the full
+            // DELTA_BLOCK window to collect transactions rather than producing it immediately
+            // and then blocking.
+            let mut proactive_correction: Option<BlockId> = None;
+            if slice_index.is_max() && !parent_ready_receiver.is_terminated() {
+                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
+                if new_hash != *parent_hash {
+                    assert_ne!(new_slot, *parent_slot);
+                    debug!(
+                        "changed parent from {} in slot {} to {} in slot {}",
+                        &hex::encode(parent_hash.as_hash())[..8],
+                        parent_slot,
+                        &hex::encode(new_hash.as_hash())[..8],
+                        new_slot
+                    );
+                    proactive_correction = Some((new_slot, new_hash));
+                } else {
+                    debug!("parent is ready, continuing with same parent");
+                }
+                debug!("starting blocktime timer");
+                duration_left = self.delta_block;
+            }
+
             let parent = if slice_index.is_first() {
                 Some(parent_block_id.clone())
             } else {
@@ -249,23 +274,12 @@ where
                 }
             };
 
-            let is_last = slice_index.is_max() || new_duration_left.is_zero();
-            if is_last && !parent_ready_receiver.is_terminated() {
-                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                if new_hash != *parent_hash {
-                    assert_ne!(new_slot, *parent_slot);
-                    debug!(
-                        "changed parent from {} in slot {} to {} in slot {}",
-                        &hex::encode(parent_hash.as_hash())[..8],
-                        parent_slot,
-                        &hex::encode(new_hash.as_hash())[..8],
-                        new_slot
-                    );
-                    payload.parent = Some((new_slot, new_hash));
-                } else {
-                    debug!("parent is ready, continuing with same parent");
-                }
+            // Apply parent correction from the proactive ParentReady wait above.
+            if let Some(corrected) = proactive_correction {
+                payload.parent = Some(corrected);
             }
+
+            let is_last = slice_index.is_max() || new_duration_left.is_zero();
             let header = SliceHeader {
                 slot,
                 slice_index,
