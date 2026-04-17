@@ -203,8 +203,8 @@ where
         };
 
         for slice_index in SliceIndex::all() {
-            // Proactively wait for ParentReady before the last slice, giving it the full
-            // DELTA_BLOCK window rather than producing it speculatively and then blocking.
+            // wait for ParentReady before the last slice
+            // giving it full DELTA_BLOCK window
             let mut parent_correction: Option<BlockId> = None;
             if slice_index.is_max()
                 && let Some(rx) = parent_ready_rx.as_mut().filter(|rx| !rx.is_terminated())
