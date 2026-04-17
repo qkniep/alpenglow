@@ -188,8 +188,8 @@ where
         // only start the DELTA_BLOCK timer once the ParentReady event is seen
         let mut duration_left = Duration::MAX;
         for slice_index in SliceIndex::all() {
-            // Proactively wait for ParentReady before the last slice, giving it the full
-            // DELTA_BLOCK window rather than producing it speculatively and then blocking.
+            // wait for ParentReady before the last slice
+            // giving it full DELTA_BLOCK window
             let mut parent_correction: Option<BlockId> = None;
             if slice_index.is_max() && !parent_ready_receiver.is_terminated() {
                 let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
