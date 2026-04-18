@@ -575,11 +575,14 @@ mod tests {
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
 
+        let (_fin_tx, fin_never_rx) = oneshot::channel::<()>();
         let mut pool = MockPool::new();
         let p = parent.clone();
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
             .return_once(move |_slot| Either::Left(p));
+        pool.expect_wait_for_finalization_at_or_after()
+            .return_once(|_| Either::Right(fin_never_rx));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
         let pool = Arc::new(RwLock::new(pool));
 

@@ -276,10 +276,10 @@ impl Blockstore for BlockstoreImpl {
         {
             Ok(Some(event)) => {
                 let block_info = self.send_blockstore_event(event).await;
-                if let Some(ref bi) = block_info {
-                    if let Some(tx) = self.block_waiters.remove(&slot) {
-                        let _ = tx.send(bi.hash.clone());
-                    }
+                if let Some(ref bi) = block_info
+                    && let Some(tx) = self.block_waiters.remove(&slot)
+                {
+                    let _ = tx.send(bi.hash.clone());
                 }
                 Ok(block_info)
             }
@@ -316,10 +316,10 @@ impl Blockstore for BlockstoreImpl {
         {
             Some(event) => {
                 let block_info = self.send_blockstore_event(event).await;
-                if let Some(ref bi) = block_info {
-                    if let Some(tx) = self.block_waiters.remove(&slot) {
-                        let _ = tx.send(bi.hash.clone());
-                    }
+                if let Some(ref bi) = block_info
+                    && let Some(tx) = self.block_waiters.remove(&slot)
+                {
+                    let _ = tx.send(bi.hash.clone());
                 }
                 Ok(block_info)
             }

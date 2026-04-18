@@ -122,7 +122,10 @@ pub trait Pool {
     fn finalized_slot(&self) -> Slot;
     fn parents_ready(&self, slot: Slot) -> &[BlockId];
     fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>>;
-    fn wait_for_finalization_at_or_after(&mut self, slot: Slot) -> Either<(), oneshot::Receiver<()>>;
+    fn wait_for_finalization_at_or_after(
+        &mut self,
+        slot: Slot,
+    ) -> Either<(), oneshot::Receiver<()>>;
 }
 
 /// Pool is the central consensus data structure.
@@ -571,8 +574,12 @@ impl Pool for PoolImpl {
         self.parent_ready_tracker.wait_for_parent_ready(slot)
     }
 
-    fn wait_for_finalization_at_or_after(&mut self, slot: Slot) -> Either<(), oneshot::Receiver<()>> {
-        self.finality_tracker.wait_for_finalization_at_or_after(slot)
+    fn wait_for_finalization_at_or_after(
+        &mut self,
+        slot: Slot,
+    ) -> Either<(), oneshot::Receiver<()>> {
+        self.finality_tracker
+            .wait_for_finalization_at_or_after(slot)
     }
 }
 
