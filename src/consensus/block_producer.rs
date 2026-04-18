@@ -21,7 +21,7 @@ use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
@@ -113,44 +113,35 @@ where
             }
 
             // genesis block is already produced
-            if first_slot_in_window.is_genesis() {
-                continue;
-            }
-
-            // wait for ParentReady or block in previous slot
-            let slot_ready = wait_for_first_slot(
-                self.pool.clone(),
-                self.blockstore.clone(),
-                first_slot_in_window,
-            )
-            .await;
+            // otherwise, wait for ParentReady or block in previous slot
+            let slot_ready = if first_slot_in_window.is_genesis() {
+                SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH))
+            } else {
+                wait_for_first_slot(
+                    self.pool.clone(),
+                    self.blockstore.clone(),
+                    first_slot_in_window,
+                )
+                .await
+            };
 
             // produce first block
-            let start = Instant::now();
-            let mut block_id = match slot_ready {
+            let (mut parent, mut rx) = match slot_ready {
                 SlotReady::Skip => {
                     warn!(
                         "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
                     );
                     continue;
                 }
-                SlotReady::Ready(parent) => {
-                    self.produce_block(first_slot_in_window, parent, None).await?
-                }
-                SlotReady::ParentReadyNotSeen(parent, rx) => {
-                    self.produce_block(first_slot_in_window, parent, Some(rx)).await?
-                }
+                SlotReady::Ready(parent) => (parent, None),
+                SlotReady::ParentReadyNotSeen(parent, rx) => (parent, Some(rx)),
             };
-            debug!(
-                "produced block {} in {} ms",
-                first_slot_in_window,
-                start.elapsed().as_millis()
-            );
 
             // produce remaining blocks
             for slot in first_slot_in_window.slots_in_window().skip(1) {
                 let start = Instant::now();
-                block_id = self.produce_block(slot, block_id, None).await?;
+                parent = self.produce_block(slot, parent, rx).await?;
+                rx = None;
                 debug!(
                     "produced block {} in {} ms",
                     slot,
@@ -174,6 +165,7 @@ where
         parent_block_id: BlockId,
         mut parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
     ) -> Result<BlockId> {
+        let shredder_pool = ShredderPool::with_size(1);
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
         let (parent_slot, parent_hash) = &parent_block_id;
         if parent_ready_rx.is_some() {
@@ -230,7 +222,9 @@ where
                 self.delta_block
             });
 
-            let awaiting_parent = parent_ready_rx.as_ref().is_some_and(|rx| !rx.is_terminated());
+            let awaiting_parent = parent_ready_rx
+                .as_ref()
+                .is_some_and(|rx| !rx.is_terminated());
 
             let (payload, new_duration_left) = if awaiting_parent {
                 race_slice_against_parent_ready(
@@ -263,7 +257,10 @@ where
                 is_last,
             };
 
-            match self.shred_and_disseminate(header, payload).await? {
+            match self
+                .shred_and_disseminate(header, payload, &shredder_pool)
+                .await?
+            {
                 Some(block_hash) => return Ok((slot, block_hash)),
                 None => {
                     assert!(!new_duration_left.is_zero());
@@ -282,13 +279,15 @@ where
         &self,
         header: SliceHeader,
         payload: SlicePayload,
+        shredder_pool: &ShredderPool<RegularShredder>,
     ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload);
         let mut maybe_block_hash = None;
-        // PERF: new shredder every time!
-        let shreds = RegularShredder::default()
+        let shreds = shredder_pool
+            .checkout()
+            .unwrap()
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
