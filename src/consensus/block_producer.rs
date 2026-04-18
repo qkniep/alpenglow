@@ -399,11 +399,12 @@ where
     // need 8 bytes to encode number of txs + 8 bytes to encode the length of the tx payload
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // reserve space for parent and 8 bytes to encode number of txs
+    // Reserve space for: parent, 8 bytes for the data field's length prefix in SlicePayload,
+    // and 8 bytes for the outer Vec length in wincode::serialize(&Vec<Vec<u8>>).
     let parent_encoded_len =
         <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
     let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len + 8)
+        .checked_sub(parent_encoded_len + 8 + 8)
         .unwrap();
     let mut txs = Vec::new();
 
@@ -419,12 +420,13 @@ where
         };
         let tx = res.expect("receiving tx");
         let tx = wincode::serialize(&tx).expect("serialization should not panic");
-        slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
+        // Each element in Vec<Vec<u8>> costs tx.len() + 8 bytes (inner Vec length prefix).
+        slice_capacity_left = slice_capacity_left.checked_sub(tx.len() + 8).unwrap();
         txs.push(tx);
 
         // if there is not enough space for another tx, break
-        // this needs to account for the 8 bytes to encode the length of the tx payload
-        if slice_capacity_left < MAX_TRANSACTION_SIZE + 8 {
+        // MAX_TRANSACTION_SIZE + 8 for the Transaction serialization, +8 for the element overhead
+        if slice_capacity_left < MAX_TRANSACTION_SIZE + 8 + 8 {
             break duration_left.saturating_sub(start_time.elapsed());
         }
     };
