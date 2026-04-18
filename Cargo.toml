@@ -28,7 +28,7 @@ either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
 fastrace-opentelemetry = "0.16"
 futures = "0.3"
-geo = "0.32"
+geo = "0.33"
 hex = "0.4"
 hex-literal = "1"
 hotpath = "0.15"
