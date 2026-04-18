@@ -114,16 +114,12 @@ where
 
             // genesis block is already produced
             // otherwise, wait for ParentReady or block in previous slot
-            let slot_ready = if first_slot_in_window.is_genesis() {
-                SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH))
-            } else {
-                wait_for_first_slot(
-                    self.pool.clone(),
-                    self.blockstore.clone(),
-                    first_slot_in_window,
-                )
-                .await
-            };
+            let slot_ready = wait_for_first_slot(
+                self.pool.clone(),
+                self.blockstore.clone(),
+                first_slot_in_window,
+            )
+            .await;
 
             // produce first block
             let (mut parent, mut rx) = match slot_ready {
@@ -137,8 +133,9 @@ where
                 SlotReady::ParentReadyNotSeen(parent, rx) => (parent, Some(rx)),
             };
 
-            // produce remaining blocks
-            for slot in first_slot_in_window.slots_in_window().skip(1) {
+            // produce remaining blocks, skip first slot if genesis
+            let skip = first_slot_in_window.is_genesis() as usize;
+            for slot in first_slot_in_window.slots_in_window().skip(skip) {
                 let start = Instant::now();
                 parent = self.produce_block(slot, parent, rx).await?;
                 rx = None;
