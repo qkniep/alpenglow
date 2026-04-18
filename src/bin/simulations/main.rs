@@ -35,6 +35,7 @@
 
 mod alpenglow;
 mod discrete_event_simulator;
+mod plot;
 mod pyjama;
 mod quorum_robustness;
 mod rotor;
@@ -79,6 +80,7 @@ use crate::ryse::{
 const RUN_BANDWIDTH_TESTS: bool = true;
 const RUN_LATENCY_TESTS: bool = true;
 const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
+const GENERATE_PLOTS: bool = true;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
     // "uniform",
@@ -97,9 +99,9 @@ const MAX_BANDWIDTHS: [u64; 4] = [
     100_000_000_000, // 100 Gbps
 ];
 
-const SHRED_COUNTS: [usize; 4] = [64, 128, 256, 512];
+// const SHRED_COUNTS: [usize; 4] = [64, 128, 256, 512];
+const SHRED_COUNTS: [usize; 1] = [64];
 
-const TOTAL_SHREDS_FA1: u64 = 64;
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
     (32, 64),
@@ -176,6 +178,12 @@ fn main() -> Result<()> {
     // run_tests_for_stake_distribution("5hubs", &FIVE_HUBS_VALIDATOR_DATA);
     // run_tests_for_stake_distribution("stock_exchanges", &STOCK_EXCHANGES_VALIDATOR_DATA);
 
+    if GENERATE_PLOTS {
+        for &(data_shreds, total_shreds) in &SHRED_COMBINATIONS {
+            plot::generate_all_plots("solana", SAMPLING_STRATEGIES[0], data_shreds, total_shreds);
+        }
+    }
+
     Ok(())
 }
 
@@ -214,13 +222,15 @@ fn run_tests_for_stake_distribution(
                 UniformSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = UniformSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = UniformSampler::new(validators_with_pings.clone())
-                .into_quorum_strategy(NUM_LEADERS);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler =
                     UniformSampler::new(validators.clone()).into_quorum_strategy(shreds);
+                let ping_rotor_sampler =
+                    UniformSampler::new(validators_with_pings.clone()).into_quorum_strategy(shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -234,13 +244,15 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
-                .into_quorum_strategy(NUM_LEADERS);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler =
                     StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(shreds);
+                let ping_rotor_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
+                    .into_quorum_strategy(shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -254,17 +266,19 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
-                validators_with_pings.clone(),
-                TOTAL_SHREDS_FA1,
-            );
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
                     validators.clone(),
                     shreds as u64,
                 );
+                let ping_rotor_sampler = FaitAccompli1Sampler::new_with_stake_weighted_fallback(
+                    validators_with_pings.clone(),
+                    shreds as u64,
+                );
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -278,12 +292,14 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler =
-                FaitAccompli2Sampler::new(validators_with_pings.clone(), TOTAL_SHREDS_FA1);
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = FaitAccompli2Sampler::new(validators.clone(), shreds as u64);
+                let ping_rotor_sampler =
+                    FaitAccompli2Sampler::new(validators_with_pings.clone(), shreds as u64);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -297,17 +313,19 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
-                validators_with_pings.clone(),
-                TOTAL_SHREDS_FA1,
-            );
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
                     validators.clone(),
                     shreds as u64,
                 );
+                let ping_rotor_sampler = FaitAccompli1Sampler::new_with_partition_fallback(
+                    validators_with_pings.clone(),
+                    shreds as u64,
+                );
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -321,15 +339,14 @@ fn run_tests_for_stake_distribution(
                 StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(NUM_LEADERS);
             let ping_leader_sampler = StakeWeightedSampler::new(validators_with_pings.clone())
                 .into_quorum_strategy(NUM_LEADERS);
-            let ping_rotor_sampler = DecayingAcceptanceSampler::new(
-                validators_with_pings.clone(),
-                3.0,
-                TOTAL_SHREDS_FA1 as usize,
-            );
             for shreds in SHRED_COUNTS {
                 let rotor_sampler = DecayingAcceptanceSampler::new(validators.clone(), 3.0, shreds);
+                let ping_rotor_sampler =
+                    DecayingAcceptanceSampler::new(validators_with_pings.clone(), 3.0, shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -350,6 +367,8 @@ fn run_tests_for_stake_distribution(
                     TurbineSampler::new(validators.clone()).into_quorum_strategy(shreds);
                 run_tests(
                     &format!("{test_name}-{shreds}"),
+                    distribution_name,
+                    sampling_strat,
                     &validators,
                     &validators_and_ping_servers,
                     &leader_sampler,
@@ -364,11 +383,14 @@ fn run_tests_for_stake_distribution(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tests<
     L: SamplingStrategy + QuorumSamplingStrategy + Send + Sync + Clone,
     R: QuorumSamplingStrategy + Send + Sync + Clone,
 >(
     test_name: &str,
+    distribution_name: &str,
+    sampling_strat: &str,
     validators: &[ValidatorInfo],
     validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
     leader_sampler: &L,
@@ -415,7 +437,7 @@ fn run_tests<
                 rotor_sampler.quorum_size(),
             );
             tester.reset();
-            tester.run_multiple(1_000_000);
+            tester.run_multiple(100);
             tester.evaluate_supported(test_name, supported_writer_ref);
             tester.evaluate_usage(test_name, usage_writer_ref.clone());
         });
@@ -442,8 +464,14 @@ fn run_tests<
             SimulationEnvironment::from_validators_with_ping_data(validators_with_ping_data)
                 .with_bandwidths(leader_bandwidth, bandwidths);
 
+        // Derive quorum sizes from the samplers so params stay consistent.
+        let rotor_quorum_size = rotor_sampler.quorum_size();
+        let ping_rotor_quorum_size = ping_rotor_sampler.quorum_size();
+        let leader_quorum_size = leader_sampler.quorum_size();
+        let ping_leader_quorum_size = ping_leader_sampler.quorum_size();
+
         // Rotor
-        let params = RotorParams::new(32, 64, 40);
+        let params = RotorParams::new(rotor_quorum_size / 2, rotor_quorum_size, 40);
         let builder = RotorInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
@@ -457,13 +485,14 @@ fn run_tests<
             .stats()
             .write_to_csv("data/output/rotor_10.csv", &params)?;
         info!("rotor latency sim (parallel)");
-        engine.run_many_parallel(1000);
+        engine.run_many_parallel(10);
         engine
             .stats()
-            .write_to_csv("data/output/rotor_1000.csv", &params)?;
+            .write_to_csv("data/output/rotor_10.csv", &params)?;
 
         // Ryse
-        let ryse_params = RyseParameters::new(8, 320);
+        let ryse_params =
+            RyseParameters::new(leader_quorum_size as u64, ping_rotor_quorum_size as u64);
         let ryse_builder = RyseInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_rotor_sampler.clone(),
@@ -474,13 +503,16 @@ fn run_tests<
         let engine =
             SimulationEngine::<RyseLatencySimulation<_, _>>::new(builder, environment.clone());
         info!("ryse latency sim (parallel)");
-        engine.run_many_parallel(1000);
+        engine.run_many_parallel(10);
         engine
             .stats()
-            .write_to_csv("data/output/ryse_1000.csv", &params)?;
+            .write_to_csv("data/output/ryse_10.csv", &params)?;
 
         // Pyjama
-        let params = PyjamaParams::new(8, 640);
+        let params = PyjamaParams::new(
+            ping_leader_quorum_size as u64,
+            ping_rotor_quorum_size as u64,
+        );
         let builder = PyjamaInstanceBuilder::new(
             ping_leader_sampler.clone(),
             ping_leader_sampler.clone(),
@@ -490,35 +522,41 @@ fn run_tests<
         let engine =
             SimulationEngine::<PyjamaLatencySimulation<_, _, _>>::new(builder, environment.clone());
         info!("pyjama latency sim (parallel)");
-        engine.run_many_parallel(1000);
+        engine.run_many_parallel(10);
         engine
             .stats()
-            .write_to_csv("data/output/pyjama_1000.csv", &params)?;
+            .write_to_csv("data/output/pyjama_10.csv", &params)?;
 
         // Alpenglow
         // latency experiments with random leaders
-        for (n, k) in SHRED_COMBINATIONS {
-            info!("{test_name} latency tests (random leaders, n={n}, k={k})");
-            let rotor_params = RotorParams::new(n, k, 40);
-            let rotor_builder = RotorInstanceBuilder::new(
-                ping_leader_sampler.clone(),
-                ping_rotor_sampler.clone(),
-                rotor_params,
-            );
-            let params = LatencySimParams::new(rotor_params, 4, 1);
-            let builder = LatencySimInstanceBuilder::new(rotor_builder, params.clone());
-            let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
-                builder,
-                environment.clone(),
-            );
-            engine.run_many_parallel(1000);
-            engine
-                .stats()
-                .write_to_csv("data/output/alpenglow_1000.csv", &params)?;
+        // for (n, k) in SHRED_COMBINATIONS {
+        let n = ping_rotor_sampler.quorum_size() / 2;
+        let k = ping_rotor_sampler.quorum_size();
+        info!("{test_name} latency tests (random leaders, n={n}, k={k})");
+        let rotor_params = RotorParams::new(n, k, 40);
+        let rotor_builder = RotorInstanceBuilder::new(
+            ping_leader_sampler.clone(),
+            ping_rotor_sampler.clone(),
+            rotor_params,
+        );
+        let params = LatencySimParams::new(rotor_params, 4, 1);
+        let builder = LatencySimInstanceBuilder::new(rotor_builder, params.clone());
+        let engine =
+            SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(builder, environment.clone());
+        engine.run_many_parallel(10);
+        let csv_path = PathBuf::from("data")
+            .join("output")
+            .join("simulations")
+            .join("latency")
+            .join(format!("{distribution_name}-{sampling_strat}-{n}-{k}.csv"));
+        if let Some(parent) = csv_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
+        engine.stats().write_to_csv(csv_path, &params)?;
+        // }
 
         // latency experiments with fixed leaders
-        let cities = if test_name.starts_with("solana") {
+        let cities = if distribution_name == "solana" {
             vec![
                 "Westpoort", // Amsterdam
                 "Frankfurt",
@@ -565,33 +603,49 @@ fn run_tests<
             unimplemented!()
         };
 
-        for (n, k) in SHRED_COMBINATIONS {
-            cities.par_iter().try_for_each(|city| {
-                info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
-                let leader = find_leader_in_city(validators_with_ping_data, city);
-                let rotor_params = RotorParams::new(n, k, 40);
-                let rotor_builder = RotorInstanceBuilder::new(
-                    AllSameSampler(leader),
-                    ping_rotor_sampler.clone(),
-                    rotor_params,
-                );
-                let params = LatencySimParams::new(rotor_params, 4, 1);
-                let builder = LatencySimInstanceBuilder::new(rotor_builder, params.clone());
-                let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
-                    builder,
-                    environment.clone(),
-                );
-                engine.run_many_sequential(1000);
-                let filename = format!("data/output/alpenglow_{city}_1000.csv");
-                engine.stats().write_to_csv(filename, &params)
-            })?;
-        }
+        // for (n, k) in SHRED_COMBINATIONS {
+        let n = ping_rotor_sampler.quorum_size() / 2;
+        let k = ping_rotor_sampler.quorum_size();
+        let city_distribution_name = distribution_name.to_string();
+        let city_sampling_strat = sampling_strat.to_string();
+        cities.par_iter().try_for_each(|city| {
+            info!("{test_name} latency tests (fixed leader in {city}, n={n}, k={k})");
+            let leader = find_leader_in_city(validators_with_ping_data, city);
+            let rotor_params = RotorParams::new(n, k, 40);
+            let rotor_builder = RotorInstanceBuilder::new(
+                AllSameSampler(leader),
+                ping_rotor_sampler.clone(),
+                rotor_params,
+            );
+            let params = LatencySimParams::new(rotor_params, 4, 1);
+            let builder = LatencySimInstanceBuilder::new(rotor_builder, params.clone());
+            let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                builder,
+                environment.clone(),
+            );
+            engine.run_many_sequential(10);
+            let csv_path = PathBuf::from("data")
+                .join("output")
+                .join("simulations")
+                .join("latency")
+                .join(city)
+                .join(format!(
+                    "{city_distribution_name}-{city_sampling_strat}-{n}-{k}.csv"
+                ));
+            if let Some(parent) = csv_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            engine.stats().write_to_csv(csv_path, &params)
+        })?;
+        // }
     }
 
     if RUN_ROTOR_ROBUSTNESS_TESTS {
-        for &(n, k) in &SHRED_COMBINATIONS {
-            run_rotor_robustness_test(n, k)?;
-        }
+        // for &(n, k) in &SHRED_COMBINATIONS {
+        let n = ping_rotor_sampler.quorum_size() / 2;
+        let k = ping_rotor_sampler.quorum_size();
+        run_rotor_robustness_test(n, k)?;
+        // }
     }
 
     Ok(())

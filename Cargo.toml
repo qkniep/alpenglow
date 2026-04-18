@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 colored = "3"
 csv = "1"
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "rusttype", "all_elements", "all_series", "histogram", "line_series"] }
 ctr = "0.10.0-rc.4"
 derive_more = { version = "2", features = ["add", "add_assign", "as_ref", "from", "into", "sum"] }
 ed25519-consensus = "2"
