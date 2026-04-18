@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use wincode::config::DefaultConfig;
 
 use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
-use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
@@ -181,7 +181,7 @@ where
         info!(
             "optimistically producing block in slot {} with parent {} in slot {}",
             slot,
-            &hex::encode(parent_hash.as_hash())[..8],
+            parent_hash.short_hex(),
             *parent_slot,
         );
 
@@ -233,9 +233,9 @@ where
                             assert_ne!(new_slot, *parent_slot);
                             debug!(
                                 "changed parent from {} in slot {} to {} in slot {}",
-                                &hex::encode(parent_hash.as_hash())[..8],
+                                parent_hash.short_hex(),
                                 parent_slot,
-                                &hex::encode(new_hash.as_hash())[..8],
+                                new_hash.short_hex(),
                                 new_slot
                             );
                             payload.parent = Some((new_slot, new_hash));
@@ -256,9 +256,9 @@ where
                     assert_ne!(new_slot, *parent_slot);
                     debug!(
                         "changed parent from {} in slot {} to {} in slot {}",
-                        &hex::encode(parent_hash.as_hash())[..8],
+                        parent_hash.short_hex(),
                         parent_slot,
-                        &hex::encode(new_hash.as_hash())[..8],
+                        new_hash.short_hex(),
                         new_slot
                     );
                     payload.parent = Some((new_slot, new_hash));
@@ -297,7 +297,7 @@ where
         info!(
             "producing block in slot {} with ready parent {} in slot {}",
             slot,
-            &hex::encode(parent_hash.as_hash())[..8],
+            parent_hash.short_hex(),
             parent_slot,
         );
 
