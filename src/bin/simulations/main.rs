@@ -383,6 +383,7 @@ fn run_tests_for_stake_distribution(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tests<
     L: SamplingStrategy + QuorumSamplingStrategy + Send + Sync + Clone,
     R: QuorumSamplingStrategy + Send + Sync + Clone,

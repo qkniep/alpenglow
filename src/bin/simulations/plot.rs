@@ -122,6 +122,7 @@ macro_rules! draw_stacked_bars {
     }};
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plot_stacked_bar_linear(
     output_path: &Path,
     title: &str,
@@ -157,6 +158,7 @@ fn plot_stacked_bar_linear(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plot_stacked_bar_log_y(
     output_path: &Path,
     title: &str,
@@ -192,6 +194,7 @@ fn plot_stacked_bar_log_y(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plot_grouped_bar_log(
     output_path: &Path,
     title: &str,
@@ -794,34 +797,34 @@ fn load_safety_data(
     Ok(rows)
 }
 
-fn filter_safety<'a>(
-    data: &'a [SafetyRow],
+fn filter_safety(
+    data: &[SafetyRow],
     total_shreds: Option<u64>,
     data_shreds: Option<u64>,
     adversary: Option<f64>,
     crashed: Option<f64>,
-) -> Vec<&'a SafetyRow> {
+) -> Vec<&SafetyRow> {
     data.iter()
         .filter(|r| {
-            if let Some(ts) = total_shreds {
-                if r.total_shreds != Some(ts) {
-                    return false;
-                }
+            if let Some(ts) = total_shreds
+                && r.total_shreds != Some(ts)
+            {
+                return false;
             }
-            if let Some(ds) = data_shreds {
-                if r.data_shreds != Some(ds) {
-                    return false;
-                }
+            if let Some(ds) = data_shreds
+                && r.data_shreds != Some(ds)
+            {
+                return false;
             }
-            if let Some(adv) = adversary {
-                if (r.byzantine - adv).abs() > 0.001 {
-                    return false;
-                }
+            if let Some(adv) = adversary
+                && (r.byzantine - adv).abs() > 0.001
+            {
+                return false;
             }
-            if let Some(cr) = crashed {
-                if (r.crashed - cr).abs() > 0.001 {
-                    return false;
-                }
+            if let Some(cr) = crashed
+                && (r.crashed - cr).abs() > 0.001
+            {
+                return false;
             }
             true
         })
