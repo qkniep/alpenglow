@@ -17,7 +17,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use either::Either;
 use log::{debug, info, trace, warn};
-use mockall::automock;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -28,7 +27,7 @@ use self::slot_state::SlotState;
 use super::{Cert, ValidatorEpochInfo, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
-use crate::crypto::merkle::{BlockHash, MerkleRoot};
+use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
@@ -113,7 +112,7 @@ pub enum SlashableOffence {
 ///
 /// This is only used for mocking of [`PoolImpl`].
 #[async_trait]
-#[automock]
+#[cfg_attr(test, mockall::automock)]
 pub trait Pool {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError>;
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError>;
@@ -187,7 +186,7 @@ impl PoolImpl {
                 let block_id = (slot, block_hash.clone());
                 info!(
                     "notarized(-fallback) block {} in slot {}",
-                    &hex::encode(block_hash.as_hash())[..8],
+                    block_hash.short_hex(),
                     slot
                 );
                 if matches!(cert, Cert::Notar(_)) {
