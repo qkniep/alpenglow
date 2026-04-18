@@ -17,7 +17,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use either::Either;
 use log::{debug, info, trace, warn};
-use mockall::automock;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -113,7 +112,7 @@ pub enum SlashableOffence {
 ///
 /// This is only used for mocking of [`PoolImpl`].
 #[async_trait]
-#[automock]
+#[cfg_attr(test, mockall::automock)]
 pub trait Pool {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError>;
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError>;

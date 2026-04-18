@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;
-use mockall::automock;
 use tokio::sync::mpsc::Sender;
 
 use self::slot_block_data::{AddShredError, SlotBlockData};
@@ -63,7 +62,7 @@ impl From<&Block> for BlockInfo {
 ///
 /// This is only used for mocking of [`BlockstoreImpl`].
 #[async_trait]
-#[automock]
+#[cfg_attr(test, mockall::automock)]
 pub trait Blockstore {
     async fn add_shred_from_disseminator(
         &mut self,
