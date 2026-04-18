@@ -7,7 +7,7 @@ use crate::{All2All, Alpenglow, Disseminator, Transaction};
 
 /// Full validator node.
 ///
-/// Consist of a consensus protocol instance and an execution engine.
+/// Consists of a consensus protocol instance and an execution engine.
 /// Participates in consensus and executes transactions.
 #[allow(dead_code)]
 pub struct Validator<A, D, T, E>

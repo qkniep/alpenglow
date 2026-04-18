@@ -96,7 +96,7 @@ pub enum ExecutionError {
 /// for the execution engine to track block state. The first slice of a block
 /// includes the parent block identifier.
 ///
-/// This type is deliberately kept separate from [`crate::consensus::votor::VotorEvent`]
+/// This type is intentionally separate from [`crate::consensus::blockstore::BlockstoreEvent`]
 /// so that the blockstore can feed execution independently of the voting logic.
 /// The blockstore will hold a [`mpsc::Sender<SliceEvent>`] alongside the existing
 /// Votor channel; the corresponding receiver is consumed by whichever task
@@ -248,7 +248,6 @@ mod tests {
     use super::*;
     use crate::crypto::hash;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
-    use crate::types::Slot;
 
     fn block_id(slot: u64) -> BlockId {
         (Slot::new(slot), GENESIS_BLOCK_HASH.clone())
