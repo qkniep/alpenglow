@@ -172,7 +172,7 @@ impl From<&[u8]> for SlicePayload {
     fn from(payload: &[u8]) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
-            "payload.len()={} {MAX_DATA_PER_SLICE}",
+            "payload.len()={} > {MAX_DATA_PER_SLICE}",
             payload.len()
         );
         wincode::deserialize(payload).unwrap()
