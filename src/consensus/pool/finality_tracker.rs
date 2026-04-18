@@ -20,6 +20,9 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
+use either::Either;
+use tokio::sync::oneshot;
+
 use crate::BlockId;
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::types::Slot;
@@ -35,6 +38,8 @@ pub struct FinalityTracker {
     /// This means that slot has a fast finalization OR finalization + notarization.
     /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
     highest_finalized_slot: Slot,
+    /// Callers waiting for finalization to reach or pass a given slot.
+    finalization_waiters: Vec<(Slot, oneshot::Sender<()>)>,
 }
 
 /// Possible states a slot can be in regarding finality.
@@ -198,6 +203,20 @@ impl FinalityTracker {
         self.highest_finalized_slot
     }
 
+    /// Returns immediately if finalization has already reached `slot`, otherwise registers
+    /// a one-shot notification that fires when `highest_finalized_slot >= slot`.
+    pub fn wait_for_finalization_at_or_after(
+        &mut self,
+        slot: Slot,
+    ) -> Either<(), oneshot::Receiver<()>> {
+        if self.highest_finalized_slot >= slot {
+            return Either::Left(());
+        }
+        let (tx, rx) = oneshot::channel();
+        self.finalization_waiters.push((slot, tx));
+        Either::Right(rx)
+    }
+
     /// Handles the direct finalization of the given block.
     ///
     /// Recurses through ancestors, potentially implicitly finalizing them.
@@ -210,6 +229,15 @@ impl FinalityTracker {
         let (slot, _) = finalized;
         event.finalized = Some(finalized.clone());
         self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
+
+        let waiters = std::mem::take(&mut self.finalization_waiters);
+        for (threshold, tx) in waiters {
+            if self.highest_finalized_slot >= threshold {
+                let _ = tx.send(());
+            } else {
+                self.finalization_waiters.push((threshold, tx));
+            }
+        }
 
         if let Some(parent) = self.parents.get(&finalized).cloned() {
             self.handle_implicitly_finalized(slot, parent, event);
@@ -300,6 +328,7 @@ impl Default for FinalityTracker {
             status,
             parents: BTreeMap::new(),
             highest_finalized_slot: Slot::genesis(),
+            finalization_waiters: Vec::new(),
         }
     }
 }

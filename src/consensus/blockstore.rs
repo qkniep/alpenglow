@@ -9,9 +9,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use either::Either;
 use log::debug;
 use mockall::automock;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::ValidatorEpochInfo;
@@ -98,6 +100,12 @@ pub trait Blockstore {
         block_id: &BlockId,
         slice_index: SliceIndex,
     ) -> Option<DoubleMerkleProof>;
+    /// Returns immediately with the block hash if the block is already available, otherwise
+    /// registers a one-shot notification that fires when the disseminated block arrives.
+    fn wait_for_disseminated_block(
+        &mut self,
+        slot: Slot,
+    ) -> Either<BlockHash, oneshot::Receiver<BlockHash>>;
 }
 
 /// Blockstore is the fundamental data structure holding block data per slot.
@@ -111,6 +119,9 @@ pub struct BlockstoreImpl {
     votor_channel: Sender<BlockstoreEvent>,
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
+
+    /// Callers waiting for a specific slot's disseminated block to arrive.
+    block_waiters: BTreeMap<Slot, oneshot::Sender<BlockHash>>,
 }
 
 impl BlockstoreImpl {
@@ -130,12 +141,14 @@ impl BlockstoreImpl {
             shredders: ShredderPool::with_size(1),
             votor_channel,
             epoch_info,
+            block_waiters: BTreeMap::new(),
         }
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
     pub fn prune(&mut self, slot: Slot) {
         self.block_data = self.block_data.split_off(&slot);
+        self.block_waiters.retain(|&s, _| s >= slot);
     }
 
     async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
@@ -261,7 +274,15 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_shred_from_disseminator(shred, leader_pk, &mut shredder)
         {
-            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
+            Ok(Some(event)) => {
+                let block_info = self.send_blockstore_event(event).await;
+                if let Some(ref bi) = block_info {
+                    if let Some(tx) = self.block_waiters.remove(&slot) {
+                        let _ = tx.send(bi.hash.clone());
+                    }
+                }
+                Ok(block_info)
+            }
             Ok(None) => Ok(None),
             Err(AddShredError::InvalidShred) => {
                 self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
@@ -293,7 +314,15 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_own_shred_as_leader(shred, &mut shredder)?
         {
-            Some(event) => Ok(self.send_blockstore_event(event).await),
+            Some(event) => {
+                let block_info = self.send_blockstore_event(event).await;
+                if let Some(ref bi) = block_info {
+                    if let Some(tx) = self.block_waiters.remove(&slot) {
+                        let _ = tx.send(bi.hash.clone());
+                    }
+                }
+                Ok(block_info)
+            }
             None => Ok(None),
         }
     }
@@ -408,6 +437,18 @@ impl Blockstore for BlockstoreImpl {
         let block_data = self.get_block_data(block_id)?;
         let tree = block_data.double_merkle_tree.as_ref()?;
         Some(tree.create_proof(slice_index.inner()))
+    }
+
+    fn wait_for_disseminated_block(
+        &mut self,
+        slot: Slot,
+    ) -> Either<BlockHash, oneshot::Receiver<BlockHash>> {
+        if let Some(hash) = self.disseminated_block_hash(slot) {
+            return Either::Left(hash.clone());
+        }
+        let (tx, rx) = oneshot::channel();
+        self.block_waiters.insert(slot, tx);
+        Either::Right(rx)
     }
 }
 

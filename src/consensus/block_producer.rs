@@ -13,7 +13,6 @@ use log::{debug, info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
 use tokio::sync::{RwLock, oneshot};
-use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use wincode::config::DefaultConfig;
 
@@ -456,50 +455,40 @@ async fn wait_for_first_slot(
         return SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH));
     }
 
-    // if already have parent ready, return it, otherwise get a channel to await on
-    let mut rx = {
-        let mut guard = pool.write().await;
-        match guard.wait_for_parent_ready(first_slot_in_window) {
-            Either::Left(parent) => {
-                return SlotReady::Ready(parent);
-            }
-            Either::Right(rx) => rx,
-        }
+    // if pool has finalized a later slot, return skip, otherwise get a channel to await on
+    let mut pool = pool.write().await;
+    let fin_rx = match pool.wait_for_finalization_at_or_after(first_slot_in_window) {
+        Either::Left(()) => return SlotReady::Skip,
+        Either::Right(rx) => rx,
     };
 
-    // Concurrently wait for:
-    // - `ParentReady` event,
-    // - block reconstruction in blockstore, OR
-    // - notification that a later slot was finalized.
-    tokio::select! {
-        res = &mut rx => {
-            let parent = res.expect("sender dropped channel");
-            SlotReady::Ready(parent)
-        }
+    // if already have parent ready, return it, otherwise get a channel to await on
+    let mut rx = match pool.wait_for_parent_ready(first_slot_in_window) {
+        Either::Left(parent) => return SlotReady::Ready(parent),
+        Either::Right(rx) => rx,
+    };
+    drop(pool);
 
-        res = async {
-            let handle = tokio::spawn(async move {
-                // PERF: These are burning a CPU. Can we use async here?
-                loop {
-                    let last_slot_in_prev_window = first_slot_in_window.prev();
-                    if let Some(hash) = blockstore.read().await
-                        .disseminated_block_hash(last_slot_in_prev_window)
-                    {
-                        return Some((last_slot_in_prev_window, hash.clone()));
-                    }
-                    if pool.read().await.finalized_slot() >= first_slot_in_window {
-                        return None;
-                    }
-                    sleep(Duration::from_millis(1)).await;
-                }
-            });
-            handle.await.expect("error in task")
-        } => {
-            match res {
-                None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash.clone()), rx),
-            }
+    // if blockstore has block for previous slot, return it, otherwise get a channel to await on
+    let parent_slot = first_slot_in_window.prev();
+    let mut bs = blockstore.write().await;
+    let block_rx = match bs.wait_for_disseminated_block(parent_slot) {
+        Either::Left(hash) => return SlotReady::ParentReadyNotSeen((parent_slot, hash), rx),
+        Either::Right(rx) => rx,
+    };
+    drop(bs);
+
+    // Concurrently wait for:
+    // - notification that a later slot was finalized,
+    // - `ParentReady` event, OR
+    // - block reconstruction in blockstore.
+    tokio::select! {
+        res = fin_rx   => {
+            res.expect("sender dropped channel");
+            SlotReady::Skip
         }
+        res = &mut rx  => SlotReady::Ready(res.expect("sender dropped channel")),
+        res = block_rx => SlotReady::ParentReadyNotSeen((parent_slot, res.expect("sender dropped")), rx),
     }
 }
 
@@ -603,18 +592,29 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_ready_later() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
-
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
+
+        // `rx` fires immediately; give the blockstore/pool pending receivers so the select!
+        // suspends on those arms and lets `rx` win.
+        let (_block_tx, block_never_rx) = oneshot::channel::<crate::crypto::merkle::BlockHash>();
+        let mut blockstore = MockBlockstore::new();
+        blockstore
+            .expect_wait_for_disseminated_block()
+            .return_once(|_| Either::Right(block_never_rx));
+        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
+        let blockstore = Arc::new(RwLock::new(blockstore));
+
         let (tx, rx) = oneshot::channel();
         tx.send(parent.clone()).unwrap();
 
+        let (_fin_tx, fin_never_rx) = oneshot::channel::<()>();
         let mut pool = MockPool::new();
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
             .return_once(move |_slot| Either::Right(rx));
+        pool.expect_wait_for_finalization_at_or_after()
+            .return_once(|_| Either::Right(fin_never_rx));
         let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
         let pool = Arc::new(RwLock::new(pool));
 
