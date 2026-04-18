@@ -28,13 +28,12 @@ either = "1"
 fastrace = { version = "0.7", features = ["enable"] }
 fastrace-opentelemetry = "0.16"
 futures = "0.3"
-geo = "0.32"
+geo = "0.33"
 hex = "0.4"
 hex-literal = "1"
 hotpath = "0.15"
 log = "0.4"
 logforth = { version = "0.29", features = ["append-fastrace", "starter-log"] }
-mockall = "0.14"
 moka = { version = "0.12", features = ["future"] }
 opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
@@ -58,6 +57,7 @@ wincode = { version = "0.5", features = ["derive"] }
 [dev-dependencies]
 assert_cmd = "2"
 divan = "0.1"
+mockall = "0.14"
 tempfile = "3"
 
 [features]
