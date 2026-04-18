@@ -230,10 +230,12 @@ impl ExecutionEngine for DummyExecution {
             .get(&InProgressBlock::Known(block_id.clone()))
             .or_else(|| self.tx_counts.get(&InProgressBlock::Pending(block_id.0)));
         if let Some(&total) = total {
-            let _ = self.event_sender.try_send(ExecutionEvent::BlockExecuted {
-                block_id,
-                result: ExecutionResult { tx_count: total },
-            });
+            self.event_sender
+                .try_send(ExecutionEvent::BlockExecuted {
+                    block_id,
+                    result: ExecutionResult { tx_count: total },
+                })
+                .unwrap();
         }
     }
 
