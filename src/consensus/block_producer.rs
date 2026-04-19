@@ -3,6 +3,7 @@
 
 //! Block production, leader-side of the consensus protocol.
 
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,10 +15,9 @@ use static_assertions::const_assert;
 use tokio::pin;
 use tokio::sync::{RwLock, oneshot};
 use tokio_util::sync::CancellationToken;
-use wincode::config::DefaultConfig;
 
 use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
-use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
@@ -151,9 +151,10 @@ where
 
     /// Produces a block for the given slot.
     ///
-    /// When `parent_ready_rx` is `None`, the parent is already known and the DELTA_BLOCK timer
-    /// starts immediately. When `Some`, block production begins optimistically while racing
-    /// slice production against the `ParentReady` event; the timer starts upon receipt.
+    /// If `parent_ready_rx` is `None`, it indicates the parent is ready.
+    /// In that case, the `DELTA_BLOCK` timer starts immediately.
+    /// Otherwise, block production begins optimistically.
+    /// The timer then only starts upon receipt of the `ParentReady` event.
     #[hotpath::measure]
     async fn produce_block(
         &self,
@@ -170,20 +171,20 @@ where
             info!(
                 "optimistically producing block in slot {} with parent {} in slot {}",
                 slot,
-                &hex::encode(parent_hash.as_hash())[..8],
+                parent_hash.short_hex(),
                 *parent_slot,
             );
         } else {
             info!(
                 "producing block in slot {} with ready parent {} in slot {}",
                 slot,
-                &hex::encode(parent_hash.as_hash())[..8],
+                parent_hash.short_hex(),
                 parent_slot,
             );
         }
 
-        // DELTA_BLOCK timer starts immediately when the parent is known; otherwise
-        // it starts upon receipt of the ParentReady event.
+        // DELTA_BLOCK timer starts immediately when the parent is known
+        // otherwise it starts upon receipt of the ParentReady event
         let mut duration_left = if parent_ready_rx.is_none() {
             self.delta_block
         } else {
@@ -223,10 +224,11 @@ where
                 .is_some_and(|rx| !rx.is_terminated());
 
             let (payload, new_duration_left) = if awaiting_parent {
+                let produce_future =
+                    produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
+                pin!(produce_future);
                 race_slice_against_parent_ready(
-                    &self.txs_receiver,
-                    parent,
-                    time_for_slice,
+                    produce_future,
                     &parent_block_id,
                     parent_ready_rx.as_mut().unwrap(),
                     self.delta_block,
@@ -325,9 +327,9 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
         assert_ne!(new_slot, old_slot);
         debug!(
             "changed parent from {} in slot {} to {} in slot {}",
-            &hex::encode(old_hash.as_hash())[..8],
+            old_hash.short_hex(),
             old_slot,
-            &hex::encode(new_hash.as_hash())[..8],
+            new_hash.short_hex(),
             new_slot,
         );
         Some(new)
@@ -339,8 +341,13 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
 
 /// Collects transactions into a slice payload, waiting up to `duration_left` for more.
 ///
-/// Returns the completed payload and the remaining time in `duration_left` after the slice
-/// was filled (zero if the timeout expired before the slice was full).
+/// Produces a slice payload.
+///
+/// Listens to transactions on `txs_receive` for at most `duration_left`.
+/// Manually serializes a [`Vec<Transaction>`] to keep track of how much space is left.
+/// Stops if either the slice cannot fit any more transactions, or time runs out.
+///
+/// Returns the completed payload and the remaining time in `duration_left`.
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
@@ -352,61 +359,54 @@ where
     let start_time = Instant::now();
 
     // each slice should be able hold at least 1 transaction
-    // need 8 bytes to encode number of txs + 8 bytes to encode the length of the tx payload
+    // +8 to encode number of txs, +8 to encode tx payload length
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // reserve space for parent and 8 bytes to encode number of txs
-    let parent_encoded_len =
-        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
-    let mut slice_capacity_left = MAX_DATA_PER_SLICE
-        .checked_sub(parent_encoded_len + 8)
-        .unwrap();
-    let mut txs = Vec::new();
+    // reserve space for: parent info, and
+    // 8 bytes for SlicePayload::data length
+    let parent_encoded_len = wincode::serialized_size(&parent).unwrap() as usize;
+    let buffer_space = MAX_DATA_PER_SLICE - parent_encoded_len - 8;
+    let mut buffer = Vec::<u8>::with_capacity(buffer_space);
+    let mut tx_count = 0u64;
+    // reserve space for the length prefix
+    buffer.extend([0; 8]);
 
     let ret = loop {
         let sleep_duration = duration_left.saturating_sub(start_time.elapsed());
         let res = tokio::select! {
-            () = tokio::time::sleep(sleep_duration) => {
+            () = sleep(sleep_duration) => {
                 break Duration::ZERO;
             }
-            res = txs_receiver.receive() => {
-                res
-            }
+            res = txs_receiver.receive() => res,
         };
         let tx = res.expect("receiving tx");
-        let tx = wincode::serialize(&tx).expect("serialization should not panic");
-        slice_capacity_left = slice_capacity_left.checked_sub(tx.len()).unwrap();
-        txs.push(tx);
+        tx_count += 1;
+        wincode::serialize_into(&mut buffer, &tx).unwrap();
 
         // if there is not enough space for another tx, break
-        // this needs to account for the 8 bytes to encode the length of the tx payload
-        if slice_capacity_left < MAX_TRANSACTION_SIZE + 8 {
+        // +8 for the transaction length overhead
+        if buffer_space - buffer.len() < MAX_TRANSACTION_SIZE + 8 {
             break duration_left.saturating_sub(start_time.elapsed());
         }
     };
 
-    // TODO: not accounting for this potentially expensive operation in duration_left calculation above.
-    let txs = wincode::serialize(&txs).expect("serialization should not panic");
-    let payload = SlicePayload::new(parent, txs);
-    (payload, ret)
+    buffer[0..8].copy_from_slice(&tx_count.to_le_bytes());
+
+    (SlicePayload::new(parent, buffer), ret)
 }
 
 /// Race slice payload production against a pending `ParentReady` channel.
 ///
 /// Returns `(payload, new_duration_left)`:
-/// - If production completes first: `Duration::MAX` is returned (timer not yet started).
+/// - If production completes first: [`Duration::MAX`] is returned (timer not yet started).
 /// - If `ParentReady` arrives during production: updates the payload's parent if it changed,
 ///   starts the DELTA_BLOCK timer, and returns the remaining budget after finishing the slice.
-async fn race_slice_against_parent_ready<T: TransactionNetwork>(
-    txs_receiver: &T,
-    parent: Option<BlockId>,
-    time_for_slice: Duration,
+async fn race_slice_against_parent_ready(
+    mut produce_future: Pin<&mut (dyn Future<Output = (SlicePayload, Duration)> + Send)>,
     parent_block_id: &BlockId,
     rx: &mut oneshot::Receiver<BlockId>,
     delta_block: Duration,
 ) -> (SlicePayload, Duration) {
-    let produce_future = produce_slice_payload(txs_receiver, parent, time_for_slice);
-    pin!(produce_future);
     tokio::select! {
         res = &mut produce_future => {
             let (payload, _) = res;
@@ -414,8 +414,8 @@ async fn race_slice_against_parent_ready<T: TransactionNetwork>(
             (payload, Duration::MAX)
         }
         res = rx => {
-            // Got ParentReady while producing this slice; start the timer,
-            // accounting for the time needed to finish the current slice.
+            // got ParentReady while producing this slice
+            // start timer, accounting for time spent producing this slice
             let start = Instant::now();
             let (mut payload, _) = produce_future.await;
             if let Some(new) = apply_parent_update(parent_block_id, res.unwrap()) {
@@ -512,7 +512,7 @@ mod tests {
     #[tokio::test]
     async fn produce_slice_empty_slices() {
         let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
-        let duration_left = Duration::from_micros(0);
+        let duration_left = Duration::ZERO;
 
         let parent = None;
         let (payload, maybe_duration) =
@@ -548,12 +548,14 @@ mod tests {
         });
 
         let parent = None;
+        let parent_len = wincode::serialized_size(&parent).unwrap() as usize;
         let (payload, maybe_duration) =
             produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
         assert!(maybe_duration > Duration::ZERO);
         assert_eq!(payload.parent, parent);
-        assert!(payload.data.len() <= MAX_DATA_PER_SLICE);
-        assert!(payload.data.len() > MAX_DATA_PER_SLICE - MAX_TRANSACTION_SIZE);
+        let max_len = MAX_DATA_PER_SLICE - parent_len - 8;
+        assert!(payload.data.len() <= max_len);
+        assert!(payload.data.len() + MAX_TRANSACTION_SIZE + 8 > max_len);
     }
 
     #[tokio::test]
