@@ -171,14 +171,14 @@ where
             info!(
                 "optimistically producing block in slot {} with parent {} in slot {}",
                 slot,
-                &hex::encode(parent_hash.as_hash())[..8],
+                parent_hash.short_hex(),
                 *parent_slot,
             );
         } else {
             info!(
                 "producing block in slot {} with ready parent {} in slot {}",
                 slot,
-                &hex::encode(parent_hash.as_hash())[..8],
+                parent_hash.short_hex(),
                 parent_slot,
             );
         }
@@ -326,9 +326,9 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
         assert_ne!(new_slot, old_slot);
         debug!(
             "changed parent from {} in slot {} to {} in slot {}",
-            &hex::encode(old_hash.as_hash())[..8],
+            old_hash.short_hex(),
             old_slot,
-            &hex::encode(new_hash.as_hash())[..8],
+            new_hash.short_hex(),
             new_slot,
         );
         Some(new)
