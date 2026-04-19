@@ -2,106 +2,108 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: true
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  main:
+  fmt:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
-      
-      - name: Install tools
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest,cargo-llvm-cov,cargo-machete
 
-      - name: Cache rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-all-crates: true
-
-      - name: Cache build files
-        uses: mozilla-actions/sccache-action@v0.0.9
-      
-      - name: Cache downloaded data
-        id: cache-data
-        uses: actions/cache@v5
-        with:
-          path: ./data
-          key: data-v1  # Change this if the dataset version changes
-
-      - name: Download data if needed
-        run: |
-          if [ ! -f data/dataset.ok ]; then
-            ./download_data.sh
-            touch data/dataset.ok
-          fi
-
-      - name: Build (debug)
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-        run: cargo build --all-targets --all-features --verbose
-
-      - name: Build (release)
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-        run: cargo build --all-targets --all-features --release --verbose
-
-      - name: Linting (clippy)
-        run: cargo clippy --all-targets --all-features -- -Dwarnings
-
-      - name: Unused dependencies
-        run: cargo machete
-
-      - name: Run tests
-        run: ./test.sh ci
-
-      # test coverage
-      - name: Collect coverage data
-        if: github.actor != 'dependabot[bot]'
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-        run: cargo llvm-cov --lcov --all-features --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --release --output-path lcov.info nextest
-
-      - name: Upload coverage to Codecov
-        if: github.actor != 'dependabot[bot]'
-        uses: codecov/codecov-action@v6
-        with:
-          fail_ci_if_error: true
-          files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
-          verbose: true
-
-  rustfmt:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
 
-      - name: Run rustfmt
+      - name: Check formatting
         run: cargo +nightly fmt --all -- --check
 
-  docs:
+  clippy:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+
+      - name: Linting (clippy)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+
+      - name: Tests
+        run: ./test.sh ci
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mode: [debug, release]
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+
+      - name: Build (${{ matrix.mode }})
+        run: cargo build --all-targets --all-features ${{ matrix.mode == 'release' && '--release' || '' }} --locked
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+
+      - name: Cargo audit
+        run: cargo audit
+
+      - name: License check
+        run: cargo license
+
+      - name: Unused deps
+        run: cargo machete
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
 
       - name: Build docs
-        run: cargo doc --no-deps --document-private-items
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --locked
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+
+      - name: Install llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Coverage
+        run: cargo llvm-cov --lcov --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --output-path lcov.info nextest
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
