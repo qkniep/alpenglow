@@ -21,7 +21,8 @@ mod latency;
 mod parameters;
 mod robustness;
 
-pub use latency::PyjamaLatencySimulation;
-pub use parameters::{PyjamaInstance, PyjamaInstanceBuilder, PyjamaParameters as PyjamaParams};
-pub use robustness::run_pyjama_robustness_test;
-pub(crate) use robustness::run_robustness_tests;
+pub(crate) use latency::PyjamaLatencySimulation;
+pub(crate) use parameters::{
+    PyjamaInstance, PyjamaInstanceBuilder, PyjamaParameters as PyjamaParams,
+};
+pub(crate) use robustness::{run_pyjama_robustness_test, run_robustness_tests};

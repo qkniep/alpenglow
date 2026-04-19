@@ -33,7 +33,7 @@ pub(crate) fn run_robustness_tests() {
     optimal_params.print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
-pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
+pub(crate) fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let proposer_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), NUM_PROPOSERS);
