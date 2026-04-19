@@ -103,7 +103,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Coverage
-        run: cargo llvm-cov --lcov --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --output-path lcov.info nextest
+        run: cargo llvm-cov --lcov --workspace --all-features --ignore-filename-regex='(benches|src/bin|src/main.rs)' --output-path lcov.info nextest
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v6
