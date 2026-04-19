@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use wincode::config::DefaultConfig;
 
 use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
-use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH, MerkleRoot};
+use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
