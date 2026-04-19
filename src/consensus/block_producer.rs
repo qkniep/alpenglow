@@ -3,6 +3,7 @@
 
 //! Block production, leader-side of the consensus protocol.
 
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -151,9 +152,10 @@ where
 
     /// Produces a block for the given slot.
     ///
-    /// When `parent_ready_rx` is `None`, the parent is already known and the DELTA_BLOCK timer
-    /// starts immediately. When `Some`, block production begins optimistically while racing
-    /// slice production against the `ParentReady` event; the timer starts upon receipt.
+    /// If `parent_ready_rx` is `None`, it indicates the parent is ready.
+    /// In that case, the `DELTA_BLOCK` timer starts immediately.
+    /// Otherwise, block production begins optimistically.
+    /// The timer then only starts upon receipt of the `ParentReady` event.
     #[hotpath::measure]
     async fn produce_block(
         &self,
@@ -182,8 +184,8 @@ where
             );
         }
 
-        // DELTA_BLOCK timer starts immediately when the parent is known; otherwise
-        // it starts upon receipt of the ParentReady event.
+        // DELTA_BLOCK timer starts immediately when the parent is known
+        // otherwise it starts upon receipt of the ParentReady event
         let mut duration_left = if parent_ready_rx.is_none() {
             self.delta_block
         } else {
@@ -223,10 +225,11 @@ where
                 .is_some_and(|rx| !rx.is_terminated());
 
             let (payload, new_duration_left) = if awaiting_parent {
+                let produce_future =
+                    produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
+                pin!(produce_future);
                 race_slice_against_parent_ready(
-                    &self.txs_receiver,
-                    parent,
-                    time_for_slice,
+                    produce_future,
                     &parent_block_id,
                     parent_ready_rx.as_mut().unwrap(),
                     self.delta_block,
@@ -396,19 +399,15 @@ where
 /// Race slice payload production against a pending `ParentReady` channel.
 ///
 /// Returns `(payload, new_duration_left)`:
-/// - If production completes first: `Duration::MAX` is returned (timer not yet started).
+/// - If production completes first: [`Duration::MAX`] is returned (timer not yet started).
 /// - If `ParentReady` arrives during production: updates the payload's parent if it changed,
 ///   starts the DELTA_BLOCK timer, and returns the remaining budget after finishing the slice.
-async fn race_slice_against_parent_ready<T: TransactionNetwork>(
-    txs_receiver: &T,
-    parent: Option<BlockId>,
-    time_for_slice: Duration,
+async fn race_slice_against_parent_ready(
+    mut produce_future: Pin<&mut (dyn Future<Output = (SlicePayload, Duration)> + Send)>,
     parent_block_id: &BlockId,
     rx: &mut oneshot::Receiver<BlockId>,
     delta_block: Duration,
 ) -> (SlicePayload, Duration) {
-    let produce_future = produce_slice_payload(txs_receiver, parent, time_for_slice);
-    pin!(produce_future);
     tokio::select! {
         res = &mut produce_future => {
             let (payload, _) = res;
@@ -416,8 +415,8 @@ async fn race_slice_against_parent_ready<T: TransactionNetwork>(
             (payload, Duration::MAX)
         }
         res = rx => {
-            // Got ParentReady while producing this slice; start the timer,
-            // accounting for the time needed to finish the current slice.
+            // got ParentReady while producing this slice
+            // start timer, accounting for time spent producing this slice
             let start = Instant::now();
             let (mut payload, _) = produce_future.await;
             if let Some(new) = apply_parent_update(parent_block_id, res.unwrap()) {
