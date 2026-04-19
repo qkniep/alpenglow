@@ -62,17 +62,17 @@ use color_eyre::Result;
 use log::info;
 use rayon::prelude::*;
 
-use crate::alpenglow::{
+pub use crate::alpenglow::{
     AlpenglowLatencySimulation, BandwidthTest, LatencySimInstanceBuilder, LatencySimParams,
 };
-use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
-use crate::pyjama::{
+pub use crate::discrete_event_simulator::{SimulationEngine, SimulationEnvironment};
+pub use crate::pyjama::{
     PyjamaInstanceBuilder, PyjamaLatencySimulation, PyjamaParams, run_pyjama_robustness_test,
 };
-use crate::rotor::{
+pub use crate::rotor::{
     RotorInstanceBuilder, RotorLatencySimulation, RotorParams, run_rotor_robustness_test,
 };
-use crate::ryse::{
+pub use crate::ryse::{
     RyseInstanceBuilder, RyseLatencySimulation, RyseParameters, run_ryse_robustness_test,
 };
 
