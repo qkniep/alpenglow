@@ -31,7 +31,9 @@ use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorId};
 
-/// Events emitted by [`PoolImpl`] to [`super::votor::Votor`].
+/// Events emitted by [`PoolImpl`] to [`Votor`].
+///
+/// [`Votor`]: crate::consensus::votor::Votor
 #[derive(Clone, Debug)]
 pub enum PoolEvent {
     /// The pool has newly marked the given block as a ready parent for `slot`.
