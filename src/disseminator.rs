@@ -15,7 +15,6 @@ pub mod trivial;
 pub mod turbine;
 
 use async_trait::async_trait;
-use mockall::automock;
 
 pub use self::rotor::Rotor;
 pub use self::trivial::TrivialDisseminator;
@@ -24,7 +23,7 @@ use crate::shredder::Shred;
 
 /// Abstraction of a block dissemination protocol.
 #[async_trait]
-#[automock]
+#[cfg_attr(test, mockall::automock)]
 pub trait Disseminator {
     /// Sends the given shred to the network as the original source.
     async fn send(&self, shred: &Shred) -> std::io::Result<()>;
