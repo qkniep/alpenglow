@@ -25,7 +25,7 @@ use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::types::Slot;
 
 /// Tracks finality of blocks.
-pub struct FinalityTracker {
+pub(super) struct FinalityTracker {
     /// Current finalization status for each slot.
     status: BTreeMap<Slot, FinalizationStatus>,
     /// Maps blocks to their parents.
@@ -39,7 +39,7 @@ pub struct FinalityTracker {
 
 /// Possible states a slot can be in regarding finality.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FinalizationStatus {
+pub(super) enum FinalizationStatus {
     /// Block with given hash is notarized, but slot is not yet (known to be) finalized.
     Notarized(BlockHash),
     /// Slot is known to be finalized, but we are missing the notarization certificate.
@@ -54,7 +54,7 @@ pub enum FinalizationStatus {
 
 /// Information about newly finalized slots.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FinalizationEvent {
+pub(super) struct FinalizationEvent {
     // TODO: instead use `Option<FinalizationEvent>`?
     /// Directly finalized block, if any.
     pub(super) finalized: Option<BlockId>,
@@ -70,7 +70,7 @@ impl FinalityTracker {
     /// Handles possibly resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
+    pub(super) fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         assert!(block.0 > parent.0);
         match self.parents.entry(block.clone()) {
             Entry::Occupied(e) => {
@@ -105,7 +105,11 @@ impl FinalityTracker {
     /// If the block was newly finalized, handles resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub fn mark_fast_finalized(&mut self, slot: Slot, block_hash: BlockHash) -> FinalizationEvent {
+    pub(super) fn mark_fast_finalized(
+        &mut self,
+        slot: Slot,
+        block_hash: BlockHash,
+    ) -> FinalizationEvent {
         let old = self
             .status
             .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
@@ -135,7 +139,11 @@ impl FinalityTracker {
     /// Further, also handles any possibly resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub fn mark_notarized(&mut self, slot: Slot, block_hash: BlockHash) -> FinalizationEvent {
+    pub(super) fn mark_notarized(
+        &mut self,
+        slot: Slot,
+        block_hash: BlockHash,
+    ) -> FinalizationEvent {
         let old = self
             .status
             .insert(slot, FinalizationStatus::Notarized(block_hash.clone()));
@@ -167,7 +175,7 @@ impl FinalityTracker {
     /// Further, also handles any possibly resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub fn mark_finalized(&mut self, slot: Slot) -> FinalizationEvent {
+    pub(super) fn mark_finalized(&mut self, slot: Slot) -> FinalizationEvent {
         let old = self
             .status
             .insert(slot, FinalizationStatus::FinalPendingNotar);
@@ -194,7 +202,7 @@ impl FinalityTracker {
     ///
     /// This means that slot has a fast finalization OR finalization + notarization.
     /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
-    pub fn highest_finalized_slot(&self) -> Slot {
+    pub(super) fn highest_finalized_slot(&self) -> Slot {
         self.highest_finalized_slot
     }
 

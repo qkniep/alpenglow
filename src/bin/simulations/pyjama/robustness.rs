@@ -26,7 +26,7 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     byzantine: 0.18,
 };
 
-pub fn run_robustness_tests() {
+pub(crate) fn run_robustness_tests() {
     PyjamaParameters::new(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)

@@ -159,7 +159,7 @@ impl TurbineTree {
     ///
     /// This is deterministic, i.e., same parameters result in the same tree.
     /// Only the neighborhood of the validator given by `own_id` is kept.
-    pub fn new(
+    fn new(
         validators: &[ValidatorInfo],
         fanout: usize,
         own_id: ValidatorId,
@@ -209,19 +209,19 @@ impl TurbineTree {
     }
 
     /// Gives the root validator of this Turbine tree.
-    pub const fn get_root(&self) -> ValidatorId {
+    const fn get_root(&self) -> ValidatorId {
         self.root
     }
 
     /// Gives the parent of this validator in the Turbine tree.
     /// Returns `None` iff this validator is the root of the tree.
     #[allow(dead_code)]
-    pub const fn get_parent(&self) -> Option<ValidatorId> {
+    const fn get_parent(&self) -> Option<ValidatorId> {
         self.parent
     }
 
     /// Gives the list of children of this validator in the Turbine tree.
-    pub fn get_children(&self) -> &[ValidatorId] {
+    fn get_children(&self) -> &[ValidatorId] {
         &self.children
     }
 }
