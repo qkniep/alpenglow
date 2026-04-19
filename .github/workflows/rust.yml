@@ -44,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
+      - uses: ./.github/actions/download-data
 
       - name: Tests
         run: ./test.sh ci
@@ -94,6 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-setup
+      - uses: ./.github/actions/download-data
 
       - name: Install llvm-cov
         uses: taiki-e/install-action@v2
