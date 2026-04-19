@@ -65,9 +65,6 @@ hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
 simulations = ["dep:rayon", "dep:statrs"]
 
-[lints.rust]
-unreachable_pub = "warn"
-
 [lints.clippy]
 cast_possible_truncation = "allow"
 
