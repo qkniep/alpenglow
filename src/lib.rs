@@ -29,7 +29,6 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::all2all::All2All;
 pub use self::consensus::Alpenglow;
-pub use self::consensus::votor::VotorEvent;
 use self::crypto::{aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;
@@ -40,7 +39,7 @@ use crate::consensus::{ConsensusMessage, EpochInfo, ValidatorEpochInfo};
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
-use crate::disseminator::rotor::StakeWeightedSampler;
+use crate::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use crate::network::{UdpNetwork, localhost_ip_sockaddr};
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
@@ -91,7 +90,7 @@ pub struct ValidatorInfo {
 
 type TestNode = Alpenglow<
     TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>,
+    Rotor<UdpNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>,
     UdpNetwork<Transaction, Transaction>,
 >;
 

@@ -139,7 +139,9 @@ impl SimulatedNetworkCore {
         // background task: receive and push to buffer
         tokio::spawn(async move {
             while let Some(msg) = pb_rx.recv().await {
-                br_tx.send(msg.payload).await.unwrap();
+                if br_tx.send(msg.payload).await.is_err() {
+                    break;
+                }
             }
         });
 
@@ -181,7 +183,9 @@ impl SimulatedNetworkCore {
             let mut limiter = TokenBucket::new(dl_bw);
             while let Some(msg) = pb_rx.recv().await {
                 limiter.wait_for(msg.payload.len()).await;
-                br_tx.send(msg.payload).await.unwrap();
+                if br_tx.send(msg.payload).await.is_err() {
+                    break;
+                }
             }
         });
 

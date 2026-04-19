@@ -6,7 +6,7 @@
 //!
 
 use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::disseminator::rotor::QuorumSamplingStrategy;
 use log::info;
 use rand::prelude::*;
 use statrs::distribution::{Binomial, DiscreteCDF};
@@ -36,15 +36,16 @@ pub struct RyseInstance {
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
-pub struct RyseInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
+pub struct RyseInstanceBuilder<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     leader_sampler: L,
     relay_sampler: R,
     params: RyseParameters,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> RyseInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> RyseInstanceBuilder<L, R> {
     /// Creates a new builder instance, with the provided sampling strategies.
     pub fn new(leader_sampler: L, relay_sampler: R, params: RyseParameters) -> Self {
+        assert_eq!(relay_sampler.quorum_size(), params.num_relays as usize);
         Self {
             leader_sampler,
             relay_sampler,
@@ -53,20 +54,15 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RyseInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Builder for RyseInstanceBuilder<L, R> {
     type Params = RyseParameters;
     type Instance = RyseInstance;
 
     fn build(&self, rng: &mut impl Rng) -> RyseInstance {
         RyseInstance {
-            leaders: self
-                .leader_sampler
-                .sample_multiple(self.params.num_leaders as usize, rng),
+            leaders: self.leader_sampler.sample_quorum(rng),
             relays: (0..self.params.num_slices)
-                .map(|_| {
-                    self.relay_sampler
-                        .sample_multiple(self.params.num_relays as usize, rng)
-                })
+                .map(|_| self.relay_sampler.sample_quorum(rng))
                 .collect(),
         }
     }

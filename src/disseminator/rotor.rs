@@ -6,9 +6,9 @@
 //! This is an evolution of Solana's original Turbine block dissemination protocol.
 //! Instead of a multi-layered tree, it always uses a single layer of relayers.
 //!
-//! Rotor can be instantiated with any quorum sampling strategy.
-//! Therefore, this module also provides multiple implementation of such.
-//! See also, the [`sampling_strategy`] module and the [`SamplingStrategy`] trait.
+//! Rotor can be instantiated with any [`QuorumSamplingStrategy`].
+//! Therefore, this module also provides multiple implementations of such.
+//! See also, the [`sampling_strategy`] module.
 //!
 //! For an implementation of Turbine, see [`crate::disseminator::turbine::Turbine`].
 
@@ -20,28 +20,33 @@ use async_trait::async_trait;
 use rand::prelude::*;
 
 use self::sampling_strategy::PartitionSampler;
-pub use self::sampling_strategy::{FaitAccompli1Sampler, SamplingStrategy, StakeWeightedSampler};
+pub use self::sampling_strategy::{
+    FaitAccompli1Sampler, IidQuorumSampler, QuorumSamplingStrategy, SamplingStrategy,
+    StakeWeightedSampler,
+};
 use super::Disseminator;
+use crate::ValidatorId;
 use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
-use crate::{Slot, ValidatorId};
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
-pub struct Rotor<N: Network, S: SamplingStrategy> {
+///
+/// Uses a [`QuorumSamplingStrategy`] to select all relays for a slice at once.
+pub struct Rotor<N: Network, S: QuorumSamplingStrategy> {
     network: N,
     sampler: S,
     epoch_info: Arc<ValidatorEpochInfo>,
 }
 
-impl<N: Network> Rotor<N, StakeWeightedSampler> {
+impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
     /// Creates a new Rotor instance with the default sampling strategy.
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
     pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         let validators = epoch_info.epoch_info().validators().to_vec();
-        let sampler = StakeWeightedSampler::new(validators);
+        let sampler = StakeWeightedSampler::new(validators).into_quorum_strategy(TOTAL_SHREDS);
         Self {
             network,
             sampler,
@@ -67,7 +72,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     }
 }
 
-impl<N, S: SamplingStrategy> Rotor<N, S>
+impl<N, S: QuorumSamplingStrategy> Rotor<N, S>
 where
     N: ShredNetwork,
 {
@@ -78,14 +83,16 @@ where
     }
 
     /// Sends the shred to the correct relay.
+    #[hotpath::measure]
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
-        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred);
         let v = self.epoch_info.epoch_info().validator(relay);
         self.network.send(shred, v.disseminator_address).await
     }
 
     /// Broadcasts a shred to all validators except for the leader and itself.
     /// Does nothing if we are not the dedicated relay for this shred.
+    #[hotpath::measure]
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
         let leader = self
             .epoch_info
@@ -94,7 +101,7 @@ where
             .id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred.payload().header.slot, shred.payload().index_in_slot());
+        let relay = self.sample_relay(shred);
         if self.epoch_info.own_id() != relay {
             return Ok(());
         }
@@ -111,21 +118,30 @@ where
         Ok(())
     }
 
-    fn sample_relay(&self, slot: Slot, shred: usize) -> ValidatorId {
+    /// Deterministically samples the relay for a given shred.
+    ///
+    /// Seeds an RNG per slice and calls [`QuorumSamplingStrategy::sample_quorum`]
+    /// to get all relays for that slice, then picks the one at the shred's position.
+    fn sample_relay(&self, shred: &Shred) -> ValidatorId {
+        let slot = shred.payload().header.slot;
+        let slice = shred.payload().header.slice_index.inner();
+        let shred = shred.payload().shred_index.inner();
+
         let seed = [
             slot.inner().to_be_bytes(),
-            shred.to_be_bytes(),
+            slice.to_be_bytes(),
             [0; 8],
             [0; 8],
         ]
         .concat();
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
-        self.sampler.sample(&mut rng)
+        let relays = self.sampler.sample_quorum(&mut rng);
+        relays[shred]
     }
 }
 
 #[async_trait]
-impl<N, S: SamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
+impl<N, S: QuorumSamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
     N: ShredNetwork,
 {
@@ -160,7 +176,7 @@ mod tests {
     use crate::types::slice::create_slice_with_invalid_txs;
     use crate::{Stake, ValidatorId, ValidatorInfo};
 
-    type MyRotor = Rotor<UdpNetwork<Shred, Shred>, StakeWeightedSampler>;
+    type MyRotor = Rotor<UdpNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>;
 
     fn create_rotor_instances(count: u64, base_port: u16) -> (Vec<SecretKey>, Vec<MyRotor>) {
         let mut sks = Vec::new();

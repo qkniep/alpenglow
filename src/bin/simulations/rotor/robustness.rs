@@ -14,7 +14,7 @@
 
 use std::fs::File;
 
-use alpenglow::disseminator::rotor::StakeWeightedSampler;
+use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
@@ -27,8 +27,9 @@ use crate::quorum_robustness::{AdversaryStrength, QuorumRobustnessTest, QuorumTh
 
 pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
-    let leader_sampler = StakeWeightedSampler::new(validators.clone());
-    let rotor_sampler = StakeWeightedSampler::new(validators.clone());
+    let leader_sampler = StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(1);
+    let rotor_sampler =
+        StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(total_shreds);
 
     let params = RotorParams {
         data_shreds,
@@ -58,6 +59,7 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Res
     let test = QuorumRobustnessTest::new(
         validators,
         "solana".to_string(),
+        "stake_weighted".to_string(),
         vec![leader_sampler, rotor_sampler],
         vec![1; params.slices],
         vec![params.shreds; params.slices],
@@ -73,6 +75,9 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Res
         .join("output")
         .join(filename)
         .with_extension("csv");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
     let file = File::create(path).unwrap();
     let mut csv_file = csv::Writer::from_writer(file);
 

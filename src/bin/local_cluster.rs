@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 
 use alpenglow::{create_test_nodes, logging};
+use clap::Parser;
 use color_eyre::Result;
 use fastrace::collector::Config;
 use fastrace::prelude::*;
@@ -13,10 +14,18 @@ use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 
+/// Local Alpenglow cluster for testing and development.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Args {}
+
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<()> {
     // enable fancy `color_eyre` error messages
     color_eyre::install()?;
+
+    Args::parse();
 
     // enable `fastrace` tracing
     let reporter = OpenTelemetryReporter::new(
@@ -44,7 +53,7 @@ async fn main() -> Result<()> {
         let parent = SpanContext::random();
 
         // spawn local cluster
-        let nodes = create_test_nodes(2);
+        let nodes = create_test_nodes(6);
         let mut node_tasks = Vec::new();
         let mut cancel_tokens = Vec::new();
         for (i, node) in nodes.into_iter().enumerate() {

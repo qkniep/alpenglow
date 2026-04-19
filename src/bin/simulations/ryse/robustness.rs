@@ -66,6 +66,7 @@ pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
     let test = QuorumRobustnessTest::new(
         validators,
         "solana".to_string(),
+        "fa1_iid".to_string(),
         vec![proposer_sampler, relay_sampler],
         vec![0, 1],
         vec![params.num_leaders as usize, params.num_relays as usize],
@@ -81,6 +82,9 @@ pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
         .join("output")
         .join(filename)
         .with_extension("csv");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let file = File::create(path)?;
     let mut csv_file = csv::Writer::from_writer(file);
 
