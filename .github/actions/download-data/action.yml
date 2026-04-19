@@ -12,6 +12,7 @@ runs:
         key: data-v1  # Change this if the dataset version changes
 
     - name: Download data if needed
+      shell: bash
       run: |
         if [ ! -f data/dataset.ok ]; then
           ./download_data.sh
