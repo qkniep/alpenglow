@@ -438,6 +438,9 @@ impl Blockstore for BlockstoreImpl {
         Some(tree.create_proof(slice_index.inner()))
     }
 
+    // NOTE: This is currently only used in block production.
+    // It currently only supports a single waiter per slot.
+    // Trying to wait on the same slot twice will panic.
     fn wait_for_disseminated_block(
         &mut self,
         slot: Slot,
@@ -446,7 +449,7 @@ impl Blockstore for BlockstoreImpl {
             return Either::Left(hash.clone());
         }
         let (tx, rx) = oneshot::channel();
-        self.block_waiters.insert(slot, tx);
+        assert!(self.block_waiters.insert(slot, tx).is_none());
         Either::Right(rx)
     }
 }
