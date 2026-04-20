@@ -142,10 +142,7 @@ async fn run_benchmark_level(
     }
 
     // Limit load_nodes to available nodes.
-    let load_addrs: Vec<SocketAddr> = tx_addrs
-        .into_iter()
-        .take(load_nodes.max(1))
-        .collect();
+    let load_addrs: Vec<SocketAddr> = tx_addrs.into_iter().take(load_nodes.max(1)).collect();
     let injector = tokio::spawn(inject_load(target_tps, tx_size, load_addrs));
 
     // Warmup: let the cluster stabilize, then discard all events so far.
@@ -242,8 +239,7 @@ async fn inject_load(target_tps: u64, tx_size: usize, addrs: Vec<SocketAddr>) {
     let txs_per_burst =
         ((target_tps as f64 * burst_interval_ms as f64 / 1000.0).ceil() as u64).max(1);
 
-    let mut interval =
-        tokio::time::interval(Duration::from_millis(burst_interval_ms));
+    let mut interval = tokio::time::interval(Duration::from_millis(burst_interval_ms));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut addr_idx: usize = 0;
@@ -253,9 +249,7 @@ async fn inject_load(target_tps: u64, tx_size: usize, addrs: Vec<SocketAddr>) {
             rng.fill_bytes(&mut buf);
             let tx = Transaction(buf.clone());
             if let Ok(bytes) = wincode::serialize(&tx) {
-                let _ = socket
-                    .send_to(&bytes, addrs[addr_idx % addrs.len()])
-                    .await;
+                let _ = socket.send_to(&bytes, addrs[addr_idx % addrs.len()]).await;
                 addr_idx = addr_idx.wrapping_add(1);
             }
         }
@@ -353,10 +347,8 @@ async fn create_test_nodes(count: u64) -> (Vec<TestNode>, Vec<SocketAddr>) {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr(id.try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
-        let repair_request_address =
-            localhost_ip_sockaddr(repair_networks[id as usize].port());
-        let repair_response_address =
-            localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id: ValidatorId::new(id),
             stake: Stake::new(1),
