@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use either::Either;
+use log::debug;
 use tokio::sync::oneshot;
 
 use crate::BlockId;
@@ -230,14 +231,10 @@ impl FinalityTracker {
         event.finalized = Some(finalized.clone());
         self.highest_finalized_slot = slot.max(self.highest_finalized_slot);
 
-        let waiters = std::mem::take(&mut self.finalization_waiters);
-        for (threshold, tx) in waiters {
-            if self.highest_finalized_slot >= threshold {
-                let _ = tx.send(());
-            } else {
-                self.finalization_waiters.push((threshold, tx));
-            }
-        }
+        self.finalization_waiters
+            .extract_if(.., |(s, _)| self.highest_finalized_slot >= *s)
+            .map(|(_, tx)| tx.send(()))
+            .for_each(|_| debug!("finalization waiter dropped"));
 
         if let Some(parent) = self.parents.get(&finalized).cloned() {
             self.handle_implicitly_finalized(slot, parent, event);
