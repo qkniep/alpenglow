@@ -15,25 +15,25 @@ use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Pyjama MCP protocol.
 #[derive(Clone, Copy, Debug)]
-pub struct PyjamaParameters {
-    pub num_proposers: u64,
-    pub num_relays: u64,
-    pub can_decode_threshold: u64,
-    pub should_decode_threshold: u64,
-    pub attestations_threshold: u64,
-    pub num_slices: u64,
+pub(crate) struct PyjamaParameters {
+    pub(crate) num_proposers: u64,
+    pub(crate) num_relays: u64,
+    pub(crate) can_decode_threshold: u64,
+    pub(crate) should_decode_threshold: u64,
+    pub(crate) attestations_threshold: u64,
+    pub(crate) num_slices: u64,
 }
 
 /// Specific instance of the Ryse protocol.
-pub struct PyjamaInstance {
-    pub leader: ValidatorId,
-    pub proposers: Vec<ValidatorId>,
-    pub relays: Vec<ValidatorId>,
-    pub params: PyjamaParameters,
+pub(crate) struct PyjamaInstance {
+    pub(crate) leader: ValidatorId,
+    pub(crate) proposers: Vec<ValidatorId>,
+    pub(crate) relays: Vec<ValidatorId>,
+    pub(crate) params: PyjamaParameters,
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
-pub struct PyjamaInstanceBuilder<
+pub(crate) struct PyjamaInstanceBuilder<
     L: SamplingStrategy,
     P: QuorumSamplingStrategy,
     R: QuorumSamplingStrategy,
@@ -51,7 +51,7 @@ where
     R: QuorumSamplingStrategy,
 {
     /// Creates a new builder instance, with the provided sampling strategies.
-    pub fn new(
+    pub(crate) fn new(
         leader_sampler: L,
         proposer_sampler: P,
         relay_sampler: R,
@@ -96,14 +96,14 @@ where
 
 /// Adversary strength.
 #[derive(Clone, Copy, Debug)]
-pub struct AdversaryStrength {
-    pub crashed: f64,
-    pub byzantine: f64,
+pub(crate) struct AdversaryStrength {
+    pub(crate) crashed: f64,
+    pub(crate) byzantine: f64,
 }
 
 impl PyjamaParameters {
     /// Generates a new balanced parameter set, equally resistant against all attacks.
-    pub fn new(num_proposers: u64, num_relays: u64) -> Self {
+    pub(crate) fn new(num_proposers: u64, num_relays: u64) -> Self {
         Self {
             num_proposers,
             num_relays,
@@ -115,7 +115,7 @@ impl PyjamaParameters {
     }
 
     /// Generates a new parameter set based on the first ones proposed in the PJM paper.
-    pub fn new_paper1(num_proposers: u64, num_relays: u64) -> Self {
+    pub(crate) fn new_paper1(num_proposers: u64, num_relays: u64) -> Self {
         Self {
             num_proposers,
             num_relays,
@@ -127,7 +127,7 @@ impl PyjamaParameters {
     }
 
     /// Generates a new parameter set based on the second ones proposed in the PJM paper.
-    pub fn new_paper2(num_proposers: u64, num_relays: u64) -> Self {
+    pub(crate) fn new_paper2(num_proposers: u64, num_relays: u64) -> Self {
         Self {
             num_proposers,
             num_relays,
@@ -139,7 +139,7 @@ impl PyjamaParameters {
     }
 
     /// Generates a new parameter set prioritizing hiding over liveness.
-    pub fn new_hiding(num_proposers: u64, num_relays: u64) -> Self {
+    pub(crate) fn new_hiding(num_proposers: u64, num_relays: u64) -> Self {
         Self {
             num_proposers,
             num_relays,
@@ -151,7 +151,7 @@ impl PyjamaParameters {
     }
 
     /// Generates a new parameter set prioritizing liveness over hiding.
-    pub fn new_liveness(num_proposers: u64, num_relays: u64) -> Self {
+    pub(crate) fn new_liveness(num_proposers: u64, num_relays: u64) -> Self {
         Self {
             num_proposers,
             num_relays,
@@ -163,7 +163,7 @@ impl PyjamaParameters {
     }
 
     /// Generates a new parameter set prioritizing permanent liveness failures over all others.
-    pub fn new_permanent_liveness(num_proposers: u64, num_relays: u64) -> Self {
+    pub(crate) fn new_permanent_liveness(num_proposers: u64, num_relays: u64) -> Self {
         Self {
             num_proposers,
             num_relays,
@@ -175,7 +175,7 @@ impl PyjamaParameters {
     }
 
     /// Proobability that the adversary can break the hiding property in a slot.
-    pub fn break_hiding_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn break_hiding_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that the adversary controls enough relays to decrypt
         let byzantine = adv_strength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
@@ -186,7 +186,7 @@ impl PyjamaParameters {
     /// Probability that the adversary can selectively censor proposers in a slot.
     //
     // just as hard with `num_relays - attestations_threshold` crashed nodes
-    pub fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
         let proposers_dist = Binomial::new(failed, self.num_proposers).unwrap();
@@ -203,7 +203,10 @@ impl PyjamaParameters {
     }
 
     /// Probability that the adversary can cause a temporary liveness failure in a slot.
-    pub fn temporary_liveness_failure_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn temporary_liveness_failure_probability(
+        &self,
+        adv_strength: AdversaryStrength,
+    ) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
         let proposers_dist = Binomial::new(failed, self.num_proposers).unwrap();
@@ -227,7 +230,10 @@ impl PyjamaParameters {
     ///
     /// The adversary can achieve this by withholding enough shreds that should be revealed.
     /// This analyzes the worst case where a batch got `self.should_decode_threshold` attestations.
-    pub fn permanent_liveness_failure_probability(&self, adv_stength: AdversaryStrength) -> f64 {
+    pub(crate) fn permanent_liveness_failure_probability(
+        &self,
+        adv_stength: AdversaryStrength,
+    ) -> f64 {
         // probability that the adversary can withhold enough shreds
         let byzantine = adv_stength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
@@ -238,7 +244,7 @@ impl PyjamaParameters {
     /// Calculates and prints attack sucess probabilities.
     ///
     /// Capabilities of the adversary are specified in the `adv_strength` parameter.
-    pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
+    pub(crate) fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
             "Pyjama parameters: proposers={}, relays={}, {:.2}/{:.2}/{:.2}",
             self.num_proposers,

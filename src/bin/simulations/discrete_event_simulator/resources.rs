@@ -14,8 +14,8 @@ use crate::discrete_event_simulator::SimTime;
 /// Tracks resource utilization across all resources and validators.
 // TODO: add other resources
 #[derive(Clone, Debug)]
-pub struct Resources {
-    pub network: Resource,
+pub(crate) struct Resources {
+    pub(crate) network: Resource,
     // pub cpu: Resource,
 }
 
@@ -23,7 +23,7 @@ impl Resources {
     /// Creates a new resource utilization tracker.
     ///
     /// All validators start with all resources free to be used.
-    pub fn new(num_validators: usize) -> Self {
+    pub(crate) fn new(num_validators: usize) -> Self {
         Self {
             network: Resource::new(num_validators),
             // cpu: Resource::new(num_validators),
@@ -33,7 +33,7 @@ impl Resources {
 
 /// Tracks resource utilization for a single resource.
 #[derive(Clone, Debug)]
-pub struct Resource {
+pub(crate) struct Resource {
     next_free: Vec<SimTime>,
 }
 
@@ -41,19 +41,19 @@ impl Resource {
     /// Creates a new resource.
     ///
     /// All validators start with this resource free to be used.
-    pub fn new(num_validators: usize) -> Self {
+    pub(crate) fn new(num_validators: usize) -> Self {
         Self {
             next_free: vec![SimTime::ZERO; num_validators],
         }
     }
 
     /// Returns the next time this resource will be free.
-    pub fn time_next_free(&self, validator: ValidatorId) -> SimTime {
+    pub(crate) fn time_next_free(&self, validator: ValidatorId) -> SimTime {
         self.next_free[validator.as_index()]
     }
 
     /// Returns the next time this resource will be free, after `time`.
-    pub fn time_next_free_after(&self, validator: ValidatorId, time: SimTime) -> SimTime {
+    pub(crate) fn time_next_free_after(&self, validator: ValidatorId, time: SimTime) -> SimTime {
         time.max(self.time_next_free(validator))
     }
 
@@ -61,7 +61,7 @@ impl Resource {
     ///
     /// First, finds the next time this resource will be free after `target_start_time`.
     /// Then, reserves the resource for `duration` starting at that time.
-    pub fn schedule(
+    pub(crate) fn schedule(
         &mut self,
         validator: ValidatorId,
         target_start_time: SimTime,

@@ -28,7 +28,7 @@ const VOTE_SIZE: usize = 128 /* sig */ + 64 /* slot, hash, flags */;
 const CERT_SIZE: usize = 128 /* sig */ + 256 /* bitmap */ + 64 /* slot, hash, flags */;
 
 /// Marker type for the Ryse latency simulation.
-pub struct RyseLatencySimulation<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
+pub(crate) struct RyseLatencySimulation<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
@@ -45,7 +45,7 @@ impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Protocol
 
 /// The sequential stages of the latency test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyTestStage {
+pub(crate) enum LatencyTestStage {
     Direct,
     Rotor,
     Block,
@@ -102,7 +102,7 @@ impl Stage for LatencyTestStage {
 
 /// Events that can occur at each validator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyEvent {
+pub(crate) enum LatencyEvent {
     // proposal dissemination
     BlockSent,
     Direct(u64),
@@ -339,7 +339,7 @@ impl Event for LatencyEvent {
 
 /// Parameters for the Ryse latency simulation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct LatencySimParams {
+pub(crate) struct LatencySimParams {
     ryse_params: RyseParameters,
     num_slots_per_window: usize,
     num_slots: usize,
@@ -347,7 +347,11 @@ pub struct LatencySimParams {
 
 impl LatencySimParams {
     /// Creates a parameter set for the Ryse latency simulation.
-    pub fn new(ryse_params: RyseParameters, num_slots_per_window: usize, num_slots: usize) -> Self {
+    pub(crate) fn new(
+        ryse_params: RyseParameters,
+        num_slots_per_window: usize,
+        num_slots: usize,
+    ) -> Self {
         Self {
             ryse_params,
             num_slots_per_window,
@@ -357,14 +361,14 @@ impl LatencySimParams {
 }
 
 /// A builder for Ryse latency simulation instances.
-pub struct LatencySimInstanceBuilder<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
+pub(crate) struct LatencySimInstanceBuilder<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     ryse_builder: RyseInstanceBuilder<L, R>,
     params: LatencySimParams,
 }
 
 impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> LatencySimInstanceBuilder<L, R> {
     /// Creates a new builder instance from a builder for Rotor instances.
-    pub fn new(ryse_builder: RyseInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
+    pub(crate) fn new(ryse_builder: RyseInstanceBuilder<L, R>, params: LatencySimParams) -> Self {
         Self {
             ryse_builder,
             params,
@@ -396,7 +400,7 @@ impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Builder
 /// A specific instance of the Ryse latency simulation.
 ///
 /// Contains one instance of the Ryse protocol, [`RyseInstance`], per slot.
-pub struct LatencySimInstance {
+pub(crate) struct LatencySimInstance {
     ryse_instances: Vec<RyseInstance>,
     params: LatencySimParams,
 }
