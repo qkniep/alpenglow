@@ -374,7 +374,7 @@ where
     let ret = loop {
         let sleep_duration = duration_left.saturating_sub(start_time.elapsed());
         let res = tokio::select! {
-            () = sleep(sleep_duration) => {
+            () = tokio::time::sleep(sleep_duration) => {
                 break Duration::ZERO;
             }
             res = txs_receiver.receive() => res,
