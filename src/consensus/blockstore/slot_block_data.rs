@@ -43,7 +43,7 @@ impl From<ShredVerifyError> for AddShredError {
 }
 
 /// Holds all data corresponding to any blocks for a single slot.
-pub struct SlotBlockData {
+pub(super) struct SlotBlockData {
     /// Slot number this data corresponds to.
     slot: Slot,
     /// Spot for storing the block that was received via block dissemination.
@@ -57,7 +57,7 @@ pub struct SlotBlockData {
 
 impl SlotBlockData {
     /// Creates a new empty structure for a slot's block data.
-    pub fn new(slot: Slot) -> Self {
+    pub(super) fn new(slot: Slot) -> Self {
         Self {
             slot,
             disseminated: BlockData::new(slot),
@@ -69,7 +69,7 @@ impl SlotBlockData {
     /// Adds a shred receive via block dissemination in the corresponding spot.
     ///
     /// Performs the necessary validity checks, including checks for leader equivocation.
-    pub fn add_shred_from_disseminator(
+    pub(super) fn add_shred_from_disseminator(
         &mut self,
         shred: Shred,
         leader_pk: PublicKey,
@@ -94,7 +94,7 @@ impl SlotBlockData {
     ///
     /// Unlike [`Self::add_shred_from_disseminator`], this skips shred validation and
     /// equivocation checks since the leader produced the shred itself.
-    pub fn add_own_shred_as_leader(
+    pub(super) fn add_own_shred_as_leader(
         &mut self,
         validated_shred: ValidatedShred,
         shredder: &mut RegularShredder,
@@ -106,7 +106,7 @@ impl SlotBlockData {
     /// Adds a shred received via repair to the spot given by block hash.
     ///
     /// Performs the necessary validity checks, all but leader equivocation.
-    pub fn add_shred_from_repair(
+    pub(super) fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
         shred: Shred,
@@ -151,7 +151,7 @@ enum ReconstructBlockResult {
 }
 
 /// Holds all data corresponding to a single block.
-pub struct BlockData {
+pub(super) struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
     /// Potentially completely restored block.
@@ -170,7 +170,7 @@ pub struct BlockData {
 
 impl BlockData {
     /// Create a new spot for storing data of a single block.
-    pub fn new(slot: Slot) -> Self {
+    pub(super) fn new(slot: Slot) -> Self {
         Self {
             slot,
             completed: None,

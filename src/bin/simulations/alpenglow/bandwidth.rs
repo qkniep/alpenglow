@@ -27,7 +27,7 @@ use rand::prelude::*;
 ///
 /// This is a wrapper around [`WorkloadTest`].
 /// It augments the workload test with bandwidth information.
-pub struct BandwidthTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
+pub(crate) struct BandwidthTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     leader_bandwidth: u64,
     bandwidths: Vec<u64>,
     workload_test: WorkloadTest<L, R>,
@@ -37,7 +37,7 @@ pub struct BandwidthTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
 ///
 /// This simulates the distribution of shreds via Rotor.
 /// It tracks the workload (number of shreds/datagrams sent) for each validator.
-pub struct WorkloadTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
+struct WorkloadTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     validators: Vec<ValidatorInfo>,
     leader_sampler: L,
     rotor_sampler: R,
@@ -48,7 +48,7 @@ pub struct WorkloadTest<L: SamplingStrategy, R: QuorumSamplingStrategy> {
 
 impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
     /// Creates a new instance with the given stake and bandwidth distribution.
-    pub fn new(
+    pub(crate) fn new(
         validators: &[ValidatorInfo],
         leader_bandwidth: u64,
         bandwidths: Vec<u64>,
@@ -78,7 +78,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
     /// Each iteration corresponds to distributing one slice, sampling leader
     /// and relays. This only modifies the internal state of the workload test.
     /// Calling `evaluate_supported` or `evaluate_usage` will output the results.
-    pub fn run_multiple(&mut self, slices: usize) {
+    pub(crate) fn run_multiple(&mut self, slices: usize) {
         self.workload_test.run_multiple(slices);
     }
 
@@ -86,7 +86,11 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
     ///
     /// Writes the results to the given CSV file.
     /// This is only meaningful after `run_multiple` has been called.
-    pub fn evaluate_supported(&self, test_name: &str, csv_file: &Arc<Mutex<csv::Writer<File>>>) {
+    pub(crate) fn evaluate_supported(
+        &self,
+        test_name: &str,
+        csv_file: &Arc<Mutex<csv::Writer<File>>>,
+    ) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let seconds =
             (8 * MAX_DATA_PER_SHRED as u64 * leader_workload) as f64 / self.leader_bandwidth as f64;
@@ -121,7 +125,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
     ///
     /// Writes the results to the given CSV file.
     /// This is only meaningful after `run_multiple` has been called.
-    pub fn evaluate_usage(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
+    pub(crate) fn evaluate_usage(&self, test_name: &str, csv_file: Arc<Mutex<csv::Writer<File>>>) {
         let (leader_workload, workload) = self.workload_test.get_workload();
         let mut bandwidth_usage = vec![(0.0, 0); workload.len()];
         for (i, shreds) in workload.iter().enumerate() {
@@ -165,14 +169,14 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
     /// Resets the internal state.
     ///
     /// This is useful for running multiple independent tests.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.workload_test.reset();
     }
 }
 
 impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
     /// Creates a new instance with the given stake distribution.
-    pub fn new(validators: &[ValidatorInfo], leader_sampler: L, rotor_sampler: R) -> Self {
+    fn new(validators: &[ValidatorInfo], leader_sampler: L, rotor_sampler: R) -> Self {
         let num_val = validators.len();
         Self {
             validators: validators.to_vec(),
@@ -185,14 +189,14 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
     }
 
     /// Returns the number of shreds per slice (quorum size from the sampler).
-    pub fn num_shreds(&self) -> usize {
+    fn num_shreds(&self) -> usize {
         self.rotor_sampler.quorum_size()
     }
 
     /// Simulates distribution of `slices` slices via Rotor.
     ///
     /// Adds the workload from these iterations to the running totals.
-    pub fn run_multiple(&mut self, slices: usize) {
+    fn run_multiple(&mut self, slices: usize) {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         for _ in 0..slices {
             self.run_one(&mut rng);
@@ -202,7 +206,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
     /// Simulates distribution of one slice via Rotor.
     ///
     /// Adds the workload from this iteration to the running totals.
-    pub fn run_one(&mut self, rng: &mut impl Rng) {
+    fn run_one(&mut self, rng: &mut impl Rng) {
         let num_shreds = self.rotor_sampler.quorum_size();
         let leader = self.leader_sampler.sample(rng);
         self.leader_workload += num_shreds as u64;
@@ -220,14 +224,14 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
     /// Resets the internal state.
     ///
     /// This is useful for running multiple independent tests.
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.workload = vec![0; self.validators.len()];
     }
 
     /// Returns the workload for the leader and the workload per validator.
     ///
     /// Workload is defined as the total number of shreds sent by each.
-    pub fn get_workload(&self) -> (u64, &[u64]) {
+    fn get_workload(&self) -> (u64, &[u64]) {
         (self.leader_workload, &self.workload)
     }
 }

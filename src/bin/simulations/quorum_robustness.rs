@@ -36,15 +36,15 @@ const MAX_FAILURES: usize = 100;
 
 /// Adversary strength.
 #[derive(Clone, Copy, Debug)]
-pub struct AdversaryStrength {
+pub(crate) struct AdversaryStrength {
     /// Fraction of stake that may crash.
-    pub crashed: f64,
+    pub(crate) crashed: f64,
     /// Fraction of stake that may be arbitrarily controlled by the adversary.
-    pub byzantine: f64,
+    pub(crate) byzantine: f64,
 }
 
 /// Test harness for quorum robustness testing.
-pub struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
+pub(crate) struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
     samplers: Vec<S>,
     quorum_samplers: Vec<usize>,
     quorum_sizes: Vec<usize>,
@@ -61,7 +61,7 @@ pub struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
 
 impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Creates a new instance of the test harness.
-    pub fn new(
+    pub(crate) fn new(
         validators: Vec<ValidatorInfo>,
         stake_distribution: String,
         sampling_strategy: String,
@@ -96,7 +96,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Returns the failure probability for the strongest adversary strategy.
     ///
     /// Results are written as a single line into `csv_file`.
-    pub fn run(
+    pub(crate) fn run(
         &self,
         adversary_strength: AdversaryStrength,
         csv_file: &mut csv::Writer<File>,
@@ -402,7 +402,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
 
 /// Named wrapper for a [`QuorumThreshold`].
 #[derive(Clone, Debug)]
-pub struct QuorumAttack {
+pub(crate) struct QuorumAttack {
     name: String,
     quorum: QuorumThreshold,
 }
@@ -417,7 +417,7 @@ impl QuorumAttack {
 ///
 /// This is used to model different attack scenarios in [`QuorumRobustnessTest`].
 #[derive(Clone, Debug)]
-pub enum QuorumThreshold {
+pub(crate) enum QuorumThreshold {
     /// This threshold is reached if the `quorum` contains at least `threshold` corrupted validators.
     ///
     /// Where "corrupted" means Byzantine (plus crashed if `is_crash_enough` is true).
@@ -435,7 +435,7 @@ pub enum QuorumThreshold {
 
 impl QuorumThreshold {
     /// Returns a [`QuorumThreshold`] that is the logical OR of `self` and `other`.
-    pub fn or(self, other: Self) -> Self {
+    pub(crate) fn or(self, other: Self) -> Self {
         if let Self::Any(mut thresholds) = self {
             thresholds.push(other);
             Self::Any(thresholds)
@@ -445,7 +445,7 @@ impl QuorumThreshold {
     }
 
     /// Turns this [`QuorumThreshold`] into a [`QuorumAttack`] with the given name.
-    pub fn into_attack(self, name: &str) -> QuorumAttack {
+    pub(crate) fn into_attack(self, name: &str) -> QuorumAttack {
         QuorumAttack {
             name: name.to_owned(),
             quorum: self,

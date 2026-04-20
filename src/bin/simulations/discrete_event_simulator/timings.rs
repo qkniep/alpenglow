@@ -24,16 +24,16 @@ use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, St
 /// Simulated time in nanoseconds.
 // TODO: maybe split into a duration and an instant type?
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SimTime(u64);
+pub(crate) struct SimTime(u64);
 
 impl SimTime {
     /// Start of the simulation.
-    pub const ZERO: Self = Self(0);
+    pub(crate) const ZERO: Self = Self(0);
     /// Infinite time, used to represent a point in time that is never reached.
-    pub const NEVER: Self = Self(u64::MAX);
+    pub(crate) const NEVER: Self = Self(u64::MAX);
 
     /// Constructs a new [`SimTime`] from the given number of nanoseconds.
-    pub const fn new(time_ns: u64) -> Self {
+    pub(crate) const fn new(time_ns: u64) -> Self {
         Self(time_ns)
     }
 
@@ -44,14 +44,14 @@ impl SimTime {
     /// # Panics
     ///
     /// Panics if `time_secs` is negative.
-    pub const fn from_secs(time_secs: f64) -> Self {
+    pub(crate) const fn from_secs(time_secs: f64) -> Self {
         assert!(time_secs >= 0.0);
         let time_ns = (time_secs * 1e9).round() as u64;
         Self::new(time_ns)
     }
 
     /// Returns the exact number of nanoseconds the [`SimTime`] represents.
-    pub const fn nanos(self) -> Option<u64> {
+    pub(crate) const fn nanos(self) -> Option<u64> {
         match self {
             Self::NEVER => None,
             Self(t) => Some(t),
@@ -59,19 +59,19 @@ impl SimTime {
     }
 
     /// Converts the [`SimTime`] to (fractional) microseconds.
-    pub fn as_micros(self) -> f64 {
+    pub(crate) fn as_micros(self) -> f64 {
         self.nanos()
             .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e3)
     }
 
     /// Converts the [`SimTime`] to (fractional) milliseconds.
-    pub fn as_millis(self) -> f64 {
+    pub(crate) fn as_millis(self) -> f64 {
         self.nanos()
             .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e6)
     }
 
     /// Converts the [`SimTime`] to (fractional) seconds.
-    pub fn as_secs(self) -> f64 {
+    pub(crate) fn as_secs(self) -> f64 {
         self.nanos()
             .map_or(f64::INFINITY, |nanos| nanos as f64 / 1e9)
     }
@@ -107,14 +107,14 @@ impl Display for SimTime {
 }
 
 /// The timing matrix, implemented as a map from events to timing vectors.
-pub struct Timings<E: Event> {
+pub(crate) struct Timings<E: Event> {
     start_time: SimTime,
     event_timings: HashMap<E, Vec<SimTime>>,
 }
 
 impl<E: Event> Timings<E> {
     /// Constructs a new [`Timings`] from the given start time.
-    pub fn new(start_time: SimTime) -> Self {
+    pub(crate) fn new(start_time: SimTime) -> Self {
         Self {
             start_time,
             event_timings: HashMap::new(),
@@ -122,18 +122,18 @@ impl<E: Event> Timings<E> {
     }
 
     /// Initializes the timing vector for the given event to infinity.
-    pub fn initialize(&mut self, event: E, num_val: usize) {
+    pub(crate) fn initialize(&mut self, event: E, num_val: usize) {
         self.event_timings
             .insert(event, vec![SimTime::NEVER; num_val]);
     }
 
     /// Deletes all the rows from the [`HashMap`].
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.event_timings.clear();
     }
 
     /// Records the latency for the given event and validator.
-    pub fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
+    pub(crate) fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
         let vec = self.event_timings.get_mut(&event).unwrap();
         let entry = vec.get_mut(validator.as_index()).unwrap();
         if timing < *entry {
@@ -142,17 +142,17 @@ impl<E: Event> Timings<E> {
     }
 
     /// Returns the start time.
-    pub fn start_time(&self) -> SimTime {
+    pub(crate) fn start_time(&self) -> SimTime {
         self.start_time
     }
 
     /// Returns the timing vector for the given event.
-    pub fn get(&self, event: E) -> Option<&[SimTime]> {
+    pub(crate) fn get(&self, event: E) -> Option<&[SimTime]> {
         self.event_timings.get(&event).map(Vec::as_slice)
     }
 
     /// Iterates over timing vectors for all events.
-    pub fn iter(&self) -> impl Iterator<Item = (&E, &[SimTime])> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&E, &[SimTime])> {
         self.event_timings.iter().map(|(k, v)| (k, v.as_slice()))
     }
 }
@@ -164,13 +164,13 @@ impl<E: Event> Default for Timings<E> {
 }
 
 /// Stats tracker for timings across all events and multiple simulation runs.
-pub struct TimingStats<P: Protocol>(HashMap<P::Event, EventTimingStats>);
+pub(crate) struct TimingStats<P: Protocol>(HashMap<P::Event, EventTimingStats>);
 
 impl<P: Protocol> TimingStats<P> {
     /// Records the timing statistics for all events.
     ///
     /// Updates the [`EventTimingStats`] corresponding to each event.
-    pub fn record_latencies(
+    pub(crate) fn record_latencies(
         &mut self,
         timings: &mut Timings<P::Event>,
         environment: &SimulationEnvironment,
@@ -187,12 +187,12 @@ impl<P: Protocol> TimingStats<P> {
     }
 
     /// References the [`EventTimingStats`] for the given event, if it exists.
-    pub fn get(&self, event: &P::Event) -> Option<&EventTimingStats> {
+    pub(crate) fn get(&self, event: &P::Event) -> Option<&EventTimingStats> {
         self.0.get(event)
     }
 
     /// Writes percentiles to a CSV file.
-    pub fn write_to_csv(
+    pub(crate) fn write_to_csv(
         &self,
         filename: impl AsRef<Path>,
         params: &P::Params,
@@ -246,7 +246,7 @@ impl<P: Protocol> Default for TimingStats<P> {
 }
 
 /// Stats tracker for timings of a single event across multiple simulation runs.
-pub struct EventTimingStats {
+pub(crate) struct EventTimingStats {
     sum_percentile_latencies: [f64; 100],
     percentile_location: Vec<HashMap<String, f64>>,
     count: u64,
@@ -254,7 +254,11 @@ pub struct EventTimingStats {
 
 impl EventTimingStats {
     /// Updates the aggregate stats based on the timing vector from a single run.
-    pub fn record_latencies(&mut self, latencies: &[SimTime], environment: &SimulationEnvironment) {
+    pub(crate) fn record_latencies(
+        &mut self,
+        latencies: &[SimTime],
+        environment: &SimulationEnvironment,
+    ) {
         let mut latencies = latencies
             .iter()
             .enumerate()
@@ -291,7 +295,7 @@ impl EventTimingStats {
     }
 
     /// Returns the average timing for a given percentile in milliseconds.
-    pub fn get_avg_percentile_latency(&self, percentile: u8) -> f64 {
+    pub(crate) fn get_avg_percentile_latency(&self, percentile: u8) -> f64 {
         assert!(percentile > 0 && percentile <= 100);
         let sum = self.sum_percentile_latencies[percentile as usize - 1];
         sum / self.count as f64
