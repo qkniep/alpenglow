@@ -52,7 +52,7 @@ const_assert_eq!(std::mem::size_of::<usize>(), 8);
 pub type BlockId = (Slot, BlockHash);
 
 /// Maximum number of bytes a transaction payload can contain.
-const MAX_TRANSACTION_SIZE: usize = 512;
+pub const MAX_TRANSACTION_SIZE: usize = 512;
 
 /// Parsed block with information about parent and transactions as payload.
 #[derive(Clone, Debug)]
@@ -114,7 +114,7 @@ impl Networks {
     }
 }
 
-/// Creates [`TestNode`] for testing and benchmarking purposes.
+/// Creates [`Alpenglow`] instances for testing and benchmarking purposes.
 ///
 /// This code lives here to enable sharing between different testing and benchmarking.
 /// It should not be used in production code.

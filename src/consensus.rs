@@ -23,7 +23,7 @@ mod cert;
 mod epoch_info;
 mod pool;
 mod vote;
-pub(crate) mod votor;
+mod votor;
 
 use std::marker::{Send, Sync};
 use std::num::NonZeroU64;
@@ -40,11 +40,11 @@ use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
-pub use self::cert::{Cert, NotarCert};
+pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
-use self::votor::Votor;
+pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};

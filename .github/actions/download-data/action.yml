@@ -1,0 +1,20 @@
+name: "Download test data"
+description: "Downloads and caches the datasets used in tests"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache downloaded data
+      id: cache-data
+      uses: actions/cache@v5
+      with:
+        path: ./data
+        key: data-v1  # Change this if the dataset version changes
+
+    - name: Download data if needed
+      shell: bash
+      run: |
+        if [ ! -f data/dataset.ok ]; then
+          ./download_data.sh
+          touch data/dataset.ok
+        fi
