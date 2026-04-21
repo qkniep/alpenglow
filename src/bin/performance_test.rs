@@ -13,8 +13,7 @@ use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
-use alpenglow::network::simulated::SimulatedNetworkCore;
-use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::network::{UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
@@ -30,7 +29,7 @@ use tokio::sync::mpsc;
 #[command(version, about)]
 struct Args {
     /// Number of simulated validator nodes.
-    #[arg(long, default_value_t = 11)]
+    #[arg(long, default_value_t = 2)]
     num_nodes: usize,
 
     /// Duration of the measurement window per load level, in seconds.
@@ -113,17 +112,23 @@ async fn run_benchmark_level(
     warmup_secs: u64,
     duration_secs: u64,
 ) -> BenchResult {
-    let (nodes, tx_addrs) = create_test_nodes(num_nodes as u64).await;
+    let (nodes, tx_addrs) = create_test_nodes(num_nodes as u64);
 
-    // Each node monitor sends (timestamp, slot) on this channel.
-    let (fin_tx, mut fin_rx) = mpsc::unbounded_channel::<(Instant, Slot)>();
+    let baseline = Instant::now();
+    let warmup_nanos = warmup_secs * 1_000_000_000;
+
+    // Node monitors send slot-finalization events and per-transaction latency events.
+    let (slot_tx, mut slot_rx) = mpsc::unbounded_channel::<(Instant, Slot)>();
+    let (lat_tx, mut lat_rx) = mpsc::unbounded_channel::<(u64, u64)>();
 
     let mut cancel_tokens = Vec::new();
     for node in nodes {
         let token = node.get_cancel_token();
         cancel_tokens.push(token.clone());
         let pool = node.get_pool();
-        let ev_tx = fin_tx.clone();
+        let blockstore = node.get_blockstore();
+        let slot_ev_tx = slot_tx.clone();
+        let lat_ev_tx = lat_tx.clone();
         tokio::spawn(node.run());
         tokio::spawn(async move {
             let mut last = Slot::new(0);
@@ -134,7 +139,17 @@ async fn run_benchmark_level(
                 tokio::time::sleep(Duration::from_millis(1)).await;
                 let new = pool.read().await.finalized_slot();
                 if new > last {
-                    let _ = ev_tx.send((Instant::now(), new));
+                    let fin_instant = Instant::now();
+                    let fin_offset = (fin_instant - baseline).as_nanos() as u64;
+                    let _ = slot_ev_tx.send((fin_instant, new));
+                    if let Some(txs) = blockstore.read().await.transactions_for_slot(new) {
+                        for tx in txs {
+                            if tx.0.len() >= 8 {
+                                let sub_offset = u64::from_le_bytes(tx.0[..8].try_into().unwrap());
+                                let _ = lat_ev_tx.send((sub_offset, fin_offset));
+                            }
+                        }
+                    }
                     last = new;
                 }
             }
@@ -143,19 +158,24 @@ async fn run_benchmark_level(
 
     // Limit load_nodes to available nodes.
     let load_addrs: Vec<SocketAddr> = tx_addrs.into_iter().take(load_nodes.max(1)).collect();
-    let injector = tokio::spawn(inject_load(target_tps, tx_size, load_addrs));
+    let injector = tokio::spawn(inject_load(target_tps, tx_size, load_addrs, baseline));
 
     // Warmup: let the cluster stabilize, then discard all events so far.
     tokio::time::sleep(Duration::from_secs(warmup_secs)).await;
-    while fin_rx.try_recv().is_ok() {}
+    while slot_rx.try_recv().is_ok() {}
+    while lat_rx.try_recv().is_ok() {}
 
     // Measurement window.
     tokio::time::sleep(Duration::from_secs(duration_secs)).await;
 
     // Collect all events buffered during measurement window.
-    let mut raw_events: Vec<(Instant, Slot)> = Vec::new();
-    while let Ok(ev) = fin_rx.try_recv() {
-        raw_events.push(ev);
+    let mut raw_slot_events: Vec<(Instant, Slot)> = Vec::new();
+    while let Ok(ev) = slot_rx.try_recv() {
+        raw_slot_events.push(ev);
+    }
+    let mut raw_lat_events: Vec<(u64, u64)> = Vec::new();
+    while let Ok(ev) = lat_rx.try_recv() {
+        raw_lat_events.push(ev);
     }
 
     injector.abort();
@@ -163,9 +183,9 @@ async fn run_benchmark_level(
         token.cancel();
     }
 
-    // Deduplicate: multiple nodes may report same slot. Keep the earliest timestamp.
+    // Deduplicate slots: multiple nodes may report same slot. Keep earliest timestamp.
     let mut by_slot: HashMap<Slot, Instant> = HashMap::new();
-    for (t, s) in raw_events {
+    for (t, s) in raw_slot_events {
         by_slot
             .entry(s)
             .and_modify(|e| {
@@ -175,47 +195,58 @@ async fn run_benchmark_level(
             })
             .or_insert(t);
     }
+    let slot_rate = by_slot.len() as f64 / duration_secs as f64;
 
-    // Sort deduplicated events chronologically.
-    let mut events: Vec<(Instant, Slot)> = by_slot.into_iter().map(|(s, t)| (t, s)).collect();
-    events.sort_by_key(|(t, _)| *t);
+    // Deduplicate latency events: per unique submission offset keep earliest finalization.
+    // Drop transactions whose submission offset predates the warmup window.
+    let mut by_sub: HashMap<u64, u64> = HashMap::new();
+    for (sub, fin) in raw_lat_events {
+        if sub < warmup_nanos {
+            continue;
+        }
+        by_sub
+            .entry(sub)
+            .and_modify(|e| {
+                if fin < *e {
+                    *e = fin;
+                }
+            })
+            .or_insert(fin);
+    }
 
-    compute_bench_result(target_tps, &events, duration_secs)
+    let latencies_ms: Vec<f64> = by_sub
+        .into_iter()
+        .filter_map(|(sub, fin)| fin.checked_sub(sub).map(|nanos| nanos as f64 / 1_000_000.0))
+        .collect();
+
+    compute_bench_result(target_tps, &latencies_ms, slot_rate)
 }
 
-fn compute_bench_result(
-    target_tps: u64,
-    events: &[(Instant, Slot)],
-    duration_secs: u64,
-) -> BenchResult {
-    if events.len() < 2 {
+fn compute_bench_result(target_tps: u64, latencies_ms: &[f64], slot_rate_hz: f64) -> BenchResult {
+    if latencies_ms.is_empty() {
         return BenchResult {
             target_tps,
-            slot_rate_hz: events.len() as f64 / duration_secs as f64,
+            slot_rate_hz,
             mean_ms: 0.0,
             p50_ms: 0.0,
             p95_ms: 0.0,
             p99_ms: 0.0,
-            samples: events.len(),
+            samples: 0,
         };
     }
 
-    let mut gaps_ms: Vec<f64> = events
-        .windows(2)
-        .map(|w| w[1].0.duration_since(w[0].0).as_secs_f64() * 1000.0)
-        .collect();
-    gaps_ms.sort_by(f64::total_cmp);
+    let mut sorted = latencies_ms.to_vec();
+    sorted.sort_by(f64::total_cmp);
 
-    let n = gaps_ms.len();
-    let p50 = gaps_ms[(n * 50).saturating_sub(1) / 100];
-    let p95 = gaps_ms[(n * 95).saturating_sub(1) / 100];
-    let p99 = gaps_ms[(n * 99).saturating_sub(1) / 100];
-    let mean = gaps_ms.iter().sum::<f64>() / n as f64;
-    let slot_rate = events.len() as f64 / duration_secs as f64;
+    let n = sorted.len();
+    let p50 = sorted[(n * 50).saturating_sub(1) / 100];
+    let p95 = sorted[(n * 95).saturating_sub(1) / 100];
+    let p99 = sorted[(n * 99).saturating_sub(1) / 100];
+    let mean = sorted.iter().sum::<f64>() / n as f64;
 
     BenchResult {
         target_tps,
-        slot_rate_hz: slot_rate,
+        slot_rate_hz,
         mean_ms: mean,
         p50_ms: p50,
         p95_ms: p95,
@@ -224,14 +255,15 @@ fn compute_bench_result(
     }
 }
 
-async fn inject_load(target_tps: u64, tx_size: usize, addrs: Vec<SocketAddr>) {
+async fn inject_load(target_tps: u64, tx_size: usize, addrs: Vec<SocketAddr>, baseline: Instant) {
     if target_tps == 0 || addrs.is_empty() {
         return;
     }
 
     let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
     let mut rng = rand::rngs::StdRng::from_rng(&mut rand::rng());
-    let tx_size = tx_size.min(512);
+    // Clamp to [8, 512]: first 8 bytes carry the submission timestamp.
+    let tx_size = tx_size.clamp(8, 512);
     let mut buf = vec![0u8; tx_size];
 
     // Send in bursts timed to 1ms ticks. For low TPS (<1000), burst every N ms.
@@ -247,6 +279,8 @@ async fn inject_load(target_tps: u64, tx_size: usize, addrs: Vec<SocketAddr>) {
         interval.tick().await;
         for _ in 0..txs_per_burst {
             rng.fill_bytes(&mut buf);
+            let offset_nanos = (Instant::now() - baseline).as_nanos() as u64;
+            buf[..8].copy_from_slice(&offset_nanos.to_le_bytes());
             let tx = Transaction(buf.clone());
             if let Ok(bytes) = wincode::serialize(&tx) {
                 let _ = socket.send_to(&bytes, addrs[addr_idx % addrs.len()]).await;
@@ -288,76 +322,49 @@ fn write_csv(results: &[BenchResult], path: Option<&Path>) -> Result<()> {
 }
 
 type TestNode = Alpenglow<
-    TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<SimulatedNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>,
+    TrivialAll2All<UdpNetwork<ConsensusMessage, ConsensusMessage>>,
+    Rotor<UdpNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>,
     UdpNetwork<Transaction, Transaction>,
 >;
 
-async fn create_test_nodes(count: u64) -> (Vec<TestNode>, Vec<SocketAddr>) {
-    let mut tx_receivers: VecDeque<_> = (0..count)
-        .map(|_| UdpNetwork::<Transaction, Transaction>::new_with_any_port())
+fn create_test_nodes(count: u64) -> (Vec<TestNode>, Vec<SocketAddr>) {
+    let mut all2all_nets: VecDeque<_> = (0..count)
+        .map(|_| UdpNetwork::<ConsensusMessage, ConsensusMessage>::new_with_any_port())
         .collect();
-    let mut repair_networks: VecDeque<_> = (0..count)
+    let mut disseminator_nets: VecDeque<_> = (0..count)
+        .map(|_| UdpNetwork::<Shred, Shred>::new_with_any_port())
+        .collect();
+    let mut repair_nets: VecDeque<_> = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect();
-    let mut repair_request_networks: VecDeque<_> = (0..count)
+    let mut repair_req_nets: VecDeque<_> = (0..count)
+        .map(|_| UdpNetwork::new_with_any_port())
+        .collect();
+    let mut tx_nets: VecDeque<UdpNetwork<Transaction, Transaction>> = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect();
 
-    // Record tx receiver addresses before consuming the VecDeque.
-    let tx_addrs: Vec<SocketAddr> = tx_receivers
+    let tx_addrs: Vec<SocketAddr> = tx_nets
         .iter()
         .map(|n| localhost_ip_sockaddr(n.port()))
         .collect();
-
-    let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-    let mut all2all_networks = VecDeque::new();
-    let mut disseminator_networks = VecDeque::new();
-    for i in 0..count {
-        all2all_networks.push_back(core.join_unlimited(ValidatorId::new(i)).await);
-        disseminator_networks.push_back(core.join_unlimited(ValidatorId::new(i + count)).await);
-    }
-
-    for a in 0..count {
-        for b in 0..count {
-            let latency = if a < 6 && b < 6 {
-                Duration::from_millis(20)
-            } else if (6..10).contains(&a) && (6..10).contains(&b) {
-                Duration::from_millis(60)
-            } else {
-                Duration::from_millis(100)
-            };
-            core.set_latency(ValidatorId::new(a), ValidatorId::new(b), latency)
-                .await;
-            core.set_latency(
-                ValidatorId::new(a + count),
-                ValidatorId::new(b + count),
-                latency,
-            )
-            .await;
-        }
-    }
 
     let mut rng = rand::rng();
     let mut sks = Vec::new();
     let mut voting_sks = Vec::new();
     let mut validators = Vec::new();
-    for id in 0..count {
+    for id in 0..count as usize {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let all2all_address = localhost_ip_sockaddr(id.try_into().unwrap());
-        let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
-        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
-        let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(id),
+            id: ValidatorId::new(id as u64),
             stake: Stake::new(1),
-            pubkey: sks[id as usize].to_pk(),
-            voting_pubkey: voting_sks[id as usize].to_pk(),
-            all2all_address,
-            disseminator_address,
-            repair_request_address,
-            repair_response_address,
+            pubkey: sks[id].to_pk(),
+            voting_pubkey: voting_sks[id].to_pk(),
+            all2all_address: localhost_ip_sockaddr(all2all_nets[id].port()),
+            disseminator_address: localhost_ip_sockaddr(disseminator_nets[id].port()),
+            repair_request_address: localhost_ip_sockaddr(repair_req_nets[id].port()),
+            repair_response_address: localhost_ip_sockaddr(repair_nets[id].port()),
         });
     }
 
@@ -367,14 +374,12 @@ async fn create_test_nodes(count: u64) -> (Vec<TestNode>, Vec<SocketAddr>) {
         .map(|v| {
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v.id, shared_epoch.clone()));
             let all2all =
-                TrivialAll2All::new(validators.clone(), all2all_networks.pop_front().unwrap());
-            let disseminator = Rotor::new(
-                disseminator_networks.pop_front().unwrap(),
-                epoch_info.clone(),
-            );
-            let repair_network = repair_networks.pop_front().unwrap();
-            let repair_request_network = repair_request_networks.pop_front().unwrap();
-            let txs_receiver = tx_receivers.pop_front().unwrap();
+                TrivialAll2All::new(validators.clone(), all2all_nets.pop_front().unwrap());
+            let disseminator =
+                Rotor::new(disseminator_nets.pop_front().unwrap(), epoch_info.clone());
+            let repair_network = repair_nets.pop_front().unwrap();
+            let repair_request_network = repair_req_nets.pop_front().unwrap();
+            let txs_receiver = tx_nets.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id.as_index()].clone(),
                 voting_sks[v.id.as_index()].clone(),
