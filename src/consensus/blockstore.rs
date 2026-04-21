@@ -18,7 +18,7 @@ use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
 use crate::shredder::{RegularShredder, Shred, ShredIndex, ShredderPool, ValidatedShred};
 use crate::types::SliceIndex;
-use crate::{Block, BlockId, Slot};
+use crate::{Block, BlockId, Slot, Transaction};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
 #[derive(Clone, Debug)]
@@ -97,6 +97,8 @@ pub trait Blockstore {
         block_id: &BlockId,
         slice_index: SliceIndex,
     ) -> Option<DoubleMerkleProof>;
+    #[allow(clippy::needless_lifetimes)]
+    fn transactions_for_slot<'a>(&'a self, slot: Slot) -> Option<&'a [Transaction]>;
 }
 
 /// Blockstore is the fundamental data structure holding block data per slot.
@@ -360,6 +362,11 @@ impl Blockstore for BlockstoreImpl {
         } else {
             None
         }
+    }
+
+    fn transactions_for_slot(&self, slot: Slot) -> Option<&[Transaction]> {
+        let (_, block) = self.slot_data(slot)?.disseminated.completed.as_ref()?;
+        Some(block.transactions())
     }
 
     /// Gives the last slice index for the given `block_id`.

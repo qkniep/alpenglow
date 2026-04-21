@@ -40,7 +40,40 @@ impl<S, R> UdpNetwork<S, R> {
     #[must_use]
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-        let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
+        // let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
+
+        let socket = socket2::Socket::new(
+            socket2::Domain::for_address(addr.into()),
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .unwrap();
+
+        // Allow reuse (optional but often useful)
+        socket.set_reuse_address(true).unwrap();
+
+        // Set buffer sizes (bytes)
+        socket.set_recv_buffer_size(16 * 1024 * 1024).unwrap(); // 4 MB
+        socket.set_send_buffer_size(16 * 1024 * 1024).unwrap(); // 4 MB
+
+        // Bind
+        socket.bind(&addr.into()).unwrap();
+
+        // Convert to std
+        let std_socket: std::net::UdpSocket = socket.into();
+
+        // Non-blocking is required for Tokio
+        std_socket.set_nonblocking(true).unwrap();
+
+        // Wrap in Tokio
+        let socket = UdpSocket::from_std(std_socket).unwrap();
+        // let std_sock = std::net::UdpSocket::bind(addr).unwrap();
+        // std_sock.set_nonblocking(true).unwrap();
+        //
+        // // These may not be available on all platforms via std:
+        // std_sock.set_recv_buffer_size(16 * 1024 * 1024).unwrap();
+        // std_sock.set_recv(16 * 1024 * 1024).unwrap();
+        // socket.set_rec
         Self {
             socket,
             _msg_types: PhantomData,
