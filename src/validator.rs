@@ -1,4 +1,25 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-pub struct Validator {}
+use crate::execution::ExecutionEngine;
+use crate::network::Network;
+use crate::{All2All, Alpenglow, Disseminator, Transaction};
+
+/// Full validator node.
+///
+/// Consists of a consensus protocol instance and an execution engine.
+/// Participates in consensus and executes transactions.
+#[allow(dead_code)]
+pub struct Validator<A, D, T, E>
+where
+    A: All2All,
+    D: Disseminator,
+    T: Network<Recv = Transaction> + 'static,
+    E: ExecutionEngine,
+{
+    /// Consensus protocol instance.
+    consensus: Alpenglow<A, D, T>,
+
+    /// Execution engine.
+    execution: E,
+}
