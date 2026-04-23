@@ -53,7 +53,8 @@ pub(crate) trait SignedVote {
 
 /// A signed notarization vote.
 ///
-/// Corresponds to a vote on the [`VoteKind::Notar`] payload.
+/// This vote is cast immediately after obtaining a valid block.
+/// With synchronous execution, this is only after successful execution.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NotarVote {
     slot: Slot,
@@ -108,7 +109,13 @@ impl SignedVote for NotarVote {
 
 /// A signed notar-fallback vote.
 ///
-/// Corresponds to a vote on the [`VoteKind::NotarFallback`] payload.
+/// This vote is only cast after the validator initially:
+/// - cast a [`SkipVote`], OR
+/// - cast a [`NotarVote`] for a different block.
+///
+/// Requires the validator to see:
+/// - 40% notar votes for the block, OR
+/// - 60% skip votes + notar votes for the block, 20% of which are notar votes.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct NotarFallbackVote {
     slot: Slot,
@@ -163,7 +170,7 @@ impl SignedVote for NotarFallbackVote {
 
 /// A signed skip vote.
 ///
-/// Corresponds to a vote on the [`VoteKind::Skip`] payload.
+/// This vote is cast when seeing an invalid block or timing out on a slot.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SkipVote {
     slot: Slot,
@@ -206,7 +213,12 @@ impl SignedVote for SkipVote {
 
 /// A signed skip-fallback vote.
 ///
-/// Corresponds to a vote on the [`VoteKind::SkipFallback`] payload.
+/// This vote is only cast after the validator initially cast a [`NotarVote`].
+///
+/// Requires the validator to see `skip + sum_notar - max_notar` >= 40%, where:
+/// - `skip` is the total stake of skip votes,
+/// - `sum_notar` is the total stake of notar votes, and
+/// - `max_notar` is the stake of notar votes for the most notarized block.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SkipFallbackVote {
     slot: Slot,
@@ -249,7 +261,11 @@ impl SignedVote for SkipFallbackVote {
 
 /// A signed finalization vote.
 ///
-/// Corresponds to a vote on the [`VoteKind::Final`] payload.
+/// This vote is cast when a notarization certificate has been seen for a block.
+///
+/// Requires that the validator:
+/// - previously voted notar on the block, AND
+/// - did NOT previously vote skip, skip-fallback, or notar-fallback.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct FinalVote {
     slot: Slot,

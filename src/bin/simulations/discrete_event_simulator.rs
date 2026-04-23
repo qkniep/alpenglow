@@ -19,11 +19,11 @@ use alpenglow::{Stake, ValidatorId, ValidatorInfo};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-pub use self::resources::Resources;
-pub use self::timings::{SimTime, TimingStats, Timings};
+pub(crate) use self::resources::Resources;
+pub(crate) use self::timings::{SimTime, TimingStats, Timings};
 
 /// Wrapper trait for a specific protocol simulation.
-pub trait Protocol {
+pub(crate) trait Protocol {
     type Event: Event<Params = Self::Params, Instance = Self::Instance>;
     type Stage: Stage<Event = Self::Event, Params = Self::Params>;
     type Params;
@@ -32,7 +32,7 @@ pub trait Protocol {
 }
 
 /// Builder for instances of a protocol with a specific set of parameters.
-pub trait Builder {
+pub(crate) trait Builder {
     type Params;
     type Instance;
 
@@ -48,7 +48,7 @@ pub trait Builder {
 /// Each event has a name, a list of dependencies, and a calculation function.
 /// The simulation engine will pass the timings of its dependencies to the calculation function.
 /// The calculation function returns the timings of this event at each validator.
-pub trait Event: Clone + Copy + Debug + Eq + Hash {
+pub(crate) trait Event: Clone + Copy + Debug + Eq + Hash {
     type Params;
     type Instance;
 
@@ -78,7 +78,7 @@ pub trait Event: Clone + Copy + Debug + Eq + Hash {
 ///
 /// Each stage contains one or more events.
 /// Events in later stages can only depend on events from earlier stages.
-pub trait Stage: Clone + Copy + Debug + Eq + Hash {
+pub(crate) trait Stage: Clone + Copy + Debug + Eq + Hash {
     type Event: Event;
     type Params;
 
@@ -107,7 +107,7 @@ pub trait Stage: Clone + Copy + Debug + Eq + Hash {
 }
 
 /// Matrix-based discrete-event simulation engine.
-pub struct SimulationEngine<P: Protocol> {
+pub(crate) struct SimulationEngine<P: Protocol> {
     builder: P::Builder,
     environment: SimulationEnvironment,
     stats: RwLock<TimingStats<P>>,
@@ -117,7 +117,7 @@ impl<P: Protocol> SimulationEngine<P> {
     /// Creates a new simulation engine.
     ///
     /// The `environment` holds the validators, network parameters, etc.
-    pub fn new(builder: P::Builder, environment: SimulationEnvironment) -> Self {
+    pub(crate) fn new(builder: P::Builder, environment: SimulationEnvironment) -> Self {
         Self {
             builder,
             environment,
@@ -128,7 +128,7 @@ impl<P: Protocol> SimulationEngine<P> {
     /// Runs the simulation `iterations` times.
     ///
     /// Samples a new [`Protocol::Instance`] from the [`Protocol::Builder`] for each iteration.
-    pub fn run_many_sequential(&self, iterations: u64) {
+    pub(crate) fn run_many_sequential(&self, iterations: u64) {
         let mut rng = rand::rng();
         let mut timings = Timings::default();
         for _ in 0..iterations {
@@ -138,7 +138,7 @@ impl<P: Protocol> SimulationEngine<P> {
     }
 
     /// Runs one iteration of the simulation.
-    pub fn run(&self, instance: &P::Instance, timings: &mut Timings<P::Event>) {
+    pub(crate) fn run(&self, instance: &P::Instance, timings: &mut Timings<P::Event>) {
         // setup & initialization
         let num_val = self.environment.num_validators();
         timings.clear();
@@ -176,7 +176,7 @@ impl<P: Protocol> SimulationEngine<P> {
     }
 
     /// References the timing stats.
-    pub fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
+    pub(crate) fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
         self.stats.read().unwrap()
     }
 }
@@ -190,7 +190,7 @@ where
     ///
     /// Samples a new [`Protocol::Instance`] from the [`Protocol::Builder`] for each iteration.
     /// Uses the [`rayon`] crate for the thread pool.
-    pub fn run_many_parallel(&self, iterations: u64) {
+    pub(crate) fn run_many_parallel(&self, iterations: u64) {
         (0..iterations).into_par_iter().for_each(|_| {
             let mut rng = rand::rng();
             let mut timings = Timings::default();
@@ -204,7 +204,7 @@ where
 ///
 /// This includes the validators, their stakes, bandwidths, ping data, etc.
 #[derive(Clone, Debug)]
-pub struct SimulationEnvironment {
+pub(crate) struct SimulationEnvironment {
     // core setup of the latency test
     pub(crate) validators: Vec<ValidatorInfo>,
     ping_servers: Vec<&'static PingServer>,
@@ -219,7 +219,10 @@ pub struct SimulationEnvironment {
 
 impl SimulationEnvironment {
     /// Creates a new simulation environment.
-    pub fn new(validators: Vec<ValidatorInfo>, ping_servers: Vec<&'static PingServer>) -> Self {
+    pub(crate) fn new(
+        validators: Vec<ValidatorInfo>,
+        ping_servers: Vec<&'static PingServer>,
+    ) -> Self {
         let total_stake = validators.iter().map(|v| v.stake).sum();
         Self {
             validators,
@@ -231,7 +234,7 @@ impl SimulationEnvironment {
     }
 
     /// Creates a new simulation environment from a list of validators with ping data.
-    pub fn from_validators_with_ping_data(
+    pub(crate) fn from_validators_with_ping_data(
         validators_with_ping_data: &[(ValidatorInfo, &'static PingServer)],
     ) -> Self {
         // sort by stake (from highest to lowest)
@@ -248,19 +251,19 @@ impl SimulationEnvironment {
     }
 
     /// Sets the bandwidths for all validators for simulating transmission delays.
-    pub fn with_bandwidths(mut self, leader_bandwidth: u64, bandwidths: Vec<u64>) -> Self {
+    pub(crate) fn with_bandwidths(mut self, leader_bandwidth: u64, bandwidths: Vec<u64>) -> Self {
         self.leader_bandwidth = Some(leader_bandwidth);
         self.bandwidths = Some(bandwidths);
         self
     }
 
     /// Returns the number of validators.
-    pub fn num_validators(&self) -> usize {
+    pub(crate) fn num_validators(&self) -> usize {
         self.validators.len()
     }
 
     /// Calculates how long it takes the `validator` to serialize `bytes` onto the wire.
-    pub fn transmission_delay(&self, bytes: usize, validator: ValidatorId) -> SimTime {
+    pub(crate) fn transmission_delay(&self, bytes: usize, validator: ValidatorId) -> SimTime {
         let Some(bandwidths) = &self.bandwidths else {
             return SimTime::ZERO;
         };
@@ -269,7 +272,7 @@ impl SimulationEnvironment {
     }
 
     /// Finds the latency between the `sender` and `receiver` validators.
-    pub fn propagation_delay(&self, sender: ValidatorId, receiver: ValidatorId) -> SimTime {
+    pub(crate) fn propagation_delay(&self, sender: ValidatorId, receiver: ValidatorId) -> SimTime {
         let sender_server = self.ping_servers[sender.as_index()].id;
         let receiver_server = self.ping_servers[receiver.as_index()].id;
         let rtt_ping_ms = get_ping(sender_server, receiver_server).unwrap();
@@ -287,7 +290,7 @@ impl SimulationEnvironment {
 ///
 /// - Panics if `rows` is empty.
 /// - Panics if not all rows have same length.
-pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+pub(crate) fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     assert!(!rows.is_empty());
     let mut result = rows[0].to_vec();
     for row in &rows[1..] {
@@ -310,7 +313,7 @@ pub fn column_min<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
 ///
 /// - Panics if `rows` is empty.
 /// - Panics if not all rows have same length.
-pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
+pub(crate) fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
     assert!(!rows.is_empty());
     let mut result = rows[0].to_vec();
     for row in &rows[1..] {
@@ -333,7 +336,7 @@ pub fn column_max<T: Copy + Ord>(rows: &[&[T]]) -> Vec<T> {
 /// - The time at which the validator received the first proof message.
 ///
 /// Returns the time at which each validator triggers the event.
-pub fn broadcast_first_arrival_or_dep(
+pub(crate) fn broadcast_first_arrival_or_dep(
     start_times: &[SimTime],
     resources: &mut Resources,
     environment: &SimulationEnvironment,
@@ -371,7 +374,7 @@ pub fn broadcast_first_arrival_or_dep(
 /// We then use [`broadcast`] to simulate broadcasting the vote message as soon as possible.
 ///
 /// Returns the time at which each validator saw the required threshold of vote messages.
-pub fn broadcast_stake_threshold(
+pub(crate) fn broadcast_stake_threshold(
     start_times: &[SimTime],
     resources: &mut Resources,
     environment: &SimulationEnvironment,
@@ -419,7 +422,7 @@ pub fn broadcast_stake_threshold(
 /// Updates the network resource for each validator, reserving the time used for the broadcast.
 ///
 /// Returns an iterator over the times at which each validator will start sending the messages.
-pub fn broadcast(
+pub(crate) fn broadcast(
     start_times: &[SimTime],
     resources: &mut Resources,
     environment: &SimulationEnvironment,

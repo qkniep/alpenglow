@@ -25,7 +25,7 @@ use crate::rotor::RotorParams;
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct PyjamaLatencySimulation<
+pub(crate) struct PyjamaLatencySimulation<
     L: SamplingStrategy,
     P: QuorumSamplingStrategy,
     R: QuorumSamplingStrategy,
@@ -50,7 +50,7 @@ where
 
 /// Stages of the Pyjama latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyTestStage {
+pub(crate) enum LatencyTestStage {
     Propose,
     Relay,
     Attestation,
@@ -93,7 +93,7 @@ impl Stage for LatencyTestStage {
 
 /// Events that can occur at each validator during the Pyjama latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyEvent {
+pub(crate) enum LatencyEvent {
     Propose,
     Relay,
     Attestation,

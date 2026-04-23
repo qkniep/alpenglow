@@ -26,7 +26,7 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     byzantine: 0.18,
 };
 
-pub fn run_robustness_tests() {
+pub(crate) fn run_robustness_tests() {
     PyjamaParameters::new(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
@@ -41,7 +41,7 @@ pub fn run_robustness_tests() {
         .print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
-pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
+pub(crate) fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 1);
