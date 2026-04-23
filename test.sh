@@ -34,6 +34,15 @@ sequential_tests () {
 		three_nodes_crash
 }
 
+fuzz_tests () {
+	echo "🧪 Running fuzz tests!"
+	sleep 1
+	for target in $(cargo +nightly fuzz list); do
+		echo "Fuzzing $target..."
+		cargo +nightly fuzz run "$target" -- -max_total_time=30 || return 1
+	done
+}
+
 smoke_tests () {
     echo "🔥 Running smoke tests!"
     sleep 1
@@ -44,11 +53,13 @@ smoke_tests () {
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 	slow_tests
 elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
-	fast_tests && doc_tests && sequential_tests && smoke_tests
+	fast_tests && doc_tests && smoke_tests && sequential_tests && fuzz_tests
 elif [ $# -gt 0 ] && [ $1 == "doc" ]; then
 	doc_tests
 elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
 	sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "fuzz" ]; then
+	fuzz_tests
 elif [ $# -gt 0 ] && [ $1 == "smoke" ]; then
 	smoke_tests
 elif [ $# -gt 0 ] && [ $1 == "many" ]; then

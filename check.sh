@@ -5,4 +5,5 @@ cargo build --all-targets --all-features \
 	&& cargo +nightly fmt --check \
 	&& cargo doc --no-deps --document-private-items \
 	&& cargo machete \
+	&& cargo +nightly fuzz build \
 	&& ./test.sh ci
