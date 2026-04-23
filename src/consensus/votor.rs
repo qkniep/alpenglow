@@ -48,10 +48,6 @@ impl VotorTimeout {
 /// Votor implements the decision process of which votes to cast.
 ///
 /// It keeps some state for each slot and checks the conditions for voting.
-/// On [`Votor::pool_receiver`] and [`Votor::blockstore_receiver`], it receives events
-/// from [`super::Pool`] and [`super::Blockstore`] respectively.
-/// Informed by these events Votor updates its state and generates votes.
-/// Votes are signed with [`Votor::voting_key`] and broadcast using [`Votor::all2all`].
 pub struct Votor<A: All2All> {
     // TODO: merge all of these into `SlotState` struct?
     /// Indicates for which slots we already voted notar or skip.
@@ -89,6 +85,11 @@ pub struct Votor<A: All2All> {
 
 impl<A: All2All> Votor<A> {
     /// Creates a new Votor instance with empty state.
+    ///
+    /// On `pool_receiver` and `blockstore_receiver`, it receives events from
+    /// [`super::Pool`] and [`super::Blockstore`] respectively.
+    /// Informed by these events Votor updates its state and generates votes.
+    /// Votes are signed with `voting_key` and broadcast using `all2all`.
     pub fn new(
         validator_id: ValidatorId,
         voting_key: SecretKey,

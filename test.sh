@@ -13,7 +13,7 @@ slow_tests () {
 fast_tests () {
 	echo "🚀 Running fast tests!"
 	sleep 1
-	RUST_BACKTRACE=1 cargo nextest run --all-targets
+	RUST_BACKTRACE=1 cargo nextest run --all-targets --all-features
 }
 
 doc_tests () {
@@ -46,7 +46,8 @@ fuzz_tests () {
 smoke_tests () {
     echo "🔥 Running smoke tests!"
     sleep 1
-    RUST_BACKTRACE=1 cargo nextest run --release --test smoke_tests --run-ignored=all
+    RUST_BACKTRACE=1 cargo nextest run --all-features --release \
+		--test smoke_tests --run-ignored=all
 }
 
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then

@@ -20,7 +20,7 @@ use crate::discrete_event_simulator::{
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct RotorLatencySimulation<L: SamplingStrategy, R: QuorumSamplingStrategy> {
+pub(crate) struct RotorLatencySimulation<L: SamplingStrategy, R: QuorumSamplingStrategy> {
     _leader_sampler: PhantomData<L>,
     _rotor_sampler: PhantomData<R>,
 }
@@ -35,7 +35,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Protocol for RotorLatencySi
 
 /// Stages of the Rotor latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyTestStage {
+pub(crate) enum LatencyTestStage {
     Direct,
     Rotor,
     Block,
@@ -83,7 +83,7 @@ impl Stage for LatencyTestStage {
 
 /// Events that can occur at each validator during the Rotor latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyEvent {
+pub(crate) enum LatencyEvent {
     BlockSent,
     Direct(usize),
     StartForwarding(usize),

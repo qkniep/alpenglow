@@ -10,5 +10,5 @@
 mod bandwidth;
 mod latency;
 
-pub use bandwidth::*;
-pub use latency::*;
+pub(crate) use bandwidth::*;
+pub(crate) use latency::*;
