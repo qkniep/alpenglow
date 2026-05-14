@@ -160,15 +160,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arc-swap"
-version = "1.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1243,22 +1234,17 @@ checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
 name = "hotpath"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdb7d0713302f121f02d93290b6303b320e886f462d2cde84146ce9f9e28f1f0"
+checksum = "0482d7c2c47acfec79b90e55188e8b86c66fd9d541335eac3ce3f73055984643"
 dependencies = [
- "arc-swap",
  "cfg-if",
- "clap",
- "colored",
  "crossbeam-channel",
- "eyre",
  "futures-util",
  "hdrhistogram",
  "hotpath-macros",
  "hotpath-meta",
  "libc",
- "mach2",
  "pin-project-lite",
  "prettytable-rs",
  "quanta",
@@ -1271,9 +1257,9 @@ dependencies = [
 
 [[package]]
 name = "hotpath-macros"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51066092dc750f8cbcac4afa04592377bf7463a911d1beca430ddd788deb0757"
+checksum = "a0a541a2ab3263fcf42ff399ec68ddd458f4883aa656c6229f59092f94058eb2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1282,15 +1268,15 @@ dependencies = [
 
 [[package]]
 name = "hotpath-macros-meta"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7f6b2adb32728a10077f9eb66ece7c122ae0d86f3430187bbd8605089e3df7e"
+checksum = "08986d10e50e7c6c8e1798fb1bd63cdf275c0b59d6aad05989d5d86a0f2cb06e"
 
 [[package]]
 name = "hotpath-meta"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d45b707a3eae596368fd81132daea5f8a4444a4590b9da2439f7f6dd2c3c3102"
+checksum = "fec29ccaa713ecf406bb6717331972fd2b932d889ddcc2bada67b264693fb9bf"
 dependencies = [
  "hotpath-macros-meta",
 ]
@@ -1837,12 +1823,6 @@ dependencies = [
  "jiff",
  "logforth-core",
 ]
-
-[[package]]
-name = "mach2"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "matrixmultiply"
