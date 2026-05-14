@@ -36,7 +36,7 @@ log = "0.4"
 logforth = { version = "0.29", features = ["append-fastrace", "starter-log"] }
 moka = { version = "0.12", features = ["future"] }
 opentelemetry = "0.31"
-opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry_sdk = "0.31"
 rand = "0.10"
 rayon = { version = "1", optional = true }
