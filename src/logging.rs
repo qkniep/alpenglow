@@ -83,7 +83,9 @@ impl Layout for MinimalLogforthLayout {
 #[cfg(feature = "telemetry")]
 pub fn enable_otel_tracing(service_name: &str) -> Result<(), ExporterBuildError> {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| DEFAULT_OTLP_ENDPOINT.to_string());
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_OTLP_ENDPOINT.to_string());
     let exporter = SpanExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)
