@@ -3,7 +3,7 @@
 
 //! Implementation of a digital signature scheme.
 //!
-//! This module abstratcs the digital signatures used throughout the entire library.
+//! This module abstracts the digital signatures used throughout the entire library.
 //! Currently, it provides Ed25519 digital signature scheme, as specified in [RFC 8032].
 //! Specifically, it is a wrapper around the [`ed25519_zebra`] crate.
 //!
