@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
                 .with_protocol(opentelemetry_otlp::Protocol::Grpc)
                 .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
                 .build()
-                .expect("initialize oltp exporter"),
+                .expect("initialize OTLP exporter"),
             Cow::Owned(
                 Resource::builder()
                     .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
