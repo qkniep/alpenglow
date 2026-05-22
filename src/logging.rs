@@ -26,19 +26,27 @@ use opentelemetry_sdk::Resource;
 const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4317";
 
 #[derive(Clone, Debug)]
-struct MinimalLogforthLayout;
+struct MinimalLogforthLayout {
+    /// Whether to emit ANSI color codes. Disabled when stderr is not a terminal
+    /// or the `NO_COLOR` environment variable is set.
+    colorize: bool,
+}
 
 impl MinimalLogforthLayout {
-    fn colorize_record_level(&self, level: Level) -> ColoredString {
-        let color = match level {
-            Level::Fatal | Level::Fatal2 | Level::Fatal3 | Level::Fatal4 => Color::BrightRed,
-            Level::Error | Level::Error2 | Level::Error3 | Level::Error4 => Color::Red,
-            Level::Warn | Level::Warn2 | Level::Warn3 | Level::Warn4 => Color::Yellow,
-            Level::Info | Level::Info2 | Level::Info3 | Level::Info4 => Color::Green,
-            Level::Debug | Level::Debug2 | Level::Debug3 | Level::Debug4 => Color::Blue,
-            Level::Trace | Level::Trace2 | Level::Trace3 | Level::Trace4 => Color::Magenta,
-        };
-        ColoredString::from(level.to_string()).color(color)
+    fn new() -> Self {
+        let colorize = stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        Self { colorize }
+    }
+
+    fn level_color(level: Level) -> AnsiColors {
+        match level {
+            Level::Fatal | Level::Fatal2 | Level::Fatal3 | Level::Fatal4 => AnsiColors::BrightRed,
+            Level::Error | Level::Error2 | Level::Error3 | Level::Error4 => AnsiColors::Red,
+            Level::Warn | Level::Warn2 | Level::Warn3 | Level::Warn4 => AnsiColors::Yellow,
+            Level::Info | Level::Info2 | Level::Info3 | Level::Info4 => AnsiColors::Green,
+            Level::Debug | Level::Debug2 | Level::Debug3 | Level::Debug4 => AnsiColors::Blue,
+            Level::Trace | Level::Trace2 | Level::Trace3 | Level::Trace4 => AnsiColors::Magenta,
+        }
     }
 }
 
@@ -48,9 +56,17 @@ impl Layout for MinimalLogforthLayout {
         record: &logforth::record::Record,
         _diagnostics: &[Box<dyn logforth::Diagnostic>],
     ) -> Result<Vec<u8>, logforth::Error> {
-        let level = self.colorize_record_level(record.level());
+        let level = record.level();
+        // Pad the level name to width 5 *before* coloring so the ANSI escape
+        // codes don't throw off the alignment.
+        let padded = format!("{:>5}", level.to_string());
         let message = record.payload();
-        Ok(format!("{level:>5} {message}").into_bytes())
+        let line = if self.colorize {
+            format!("{} {message}", padded.color(Self::level_color(level)))
+        } else {
+            format!("{padded} {message}")
+        };
+        Ok(line.into_bytes())
     }
 }
 
@@ -85,7 +101,7 @@ pub fn enable_otel_tracing(service_name: &str) {
 }
 
 pub fn enable_logforth() {
-    enable_logforth_append(append::Stderr::default().with_layout(MinimalLogforthLayout));
+    enable_logforth_append(append::Stderr::default().with_layout(MinimalLogforthLayout::new()));
 }
 
 pub fn enable_logforth_stderr() {
