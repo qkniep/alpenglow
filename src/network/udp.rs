@@ -5,6 +5,10 @@
 //!
 //! This module provides an implementation of the [`Network`] trait for UDP sockets.
 //! It is essentially a wrapper around [`tokio::net::UdpSocket`].
+//!
+//! On Linux, `send_to_many` uses the `sendmmsg(2)` syscall to emit a fanout
+//! batch with a single kernel transition; other platforms fall back to issuing
+//! one `sendto` per destination.
 
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -81,12 +85,23 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = &wincode::serialize(msg).unwrap();
-        let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
-        for res in join_all(tasks).await {
-            let () = res?;
+        let bytes = wincode::serialize(msg).unwrap();
+        assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+
+        #[cfg(target_os = "linux")]
+        {
+            let addrs: Vec<SocketAddr> = addrs.collect();
+            sendmmsg::send_to_many_linux(&self.socket, &bytes, &addrs).await
         }
-        Ok(())
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let tasks = addrs.map(async |addr| self.send_serialized(&bytes, addr).await);
+            for res in join_all(tasks).await {
+                let () = res?;
+            }
+            Ok(())
+        }
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
@@ -107,6 +122,103 @@ where
             };
             return Ok(msg);
         }
+    }
+}
+
+/// Linux-only `sendmmsg(2)` fast path for fanout sends.
+///
+/// Issues one `sendmmsg` syscall per chunk of up to `UIO_MAXIOV` destinations,
+/// with every entry's `iovec` pointing at the same serialized payload — so the
+/// kernel reads from one userspace buffer and emits N independent UDP packets.
+/// This replaces N `sendto` syscalls (and N tokio wakers) with one syscall per
+/// 1024-packet chunk.
+#[cfg(target_os = "linux")]
+mod sendmmsg {
+    use std::io;
+    use std::net::SocketAddr;
+    use std::os::fd::AsRawFd;
+
+    use socket2::SockAddr;
+    use tokio::io::Interest;
+    use tokio::net::UdpSocket;
+
+    /// Maximum messages per `sendmmsg` syscall. Linux caps `vlen` at `UIO_MAXIOV`
+    /// (1024); larger fanouts are chunked across multiple syscalls.
+    const MAX_BATCH: usize = 1024;
+
+    pub(super) async fn send_to_many_linux(
+        socket: &UdpSocket,
+        payload: &[u8],
+        addrs: &[SocketAddr],
+    ) -> io::Result<()> {
+        if addrs.is_empty() {
+            return Ok(());
+        }
+
+        let n = addrs.len();
+        // socket2 builds a correctly-laid-out sockaddr_storage + length for v4/v6.
+        let sockaddrs: Vec<SockAddr> = addrs.iter().map(|a| SockAddr::from(*a)).collect();
+
+        // One iovec per message, all pointing at the shared payload buffer. The
+        // kernel only reads from these, so the aliased pointers are sound.
+        let mut iovecs: Vec<libc::iovec> = (0..n)
+            .map(|_| libc::iovec {
+                iov_base: payload.as_ptr() as *mut libc::c_void,
+                iov_len: payload.len(),
+            })
+            .collect();
+
+        // Build mmsghdr entries linking each msg_hdr to its sockaddr + iovec.
+        // We use raw pointers into `sockaddrs` and `iovecs` rather than `&mut`
+        // borrows so the array can be re-indexed across retry iterations
+        // without re-borrowing.
+        let iov_ptr = iovecs.as_mut_ptr();
+        let mut msgs: Vec<libc::mmsghdr> = (0..n)
+            .map(|i| {
+                let mut msg_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+                msg_hdr.msg_name = sockaddrs[i].as_ptr() as *mut libc::c_void;
+                msg_hdr.msg_namelen = sockaddrs[i].len();
+                msg_hdr.msg_iov = unsafe { iov_ptr.add(i) };
+                msg_hdr.msg_iovlen = 1;
+                libc::mmsghdr { msg_hdr, msg_len: 0 }
+            })
+            .collect();
+
+        let fd = socket.as_raw_fd();
+        let mut sent = 0;
+        while sent < n {
+            socket.writable().await?;
+            let chunk_len = (n - sent).min(MAX_BATCH);
+            let chunk = &mut msgs[sent..sent + chunk_len];
+            let res = socket.try_io(Interest::WRITABLE, || {
+                // SAFETY: `fd` is owned by `socket` and live for the duration of
+                // this call. `chunk` is a valid `&mut [mmsghdr]`; each entry's
+                // `msg_name`/`msg_iov` point into `sockaddrs`/`iovecs`, which
+                // outlive the call. The kernel only reads from these.
+                let r = unsafe {
+                    libc::sendmmsg(
+                        fd,
+                        chunk.as_mut_ptr(),
+                        chunk.len() as libc::c_uint,
+                        0,
+                    )
+                };
+                if r < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(r as usize)
+                }
+            });
+            match res {
+                Ok(n_sent) => sent += n_sent,
+                // tokio decided the fd isn't actually writable; go back to wait.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                // Interrupted before any messages sent; retry the same chunk.
+                Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -141,5 +253,36 @@ mod tests {
         socket2.send(&Pong(msg.0), addr1).await.unwrap();
         let msg: Pong = socket1.receive().await.unwrap();
         assert_eq!(msg.0, Ping::default().0);
+    }
+
+    /// `send_to_many` must deliver the payload to every destination.
+    ///
+    /// Exercises the Linux `sendmmsg` fast path and the portable fallback.
+    #[tokio::test]
+    async fn send_to_many_fanout() {
+        const N: usize = 32;
+        let sender: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+
+        let mut receivers: Vec<UdpNetwork<Ping, Ping>> = Vec::with_capacity(N);
+        let mut addrs: Vec<SocketAddr> = Vec::with_capacity(N);
+        for _ in 0..N {
+            let r: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+            addrs.push(localhost_ip_sockaddr(r.port()));
+            receivers.push(r);
+        }
+
+        let payload = Ping([0xab; 32]);
+        sender
+            .send_to_many(&payload, addrs.iter().copied())
+            .await
+            .unwrap();
+
+        for r in &receivers {
+            let got = tokio::time::timeout(std::time::Duration::from_secs(2), r.receive())
+                .await
+                .expect("receiver should get a packet")
+                .unwrap();
+            assert_eq!(got.0, payload.0);
+        }
     }
 }
