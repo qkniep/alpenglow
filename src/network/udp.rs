@@ -14,6 +14,7 @@ use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
+#[cfg(not(target_os = "linux"))]
 use futures::future::join_all;
 use log::warn;
 use tokio::net::UdpSocket;
@@ -155,51 +156,55 @@ mod sendmmsg {
             return Ok(());
         }
 
-        let n = addrs.len();
         // socket2 builds a correctly-laid-out sockaddr_storage + length for v4/v6.
+        // `SockAddr` is `Send`, so it's safe to hold across awaits; the raw-pointer
+        // `iovec`/`mmsghdr` arrays are not, so they get built inside the syscall
+        // closure on each call.
         let sockaddrs: Vec<SockAddr> = addrs.iter().map(|a| SockAddr::from(*a)).collect();
-
-        // One iovec per message, all pointing at the shared payload buffer. The
-        // kernel only reads from these, so the aliased pointers are sound.
-        let mut iovecs: Vec<libc::iovec> = (0..n)
-            .map(|_| libc::iovec {
-                iov_base: payload.as_ptr() as *mut libc::c_void,
-                iov_len: payload.len(),
-            })
-            .collect();
-
-        // Build mmsghdr entries linking each msg_hdr to its sockaddr + iovec.
-        // We use raw pointers into `sockaddrs` and `iovecs` rather than `&mut`
-        // borrows so the array can be re-indexed across retry iterations
-        // without re-borrowing.
-        let iov_ptr = iovecs.as_mut_ptr();
-        let mut msgs: Vec<libc::mmsghdr> = (0..n)
-            .map(|i| {
-                let mut msg_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
-                msg_hdr.msg_name = sockaddrs[i].as_ptr() as *mut libc::c_void;
-                msg_hdr.msg_namelen = sockaddrs[i].len();
-                msg_hdr.msg_iov = unsafe { iov_ptr.add(i) };
-                msg_hdr.msg_iovlen = 1;
-                libc::mmsghdr { msg_hdr, msg_len: 0 }
-            })
-            .collect();
-
+        let n = sockaddrs.len();
         let fd = socket.as_raw_fd();
+
         let mut sent = 0;
         while sent < n {
             socket.writable().await?;
             let chunk_len = (n - sent).min(MAX_BATCH);
-            let chunk = &mut msgs[sent..sent + chunk_len];
+
             let res = socket.try_io(Interest::WRITABLE, || {
+                // All `mmsghdr` entries share a single `iovec` pointing at the
+                // serialized payload: the kernel only reads it, so aliasing is
+                // sound and we save N*sizeof(iovec) of setup work per call.
+                let mut shared_iov = libc::iovec {
+                    iov_base: payload.as_ptr() as *mut libc::c_void,
+                    iov_len: payload.len(),
+                };
+                let iov_ptr: *mut libc::iovec = &mut shared_iov;
+
+                let mut msgs: Vec<libc::mmsghdr> = (0..chunk_len)
+                    .map(|i| {
+                        let sa = &sockaddrs[sent + i];
+                        // SAFETY: `msghdr` is plain POD; zeroing leaves all
+                        // optional fields (msg_control, msg_flags, ...) in their
+                        // documented "absent" state.
+                        let mut msg_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+                        msg_hdr.msg_name = sa.as_ptr() as *mut libc::c_void;
+                        msg_hdr.msg_namelen = sa.len();
+                        msg_hdr.msg_iov = iov_ptr;
+                        msg_hdr.msg_iovlen = 1;
+                        libc::mmsghdr { msg_hdr, msg_len: 0 }
+                    })
+                    .collect();
+
                 // SAFETY: `fd` is owned by `socket` and live for the duration of
-                // this call. `chunk` is a valid `&mut [mmsghdr]`; each entry's
-                // `msg_name`/`msg_iov` point into `sockaddrs`/`iovecs`, which
-                // outlive the call. The kernel only reads from these.
+                // this call. `msgs.as_mut_ptr()` is a valid pointer to a slice of
+                // initialized `mmsghdr`s; each entry's `msg_name` points into
+                // `sockaddrs` (alive for the outer function) and `msg_iov` points
+                // at `shared_iov` (alive on this stack frame). The kernel only
+                // reads from these pointers during the syscall.
                 let r = unsafe {
                     libc::sendmmsg(
                         fd,
-                        chunk.as_mut_ptr(),
-                        chunk.len() as libc::c_uint,
+                        msgs.as_mut_ptr(),
+                        msgs.len() as libc::c_uint,
                         0,
                     )
                 };
