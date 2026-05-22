@@ -282,7 +282,7 @@ impl Shredder for RegularShredder {
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
@@ -333,7 +333,7 @@ impl Shredder for CodingOnlyShredder {
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         raw_shreds.data = vec![];
@@ -407,7 +407,7 @@ impl Shredder for PetsShredder {
         }
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         raw_shreds.data.pop();
@@ -490,7 +490,7 @@ impl Shredder for AontShredder {
         }
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
