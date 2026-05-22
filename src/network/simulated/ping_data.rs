@@ -26,10 +26,15 @@ use std::fs::File;
 use std::sync::LazyLock;
 
 use csv::ReaderBuilder;
-use geo::{Distance, Haversine, Point};
 use serde::Deserialize;
 
 const MAX_PING_SERVERS: usize = 300;
+
+/// Mean earth radius in meters (GRS80 ellipsoid), as recommended by the IUGG.
+///
+/// This matches the radius used by the `geo` crate's `Haversine` metric, so the
+/// inlined [`haversine_distance`] below reproduces its results exactly.
+const MEAN_EARTH_RADIUS: f64 = 6_371_008.8;
 
 static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
     let mut output = Vec::with_capacity(MAX_PING_SERVERS);
@@ -120,14 +125,23 @@ pub fn coordinates_for_city(city: &str) -> Option<(f64, f64)> {
     })
 }
 
+/// Great-circle distance in meters between two `(latitude, longitude)` points,
+/// computed with the haversine formula on a sphere of [`MEAN_EARTH_RADIUS`].
+fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let delta_lat = (lat2 - lat1).to_radians();
+    let delta_lon = (lon2 - lon1).to_radians();
+    let a = (delta_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (delta_lon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().asin();
+    MEAN_EARTH_RADIUS * c
+}
+
 /// Gives the ping server from the dataset that is closest to the given coordinates.
 pub fn find_closest_ping_server(lat: f64, lon: f64) -> &'static PingServer {
     PING_SERVERS
         .iter()
         .min_by_key(|server| {
-            let server_pos = Point::new(server.longitude, server.latitude);
-            let target_pos = Point::new(lon, lat);
-            Haversine.distance(server_pos, target_pos) as u64
+            haversine_distance(server.latitude, server.longitude, lat, lon) as u64
         })
         .unwrap()
 }
