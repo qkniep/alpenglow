@@ -125,8 +125,13 @@ pub fn coordinates_for_city(city: &str) -> Option<(f64, f64)> {
     })
 }
 
-/// Great-circle distance in meters between two `(latitude, longitude)` points,
-/// computed with the haversine formula on a sphere of [`MEAN_EARTH_RADIUS`].
+/// Great-circle distance between two geographic points.
+///
+/// Takes two points `(latitude, longitude)` (in degrees) as input.
+/// Calculates their distance with the haversine formula on a sphere of
+/// [`MEAN_EARTH_RADIUS`].
+///
+/// Returns the distance in meters.
 fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let delta_lat = (lat2 - lat1).to_radians();
     let delta_lon = (lon2 - lon1).to_radians();
