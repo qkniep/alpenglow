@@ -3,8 +3,8 @@
 
 #[cfg(feature = "telemetry")]
 use std::borrow::Cow;
+use std::io::{IsTerminal, stderr};
 
-use colored::{Color, ColoredString, Colorize};
 #[cfg(feature = "telemetry")]
 use fastrace::collector::Config;
 #[cfg(feature = "telemetry")]
@@ -20,6 +20,7 @@ use opentelemetry_otlp::{
 };
 #[cfg(feature = "telemetry")]
 use opentelemetry_sdk::Resource;
+use owo_colors::{AnsiColors, OwoColorize};
 
 /// Endpoint used for OTLP trace export when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
 #[cfg(feature = "telemetry")]
