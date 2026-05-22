@@ -1,8 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "telemetry")]
-use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -20,18 +18,8 @@ use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
-#[cfg(feature = "telemetry")]
-use fastrace::collector::Config;
 use fastrace::prelude::*;
-#[cfg(feature = "telemetry")]
-use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-#[cfg(feature = "telemetry")]
-use opentelemetry::{InstrumentationScope, KeyValue};
-#[cfg(feature = "telemetry")]
-use opentelemetry_otlp::{SpanExporter, WithExportConfig};
-#[cfg(feature = "telemetry")]
-use opentelemetry_sdk::Resource;
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -77,26 +65,7 @@ async fn main() -> Result<()> {
 
     // enable `fastrace` tracing via OpenTelemetry export (only with `telemetry` feature)
     #[cfg(feature = "telemetry")]
-    {
-        let reporter = OpenTelemetryReporter::new(
-            SpanExporter::builder()
-                .with_tonic()
-                .with_endpoint("http://127.0.0.1:4317".to_string())
-                .with_protocol(opentelemetry_otlp::Protocol::Grpc)
-                .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
-                .build()
-                .expect("initialize oltp exporter"),
-            Cow::Owned(
-                Resource::builder()
-                    .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
-                    .build(),
-            ),
-            InstrumentationScope::builder("alpenglow")
-                .with_version(env!("CARGO_PKG_VERSION"))
-                .build(),
-        );
-        fastrace::set_reporter(reporter, Config::default());
-    }
+    logging::enable_otel_tracing("alpenglow-main");
 
     logging::enable_logforth();
 
