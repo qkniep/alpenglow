@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 
     // enable `fastrace` tracing via OpenTelemetry export (only with `telemetry` feature)
     #[cfg(feature = "telemetry")]
-    logging::enable_otel_tracing("alpenglow-main");
+    logging::enable_otel_tracing("alpenglow-main")?;
 
     logging::enable_logforth();
 

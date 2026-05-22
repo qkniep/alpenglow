@@ -16,7 +16,8 @@ use logforth::{Layout, append};
 use opentelemetry::{InstrumentationScope, KeyValue};
 #[cfg(feature = "telemetry")]
 use opentelemetry_otlp::{
-    OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT, Protocol, SpanExporter, WithExportConfig,
+    ExporterBuildError, OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT, Protocol, SpanExporter,
+    WithExportConfig,
 };
 #[cfg(feature = "telemetry")]
 use opentelemetry_sdk::Resource;
@@ -76,19 +77,21 @@ impl Layout for MinimalLogforthLayout {
 /// The collector endpoint is read from the standard `OTEL_EXPORTER_OTLP_ENDPOINT`
 /// environment variable, falling back to [`DEFAULT_OTLP_ENDPOINT`] for local runs.
 ///
-/// Callers must invoke [`fastrace::flush`] on shutdown to avoid losing buffered spans.
+/// Returns an error if the OTLP exporter cannot be built (e.g., the endpoint URL
+/// is malformed). Callers must invoke [`fastrace::flush`] on shutdown to avoid
+/// losing buffered spans.
 #[cfg(feature = "telemetry")]
-pub fn enable_otel_tracing(service_name: &str) {
+pub fn enable_otel_tracing(service_name: &str) -> Result<(), ExporterBuildError> {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| DEFAULT_OTLP_ENDPOINT.to_string());
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .with_protocol(Protocol::Grpc)
+        .with_timeout(OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
+        .build()?;
     let reporter = OpenTelemetryReporter::new(
-        SpanExporter::builder()
-            .with_tonic()
-            .with_endpoint(endpoint)
-            .with_protocol(Protocol::Grpc)
-            .with_timeout(OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
-            .build()
-            .expect("initialize otlp exporter"),
+        exporter,
         Cow::Owned(
             Resource::builder()
                 .with_attributes([KeyValue::new("service.name", service_name.to_string())])
@@ -99,6 +102,7 @@ pub fn enable_otel_tracing(service_name: &str) {
             .build(),
     );
     fastrace::set_reporter(reporter, Config::default());
+    Ok(())
 }
 
 pub fn enable_logforth() {
