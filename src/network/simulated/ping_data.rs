@@ -165,6 +165,8 @@ impl PingServer {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::PI;
+
     use super::*;
 
     #[test]
@@ -182,5 +184,32 @@ mod tests {
         let ping = get_ping(frankfurt.id, singapore.id).unwrap();
         // ping is at least speed of light
         assert!(ping > 34.0);
+    }
+
+    #[test]
+    fn haversine_distance_sanity() {
+        const EPSILON: f64 = 1e-6;
+
+        // identical points have zero distance
+        assert_eq!(haversine_distance(0.0, 0.0, 0.0, 0.0), 0.0);
+        assert_eq!(haversine_distance(47.377, 8.454, 47.377, 8.454), 0.0);
+        assert_eq!(haversine_distance(-90.0, 0.0, -90.0, 0.0), 0.0);
+
+        // 1° along the equator equals MEAN_EARTH_RADIUS * PI/180
+        let one_degree_arc = MEAN_EARTH_RADIUS * PI / 180.0;
+        assert!((haversine_distance(0.0, 0.0, 0.0, 1.0) - one_degree_arc).abs() < EPSILON);
+        assert!((haversine_distance(0.0, 0.0, 1.0, 0.0) - one_degree_arc).abs() < EPSILON);
+
+        // symmetry: distance is independent of point order
+        let d_ab = haversine_distance(52.507, 13.260, 1.352, 103.819);
+        let d_ba = haversine_distance(1.352, 103.819, 52.507, 13.260);
+        assert!((d_ab - d_ba).abs() < EPSILON);
+
+        // antipodal points: half the Earth's circumference
+        let antipodal = haversine_distance(0.0, 0.0, 0.0, 180.0);
+        assert!((antipodal - MEAN_EARTH_RADIUS * PI).abs() < EPSILON);
+
+        // result must be finite for arbitrary valid inputs
+        assert!(haversine_distance(90.0, 0.0, -90.0, 0.0).is_finite());
     }
 }
