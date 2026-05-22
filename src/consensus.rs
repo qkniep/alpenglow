@@ -49,7 +49,8 @@ use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
-use crate::shredder::{Shred, ValidatedShred};
+use crate::shred_verifier::{NUM_VERIFY_WORKERS, ShredVerifier};
+use crate::shredder::ValidatedShred;
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -116,6 +117,11 @@ where
     all2all: Arc<A>,
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
+
+    /// Parallel signature-verification stage between the network and consumers.
+    shred_verifier: Arc<ShredVerifier>,
+    /// Receiver for verified shreds; taken once by [`Self::run`].
+    validated_shreds_rx: tokio::sync::Mutex<Option<mpsc::Receiver<ValidatedShred>>>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -197,6 +203,10 @@ where
 
         let disseminator = Arc::new(disseminator);
 
+        let (shred_verifier, validated_shreds_rx) =
+            ShredVerifier::spawn(NUM_VERIFY_WORKERS, epoch_info.clone(), cancel_token.clone());
+        let shred_verifier = Arc::new(shred_verifier);
+
         let block_producer = Arc::new(BlockProducer::new(
             secret_key,
             epoch_info.clone(),
@@ -216,6 +226,8 @@ where
             block_producer,
             all2all,
             disseminator,
+            shred_verifier,
+            validated_shreds_rx: tokio::sync::Mutex::new(Some(validated_shreds_rx)),
             cancel_token,
             votor_handle,
         }
@@ -228,10 +240,24 @@ where
     /// Returns an error only if any of the tasks panics.
     #[fastrace::trace(short_name = true)]
     pub async fn run(self) -> Result<()> {
+        let validated_shreds_rx = self
+            .validated_shreds_rx
+            .lock()
+            .await
+            .take()
+            .expect("run() called more than once");
+
         let msg_loop_span = Span::enter_with_local_parent("message loop");
         let node = Arc::new(self);
         let nn = node.clone();
         let msg_loop = tokio::spawn(async move { nn.message_loop().await }.in_span(msg_loop_span));
+
+        let validated_loop_span = Span::enter_with_local_parent("validated shreds loop");
+        let nn = node.clone();
+        let validated_loop = tokio::spawn(
+            async move { nn.validated_shreds_loop(validated_shreds_rx).await }
+                .in_span(validated_loop_span),
+        );
 
         let standstill_loop_span = Span::enter_with_local_parent("standstill detection loop");
         let nn = node.clone();
@@ -248,11 +274,14 @@ where
         node.cancel_token.cancelled().await;
         node.votor_handle.abort();
         msg_loop.abort();
+        validated_loop.abort();
         standstill_loop.abort();
         prod_loop.abort();
 
-        let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
+        let (msg_res, validated_res, prod_res) =
+            tokio::join!(msg_loop, validated_loop, prod_loop);
         msg_res??;
+        validated_res??;
         prod_res??;
         Ok(())
     }
@@ -274,15 +303,30 @@ where
     /// Handles incoming messages on all the different network interfaces.
     ///
     /// [`All2All`]: Handles incoming votes and certificates. Adds them to the [`Pool`].
-    /// [`Disseminator`]: Handles incoming shreds. Adds them to the [`Blockstore`].
+    /// [`Disseminator`]: Hands incoming shreds to the parallel [`ShredVerifier`];
+    /// successfully verified shreds are then processed in [`Self::validated_shreds_loop`].
     async fn message_loop(self: &Arc<Self>) -> Result<()> {
         loop {
             tokio::select! {
                 // handle incoming votes and certificates
                 res = self.all2all.receive() => self.handle_all2all_message(res?).await,
-                // handle shreds received by block dissemination protocol
-                res = self.disseminator.receive() => self.handle_disseminator_shred(res?).await?,
+                // hand shreds off to the verify stage
+                res = self.disseminator.receive() => self.shred_verifier.submit(res?).await,
 
+                () = self.cancel_token.cancelled() => return Ok(()),
+            };
+        }
+    }
+
+    /// Consumes shreds emitted by the [`ShredVerifier`] stage and runs the
+    /// per-shred forward + blockstore ingest steps.
+    async fn validated_shreds_loop(
+        self: &Arc<Self>,
+        mut rx: mpsc::Receiver<ValidatedShred>,
+    ) -> Result<()> {
+        loop {
+            tokio::select! {
+                Some(shred) = rx.recv() => self.handle_validated_shred(shred).await?,
                 () = self.cancel_token.cancelled() => return Ok(()),
             };
         }
@@ -328,19 +372,12 @@ where
 
     #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
-    async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
-        // validate shred before forwarding or inserting
-        let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
-            Ok(v) => v,
-            Err(_) => return Ok(()),
-        };
-
+    async fn handle_validated_shred(&self, shred: ValidatedShred) -> std::io::Result<()> {
         // potentially forward shred
-        self.disseminator.forward(&validated).await?;
+        self.disseminator.forward(&shred).await?;
 
         // if we are the leader, we already have the shred
+        let slot = shred.payload().header.slot;
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
@@ -350,7 +387,7 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(validated)
+            .add_shred_from_disseminator(shred)
             .await;
         if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;
