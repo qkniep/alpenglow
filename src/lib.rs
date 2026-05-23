@@ -11,6 +11,7 @@ pub mod all2all;
 pub mod consensus;
 pub mod crypto;
 pub mod disseminator;
+pub mod execution;
 pub mod logging;
 pub mod network;
 pub mod repair;
