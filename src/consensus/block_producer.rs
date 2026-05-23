@@ -244,7 +244,7 @@ where
                         debug!("starting blocktime timer");
                         let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
-                  }
+                    }
                 }
             };
 
