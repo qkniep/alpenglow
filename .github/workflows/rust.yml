@@ -28,6 +28,17 @@ jobs:
       - name: Check formatting
         run: cargo +nightly fmt --all -- --check
 
+  editorconfig:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: editorconfig-checker
+      - name: Check editorconfig compliance
+        run: editorconfig-checker
+
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
