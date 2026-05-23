@@ -3,38 +3,38 @@
 
 //! Implementation of a digital signature scheme.
 //!
-//! This module abstratcs the digital signatures used throughout the entire library.
+//! This module abstracts the digital signatures used throughout the entire library.
 //! Currently, it provides Ed25519 digital signature scheme, as specified in [RFC 8032].
-//! Specifically, it is a wrapper around the [`ed25519_consensus`] crate.
+//! Specifically, it is a wrapper around the [`ed25519_zebra`] crate.
 //!
 //! [RFC 8032]: https://tools.ietf.org/html/rfc8032
 
-use ed25519_consensus::{SigningKey, VerificationKey};
+use ed25519_zebra::{SigningKey, VerificationKey};
 use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Secret key for the digital signature scheme.
 ///
-/// This is a wrapper around [`ed25519_consensus::SigningKey`].
+/// This is a wrapper around [`ed25519_zebra::SigningKey`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SecretKey(SigningKey);
 
 /// Public key for the digital signature scheme.
 ///
-/// This is a wrapper around [`ed25519_consensus::VerificationKey`].
+/// This is a wrapper around [`ed25519_zebra::VerificationKey`].
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PublicKey(VerificationKey);
 
 wincode::pod_wrapper! {
-    unsafe struct PodSignature(ed25519_consensus::Signature);
+    unsafe struct PodSignature(ed25519_zebra::Signature);
 }
 
 /// Digital signature.
 ///
-/// This is a wrapper around [`ed25519_consensus::Signature`].
+/// This is a wrapper around [`ed25519_zebra::Signature`].
 #[derive(Clone, Copy, Debug, SchemaRead, SchemaWrite)]
-pub struct Signature(#[wincode(with = "PodSignature")] ed25519_consensus::Signature);
+pub struct Signature(#[wincode(with = "PodSignature")] ed25519_zebra::Signature);
 
 impl SecretKey {
     /// Generates a new secret key.
@@ -73,7 +73,12 @@ impl PublicKey {
     /// Returns the bytes of this public key.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8; 32] {
-        self.0.as_bytes()
+        // `ed25519_zebra::VerificationKey` exposes its bytes as `&[u8]`; the key
+        // is always 32 bytes, so reborrowing into `&[u8; 32]` cannot fail.
+        self.0
+            .as_ref()
+            .try_into()
+            .expect("verification key is always 32 bytes")
     }
 }
 
