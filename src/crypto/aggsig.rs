@@ -285,6 +285,16 @@ impl AggregateSignature {
     ///
     /// Augments the aggregate signature with a bitmask of length `num_bits`,
     /// where the bits in `indices` are set to 1.
+    ///
+    /// `sigs` and `indices` must be in lockstep: the `n`-th signature must
+    /// belong to the `n`-th validator id. Duplicate validator ids are silently
+    /// dropped (their signature is not re-aggregated) so the bitmask and the
+    /// underlying aggregate always agree on who signed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `sigs` and `indices` produce a different number of items, or
+    /// if `sigs` is empty.
     #[must_use]
     pub fn new<'a>(
         sigs: impl IntoIterator<Item = &'a IndividualSignature>,
@@ -292,18 +302,40 @@ impl AggregateSignature {
         num_bits: usize,
     ) -> Self {
         let mut sigs_iter = sigs.into_iter();
-        let mut agg_sig = BlstAggSig::from_signature(&sigs_iter.next().unwrap().0);
-        for sig in sigs_iter {
-            agg_sig.add_signature(&sig.0, true).unwrap();
-        }
-
+        let mut indices_iter = indices.into_iter();
         let mut bitmask = bitvec::bitvec![0; num_bits];
-        for i in indices {
-            bitmask.set(i.as_index(), true);
+        let mut agg_sig: Option<BlstAggSig> = None;
+
+        loop {
+            match (sigs_iter.next(), indices_iter.next()) {
+                (Some(sig), Some(idx)) => {
+                    let bit_idx = idx.as_index();
+                    // Bind the aggregate to the bitmask: each signer contributes
+                    // exactly one signature. Dropping duplicates here prevents a
+                    // double-counted contribution that would later fail
+                    // `fast_aggregate_verify` opaquely.
+                    if bitmask.get(bit_idx).as_deref() == Some(&true) {
+                        continue;
+                    }
+                    bitmask.set(bit_idx, true);
+                    match agg_sig.as_mut() {
+                        Some(a) => {
+                            a.add_signature(&sig.0, true).unwrap();
+                        }
+                        None => {
+                            agg_sig = Some(BlstAggSig::from_signature(&sig.0));
+                        }
+                    }
+                }
+                (None, None) => break,
+                _ => panic!("AggregateSignature::new: sigs and indices length mismatch"),
+            }
         }
 
         Self {
-            sig: agg_sig.to_signature(),
+            sig: agg_sig
+                .expect("AggregateSignature::new requires at least one signature")
+                .to_signature(),
             bitmask,
         }
     }
@@ -448,6 +480,54 @@ mod tests {
         assert!(!aggsig.verify(msg, &[pk1, pk3, pk2]));
         assert!(!aggsig.verify(msg, &[pk2, pk3, pk1]));
         assert!(!aggsig.verify(msg, &[pk3, pk1, pk2]));
+    }
+
+    /// A signer listed twice in `votes` must not double-count: the bitmask
+    /// records one bit, and the aggregate must include the signature only once.
+    #[test]
+    fn duplicate_signer_is_deduped() {
+        let msg = b"blst is such a blast";
+
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let pk1 = sk1.to_pk();
+        let sig1 = sk1.sign(msg);
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let pk2 = sk2.to_pk();
+        let sig2 = sk2.sign(msg);
+
+        // sk1 appears twice — must collapse to one contribution.
+        let aggsig = AggregateSignature::new(
+            &[sig1, sig1, sig2],
+            [ValidatorId::new(0), ValidatorId::new(0), ValidatorId::new(1)],
+            2,
+        );
+        let signers: Vec<_> = aggsig.signers().collect();
+        assert_eq!(signers, vec![ValidatorId::new(0), ValidatorId::new(1)]);
+        assert!(aggsig.verify(msg, &[pk1, pk2]));
+        assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk2]));
+
+        // Equivalent to deduplicated input.
+        let reference = AggregateSignature::new(
+            &[sig1, sig2],
+            [ValidatorId::new(0), ValidatorId::new(1)],
+            2,
+        );
+        assert_eq!(aggsig, reference);
+    }
+
+    /// Mismatched `sigs` and `indices` lengths previously let a caller forge a
+    /// bitmask naming signers whose signatures weren't aggregated.
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn length_mismatch_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        // one sig, two named signers
+        let _ = AggregateSignature::new(
+            &[sig1],
+            [ValidatorId::new(0), ValidatorId::new(1)],
+            2,
+        );
     }
 
     #[test]
