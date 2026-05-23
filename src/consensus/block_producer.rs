@@ -354,7 +354,7 @@ where
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
-            self.disseminator.send(&s).await?;
+            self.disseminator.send(s.as_shred()).await?;
             // PERF: move expensive add_shred() call out of block production
             let block = self
                 .blockstore

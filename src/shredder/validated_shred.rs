@@ -3,11 +3,9 @@
 
 //! Defines the [`ValidatedShred`] type.
 
-use std::ops::{Deref, DerefMut};
-
 use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ShredPayload};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
@@ -91,23 +89,33 @@ impl ValidatedShred {
         &self.merkle_root
     }
 
+    /// References the payload contained in the inner [`Shred`].
+    #[must_use]
+    pub fn payload(&self) -> &ShredPayload {
+        self.shred.payload()
+    }
+
+    /// Returns `true` iff the inner [`Shred`] is a data shred.
+    #[must_use]
+    pub fn is_data(&self) -> bool {
+        self.shred.is_data()
+    }
+
+    /// Returns `true` iff the inner [`Shred`] is a coding shred.
+    #[must_use]
+    pub fn is_coding(&self) -> bool {
+        self.shred.is_coding()
+    }
+
+    /// Borrows the inner [`Shred`].
+    #[must_use]
+    pub fn as_shred(&self) -> &Shred {
+        &self.shred
+    }
+
     /// Get access to the inner [`Shred`] consuming self.
     pub fn into_shred(self) -> Shred {
         self.shred
-    }
-}
-
-impl Deref for ValidatedShred {
-    type Target = Shred;
-
-    fn deref(&self) -> &Self::Target {
-        &self.shred
-    }
-}
-
-impl DerefMut for ValidatedShred {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.shred
     }
 }
 

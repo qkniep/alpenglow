@@ -338,7 +338,7 @@ where
         };
 
         // potentially forward shred
-        self.disseminator.forward(&validated).await?;
+        self.disseminator.forward(validated.as_shred()).await?;
 
         // if we are the leader, we already have the shred
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {

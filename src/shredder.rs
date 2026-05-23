@@ -291,7 +291,7 @@ impl Shredder for RegularShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -343,7 +343,7 @@ impl Shredder for CodingOnlyShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -425,7 +425,7 @@ impl Shredder for PetsShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -512,7 +512,7 @@ impl Shredder for AontShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
