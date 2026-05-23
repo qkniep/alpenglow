@@ -14,8 +14,6 @@ use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
-#[cfg(not(target_os = "linux"))]
-use futures::future::join_all;
 use log::warn;
 use tokio::net::UdpSocket;
 use wincode::config::DefaultConfig;
@@ -95,11 +93,22 @@ where
             sendmmsg::send_to_many_linux(&self.socket, &bytes, &addrs).await
         }
 
+        // Sequential `try_send_to` loop, one shared `writable().await` per
+        // EAGAIN. Saves N future allocations and N waker round-trips vs the
+        // previous `join_all`-of-sendtos; UDP sends on one socket are serial
+        // in the kernel anyway, so concurrent polling bought nothing.
         #[cfg(not(target_os = "linux"))]
         {
-            let tasks = addrs.map(async |addr| self.send_serialized(&bytes, addr).await);
-            for res in join_all(tasks).await {
-                let () = res?;
+            for addr in addrs {
+                loop {
+                    match self.socket.try_send_to(&bytes, addr) {
+                        Ok(_) => break,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            self.socket.writable().await?;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
             }
             Ok(())
         }
