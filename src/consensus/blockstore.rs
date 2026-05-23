@@ -9,9 +9,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, warn};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::TrySendError;
 
 pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
@@ -127,24 +128,40 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        let block_info = match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => None,
-            BlockstoreEvent::Block { slot, block_info } => {
-                debug!(
-                    "reconstructed block {} in slot {} with parent {} in slot {}",
-                    block_info.hash.short_hex(),
-                    slot,
-                    block_info.parent.1.short_hex(),
-                    block_info.parent.0,
-                );
-                Some(block_info.clone())
-            }
+    /// Forwards a [`BlockstoreEvent`] to Votor, returning the [`BlockInfo`] of a
+    /// newly reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
+    ///
+    /// This uses a non-blocking [`Sender::try_send`] on purpose: the shred-ingest
+    /// path holds the blockstore write lock while adding a shred (see
+    /// [`super::Alpenglow::handle_disseminator_shred`]), so a blocking send would
+    /// let a slow or stalled Votor apply back-pressure that jams every other task
+    /// waiting on that lock. Instead, on overflow (channel full) or a closed
+    /// channel (Votor shutting down) we drop the event with a log message rather
+    /// than panicking. The block itself is still stored and handed to the Pool by
+    /// the caller, so a dropped event only costs this node its own vote for that
+    /// block under extreme back-pressure.
+    fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
+        let block_info = if let BlockstoreEvent::Block { slot, block_info } = &event {
+            debug!(
+                "reconstructed block {} in slot {} with parent {} in slot {}",
+                block_info.hash.short_hex(),
+                slot,
+                block_info.parent.1.short_hex(),
+                block_info.parent.0,
+            );
+            Some(block_info.clone())
+        } else {
+            None
         };
-        self.votor_channel
-            .send(event)
-            .await
-            .expect("votor should not drop the event receiver");
+        match self.votor_channel.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(event)) => {
+                warn!("Votor event channel full, dropping blockstore event: {event:?}");
+            }
+            Err(TrySendError::Closed(event)) => {
+                debug!("Votor event channel closed, dropping blockstore event: {event:?}");
+            }
+        }
         block_info
     }
 
@@ -249,11 +266,10 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_shred_from_dissemination(shred, &mut shredder)
         {
-            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
+            Ok(Some(event)) => Ok(self.send_blockstore_event(event)),
             Ok(None) => Ok(None),
             Err(AddShredError::InvalidShred) => {
-                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
-                    .await;
+                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot));
                 Err(AddShredError::InvalidShred)
             }
             Err(e) => Err(e),
@@ -288,7 +304,7 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_shred_from_repair(hash, shred, &mut shredder)?
         {
-            Some(event) => Ok(self.send_blockstore_event(event).await),
+            Some(event) => Ok(self.send_blockstore_event(event)),
             None => Ok(None),
         }
     }
@@ -408,6 +424,49 @@ mod tests {
             Err(AddShredError::Duplicate) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Feeds every shred of a fresh single-slice block into `blockstore` and
+    /// returns the [`BlockInfo`] of the reconstructed block.
+    ///
+    /// Reconstruction makes the blockstore emit `FirstShred` + `Block` events to
+    /// Votor via the (non-blocking) `send_blockstore_event`.
+    async fn store_full_block(blockstore: &mut BlockstoreImpl, sk: &SecretKey) -> BlockInfo {
+        let slot = Slot::genesis().next();
+        let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, sk);
+        let mut reconstructed = None;
+        for shred in shreds.into_iter().flatten() {
+            if let Some(info) = add_shred_ignore_duplicate(blockstore, shred).await.unwrap() {
+                reconstructed = Some(info);
+            }
+        }
+        let info = reconstructed.expect("block should reconstruct from all its shreds");
+        assert_eq!(info.hash, block_hash);
+        info
+    }
+
+    /// A full Votor channel must not panic or block the blockstore: the event is
+    /// dropped on overflow, yet the block is still reconstructed and returned.
+    #[tokio::test]
+    async fn block_event_dropped_when_channel_full() {
+        let sk = SecretKey::new(&mut rand::rng());
+        // Capacity 1, never drained: `FirstShred` fills it, `Block` overflows.
+        let (tx, _rx) = mpsc::channel(1);
+        let mut blockstore = BlockstoreImpl::new(tx);
+
+        store_full_block(&mut blockstore, &sk).await;
+    }
+
+    /// A closed Votor channel (Votor shutting down) must not panic the blockstore;
+    /// the event is dropped and the block is still reconstructed and returned.
+    #[tokio::test]
+    async fn block_event_dropped_when_channel_closed() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let (tx, rx) = mpsc::channel(1000);
+        let mut blockstore = BlockstoreImpl::new(tx);
+        drop(rx);
+
+        store_full_block(&mut blockstore, &sk).await;
     }
 
     #[tokio::test]
