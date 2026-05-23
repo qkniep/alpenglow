@@ -49,6 +49,23 @@ jobs:
       - name: Tests
         run: ./test.sh ci
 
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz
+        run: ./test.sh fuzz
+
   build:
     runs-on: ubuntu-latest
     strategy:

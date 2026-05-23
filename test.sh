@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 slow_tests () {
 	echo "🐌 Running slow tests can take up to 10 minutes!"
 	echo "Starting in 3 seconds..."
@@ -37,7 +39,16 @@ sequential_tests () {
 fuzz_tests () {
 	echo "🧪 Running fuzz tests!"
 	sleep 1
-	for target in $(cargo +nightly fuzz list); do
+	local targets
+	if ! targets=$(cargo +nightly fuzz list); then
+		echo "❌ Failed to list fuzz targets (nightly toolchain + cargo-fuzz installed?)"
+		return 1
+	fi
+	if [ -z "$targets" ]; then
+		echo "⚠️  No fuzz targets found, skipping."
+		return 0
+	fi
+	for target in $targets; do
 		echo "Fuzzing $target..."
 		cargo +nightly fuzz run "$target" -- -max_total_time=30 || return 1
 	done
@@ -53,7 +64,7 @@ smoke_tests () {
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 	slow_tests
 elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
-	fast_tests && doc_tests && smoke_tests && sequential_tests && fuzz_tests
+	fast_tests && doc_tests && smoke_tests && sequential_tests
 elif [ $# -gt 0 ] && [ $1 == "doc" ]; then
 	doc_tests
 elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
@@ -66,12 +77,12 @@ elif [ $# -gt 0 ] && [ $1 == "many" ]; then
 	echo "🔁 Running tests for 50 iterations to detect flaky tests..."
 	for i in $(seq 1 50); do
 		echo "Iteration $i/50:"
-		fast_tests && sequential_tests
-		if [ $? -ne 0 ]; then
-            echo "❌ Test failed in one iteration, maybe some tests are flaky."
-            break
-        fi
-    done
+		# Guard with `if` so `set -e` doesn't abort before we can report flakiness.
+		if ! { fast_tests && sequential_tests; }; then
+			echo "❌ Test failed in one iteration, maybe some tests are flaky."
+			break
+		fi
+	done
 else
 	fast_tests
 fi
