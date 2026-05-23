@@ -471,6 +471,12 @@ impl Pool for PoolImpl {
         if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if self.slot_state(slot).should_ignore_vote(&vote) {
+            // Not slashable, but a validator casting both skip and skip-fallback
+            // is provably non-honest. The vote is still dropped as a duplicate;
+            // we only log it to aid post-hoc analysis.
+            if self.slot_state(slot).is_skip_skip_fallback_conflict(&vote) {
+                warn!("validator {voter} cast both skip and skip-fallback on slot {slot}");
+            }
             return Err(AddVoteError::Duplicate);
         }
 
