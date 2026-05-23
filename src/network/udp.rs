@@ -15,6 +15,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use async_trait::async_trait;
 use log::warn;
+use socket2::SockRef;
 use tokio::net::UdpSocket;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
@@ -27,6 +28,16 @@ use crate::network::Network;
 /// This should be enough to receive and deserialize any `NetworkMessage`,
 /// since messages we send in our protocols should fit in one MTU size packet.
 const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
+
+/// Kernel-side send/receive buffer size requested per socket.
+///
+/// The Linux default of ~200 KB (~133 MTU packets) is small enough that
+/// high-fanout broadcasts fill the send buffer mid-`sendmmsg`, forcing EAGAIN
+/// round-trips that erase the syscall amortization. 8 MB holds ~5400 MTU
+/// packets — enough headroom for fanout to thousands of peers without
+/// backpressuring on the sender. The kernel may cap below this (Linux clamps
+/// to `net.core.{rmem,wmem}_max`); we accept whatever we get.
+const SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 /// Implementation of network abstraction over a simple UDP socket.
 pub struct UdpNetwork<S, R> {
@@ -44,6 +55,12 @@ impl<S, R> UdpNetwork<S, R> {
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
         let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
+        let sock_ref = SockRef::from(&socket);
+        // The kernel silently caps requests above the system maximum
+        // (`net.core.{rmem,wmem}_max` on Linux); failure here would mean
+        // setsockopt itself errored, which only happens for invalid fds.
+        sock_ref.set_send_buffer_size(SOCKET_BUFFER_BYTES).unwrap();
+        sock_ref.set_recv_buffer_size(SOCKET_BUFFER_BYTES).unwrap();
         Self {
             socket,
             _msg_types: PhantomData,
@@ -86,10 +103,17 @@ where
     ) -> std::io::Result<()> {
         let bytes = wincode::serialize(msg).unwrap();
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
+        let addrs: Vec<SocketAddr> = addrs.collect();
+
+        // Single-destination short-circuit: `sendmmsg(vlen=1)` carries
+        // mmsghdr setup overhead `sendto` doesn't pay, and the fallback
+        // loop has nothing to amortize across.
+        if let [addr] = addrs.as_slice() {
+            return self.send_serialized(&bytes, *addr).await;
+        }
 
         #[cfg(target_os = "linux")]
         {
-            let addrs: Vec<SocketAddr> = addrs.collect();
             sendmmsg::send_to_many_linux(&self.socket, &bytes, &addrs).await
         }
 
@@ -267,6 +291,27 @@ mod tests {
         socket2.send(&Pong(msg.0), addr1).await.unwrap();
         let msg: Pong = socket1.receive().await.unwrap();
         assert_eq!(msg.0, Ping::default().0);
+    }
+
+    /// `send_to_many` with a single destination must short-circuit to the
+    /// single-packet `sendto` path and still deliver.
+    #[tokio::test]
+    async fn send_to_many_single_addr() {
+        let sender: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+        let receiver: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+        let addr = localhost_ip_sockaddr(receiver.port());
+
+        let payload = Ping([0xcd; 32]);
+        sender
+            .send_to_many(&payload, std::iter::once(addr))
+            .await
+            .unwrap();
+
+        let got = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.receive())
+            .await
+            .expect("receiver should get a packet")
+            .unwrap();
+        assert_eq!(got.0, payload.0);
     }
 
     /// `send_to_many` must deliver the payload to every destination.
