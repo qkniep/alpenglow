@@ -7,7 +7,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
-use crate::shredder::Shred;
+use crate::shredder::{Shred, signed_message};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
@@ -42,20 +42,21 @@ impl ValidatedShred {
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
         let derived_root = shred.merkle_root();
+        let msg = signed_message(&shred.payload().header, &derived_root);
 
         match cached_merkle_root {
             Some(root) => {
                 if root == &derived_root {
                     return Ok(Self(shred));
                 }
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                if shred.merkle_root_sig.verify(&msg, pk) {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             None => {
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                if shred.merkle_root_sig.verify(&msg, pk) {
                     Ok(Self(shred))
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
@@ -135,5 +136,39 @@ mod tests {
         let res =
             ValidatedShred::try_new(invalid_shred, Some(&merkle_root), &invalid_shred_sk.to_pk());
         assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
+    }
+
+    /// Mutating any `SliceHeader` field on a real shred must invalidate the
+    /// signature: the leader signs `(header || merkle_root)`, so re-framing a
+    /// shred for a different slot, slice index, or `is_last` flag is rejected.
+    #[test]
+    fn header_is_bound_to_signature() {
+        use crate::Slot;
+        use crate::types::SliceIndex;
+
+        let (shred, sk) = create_random_shred();
+        let pk = sk.to_pk();
+
+        // baseline: original shred verifies
+        assert!(ValidatedShred::try_new(shred.clone(), None, &pk).is_ok());
+
+        // cross-slot replay: mutate header.slot
+        let mut tampered = shred.clone();
+        let original_slot = tampered.payload().header.slot;
+        tampered.payload_mut().header.slot = Slot::new(original_slot.inner() + 1);
+        let res = ValidatedShred::try_new(tampered, None, &pk);
+        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+
+        // mutate header.slice_index
+        let mut tampered = shred.clone();
+        tampered.payload_mut().header.slice_index = SliceIndex::new_unchecked(7);
+        let res = ValidatedShred::try_new(tampered, None, &pk);
+        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+
+        // mutate header.is_last
+        let mut tampered = shred.clone();
+        tampered.payload_mut().header.is_last = !tampered.payload().header.is_last;
+        let res = ValidatedShred::try_new(tampered, None, &pk);
+        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
     }
 }
