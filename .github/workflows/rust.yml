@@ -66,6 +66,14 @@ jobs:
       - name: Fuzz
         run: ./test.sh fuzz
 
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
   build:
     runs-on: ubuntu-latest
     strategy:
