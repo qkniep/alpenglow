@@ -277,7 +277,10 @@ impl FinalityTracker {
                     self.status.insert(slot, status);
                     return;
                 }
-                FinalizationStatus::Notarized(_) | FinalizationStatus::FinalPendingNotar => {}
+                FinalizationStatus::Notarized(hash) => {
+                    assert_eq!(*hash, block_hash, "consensus safety violation");
+                }
+                FinalizationStatus::FinalPendingNotar => {}
                 FinalizationStatus::ImplicitlySkipped => {
                     unreachable!("consensus safety violation")
                 }
