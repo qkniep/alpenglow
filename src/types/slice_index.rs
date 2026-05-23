@@ -18,7 +18,7 @@ pub const MAX_SLICES_PER_BLOCK: usize = 1024;
 ///
 /// Using strong type to enforce certain constraints, e.g. it is never >= [`MAX_SLICES_PER_BLOCK`].
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, SchemaWrite)]
 pub struct SliceIndex(usize);
 
 impl SliceIndex {
