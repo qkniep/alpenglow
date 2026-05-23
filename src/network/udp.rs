@@ -7,11 +7,14 @@
 //! It is essentially a wrapper around [`tokio::net::UdpSocket`].
 //!
 //! On Linux, `send_to_many` uses the `sendmmsg(2)` syscall to emit a fanout
-//! batch with a single kernel transition; other platforms fall back to issuing
-//! one `sendto` per destination.
+//! batch with a single kernel transition, and `receive` uses `recvmmsg(2)` to
+//! drain a batch of queued datagrams per syscall (buffering the surplus for
+//! later calls); other platforms fall back to one `sendto`/`recv` per packet.
 
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use log::warn;
@@ -39,10 +42,28 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 /// to `net.core.{rmem,wmem}_max`); we accept whatever we get.
 const SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
+/// Number of datagrams drained per `recvmmsg(2)` syscall on Linux.
+///
+/// `receive` reads up to this many queued datagrams in one kernel transition,
+/// hands out the first, and buffers the rest — so a burst of `RECV_BATCH`
+/// packets costs one syscall instead of one per packet. The scratch buffers
+/// backing this are ~`RECV_BATCH * MTU_BYTES` (here ~48 KB) per socket,
+/// allocated once at construction.
+#[cfg(target_os = "linux")]
+const RECV_BATCH: usize = 32;
+
 /// Implementation of network abstraction over a simple UDP socket.
 pub struct UdpNetwork<S, R> {
     socket: UdpSocket,
-    _msg_types: PhantomData<(S, R)>,
+    /// Datagrams drained by an earlier `recvmmsg` batch but not yet handed out
+    /// by `receive`. Filled in arrival order and popped from the front.
+    recv_queue: Mutex<VecDeque<R>>,
+    /// Reusable per-slot receive buffers for the Linux `recvmmsg` fast path.
+    /// Allocated once so a batch drain never re-zeroes ~`RECV_BATCH` MTUs of
+    /// scratch on every refill; the kernel overwrites the bytes it fills.
+    #[cfg(target_os = "linux")]
+    recv_scratch: Mutex<Vec<[u8; RECEIVE_BUFFER_SIZE]>>,
+    _msg_types: PhantomData<S>,
 }
 
 impl<S, R> UdpNetwork<S, R> {
@@ -63,6 +84,9 @@ impl<S, R> UdpNetwork<S, R> {
         sock_ref.set_recv_buffer_size(SOCKET_BUFFER_BYTES).unwrap();
         Self {
             socket,
+            recv_queue: Mutex::new(VecDeque::new()),
+            #[cfg(target_os = "linux")]
+            recv_scratch: Mutex::new(vec![[0u8; RECEIVE_BUFFER_SIZE]; RECV_BATCH]),
             _msg_types: PhantomData,
         }
     }
@@ -84,6 +108,72 @@ impl<S, R> UdpNetwork<S, R> {
         let bytes_sent = self.socket.send_to(bytes, addr).await?;
         assert_eq!(bytes.len(), bytes_sent);
         Ok(())
+    }
+}
+
+impl<S, R> UdpNetwork<S, R>
+where
+    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
+{
+    /// Receives one batch of datagrams from the socket and decodes each into an
+    /// `R`, returned in arrival order.
+    ///
+    /// Datagrams that fail to deserialize are logged and dropped, so the batch
+    /// may be shorter than the number read — and empty when the socket was only
+    /// spuriously readable or every datagram was malformed, in which case the
+    /// caller should simply wait again.
+    ///
+    /// On Linux this drains up to [`RECV_BATCH`] queued datagrams with a single
+    /// `recvmmsg(2)`; on other platforms it reads one datagram per `recv`.
+    async fn recv_batch(&self) -> std::io::Result<VecDeque<R>> {
+        #[cfg(target_os = "linux")]
+        {
+            loop {
+                // Wait for readiness with no lock held, so the (potentially
+                // long) wait never blocks a concurrent drain of the queue.
+                self.socket.readable().await?;
+
+                // `recv_into` is synchronous; the scratch guard is taken only
+                // after the await above and never held across one, keeping this
+                // future `Send` as `async_trait` requires.
+                let mut scratch = self.recv_scratch.lock().unwrap();
+                let lens = match recvmmsg::recv_into(&self.socket, scratch.as_mut_slice()) {
+                    Ok(lens) => lens,
+                    // tokio reported readable but the queue drained first; re-arm.
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        drop(scratch);
+                        continue;
+                    }
+                    // Interrupted before any datagram was read; retry the wait.
+                    Err(e) if e.raw_os_error() == Some(libc::EINTR) => {
+                        drop(scratch);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+
+                let mut batch = VecDeque::with_capacity(lens.len());
+                for (i, &len) in lens.iter().enumerate() {
+                    match wincode::deserialize(&scratch[i][..len]) {
+                        Ok(msg) => batch.push_back(msg),
+                        Err(err) => warn!("deserializing failed with {err:?}"),
+                    }
+                }
+                return Ok(batch);
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut buf = [0; RECEIVE_BUFFER_SIZE];
+            let len = self.socket.recv(&mut buf).await?;
+            let mut batch = VecDeque::new();
+            match wincode::deserialize(&buf[..len]) {
+                Ok(msg) => batch.push_back(msg),
+                Err(err) => warn!("deserializing failed with {err:?}"),
+            }
+            Ok(batch)
+        }
     }
 }
 
@@ -144,17 +234,24 @@ where
     }
 
     async fn receive(&self) -> std::io::Result<R> {
-        let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
-            let _bytes_recved = self.socket.recv(&mut buf).await?;
-            let msg = match wincode::deserialize(&buf) {
-                Ok(r) => r,
-                Err(err) => {
-                    warn!("deserializing failed with {err:?}");
-                    continue;
+            // Fast path: hand out a datagram drained by an earlier batch. The
+            // lock is released before the `await` below — never held across it.
+            let queued = self.recv_queue.lock().unwrap().pop_front();
+            if let Some(msg) = queued {
+                return Ok(msg);
+            }
+
+            // Queue empty: pull a fresh batch from the socket, return its first
+            // message, and stash the rest for subsequent calls. An empty batch
+            // (spurious wakeup or all-malformed) just loops back to wait again.
+            let mut batch = self.recv_batch().await?;
+            if let Some(first) = batch.pop_front() {
+                if !batch.is_empty() {
+                    self.recv_queue.lock().unwrap().append(&mut batch);
                 }
-            };
-            return Ok(msg);
+                return Ok(first);
+            }
         }
     }
 }
@@ -260,6 +357,90 @@ mod sendmmsg {
     }
 }
 
+/// Linux-only `recvmmsg(2)` fast path for batched receives.
+///
+/// Drains every datagram currently queued on the socket (up to the number of
+/// `buffers` provided) with a single `recvmmsg` syscall, replacing N `recvfrom`
+/// syscalls (and N tokio wakers) with one. The caller serializes access and
+/// must have observed readability first.
+#[cfg(target_os = "linux")]
+mod recvmmsg {
+    use std::io;
+    use std::os::fd::AsRawFd;
+
+    use tokio::io::Interest;
+    use tokio::net::UdpSocket;
+
+    use super::RECEIVE_BUFFER_SIZE;
+
+    /// Drains queued datagrams from `socket` into `buffers`, returning the byte
+    /// length of each datagram received (one entry per packet, arrival order).
+    ///
+    /// The fd is non-blocking, so `recvmmsg` reads as many datagrams as are
+    /// already queued — up to `buffers.len()` — and returns immediately rather
+    /// than waiting for the batch to fill. If nothing is queued (a spurious
+    /// readiness, or a racing reader drained it) the underlying `EAGAIN`
+    /// surfaces as `WouldBlock` for the caller to re-arm on.
+    pub(super) fn recv_into(
+        socket: &UdpSocket,
+        buffers: &mut [[u8; RECEIVE_BUFFER_SIZE]],
+    ) -> io::Result<Vec<usize>> {
+        let vlen = buffers.len();
+        let fd = socket.as_raw_fd();
+
+        socket.try_io(Interest::READABLE, || {
+            // One `iovec` per slot, each pointing at that slot's buffer. The
+            // backing `iovecs` Vec must outlive the syscall: every `mmsghdr`
+            // holds a raw pointer into it.
+            let mut iovecs: Vec<libc::iovec> = buffers
+                .iter_mut()
+                .map(|b| libc::iovec {
+                    iov_base: b.as_mut_ptr().cast::<libc::c_void>(),
+                    iov_len: RECEIVE_BUFFER_SIZE,
+                })
+                .collect();
+
+            let mut msgs: Vec<libc::mmsghdr> = iovecs
+                .iter_mut()
+                .map(|iov| {
+                    // SAFETY: `msghdr` is plain POD; zeroing leaves `msg_name`
+                    // NULL (so the kernel skips source-address capture, which we
+                    // discard anyway) and every other optional field in its
+                    // documented "absent" state.
+                    let mut msg_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+                    msg_hdr.msg_iov = iov as *mut libc::iovec;
+                    msg_hdr.msg_iovlen = 1;
+                    libc::mmsghdr { msg_hdr, msg_len: 0 }
+                })
+                .collect();
+
+            // SAFETY: `fd` is owned by `socket` and live for this call.
+            // `msgs.as_mut_ptr()` is a valid pointer to `vlen` initialized
+            // `mmsghdr`s; each entry's `msg_iov` points into `iovecs` (alive on
+            // this stack frame) whose `iov_base` points into `buffers` (alive
+            // for the caller). The kernel writes received bytes into those
+            // buffers and the per-datagram length into each `msg_len`.
+            let r = unsafe {
+                libc::recvmmsg(
+                    fd,
+                    msgs.as_mut_ptr(),
+                    vlen as libc::c_uint,
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            if r < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            Ok(msgs[..r as usize]
+                .iter()
+                .map(|m| m.msg_len as usize)
+                .collect())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +523,39 @@ mod tests {
                 .expect("receiver should get a packet")
                 .unwrap();
             assert_eq!(got.0, payload.0);
+        }
+    }
+
+    /// `receive` must deliver every datagram when many arrive back-to-back,
+    /// regardless of how they were chunked across syscalls.
+    ///
+    /// `N > RECV_BATCH` so the Linux `recvmmsg` path needs more than one batch
+    /// to drain the burst, exercising the internal queue across refills; other
+    /// platforms exercise the single-`recv` fallback. Each datagram carries a
+    /// distinct id so we can confirm none are dropped or duplicated.
+    #[tokio::test]
+    async fn receive_many_batched() {
+        const N: usize = 100;
+        let receiver: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+        let recv_addr = localhost_ip_sockaddr(receiver.port());
+        let sender: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
+
+        for i in 0..N {
+            let mut payload = [0u8; 32];
+            payload[0] = i as u8;
+            sender.send(&Ping(payload), recv_addr).await.unwrap();
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..N {
+            let got = tokio::time::timeout(std::time::Duration::from_secs(5), receiver.receive())
+                .await
+                .expect("receiver should get every packet")
+                .unwrap();
+            assert!(seen.insert(got.0[0]), "datagram {} delivered twice", got.0[0]);
+        }
+        for i in 0..N {
+            assert!(seen.contains(&(i as u8)), "datagram {i} was never delivered");
         }
     }
 }
