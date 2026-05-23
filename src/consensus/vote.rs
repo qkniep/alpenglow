@@ -22,9 +22,9 @@ use crate::{Slot, ValidatorId};
 /// Payload used internally for computing bytes to sign for a vote.
 ///
 /// This type is intentionally not part of the public API.
-/// Each typed vote struct signs the corresponding `VoteKind` variant.
+/// Each typed vote struct signs the corresponding `VotePayload` variant.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
-pub(crate) enum VoteKind {
+pub(crate) enum VotePayload {
     /// A notarization vote for a given block hash in a given slot.
     Notar(Slot, BlockHash),
     /// A notar-fallback vote for a given block hash in a given slot.
@@ -37,7 +37,7 @@ pub(crate) enum VoteKind {
     Final(Slot),
 }
 
-impl Signable for VoteKind {
+impl Signable for VotePayload {
     fn bytes_to_sign(&self) -> Vec<u8> {
         wincode::serialize(self).expect("serialization should not panic")
     }
@@ -67,7 +67,7 @@ impl NotarVote {
     /// Creates a new notarization vote.
     #[must_use]
     pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorId) -> Self {
-        let kind = VoteKind::Notar(slot, block_hash.clone());
+        let kind = VotePayload::Notar(slot, block_hash.clone());
         let sig = sk.sign(&kind.bytes_to_sign());
         Self {
             slot,
@@ -92,7 +92,7 @@ impl NotarVote {
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
-        let msg = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
+        let msg = VotePayload::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         self.sig.verify(&msg, pk)
     }
 }
@@ -128,7 +128,7 @@ impl NotarFallbackVote {
     /// Creates a new notar-fallback vote.
     #[must_use]
     pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorId) -> Self {
-        let kind = VoteKind::NotarFallback(slot, block_hash.clone());
+        let kind = VotePayload::NotarFallback(slot, block_hash.clone());
         let sig = sk.sign(&kind.bytes_to_sign());
         Self {
             slot,
@@ -153,7 +153,7 @@ impl NotarFallbackVote {
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
-        let msg = VoteKind::NotarFallback(self.slot, self.block_hash.clone()).bytes_to_sign();
+        let msg = VotePayload::NotarFallback(self.slot, self.block_hash.clone()).bytes_to_sign();
         self.sig.verify(&msg, pk)
     }
 }
@@ -182,7 +182,7 @@ impl SkipVote {
     /// Creates a new skip vote.
     #[must_use]
     pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
-        let kind = VoteKind::Skip(slot);
+        let kind = VotePayload::Skip(slot);
         let sig = sk.sign(&kind.bytes_to_sign());
         Self { slot, sig, signer }
     }
@@ -196,7 +196,7 @@ impl SkipVote {
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
-        let msg = VoteKind::Skip(self.slot).bytes_to_sign();
+        let msg = VotePayload::Skip(self.slot).bytes_to_sign();
         self.sig.verify(&msg, pk)
     }
 }
@@ -230,7 +230,7 @@ impl SkipFallbackVote {
     /// Creates a new skip-fallback vote.
     #[must_use]
     pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
-        let kind = VoteKind::SkipFallback(slot);
+        let kind = VotePayload::SkipFallback(slot);
         let sig = sk.sign(&kind.bytes_to_sign());
         Self { slot, sig, signer }
     }
@@ -244,7 +244,7 @@ impl SkipFallbackVote {
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
-        let msg = VoteKind::SkipFallback(self.slot).bytes_to_sign();
+        let msg = VotePayload::SkipFallback(self.slot).bytes_to_sign();
         self.sig.verify(&msg, pk)
     }
 }
@@ -277,7 +277,7 @@ impl FinalVote {
     /// Creates a new finalization vote.
     #[must_use]
     pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
-        let kind = VoteKind::Final(slot);
+        let kind = VotePayload::Final(slot);
         let sig = sk.sign(&kind.bytes_to_sign());
         Self { slot, sig, signer }
     }
@@ -291,7 +291,7 @@ impl FinalVote {
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
-        let msg = VoteKind::Final(self.slot).bytes_to_sign();
+        let msg = VotePayload::Final(self.slot).bytes_to_sign();
         self.sig.verify(&msg, pk)
     }
 }
