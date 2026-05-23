@@ -498,7 +498,11 @@ mod tests {
         // sk1 appears twice — must collapse to one contribution.
         let aggsig = AggregateSignature::new(
             &[sig1, sig1, sig2],
-            [ValidatorId::new(0), ValidatorId::new(0), ValidatorId::new(1)],
+            [
+                ValidatorId::new(0),
+                ValidatorId::new(0),
+                ValidatorId::new(1),
+            ],
             2,
         );
         let signers: Vec<_> = aggsig.signers().collect();
@@ -507,11 +511,8 @@ mod tests {
         assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk2]));
 
         // Equivalent to deduplicated input.
-        let reference = AggregateSignature::new(
-            &[sig1, sig2],
-            [ValidatorId::new(0), ValidatorId::new(1)],
-            2,
-        );
+        let reference =
+            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
         assert_eq!(aggsig, reference);
     }
 
@@ -523,11 +524,7 @@ mod tests {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
         // one sig, two named signers
-        let _ = AggregateSignature::new(
-            &[sig1],
-            [ValidatorId::new(0), ValidatorId::new(1)],
-            2,
-        );
+        let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(0), ValidatorId::new(1)], 2);
     }
 
     #[test]
