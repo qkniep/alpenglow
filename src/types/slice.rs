@@ -6,6 +6,7 @@
 use std::ops::Deref;
 
 use rand::prelude::*;
+use thiserror::Error;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -168,14 +169,33 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<&[u8]> for SlicePayload {
-    fn from(payload: &[u8]) -> Self {
-        assert!(
-            payload.len() <= MAX_DATA_PER_SLICE,
-            "payload.len()={} > {MAX_DATA_PER_SLICE}",
-            payload.len()
-        );
-        wincode::deserialize(payload).unwrap()
+/// Errors that may occur while deserializing a [`SlicePayload`] from bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub(crate) enum SlicePayloadError {
+    /// The serialized payload is larger than a slice is allowed to hold.
+    #[error("payload of {len} bytes exceeds the {MAX_DATA_PER_SLICE} byte slice limit")]
+    TooLarge { len: usize },
+    /// The bytes did not decode into a valid [`SlicePayload`].
+    #[error("malformed slice payload")]
+    BadEncoding,
+}
+
+impl TryFrom<&[u8]> for SlicePayload {
+    type Error = SlicePayloadError;
+
+    /// Deserializes a [`SlicePayload`] from bytes received over the network.
+    ///
+    /// Unlike a plain [`wincode::deserialize`], this caps preallocation at
+    /// [`MAX_DATA_PER_SLICE`] (rather than wincode's 4 MiB default), so a
+    /// malicious leader cannot use an inflated length prefix to amplify
+    /// allocation, and returns an error instead of panicking on malformed input.
+    fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
+        if payload.len() > MAX_DATA_PER_SLICE {
+            return Err(SlicePayloadError::TooLarge { len: payload.len() });
+        }
+        let config =
+            DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
+        wincode::config::deserialize(payload, config).map_err(|_| SlicePayloadError::BadEncoding)
     }
 }
 
@@ -219,4 +239,52 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
         is_last: true,
     };
     Slice::from_parts(header, payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payload_roundtrip() {
+        let payload = SlicePayload::new(None, vec![1, 2, 3, 4]);
+        let bytes = payload.to_bytes();
+        assert_eq!(SlicePayload::try_from(bytes.as_slice()).unwrap(), payload);
+    }
+
+    #[test]
+    fn malformed_payload_returns_error() {
+        // Garbage bytes must return an error rather than panicking.
+        assert_eq!(
+            SlicePayload::try_from([0xFFu8; 4].as_slice()),
+            Err(SlicePayloadError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn oversized_payload_returns_error() {
+        let bytes = vec![0u8; MAX_DATA_PER_SLICE + 1];
+        assert_eq!(
+            SlicePayload::try_from(bytes.as_slice()),
+            Err(SlicePayloadError::TooLarge {
+                len: MAX_DATA_PER_SLICE + 1
+            })
+        );
+    }
+
+    #[test]
+    fn inflated_length_prefix_is_rejected_without_panic() {
+        // `data` is the last field, so a serialized empty-data payload ends with
+        // its 8-byte fixint length field. Overwrite it with a huge declared
+        // length: deserialization must error (capped preallocation / short read)
+        // instead of panicking or eagerly allocating gigabytes.
+        let mut bytes = SlicePayload::new(None, vec![]).to_bytes();
+        let len = bytes.len();
+        bytes[len - 8..].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(bytes.len() <= MAX_DATA_PER_SLICE);
+        assert_eq!(
+            SlicePayload::try_from(bytes.as_slice()),
+            Err(SlicePayloadError::BadEncoding)
+        );
+    }
 }

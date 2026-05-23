@@ -14,8 +14,11 @@ use thiserror::Error;
 use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::crypto::signature::PublicKey;
+use wincode::config::DefaultConfig;
+
 use crate::shredder::{
-    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
+    DeshredError, MAX_DATA_PER_SLICE, RegularShredder, Shred, ShredVerifyError, Shredder,
+    TOTAL_SHREDS, ValidatedShred,
 };
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
@@ -356,7 +359,12 @@ impl BlockData {
                 parent = new_parent;
             }
 
-            let mut txs = match wincode::deserialize(&slice.data) {
+            // Cap preallocation at the slice size limit (rather than wincode's
+            // 4 MiB default) so a malicious leader cannot use an inflated length
+            // prefix to amplify allocation while decoding transactions.
+            let config =
+                DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
+            let mut txs = match wincode::config::deserialize(&slice.data, config) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("decoding slice {ind} failed with {err:?}");
