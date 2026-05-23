@@ -19,6 +19,7 @@ use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
 
 use self::finality_tracker::FinalityTracker;
@@ -206,26 +207,22 @@ impl PoolImpl {
                         .notify_parent_certified(child_hash)
                 {
                     match output {
-                        Either::Left(event) => {
-                            self.votor_event_channel.send(event).await.unwrap();
-                        }
-                        Either::Right((slot, hash)) => {
-                            self.repair_channel.send((slot, hash)).await.unwrap();
-                        }
+                        Either::Left(event) => self.send_votor_event(event),
+                        Either::Right((slot, hash)) => self.request_repair((slot, hash)),
                     }
                 }
 
                 // add block to parent-ready tracker, send any new parents to Votor.
                 let new_parents_ready = self.parent_ready_tracker.mark_notar_fallback(&block_id);
-                self.send_parent_ready_events(new_parents_ready).await;
+                self.send_parent_ready_events(new_parents_ready);
 
                 // repair this block, if necessary
-                self.repair_channel.send((slot, block_hash)).await.unwrap();
+                self.request_repair((slot, block_hash));
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
                 let new_parents_ready = self.parent_ready_tracker.mark_skipped(slot);
-                self.send_parent_ready_events(new_parents_ready).await;
+                self.send_parent_ready_events(new_parents_ready);
             }
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
@@ -244,7 +241,7 @@ impl PoolImpl {
 
         // send to votor for broadcasting
         let event = PoolEvent::CertCreated(Box::new(cert));
-        self.votor_event_channel.send(event).await.unwrap();
+        self.send_votor_event(event);
     }
 
     /// Mutably accesses the [`SlotState`] for the given `slot`.
@@ -383,10 +380,10 @@ impl PoolImpl {
 
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
-        self.send_parent_ready_events(new_parents_ready).await;
+        self.send_parent_ready_events(new_parents_ready);
     }
 
-    async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
+    fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
         for (slot, (parent_slot, parent_hash)) in parents {
             debug_assert!(slot.is_start_of_window());
             let event = PoolEvent::ParentReady {
@@ -394,7 +391,45 @@ impl PoolImpl {
                 parent_slot,
                 parent_hash,
             };
-            self.votor_event_channel.send(event).await.unwrap();
+            self.send_votor_event(event);
+        }
+    }
+
+    /// Forwards an event to Votor, returning without blocking.
+    ///
+    /// This uses a non-blocking [`Sender::try_send`] on purpose: the vote/cert
+    /// ingest path holds the Pool write lock while adding to the pool (see
+    /// [`super::Alpenglow::handle_all2all_message`]), so a blocking send would let
+    /// a slow or stalled Votor apply back-pressure that jams every other task
+    /// waiting on that lock. On overflow (channel full) or a closed channel (Votor
+    /// shutting down) the event is dropped with a log message rather than panicking.
+    fn send_votor_event(&self, event: PoolEvent) {
+        match self.votor_event_channel.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(event)) => {
+                warn!("Votor event channel full, dropping pool event: {event:?}");
+            }
+            Err(TrySendError::Closed(event)) => {
+                debug!("Votor event channel closed, dropping pool event: {event:?}");
+            }
+        }
+    }
+
+    /// Requests a repair of the given block, returning without blocking.
+    ///
+    /// Like [`Self::send_votor_event`], this uses a non-blocking
+    /// [`Sender::try_send`] so the Pool write lock is never held waiting on the
+    /// repair loop. On overflow or a closed channel the request is dropped with a
+    /// log message; the block can still be repaired later via standstill recovery.
+    fn request_repair(&self, block_id: BlockId) {
+        match self.repair_channel.try_send(block_id) {
+            Ok(()) => {}
+            Err(TrySendError::Full(block_id)) => {
+                warn!("repair channel full, dropping repair request for {block_id:?}");
+            }
+            Err(TrySendError::Closed(block_id)) => {
+                debug!("repair channel closed, dropping repair request for {block_id:?}");
+            }
         }
     }
 }
@@ -484,10 +519,10 @@ impl Pool for PoolImpl {
             self.add_valid_cert(cert).await;
         }
         for event in votor_events {
-            self.votor_event_channel.send(event).await.unwrap();
+            self.send_votor_event(event);
         }
         for (slot, block_hash) in blocks_to_repair {
-            self.repair_channel.send((slot, block_hash)).await.unwrap();
+            self.request_repair((slot, block_hash));
         }
         Ok(())
     }
@@ -507,7 +542,7 @@ impl Pool for PoolImpl {
         let new_parents_ready = self
             .parent_ready_tracker
             .handle_finalization(finalization_event);
-        self.send_parent_ready_events(new_parents_ready).await;
+        self.send_parent_ready_events(new_parents_ready);
 
         self.slot_state(*slot)
             .notify_parent_known(block_hash.clone());
@@ -518,12 +553,8 @@ impl Pool for PoolImpl {
                 .notify_parent_certified(block_hash.clone())
         {
             match output {
-                Either::Left(event) => {
-                    self.votor_event_channel.send(event).await.unwrap();
-                }
-                Either::Right((slot, hash)) => {
-                    self.repair_channel.send((slot, hash)).await.unwrap();
-                }
+                Either::Left(event) => self.send_votor_event(event),
+                Either::Right((slot, hash)) => self.request_repair((slot, hash)),
             }
             return;
         }
@@ -554,7 +585,7 @@ impl Pool for PoolImpl {
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
-        self.votor_event_channel.send(event).await.unwrap();
+        self.send_votor_event(event);
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.
