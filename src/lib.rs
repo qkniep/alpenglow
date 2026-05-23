@@ -93,6 +93,12 @@ pub struct ValidatorInfo {
     pub pubkey: signature::PublicKey,
     #[serde(deserialize_with = "aggsig::PublicKey::from_array_of_bytes")]
     pub voting_pubkey: aggsig::PublicKey,
+    /// Proof of possession for `voting_pubkey`, verified once in
+    /// [`crate::consensus::EpochInfo::new`]. Without this, BLS aggregate
+    /// verification is unsound under the rogue-key attack — see
+    /// [`aggsig::ProofOfPossession`] for the threat model.
+    #[serde(deserialize_with = "aggsig::ProofOfPossession::from_array_of_bytes")]
+    pub voting_pop: aggsig::ProofOfPossession,
     pub all2all_address: SocketAddr,
     pub disseminator_address: SocketAddr,
     /// Address of the node's repair requester; send [`RepairResponse`] messages here when replying to its [`RepairRequest`].
@@ -153,6 +159,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             stake: Stake::new(1),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
+            voting_pop: voting_sks[id].sign_pop(),
             all2all_address,
             disseminator_address,
             repair_requester_address,
