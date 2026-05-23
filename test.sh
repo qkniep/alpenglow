@@ -39,7 +39,10 @@ sequential_tests () {
 fuzz_tests () {
 	echo "🧪 Running fuzz tests!"
 	sleep 1
-	local targets
+	local targets host
+	# Pin to the host triple: prebuilt cargo-fuzz binaries default to their own
+	# musl-static target, which is ASAN-incompatible and usually not installed.
+	host=$(rustc -vV | sed -n 's/^host: //p')
 	if ! targets=$(cargo +nightly fuzz list); then
 		echo "❌ Failed to list fuzz targets (nightly toolchain + cargo-fuzz installed?)"
 		return 1
@@ -50,7 +53,7 @@ fuzz_tests () {
 	fi
 	for target in $targets; do
 		echo "Fuzzing $target..."
-		cargo +nightly fuzz run "$target" -- -max_total_time=30 || return 1
+		cargo +nightly fuzz run --target "$host" "$target" -- -max_total_time=30 || return 1
 	done
 }
 
