@@ -185,17 +185,21 @@ impl TryFrom<&[u8]> for SlicePayload {
 
     /// Deserializes a [`SlicePayload`] from bytes received over the network.
     ///
-    /// Unlike a plain [`wincode::deserialize`], this caps preallocation at
-    /// [`MAX_DATA_PER_SLICE`] (rather than wincode's 4 MiB default), so a
-    /// malicious leader cannot use an inflated length prefix to amplify
-    /// allocation, and returns an error instead of panicking on malformed input.
+    /// Unlike a plain [`wincode::deserialize`], this:
+    /// - caps preallocation at [`MAX_DATA_PER_SLICE`] (rather than wincode's
+    ///   4 MiB default), so a malicious leader cannot use an inflated length
+    ///   prefix to amplify allocation,
+    /// - requires the bytes to be fully consumed (no trailing bytes), so the
+    ///   encoding is canonical, and
+    /// - returns an error instead of panicking on malformed input.
     fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
         if payload.len() > MAX_DATA_PER_SLICE {
             return Err(SlicePayloadError::TooLarge { len: payload.len() });
         }
         let config =
             DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
-        wincode::config::deserialize(payload, config).map_err(|_| SlicePayloadError::BadEncoding)
+        wincode::config::deserialize_exact(payload, config)
+            .map_err(|_| SlicePayloadError::BadEncoding)
     }
 }
 
@@ -250,6 +254,18 @@ mod tests {
         let payload = SlicePayload::new(None, vec![1, 2, 3, 4]);
         let bytes = payload.to_bytes();
         assert_eq!(SlicePayload::try_from(bytes.as_slice()).unwrap(), payload);
+    }
+
+    #[test]
+    fn trailing_bytes_are_rejected() {
+        // A valid payload followed by extra bytes must not decode (canonical
+        // encoding), even though the leading bytes are a valid `SlicePayload`.
+        let mut bytes = SlicePayload::new(None, vec![1, 2, 3, 4]).to_bytes();
+        bytes.push(0xAA);
+        assert_eq!(
+            SlicePayload::try_from(bytes.as_slice()),
+            Err(SlicePayloadError::BadEncoding)
+        );
     }
 
     #[test]
