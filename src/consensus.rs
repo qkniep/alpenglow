@@ -121,7 +121,7 @@ where
     /// Parallel signature-verification stage between the network and consumers.
     shred_verifier: Arc<ShredVerifier>,
     /// Receiver for verified shreds; taken once by [`Self::run`].
-    validated_shreds_rx: tokio::sync::Mutex<Option<mpsc::Receiver<ValidatedShred>>>,
+    validated_shreds_rx: Option<mpsc::Receiver<ValidatedShred>>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -227,7 +227,7 @@ where
             all2all,
             disseminator,
             shred_verifier,
-            validated_shreds_rx: tokio::sync::Mutex::new(Some(validated_shreds_rx)),
+            validated_shreds_rx: Some(validated_shreds_rx),
             cancel_token,
             votor_handle,
         }
@@ -239,13 +239,13 @@ where
     ///
     /// Returns an error only if any of the tasks panics.
     #[fastrace::trace(short_name = true)]
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
+        // `take()` moves the receiver out so the rest of `self` can still be
+        // moved into the `Arc` below; `new()` always sets this, so it is `Some`.
         let validated_shreds_rx = self
             .validated_shreds_rx
-            .lock()
-            .await
             .take()
-            .expect("run() called more than once");
+            .expect("validated_shreds_rx is always set by new()");
 
         let msg_loop_span = Span::enter_with_local_parent("message loop");
         let node = Arc::new(self);
