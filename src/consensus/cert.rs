@@ -719,6 +719,7 @@ mod tests {
                 stake: Stake::new(1),
                 pubkey: sks.last().unwrap().to_pk(),
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
+                voting_pop: voting_sks.last().unwrap().sign_pop(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
                 repair_request_address: dontcare_sockaddr(),

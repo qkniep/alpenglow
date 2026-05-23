@@ -46,6 +46,13 @@ use crate::ValidatorId;
 /// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
 const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 
+/// Domain separator for proof-of-possession signatures.
+///
+/// Distinct from [`DST`] so that PoP signatures and voting signatures live in
+/// disjoint signing oracles: a PoP can never be reinterpreted as a vote, and
+/// vice versa. This is the IRTF-recommended POP DST for the min-sig variant.
+const POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
+
 /// Size of an uncompressed BLS signature (in the `min_sig` scheme).
 ///
 /// We deal with uncompressed signatures everywhere.
@@ -130,6 +137,39 @@ unsafe impl<C: Config> SchemaWrite<C> for IndividualSignature {
 
     fn write(mut writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         Ok(writer.write(&src.0.serialize())?)
+    }
+}
+
+/// A proof of possession for a BLS public key.
+///
+/// A PoP is a BLS signature over the public key's bytes, made under the
+/// dedicated [`POP_DST`] domain separator. Verifying it before admitting a
+/// `pk` into the validator set is what makes [`AggregateSignature::verify`]
+/// safe under the rogue-key attack: without PoPs an adversary can publish
+/// `pk_adv = -Σ pk_others + g^x` and forge aggregate signatures that name
+/// honest signers; with PoPs, `pk_adv` cannot produce a valid signature of
+/// its own bytes, so it never makes it into the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofOfPossession(BlstSignature);
+
+impl ProofOfPossession {
+    /// Tries to convert a byte array into a proof of possession.
+    ///
+    /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS signature.
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, BLST_ERROR> {
+        Ok(Self(BlstSignature::deserialize(bytes)?))
+    }
+
+    /// Tries to deserialize a `Vec<u8>` into a proof of possession.
+    ///
+    /// This is for use with `serde(deserialize_with)`.
+    pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        Self::try_from_bytes(&buf)
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
     }
 }
 
@@ -270,6 +310,19 @@ impl SecretKey {
         let sig = self.0.sign(msg, DST, &[]);
         IndividualSignature(sig)
     }
+
+    /// Produces a proof of possession for this key's public key.
+    ///
+    /// The PoP is a signature of the public key's bytes under the dedicated
+    /// [`POP_DST`]. It must be verified once (by [`PublicKey::verify_pop`])
+    /// before the public key is admitted to a validator set that is later
+    /// passed to [`AggregateSignature::verify`].
+    #[must_use]
+    pub fn sign_pop(&self) -> ProofOfPossession {
+        let pk_bytes = self.0.sk_to_pk().serialize();
+        let sig = self.0.sign(&pk_bytes, POP_DST, &[]);
+        ProofOfPossession(sig)
+    }
 }
 
 impl IndividualSignature {
@@ -277,6 +330,21 @@ impl IndividualSignature {
     #[must_use]
     pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
         self.0.verify(true, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+    }
+}
+
+impl PublicKey {
+    /// Verifies that `pop` is a valid proof of possession for this public key.
+    ///
+    /// A passing check certifies that the holder of `self` knows the
+    /// corresponding secret key, which is the precondition that makes
+    /// [`AggregateSignature::verify`] (built on `fast_aggregate_verify`) sound
+    /// against the rogue-key attack.
+    #[must_use]
+    pub fn verify_pop(&self, pop: &ProofOfPossession) -> bool {
+        let pk_bytes = self.0.serialize();
+        pop.0.verify(true, &pk_bytes, POP_DST, &[], &self.0, true)
+            == blst::BLST_ERROR::BLST_SUCCESS
     }
 }
 
@@ -309,6 +377,15 @@ impl AggregateSignature {
     }
 
     /// Verifies the aggregate signature against `msg` and `pks`.
+    ///
+    /// # Safety
+    ///
+    /// This uses `fast_aggregate_verify`, which is only sound when every key
+    /// in `pks` has been independently certified to belong to someone who
+    /// knows the corresponding secret. Callers must therefore guarantee that
+    /// each `pk` in `pks` has had its [`ProofOfPossession`] verified via
+    /// [`PublicKey::verify_pop`] before being admitted to the validator set.
+    /// In this codebase that check happens once, in [`crate::consensus::EpochInfo::new`].
     #[must_use]
     pub fn verify(&self, msg: &[u8], pks: &[PublicKey]) -> bool {
         if self.bitmask.len() != pks.len() {
@@ -320,6 +397,10 @@ impl AggregateSignature {
     }
 
     /// Verifies the aggregate signature against `msg` and `pks`.
+    ///
+    /// # Safety
+    ///
+    /// Same PoP precondition as [`AggregateSignature::verify`].
     #[must_use]
     pub fn verify_without_bitmask(&self, msg: &[u8], pks: &[PublicKey]) -> bool {
         if self.bitmask.count_ones() != pks.len() {
@@ -489,5 +570,93 @@ mod tests {
         let wrong_pk_str = format!("sk = {:?}\npk = [0, 0, 0, 0]", kp.sk.0.to_bytes());
         let deserialized: Result<KeyPair, toml::de::Error> = toml::from_str(&wrong_pk_str);
         assert!(deserialized.is_err());
+    }
+
+    /// A PoP for a freshly generated key verifies, and the same PoP rejected
+    /// against any other key.
+    #[test]
+    fn pop_roundtrip() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
+        let pop = sk.sign_pop();
+        assert!(pk.verify_pop(&pop));
+
+        let other_pk = SecretKey::new(&mut rand::rng()).to_pk();
+        assert!(!other_pk.verify_pop(&pop));
+    }
+
+    /// Cross-DST separation: a regular vote signature is not a valid PoP and a
+    /// PoP is not a valid regular signature.
+    #[test]
+    fn pop_dst_is_separate() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
+        let pk_bytes = pk.0.serialize();
+
+        // A vote signature of the pubkey's bytes must NOT be accepted as a PoP.
+        let vote_sig_of_pk = sk.sign(&pk_bytes);
+        let masquerade = ProofOfPossession(vote_sig_of_pk.0);
+        assert!(!pk.verify_pop(&masquerade));
+
+        // A PoP must NOT verify as a regular vote signature over the pk bytes.
+        let pop = sk.sign_pop();
+        let masquerade = IndividualSignature(pop.0);
+        assert!(!masquerade.verify(&pk_bytes, &pk));
+    }
+
+    /// Rogue-key attack: an adversary can construct `pk_adv = pk_x - pk_h` so
+    /// that `[pk_h, pk_adv]` aggregates to `pk_x`. A signature from `sk_x`
+    /// then "verifies" via `fast_aggregate_verify` even though `pk_h` never
+    /// signed. The PoP check defeats this: the adversary cannot produce a
+    /// valid signature of `pk_adv` under `sk_adv` because they do not know
+    /// (and computing it is the discrete log problem).
+    #[test]
+    fn rogue_key_attack_demonstrates_need_for_pop() {
+        use blst::min_sig::AggregatePublicKey as BlstAggregatePublicKey;
+
+        let msg = b"victim's vote";
+
+        // Honest validator.
+        let sk_h = SecretKey::new(&mut rand::rng());
+        let pk_h = sk_h.to_pk();
+
+        // Attacker picks any sk_x they fully control, then derives
+        //   pk_adv := pk_x - pk_h
+        // so that pk_h + pk_adv = pk_x.
+        let sk_x = SecretKey::new(&mut rand::rng());
+        let pk_x = sk_x.to_pk();
+        let mut agg = BlstAggregatePublicKey::from_public_key(&pk_x.0);
+        agg.sub_aggregate(&BlstAggregatePublicKey::from_public_key(&pk_h.0));
+        let pk_adv = PublicKey(agg.to_public_key());
+
+        // Attacker signs `msg` under sk_x and publishes a "two-signer"
+        // aggregate that names both pk_h and pk_adv but actually only carries
+        // sigma_x. The current `new()` does not bind sigs to the bitmask, so
+        // this construction is buildable.
+        let sigma_x = sk_x.sign(msg);
+        let forged = AggregateSignature::new(
+            &[sigma_x],
+            [ValidatorId::new(0), ValidatorId::new(1)],
+            2,
+        );
+
+        // 1) Without a PoP gate, `fast_aggregate_verify` ACCEPTS — the attack
+        //    succeeds at the crypto layer.
+        assert!(
+            forged.verify(msg, &[pk_h, pk_adv]),
+            "rogue-key attack should pass fast_aggregate_verify on its own",
+        );
+
+        // 2) PoP is what saves us: pk_adv has no known secret key, so no PoP
+        //    the attacker can produce will verify against it. Even reusing
+        //    sk_x's PoP (a valid PoP for pk_x, not pk_adv) fails.
+        let sk_x_pop = sk_x.sign_pop();
+        assert!(!pk_adv.verify_pop(&sk_x_pop));
+
+        // And signing pk_adv's bytes under sk_x doesn't help either —
+        // verify_pop checks the signature against pk_adv, not sk_x.
+        let pk_adv_bytes = pk_adv.0.serialize();
+        let bogus = ProofOfPossession(sk_x.0.sign(&pk_adv_bytes, POP_DST, &[]));
+        assert!(!pk_adv.verify_pop(&bogus));
     }
 }

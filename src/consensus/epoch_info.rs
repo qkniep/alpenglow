@@ -29,15 +29,27 @@ pub struct ValidatorEpochInfo {
 impl EpochInfo {
     /// Creates a new `EpochInfo` from the given validator set.
     ///
+    /// Verifies each validator's BLS proof of possession (`voting_pop`). This
+    /// is the trust boundary that makes `fast_aggregate_verify` sound for the
+    /// rest of the protocol: once a key sits inside an `EpochInfo`, downstream
+    /// code can treat it as PoP-checked. Construction-time verification, not
+    /// per-vote, keeps the hot path cheap.
+    ///
     /// # Panics
     ///
-    /// Panics if any validator's `id` does not match its index in the vector.
+    /// - If any validator's `id` does not match its index in the vector.
+    /// - If any validator's `voting_pop` fails to verify against its `voting_pubkey`.
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
         for (i, v) in validators.iter().enumerate() {
             assert!(
                 v.id.as_index() == i,
                 "validator at index {i} has id {}, expected {i}",
                 v.id
+            );
+            assert!(
+                v.voting_pubkey.verify_pop(&v.voting_pop),
+                "validator {} has invalid BLS proof of possession",
+                v.id,
             );
         }
         let total_stake = validators.iter().map(|v| v.stake).sum();
@@ -132,8 +144,23 @@ impl ValidatorEpochInfo {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::Stake;
+    use crate::crypto::aggsig::SecretKey as AggSecretKey;
     use crate::test_utils::generate_validators;
+
+    /// Swapping in a PoP from a different key must panic in `EpochInfo::new`:
+    /// this is the trust boundary that gates everything downstream.
+    #[test]
+    #[should_panic(expected = "invalid BLS proof of possession")]
+    fn rejects_mismatched_pop() {
+        let (_, epoch) = generate_validators(2);
+        let mut validators = epoch.validators().to_vec();
+        // Replace validator 0's PoP with one generated under an unrelated key.
+        let bogus = AggSecretKey::new(&mut rand::rng()).sign_pop();
+        validators[0].voting_pop = bogus;
+        let _ = EpochInfo::new(validators);
+    }
 
     #[test]
     fn quorums() {

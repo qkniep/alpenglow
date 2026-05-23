@@ -147,6 +147,7 @@ async fn create_node_configs(
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
+            voting_pop: voting_sks[id as usize].sign_pop(),
             all2all_address: sockaddr,
             disseminator_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 1),
             repair_request_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),

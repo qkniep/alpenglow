@@ -103,6 +103,7 @@ mod tests {
                 stake: Stake::new(1),
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
+                voting_pop: voting_sk.sign_pop(),
                 all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),
                 disseminator_address: dontcare_sockaddr(),
                 repair_request_address: dontcare_sockaddr(),
