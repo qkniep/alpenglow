@@ -10,12 +10,15 @@ use crate::crypto::signature::PublicKey;
 use crate::shredder::Shred;
 
 /// Different errors returned from [`ValidatedShred::try_new`].
+///
+/// Note: equivocation is not surfaced here. A shred whose derived Merkle root
+/// differs from the cached one but carries a valid leader signature is
+/// returned as `Ok`. Equivocation detection lives in the blockstore, which
+/// compares the resulting root against its own per-slice record.
 #[derive(Debug)]
 pub enum ShredVerifyError {
     /// The signature verification failed.
     InvalidSignature,
-    /// Leader showed equivocation: a valid signature was seen on a different Merkle root.
-    Equivocation,
 }
 
 /// A verified wrapper around a [`Shred`].
@@ -48,31 +51,23 @@ impl ValidatedShred {
     ) -> Result<Self, ShredVerifyError> {
         let derived_root = shred.merkle_root();
 
-        match cached_merkle_root {
-            Some(root) => {
-                if root == &derived_root {
-                    return Ok(Self {
-                        shred,
-                        merkle_root: derived_root,
-                    });
-                }
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
-                    Err(ShredVerifyError::Equivocation)
-                } else {
-                    Err(ShredVerifyError::InvalidSignature)
-                }
-            }
-            None => {
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
-                    Ok(Self {
-                        shred,
-                        merkle_root: derived_root,
-                    })
-                } else {
-                    Err(ShredVerifyError::InvalidSignature)
-                }
-            }
+        // Fast path: the cached root is already known to be signed by `pk`,
+        // and this shred derives the same root, so the same signature is
+        // valid for this shred — skip the Ed25519 verify.
+        if cached_merkle_root == Some(&derived_root) {
+            return Ok(Self {
+                shred,
+                merkle_root: derived_root,
+            });
         }
+
+        if !shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+            return Err(ShredVerifyError::InvalidSignature);
+        }
+        Ok(Self {
+            shred,
+            merkle_root: derived_root,
+        })
     }
 
     /// Creates a new [`ValidatedShred`] when the inner [`Shred`] does not need to be verified.
@@ -150,10 +145,12 @@ mod tests {
         let res = ValidatedShred::try_new(invalid_shred.clone(), Some(&merkle_root), &random_pk);
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
 
-        // checking different shred (with different Merkle root and valid sig)
-        // against existing Merkle root should fail and detect equivocation
+        // a different shred carrying a valid signature for a different Merkle
+        // root than the one cached now returns Ok — equivocation is detected
+        // downstream by the blockstore, not by `try_new`.
         let res =
-            ValidatedShred::try_new(invalid_shred, Some(&merkle_root), &invalid_shred_sk.to_pk());
-        assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
+            ValidatedShred::try_new(invalid_shred, Some(&merkle_root), &invalid_shred_sk.to_pk())
+                .expect("valid signature should produce a ValidatedShred");
+        assert_ne!(res.merkle_root(), &merkle_root);
     }
 }
