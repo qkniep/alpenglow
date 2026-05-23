@@ -173,6 +173,10 @@ where
         RP: RepairResponderNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
+        // Producers (blockstore/pool) send on these with a non-blocking `try_send`
+        // so they never hold a write lock waiting on Votor; the buffer must be deep
+        // enough to absorb bursts, since on overflow events are dropped (and only
+        // recovered later via standstill recovery). Keep these capacities generous.
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
         let (pool_tx, pool_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
