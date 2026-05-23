@@ -96,7 +96,7 @@ pub enum ExecutionError {
 /// for the execution engine to track block state. The first slice of a block
 /// includes the parent block identifier.
 ///
-/// This type is intentionally separate from [`crate::consensus::blockstore::BlockstoreEvent`]
+/// This type is intentionally separate from [`crate::consensus::BlockstoreEvent`]
 /// so that the blockstore can feed execution independently of the voting logic.
 /// The blockstore will hold a [`mpsc::Sender<SliceEvent>`] alongside the existing
 /// Votor channel; the corresponding receiver is consumed by whichever task
