@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 slow_tests () {
 	echo "🐌 Running slow tests can take up to 10 minutes!"
 	echo "Starting in 3 seconds..."
@@ -34,6 +36,27 @@ sequential_tests () {
 		three_nodes_crash
 }
 
+fuzz_tests () {
+	echo "🧪 Running fuzz tests!"
+	sleep 1
+	local targets host
+	# Pin to the host triple: prebuilt cargo-fuzz binaries default to their own
+	# musl-static target, which is ASAN-incompatible and usually not installed.
+	host=$(rustc -vV | sed -n 's/^host: //p')
+	if ! targets=$(cargo +nightly fuzz list); then
+		echo "❌ Failed to list fuzz targets (nightly toolchain + cargo-fuzz installed?)"
+		return 1
+	fi
+	if [ -z "$targets" ]; then
+		echo "⚠️  No fuzz targets found, skipping."
+		return 0
+	fi
+	for target in $targets; do
+		echo "Fuzzing $target..."
+		cargo +nightly fuzz run --target "$host" "$target" -- -max_total_time=30 || return 1
+	done
+}
+
 smoke_tests () {
     echo "🔥 Running smoke tests!"
     sleep 1
@@ -44,23 +67,25 @@ smoke_tests () {
 if [ $# -gt 0 ] && [ $1 == "slow" ]; then
 	slow_tests
 elif [ $# -gt 0 ] && [ $1 == "ci" ]; then
-	fast_tests && doc_tests && sequential_tests && smoke_tests
+	fast_tests && doc_tests && smoke_tests && sequential_tests
 elif [ $# -gt 0 ] && [ $1 == "doc" ]; then
 	doc_tests
 elif [ $# -gt 0 ] && [ $1 == "sequential" ]; then
 	sequential_tests
+elif [ $# -gt 0 ] && [ $1 == "fuzz" ]; then
+	fuzz_tests
 elif [ $# -gt 0 ] && [ $1 == "smoke" ]; then
 	smoke_tests
 elif [ $# -gt 0 ] && [ $1 == "many" ]; then
 	echo "🔁 Running tests for 50 iterations to detect flaky tests..."
 	for i in $(seq 1 50); do
 		echo "Iteration $i/50:"
-		fast_tests && sequential_tests
-		if [ $? -ne 0 ]; then
-            echo "❌ Test failed in one iteration, maybe some tests are flaky."
-            break
-        fi
-    done
+		# Guard with `if` so `set -e` doesn't abort before we can report flakiness.
+		if ! { fast_tests && sequential_tests; }; then
+			echo "❌ Test failed in one iteration, maybe some tests are flaky."
+			break
+		fi
+	done
 else
 	fast_tests
 fi
