@@ -164,6 +164,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<Validato
             stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
+            voting_pop: voting_sks[i as usize].sign_pop(),
             all2all_address: localhost_ip_sockaddr(0),
             disseminator_address: localhost_ip_sockaddr(0),
             repair_request_address: localhost_ip_sockaddr(0),
