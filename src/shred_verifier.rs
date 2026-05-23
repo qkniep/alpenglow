@@ -14,9 +14,15 @@
 //! root seen for each (slot, slice). On a cache hit the Ed25519 verify is
 //! skipped — the cached root already carries a verified leader signature, and
 //! a matching derived root means this shred is covered by the same signature.
-//! Equivocating shreds (valid leader signature on a *different* root for the
-//! same slice) still pass `try_new` and are detected downstream by the
-//! blockstore against its own per-slice record.
+//!
+//! Once a worker observes a second distinct valid root for any slice in a
+//! slot, the leader is provably equivocating for that slot. The cache marks
+//! the slot equivocated and subsequent shreds for it are dropped before
+//! verify — the blockstore would reject them via `leader_misbehaved`
+//! anyway, and absent this short-circuit a Byzantine leader could force a
+//! full Ed25519 verify per shred by spamming distinct-but-valid root sigs.
+//! The two shreds that exposed the equivocation are still forwarded so the
+//! blockstore sees both signatures and updates its own state.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -43,35 +49,53 @@ const VERIFY_QUEUE_SIZE: usize = 1024;
 /// back to the full Ed25519 verify.
 const CACHE_CAPACITY: u64 = 100_000;
 
-/// Concurrent cache of per-slice Merkle roots whose leader signatures have
-/// already been verified. A hit lets a worker skip Ed25519 verify entirely.
+/// Cap on the per-slot equivocation set. Entries are only inserted when a
+/// slot is proven equivocating, which is rare, so this only needs to bound
+/// pathological growth.
+const EQUIVOCATED_SLOTS_CAPACITY: u64 = 4_096;
+
+/// Concurrent cache shared by the verifier workers.
 ///
-/// Entries are inserted on first sight per (slot, slice) and never updated
-/// in place: keeping the first-seen root authoritative means a subsequent
-/// shred with a different (also valid) root falls through to a full verify
-/// and reaches the blockstore, which then detects the equivocation.
+/// Has two parts:
+///   * `roots`: the first verified Merkle root we saw per (slot, slice).
+///     Used to short-circuit Ed25519 verify when a subsequent shred derives
+///     the same root.
+///   * `equivocated_slots`: slots for which we observed two distinct valid
+///     roots for some slice — i.e. proof of leader equivocation. Workers
+///     drop incoming shreds for these slots without verifying.
 pub struct SliceRootCache {
-    inner: Cache<(Slot, SliceIndex), SliceRoot>,
+    roots: Cache<(Slot, SliceIndex), SliceRoot>,
+    equivocated_slots: Cache<Slot, ()>,
 }
 
 impl SliceRootCache {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: Cache::new(CACHE_CAPACITY),
+            roots: Cache::new(CACHE_CAPACITY),
+            equivocated_slots: Cache::new(EQUIVOCATED_SLOTS_CAPACITY),
         }
     }
 
     pub fn get(&self, slot: Slot, slice: SliceIndex) -> Option<SliceRoot> {
-        self.inner.get(&(slot, slice))
+        self.roots.get(&(slot, slice))
     }
 
-    /// Inserts only if no entry exists yet for this key.
+    /// Inserts only if no entry exists yet for this key — keeps the
+    /// first-seen verified root authoritative.
     pub fn insert_if_absent(&self, slot: Slot, slice: SliceIndex, root: SliceRoot) {
         let key = (slot, slice);
-        if self.inner.get(&key).is_none() {
-            self.inner.insert(key, root);
+        if self.roots.get(&key).is_none() {
+            self.roots.insert(key, root);
         }
+    }
+
+    pub fn is_slot_equivocated(&self, slot: Slot) -> bool {
+        self.equivocated_slots.get(&slot).is_some()
+    }
+
+    pub fn mark_slot_equivocated(&self, slot: Slot) {
+        self.equivocated_slots.insert(slot, ());
     }
 }
 
@@ -145,13 +169,41 @@ impl ShredVerifier {
                     let Some(shred) = res else { break };
                     let slot = shred.payload().header.slot;
                     let slice = shred.payload().header.slice_index;
+
+                    // Slots known to have already produced equivocating shreds
+                    // are dropped without Ed25519 verify, so a Byzantine leader
+                    // can't force unbounded sig-verify work by spamming distinct
+                    // valid roots once two have been observed.
+                    if cache.is_slot_equivocated(slot) {
+                        continue;
+                    }
+
                     let leader_pk = epoch_info.epoch_info().leader(slot).pubkey;
                     let cached = cache.get(slot, slice);
                     let Ok(validated) = ValidatedShred::try_new(shred, cached.as_ref(), &leader_pk)
                     else {
                         continue;
                     };
-                    cache.insert_if_absent(slot, slice, validated.merkle_root().clone());
+
+                    match cached {
+                        None => {
+                            cache.insert_if_absent(
+                                slot,
+                                slice,
+                                validated.merkle_root().clone(),
+                            );
+                        }
+                        Some(prev) if &prev != validated.merkle_root() => {
+                            // Two distinct valid roots for the same slice — the
+                            // leader is provably equivocating for this slot.
+                            // Forward this shred too so the blockstore sees
+                            // both signatures, then mark the slot so future
+                            // shreds short-circuit before verify.
+                            cache.mark_slot_equivocated(slot);
+                        }
+                        Some(_) => {}
+                    }
+
                     if output_tx.send(validated).await.is_err() {
                         break;
                     }
@@ -277,6 +329,54 @@ mod tests {
         }
         assert_eq!(received, TOTAL_SHREDS);
         assert_eq!(seen_roots, expected_roots);
+    }
+
+    #[tokio::test]
+    async fn equivocation_short_circuits_further_shreds() {
+        // Produce two distinct slices for the same slot signed by the same
+        // leader: each constitutes a different valid Merkle root, so feeding
+        // shreds from both proves equivocation.
+        let mut shredder = RegularShredder::default();
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = crate::Slot::new(1);
+        let mut slice_a = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        let mut slice_b = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        // Force both slices into the same (slot, slice_index) so the cache
+        // treats them as competing roots for the same slot.
+        slice_a.slot = slot;
+        slice_b.slot = slot;
+        let shreds_a = shredder.shred(slice_a, &sk).unwrap();
+        let shreds_b = shredder.shred(slice_b, &sk).unwrap();
+        assert_ne!(shreds_a[0].merkle_root(), shreds_b[0].merkle_root());
+
+        let epoch_info = single_validator_epoch(&sk);
+        // Single worker so submission order is also processing order.
+        let (verifier, mut rx) =
+            ShredVerifier::spawn(1, epoch_info, CancellationToken::new());
+
+        // First shred (root A) goes through, caches A.
+        verifier.submit(shreds_a[0].clone().into_shred()).await;
+        // Second shred with a different valid root (root B) goes through,
+        // and triggers the slot-equivocated mark.
+        verifier.submit(shreds_b[0].clone().into_shred()).await;
+        // A third shred with yet another root would now be dropped before
+        // any sig verify. We simulate that by feeding more of slice B's
+        // shreds; once the slot is marked equivocated they should all drop.
+        for shred in shreds_b.iter().skip(1).take(3) {
+            verifier.submit(shred.clone().into_shred()).await;
+        }
+
+        // We expect exactly two emissions (the equivocation exposure).
+        let _first = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("first")
+            .unwrap();
+        let _second = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("second")
+            .unwrap();
+        // No further shreds should arrive — they're dropped pre-verify.
+        assert!(timeout(Duration::from_millis(100), rx.recv()).await.is_err());
     }
 
     #[tokio::test]
