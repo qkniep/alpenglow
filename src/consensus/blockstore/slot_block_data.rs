@@ -64,7 +64,7 @@ impl SlotBlockData {
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        assert_eq!(shred.payload().header.slot, self.slot);
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
             debug!("recevied shred from misbehaving leader, not adding to blockstore");
             return Err(AddShredError::InvalidShred);
@@ -89,7 +89,7 @@ impl SlotBlockData {
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        assert_eq!(shred.payload().header.slot, self.slot);
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
             .repaired
             .entry(hash)
@@ -163,7 +163,7 @@ impl BlockData {
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        assert!(shred.payload().header.slot == self.slot);
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
 
         // Both this shred and any cached root carry a verified leader signature,
@@ -182,7 +182,7 @@ impl BlockData {
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
-        assert!(header.slot == self.slot);
+        debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
 
         // populate Merkle root cache
