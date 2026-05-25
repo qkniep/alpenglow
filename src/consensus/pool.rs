@@ -483,8 +483,7 @@ impl Pool for PoolImpl {
 
         // actually add the vote
         trace!("adding vote to pool: {vote:?}");
-        let (new_certs, votor_events, blocks_to_repair) =
-            slot_state.add_vote(vote, voter_stake);
+        let (new_certs, votor_events, blocks_to_repair) = slot_state.add_vote(vote, voter_stake);
 
         // handle any resulting events
         for cert in new_certs {
