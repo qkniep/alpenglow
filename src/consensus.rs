@@ -49,7 +49,7 @@ use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -329,11 +329,18 @@ where
     #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
+        // validate shred before forwarding or inserting
+        let slot = shred.payload().header.slot;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
+        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+
         // potentially forward shred
-        self.disseminator.forward(&shred).await?;
+        self.disseminator.forward(&validated).await?;
 
         // if we are the leader, we already have the shred
-        let slot = shred.payload().header.slot;
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
@@ -343,7 +350,7 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(shred)
+            .add_shred_from_disseminator(validated.into_shred())
             .await;
         if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;

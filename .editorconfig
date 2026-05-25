@@ -1,0 +1,22 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{py,rs,sh}]
+indent_size = 4
+
+[*.{json,md,toml,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.csv]
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
