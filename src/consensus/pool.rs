@@ -454,6 +454,7 @@ impl Pool for PoolImpl {
         if slot < self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
+        let slot_state = self.slot_state(slot);
 
         // verify signature
         let pk = &self
@@ -468,13 +469,13 @@ impl Pool for PoolImpl {
         // check if vote is valid and should be counted
         let voter = vote.signer();
         let voter_stake = self.epoch_info.epoch_info().validator(voter).stake;
-        if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
+        if let Some(offence) = slot_state.check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
-        } else if self.slot_state(slot).should_ignore_vote(&vote) {
+        } else if slot_state.should_ignore_vote(&vote) {
             // Not slashable, but a validator casting both skip and skip-fallback
             // is provably non-honest. The vote is still dropped as a duplicate;
             // we only log it to aid post-hoc analysis.
-            if self.slot_state(slot).is_skip_skip_fallback_conflict(&vote) {
+            if slot_state.is_skip_skip_fallback_conflict(&vote) {
                 warn!("validator {voter} cast both skip and skip-fallback on slot {slot}");
             }
             return Err(AddVoteError::Duplicate);
@@ -483,7 +484,7 @@ impl Pool for PoolImpl {
         // actually add the vote
         trace!("adding vote to pool: {vote:?}");
         let (new_certs, votor_events, blocks_to_repair) =
-            self.slot_state(slot).add_vote(vote, voter_stake);
+            slot_state.add_vote(vote, voter_stake);
 
         // handle any resulting events
         for cert in new_certs {
