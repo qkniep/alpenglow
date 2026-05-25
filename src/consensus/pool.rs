@@ -454,7 +454,6 @@ impl Pool for PoolImpl {
         if slot < self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
-        let slot_state = self.slot_state(slot);
 
         // verify signature
         let pk = &self
@@ -469,6 +468,7 @@ impl Pool for PoolImpl {
         // check if vote is valid and should be counted
         let voter = vote.signer();
         let voter_stake = self.epoch_info.epoch_info().validator(voter).stake;
+        let slot_state = self.slot_state(slot);
         if let Some(offence) = slot_state.check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if slot_state.should_ignore_vote(&vote) {
