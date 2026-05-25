@@ -124,7 +124,7 @@ impl FinalityTracker {
                     assert_eq!(hash, block_hash, "consensus safety violation");
                 }
                 FinalizationStatus::FinalPendingNotar => {}
-                FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
+                FinalizationStatus::ImplicitlySkipped => panic!("consensus safety violation"),
             }
         }
 
@@ -194,7 +194,7 @@ impl FinalityTracker {
                 self.handle_finalized_block((slot, block_hash), &mut event);
                 event
             }
-            FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
+            FinalizationStatus::ImplicitlySkipped => panic!("consensus safety violation"),
         }
     }
 
@@ -256,7 +256,7 @@ impl FinalityTracker {
                     FinalizationStatus::FinalPendingNotar
                     | FinalizationStatus::Finalized(_)
                     | FinalizationStatus::ImplicitlyFinalized(_) => {
-                        unreachable!("consensus safety violation")
+                        panic!("consensus safety violation")
                     }
                 }
             }
@@ -282,7 +282,7 @@ impl FinalityTracker {
                 }
                 FinalizationStatus::FinalPendingNotar => {}
                 FinalizationStatus::ImplicitlySkipped => {
-                    unreachable!("consensus safety violation")
+                    panic!("consensus safety violation")
                 }
             }
         }
