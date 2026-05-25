@@ -476,7 +476,7 @@ impl Pool for PoolImpl {
             // is provably non-honest. The vote is still dropped as a duplicate;
             // we only log it to aid post-hoc analysis.
             if slot_state.is_skip_skip_fallback_conflict(&vote) {
-                warn!("validator {voter} cast both skip and skip-fallback on slot {slot}");
+                debug!("validator {voter} cast both skip and skip-fallback on slot {slot}");
             }
             return Err(AddVoteError::Duplicate);
         }
