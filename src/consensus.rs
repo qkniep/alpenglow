@@ -30,7 +30,7 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
