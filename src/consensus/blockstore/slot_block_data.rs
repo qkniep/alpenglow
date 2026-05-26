@@ -371,7 +371,7 @@ impl BlockData {
             hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
-            _transactions: transactions,
+            transactions,
         };
         let block_info = BlockInfo::from(&block);
         self.completed = Some((block_hash, block));

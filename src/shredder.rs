@@ -236,6 +236,7 @@ pub trait Shredder: Default {
     ///     1. Reconstruct all shreds (data and coding) under the Merkle tree.
     ///     2. Verify the entire Merkle tree.
     ///     3. Return [`DeshredError::InvalidMerkleTree`] if this fails.
+    #[hotpath::measure]
     fn deshred(
         &mut self,
         shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],

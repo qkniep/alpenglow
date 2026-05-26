@@ -267,6 +267,10 @@ where
         Arc::clone(&self.pool)
     }
 
+    pub fn get_blockstore(&self) -> Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> {
+        Arc::clone(&self.blockstore)
+    }
+
     pub fn get_cancel_token(&self) -> CancellationToken {
         self.cancel_token.clone()
     }
