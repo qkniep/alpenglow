@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use either::Either;
 use fastrace::Span;
 use log::{debug, info, warn};

@@ -659,7 +659,7 @@ fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
 
 #[cfg(test)]
 mod tests {
-    use color_eyre::Result;
+    use anyhow::Result;
 
     use super::*;
     use crate::types::slice::create_slice_with_invalid_txs;

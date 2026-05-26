@@ -412,7 +412,7 @@ impl Blockstore for BlockstoreImpl {
 
 #[cfg(test)]
 mod tests {
-    use color_eyre::Result;
+    use anyhow::Result;
     use tokio::sync::mpsc;
 
     use super::*;
