@@ -103,6 +103,19 @@ impl SlotBlockData {
                 AddShredError::Duplicate => (),
             })
     }
+
+    /// Records that the leader was observed equivocating for this slot.
+    ///
+    /// Returns `true` iff this transitioned the slot from "leader behaving" to
+    /// "leader misbehaved", so the caller can decide whether to emit a
+    /// [`BlockstoreEvent::InvalidBlock`].
+    pub(super) fn mark_leader_misbehaved(&mut self) -> bool {
+        if self.leader_misbehaved {
+            return false;
+        }
+        self.leader_misbehaved = true;
+        true
+    }
 }
 
 /// Returned value from [`BlockData::try_reconstruct_slice`]
