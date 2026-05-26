@@ -156,7 +156,7 @@ where
         let all2all = Arc::new(all2all);
 
         let blockstore: Box<dyn Blockstore + Send + Sync> =
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx));
+            Box::new(BlockstoreImpl::new(blockstore_tx));
         let blockstore = Arc::new(RwLock::new(blockstore));
 
         let pool: Box<dyn Pool + Send + Sync> =
@@ -350,7 +350,7 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(validated.into_shred())
+            .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;

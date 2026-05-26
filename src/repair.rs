@@ -23,7 +23,7 @@ use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
-use crate::shredder::{Shred, ShredIndex};
+use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorId};
 
@@ -385,17 +385,18 @@ where
                 let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                if !shred.verify_path_only(root) {
-                    warn!("repair response (Shred) with invalid Merkle proof");
+                let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
+                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
+                    warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
-                }
+                };
 
                 // store shred
                 let res = self
                     .blockstore
                     .write()
                     .await
-                    .add_shred_from_repair(block_hash.clone(), shred)
+                    .add_shred_from_repair(block_hash.clone(), validated)
                     .await;
                 if let Ok(Some(block_info)) = res {
                     assert_eq!(block_info.hash, *block_hash);
@@ -508,9 +509,8 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx)),
-        ));
+        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> =
+            Arc::new(RwLock::new(Box::new(BlockstoreImpl::new(blockstore_tx))));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
@@ -585,7 +585,7 @@ mod tests {
         let response = RepairResponse::LastSliceRoot(
             req_type,
             SliceIndex::new_unchecked(num_slices - 1),
-            shreds.last().unwrap()[0].merkle_root(),
+            shreds.last().unwrap()[0].merkle_root().clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
         let port1 = localhost_ip_sockaddr(3);
@@ -609,7 +609,7 @@ mod tests {
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
             let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
-            let root = shreds[slice.inner()][0].merkle_root();
+            let root = shreds[slice.inner()][0].merkle_root().clone();
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
             ctx.v0_request_net.send(&response, port1).await.unwrap();
@@ -665,7 +665,7 @@ mod tests {
         for slice_shreds in shreds.clone() {
             let mut b = ctx.blockstore.write().await;
             for shred in slice_shreds {
-                let _ = b.add_shred_from_disseminator(shred.into_shred()).await;
+                let _ = b.add_shred_from_dissemination(shred).await;
             }
         }
         assert_eq!(
@@ -695,7 +695,7 @@ mod tests {
         };
         assert_eq!(req_type, request.req_type);
         assert_eq!(last_slice.inner(), SLICES - 1);
-        assert_eq!(root, shreds[last_slice.inner()][0].merkle_root());
+        assert_eq!(&root, shreds[last_slice.inner()][0].merkle_root());
         let correct_proof = ctx
             .blockstore
             .read()
@@ -718,7 +718,7 @@ mod tests {
                 panic!("not SliceRoot response");
             };
             assert_eq!(req_type, request.req_type);
-            assert_eq!(root, shreds[slice.inner()][0].merkle_root());
+            assert_eq!(&root, shreds[slice.inner()][0].merkle_root());
             let correct_proof = ctx
                 .blockstore
                 .read()
