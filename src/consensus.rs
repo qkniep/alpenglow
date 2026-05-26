@@ -350,7 +350,7 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(validated)
+            .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;

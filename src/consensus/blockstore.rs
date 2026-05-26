@@ -62,7 +62,7 @@ impl From<&Block> for BlockInfo {
 #[async_trait]
 #[cfg_attr(test, mockall::automock)]
 pub trait Blockstore {
-    async fn add_shred_from_disseminator(
+    async fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
@@ -234,7 +234,7 @@ impl Blockstore for BlockstoreImpl {
     /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
-    async fn add_shred_from_disseminator(
+    async fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
@@ -245,7 +245,7 @@ impl Blockstore for BlockstoreImpl {
             .expect("should have a shredder because of exclusive access");
         match self
             .slot_data_mut(slot)
-            .add_shred_from_disseminator(shred, &mut shredder)
+            .add_shred_from_dissemination(shred, &mut shredder)
         {
             Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
             Ok(None) => Ok(None),
@@ -261,8 +261,8 @@ impl Blockstore for BlockstoreImpl {
     /// Stores a new shred from repair in the blockstore.
     ///
     /// This shred is stored in a spot associated with the given block`hash`.
-    /// For shreds obtained through block dissemination, `add_shred_from_disseminator`
-    /// should be used instead.
+    /// For shreds obtained through block dissemination,
+    /// `add_shred_from_dissemination` should be used instead.
     /// Compared to that function, this one does not check for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
@@ -401,7 +401,7 @@ mod tests {
         blockstore: &mut BlockstoreImpl,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
-        match blockstore.add_shred_from_disseminator(shred).await {
+        match blockstore.add_shred_from_dissemination(shred).await {
             Ok(output) => Ok(output),
             Err(AddShredError::Duplicate) => Ok(None),
             Err(e) => Err(e),
@@ -533,7 +533,7 @@ mod tests {
 
         // insert just enough shreds to reconstruct slice 0 (from beginning)
         for shred in slices[0].clone().into_iter().take(DATA_SHREDS) {
-            ctx.blockstore.add_shred_from_disseminator(shred).await?;
+            ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 1);
 
@@ -543,7 +543,7 @@ mod tests {
             .into_iter()
             .skip(TOTAL_SHREDS - DATA_SHREDS)
         {
-            ctx.blockstore.add_shred_from_disseminator(shred).await?;
+            ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 2);
 
@@ -554,7 +554,7 @@ mod tests {
             .skip((TOTAL_SHREDS - DATA_SHREDS) / 2)
             .take(DATA_SHREDS)
         {
-            ctx.blockstore.add_shred_from_disseminator(shred).await?;
+            ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 3);
 
@@ -565,7 +565,7 @@ mod tests {
             .enumerate()
             .filter(|(i, _)| *i < DATA_SHREDS / 2 || *i >= TOTAL_SHREDS - DATA_SHREDS / 2)
         {
-            ctx.blockstore.add_shred_from_disseminator(shred).await?;
+            ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
@@ -617,14 +617,14 @@ mod tests {
         // inserting single shred should not throw errors
         let res = ctx
             .blockstore
-            .add_shred_from_disseminator(slices[0][0].clone())
+            .add_shred_from_dissemination(slices[0][0].clone())
             .await;
         assert!(res.is_ok());
 
         // inserting same shred again should give duplicate error
         let res = ctx
             .blockstore
-            .add_shred_from_disseminator(slices[0][0].clone())
+            .add_shred_from_dissemination(slices[0][0].clone())
             .await;
         assert_eq!(res, Err(AddShredError::Duplicate));
 

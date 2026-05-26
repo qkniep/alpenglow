@@ -668,7 +668,7 @@ mod tests {
         for slice_shreds in shreds.clone() {
             let mut b = ctx.blockstore.write().await;
             for shred in slice_shreds {
-                let _ = b.add_shred_from_disseminator(shred).await;
+                let _ = b.add_shred_from_dissemination(shred).await;
             }
         }
         assert_eq!(

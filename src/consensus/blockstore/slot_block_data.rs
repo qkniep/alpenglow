@@ -59,7 +59,7 @@ impl SlotBlockData {
     ///
     /// The shred must already have a verified leader signature (see [`ValidatedShred`]).
     /// Checks for leader equivocation against any previously stored shred for the slice.
-    pub(super) fn add_shred_from_disseminator(
+    pub(super) fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
