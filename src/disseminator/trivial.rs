@@ -126,7 +126,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         for shred in shreds {
-            disseminators[0].send(&shred).await.unwrap();
+            disseminators[0].send(shred.as_shred()).await.unwrap();
         }
 
         // forward shreds on the "leader" disseminator instance
