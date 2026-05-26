@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, warn};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::TrySendError;
 
 use self::slot_block_data::{AddShredError, SlotBlockData};
 use super::epoch_info::ValidatorEpochInfo;
@@ -137,26 +138,41 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
-                self.votor_channel.send(event).await.unwrap();
-                None
+    /// Forwards a [`BlockstoreEvent`] to Votor, returning the [`BlockInfo`] of a
+    /// newly reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
+    ///
+    /// This uses a non-blocking [`Sender::try_send`] on purpose: the shred-ingest
+    /// path holds the blockstore write lock while adding a shred (see
+    /// [`super::Alpenglow::handle_disseminator_shred`]), so a blocking send would
+    /// let a slow or stalled Votor apply back-pressure that jams every other task
+    /// waiting on that lock. Instead, on overflow (channel full) or a closed
+    /// channel (Votor shutting down) we drop the event with a log message rather
+    /// than panicking. The block itself is still stored and handed to the Pool by
+    /// the caller, so a dropped event only costs this node its own vote for that
+    /// block under extreme back-pressure.
+    fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
+        let block_info = if let BlockstoreEvent::Block { slot, block_info } = &event {
+            debug!(
+                "reconstructed block {} in slot {} with parent {} in slot {}",
+                block_info.hash.short_hex(),
+                slot,
+                block_info.parent.1.short_hex(),
+                block_info.parent.0,
+            );
+            Some(block_info.clone())
+        } else {
+            None
+        };
+        match self.votor_channel.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(event)) => {
+                warn!("Votor event channel full, dropping blockstore event: {event:?}");
             }
-            BlockstoreEvent::Block { slot, block_info } => {
-                let block_info = block_info.clone();
-                debug!(
-                    "reconstructed block {} in slot {} with parent {} in slot {}",
-                    block_info.hash.short_hex(),
-                    slot,
-                    block_info.parent.1.short_hex(),
-                    block_info.parent.0,
-                );
-                self.votor_channel.send(event).await.unwrap();
-
-                Some(block_info)
+            Err(TrySendError::Closed(event)) => {
+                debug!("Votor event channel closed, dropping blockstore event: {event:?}");
             }
         }
+        block_info
     }
 
     /// Gives reference to stored block data for the given `block_id`.
@@ -260,11 +276,10 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_shred_from_disseminator(shred, leader_pk, &mut shredder)
         {
-            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
+            Ok(Some(event)) => Ok(self.send_blockstore_event(event)),
             Ok(None) => Ok(None),
             Err(AddShredError::InvalidShred) => {
-                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
-                    .await;
+                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot));
                 Err(AddShredError::InvalidShred)
             }
             Err(e) => Err(e),
@@ -292,7 +307,7 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_own_shred_as_leader(shred, &mut shredder)?
         {
-            Some(event) => Ok(self.send_blockstore_event(event).await),
+            Some(event) => Ok(self.send_blockstore_event(event)),
             None => Ok(None),
         }
     }
@@ -328,7 +343,7 @@ impl Blockstore for BlockstoreImpl {
             leader_pk,
             &mut shredder,
         )? {
-            Some(event) => Ok(self.send_blockstore_event(event).await),
+            Some(event) => Ok(self.send_blockstore_event(event)),
             None => Ok(None),
         }
     }

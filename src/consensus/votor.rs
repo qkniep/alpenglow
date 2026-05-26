@@ -21,7 +21,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::blockstore::{BlockInfo, BlockstoreEvent};
 use super::pool::PoolEvent;
-use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
+use super::{Cert, ConsensusMessage, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
@@ -150,6 +150,18 @@ impl<A: All2All> Votor<A> {
         Ok(())
     }
 
+    /// Broadcasts a consensus message to all other nodes on a best-effort basis.
+    ///
+    /// A failure of the underlying [`All2All`] network is logged and otherwise
+    /// ignored. Broadcasts are best-effort by contract, and a transient network
+    /// error must not bring down the voting loop, which has to keep running to
+    /// preserve liveness.
+    async fn broadcast(&self, msg: impl Into<ConsensusMessage>) {
+        if let Err(err) = self.all2all.broadcast(&msg.into()).await {
+            warn!("failed to broadcast consensus message: {err}");
+        }
+    }
+
     async fn handle_pool_event(&mut self, event: PoolEvent) {
         let slot = event.slot();
         if self.retired_slots.contains(&slot) {
@@ -173,14 +185,14 @@ impl<A: All2All> Votor<A> {
                 debug!("voted notar-fallback in slot {slot}");
                 let vote =
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_id);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.broadcast(vote).await;
                 self.try_skip_window(slot).await;
                 self.bad_window.insert(slot);
             }
             PoolEvent::SafeToSkip(slot) => {
                 debug!("voted skip-fallback in slot {slot}");
                 let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_id);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.broadcast(vote).await;
                 self.try_skip_window(slot).await;
                 self.bad_window.insert(slot);
             }
@@ -198,14 +210,14 @@ impl<A: All2All> Votor<A> {
                     }
                     _ => {}
                 }
-                self.all2all.broadcast(&(*cert).into()).await.unwrap();
+                self.broadcast(*cert).await;
             }
             PoolEvent::Standstill(_, certs, votes) => {
                 for cert in certs {
-                    self.all2all.broadcast(&cert.into()).await.unwrap();
+                    self.broadcast(cert).await;
                 }
                 for vote in votes {
-                    self.all2all.broadcast(&vote.into()).await.unwrap();
+                    self.broadcast(vote).await;
                 }
             }
         }
@@ -319,7 +331,7 @@ impl<A: All2All> Votor<A> {
         }
         debug!("voted notar for slot {slot}");
         let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_id);
-        self.all2all.broadcast(&vote.into()).await.unwrap();
+        self.broadcast(vote).await;
         self.voted.insert(slot);
         self.voted_notar.insert(slot, hash.clone());
         self.pending_blocks.remove(&slot);
@@ -334,7 +346,7 @@ impl<A: All2All> Votor<A> {
         let not_bad = !self.bad_window.contains(&slot);
         if notarized && voted_notar && not_bad {
             let vote = Vote::new_final(slot, &self.voting_key, self.validator_id);
-            self.all2all.broadcast(&vote.into()).await.unwrap();
+            self.broadcast(vote).await;
             self.retired_slots.insert(slot);
         }
     }
@@ -345,7 +357,7 @@ impl<A: All2All> Votor<A> {
         for s in slot.slots_in_window() {
             if self.voted.insert(s) {
                 let vote = Vote::new_skip(s, &self.voting_key, self.validator_id);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.broadcast(vote).await;
                 self.bad_window.insert(s);
                 debug!("voted skip for slot {s}");
             }
