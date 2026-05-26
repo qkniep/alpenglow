@@ -99,7 +99,6 @@ pub struct BlockstoreImpl {
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<BlockstoreEvent>,
 }
