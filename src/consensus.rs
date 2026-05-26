@@ -39,7 +39,7 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
+pub use self::blockstore::{AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl};
