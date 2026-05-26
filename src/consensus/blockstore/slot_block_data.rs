@@ -166,8 +166,7 @@ impl BlockData {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
 
-        // Both this shred and any cached root carry a verified leader signature,
-        // so a mismatch implies the leader signed two roots for the same slice.
+        // different valid signatures for the same slice -> leader equivocation
         if let Some(cached) = self.merkle_root_cache.get(&slice_index)
             && cached != shred.merkle_root()
         {
