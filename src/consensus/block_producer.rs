@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -354,7 +354,7 @@ where
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
-            self.disseminator.send(&s).await?;
+            self.disseminator.send(s.as_shred()).await?;
             // PERF: move expensive add_shred() call out of block production
             let block = self
                 .blockstore
@@ -362,6 +362,13 @@ where
                 .await
                 .add_shred_from_dissemination(s)
                 .await;
+            debug_assert!(
+                !matches!(
+                    block,
+                    Err(AddShredError::InvalidShred | AddShredError::Equivocation),
+                ),
+                "leader produced bad shreds"
+            );
             if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash.clone());

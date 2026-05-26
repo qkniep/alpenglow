@@ -40,7 +40,7 @@ use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{
-    BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
+    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
 };
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
@@ -341,7 +341,7 @@ where
         };
 
         // potentially forward shred
-        self.disseminator.forward(&validated).await?;
+        self.disseminator.forward(validated.as_shred()).await?;
 
         // if we are the leader, we already have the shred
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {

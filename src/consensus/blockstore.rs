@@ -13,7 +13,8 @@ use log::debug;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::Sender;
 
-use self::slot_block_data::{AddShredError, SlotBlockData};
+pub use self::slot_block_data::AddShredError;
+use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
 use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, ValidatedShred};
