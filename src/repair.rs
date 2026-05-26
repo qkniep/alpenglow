@@ -512,9 +512,8 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
-            Box::new(BlockstoreImpl::new(blockstore_tx)),
-        ));
+        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> =
+            Arc::new(RwLock::new(Box::new(BlockstoreImpl::new(blockstore_tx))));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);

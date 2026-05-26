@@ -40,7 +40,8 @@ pub(super) struct SlotBlockData {
     /// Spot for storing blocks that might later be received via repair.
     pub(super) repaired: BTreeMap<BlockHash, BlockData>,
     /// Tracks whether we observed the leader misbehaving.
-    /// Once misbehavior is observed, we stop accepting additional [`Shred`]s through dissemination.
+    /// Once leader misbehavior is observed,
+    /// we stop adding [`ValidatedShred`]s from dissemination.
     leader_misbehaved: bool,
 }
 

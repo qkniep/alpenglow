@@ -442,7 +442,7 @@ mod tests {
         let slot_data = ctx.blockstore.slot_data(slot).unwrap();
         let tree = slot_data.disseminated.double_merkle_tree.as_ref().unwrap();
         let root = tree.get_root();
-        assert!(DoubleMerkleTree::check_proof(&slice_hash, 0, &root, &proof));
+        assert!(DoubleMerkleTree::check_proof(slice_hash, 0, &root, &proof));
 
         Ok(())
     }
@@ -533,9 +533,7 @@ mod tests {
 
         // insert just enough shreds to reconstruct slice 0 (from beginning)
         for shred in slices[0].clone().into_iter().take(DATA_SHREDS) {
-            ctx.blockstore
-                .add_shred_from_disseminator(shred)
-                .await?;
+            ctx.blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 1);
 
@@ -545,9 +543,7 @@ mod tests {
             .into_iter()
             .skip(TOTAL_SHREDS - DATA_SHREDS)
         {
-            ctx.blockstore
-                .add_shred_from_disseminator(shred)
-                .await?;
+            ctx.blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 2);
 
@@ -558,9 +554,7 @@ mod tests {
             .skip((TOTAL_SHREDS - DATA_SHREDS) / 2)
             .take(DATA_SHREDS)
         {
-            ctx.blockstore
-                .add_shred_from_disseminator(shred)
-                .await?;
+            ctx.blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 3);
 
@@ -571,9 +565,7 @@ mod tests {
             .enumerate()
             .filter(|(i, _)| *i < DATA_SHREDS / 2 || *i >= TOTAL_SHREDS - DATA_SHREDS / 2)
         {
-            ctx.blockstore
-                .add_shred_from_disseminator(shred)
-                .await?;
+            ctx.blockstore.add_shred_from_disseminator(shred).await?;
         }
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
