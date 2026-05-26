@@ -15,9 +15,8 @@ use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
 use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use anyhow::{Context, Result};
 use clap::Parser;
-use color_eyre::Result;
-use color_eyre::eyre::Context;
 use fastrace::prelude::*;
 use log::warn;
 use rand::rng;
@@ -49,9 +48,6 @@ struct Args {
 #[tokio::main]
 #[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     // parse args & load config from file
     let args = Args::parse();
     if let Some(ip_list) = args.generate_config_files {
@@ -123,7 +119,7 @@ fn create_node(config: ConfigFile) -> Node {
 async fn create_node_configs(
     socket_list_filename: String,
     config_base_filename: String,
-) -> color_eyre::Result<()> {
+) -> Result<()> {
     // prepare ValidatorInfo for all nodes
     let mut rng = rng();
     let mut sks = Vec::new();

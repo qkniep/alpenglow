@@ -204,7 +204,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(shred.as_shred(), localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -266,7 +268,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(shred.as_shred(), localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -324,7 +328,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(shred.as_shred(), localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();

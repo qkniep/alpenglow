@@ -18,7 +18,7 @@ use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use color_eyre::Result;
+use anyhow::Result;
 
 use super::RotorParams;
 use crate::quorum_robustness::{AdversaryStrength, QuorumRobustnessTest, QuorumThreshold};

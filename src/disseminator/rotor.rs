@@ -240,7 +240,7 @@ mod tests {
 
         assert_eq!(rotors.len(), 1);
         for shred in shreds {
-            rotors[0].send(&shred).await.unwrap();
+            rotors[0].send(shred.as_shred()).await.unwrap();
         }
 
         // forward shreds on the "leader" Rotor instance
