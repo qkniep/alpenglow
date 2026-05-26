@@ -6,8 +6,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alpenglow::{Transaction, logging};
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use log::info;
 use rand::prelude::*;
 
@@ -30,9 +30,6 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     logging::enable_logforth();
 
     // parse args

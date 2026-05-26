@@ -15,10 +15,10 @@ publish = false
 [dependencies]
 aes = { version = "0.9", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
+anyhow = "1"
 bitvec = { version = "1", features = ["serde"] }
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
 clap = { version = "4", features = ["derive"] }
-color-eyre = "0.6"
 csv = "1"
 ctr = "0.10"
 derive_more = { version = "2", features = ["add", "add_assign", "as_ref", "from", "into", "sum"] }
