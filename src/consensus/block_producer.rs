@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use either::Either;
 use fastrace::Span;
 use log::{debug, info, warn};
@@ -244,7 +244,7 @@ where
                         debug!("starting blocktime timer");
                         let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
-                  }
+                    }
                 }
             };
 
@@ -360,7 +360,7 @@ where
                 .blockstore
                 .write()
                 .await
-                .add_shred_from_disseminator(s)
+                .add_shred_from_dissemination(s)
                 .await;
             if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
@@ -683,13 +683,13 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_shred_from_dissemination()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_shred_from_dissemination()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
@@ -749,12 +749,12 @@ mod tests {
 
         // handle first slice
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_shred_from_dissemination()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_shred_from_dissemination()
             .times(1)
             .in_sequence(&mut seq)
             .return_once(move |_| {
@@ -768,13 +768,13 @@ mod tests {
 
         // handle second slice
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_shred_from_dissemination()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_shred_from_disseminator()
+            .expect_add_shred_from_dissemination()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {

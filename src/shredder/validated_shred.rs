@@ -21,8 +21,9 @@ pub enum ShredVerifyError {
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
 ///
-/// The slice's Merkle root is cached at construction time so callers (and
-/// equivocation checks) don't need to re-derive it from the proof.
+/// The slice's Merkle root is derived and cached at construction time
+/// because it is needed for signature verification anyways.
+/// So calling [`ValidatedShred::merkle_root`] does't re-calculate it.
 #[derive(Clone, Debug)]
 pub struct ValidatedShred {
     shred: Shred,

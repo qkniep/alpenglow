@@ -385,11 +385,8 @@ where
                 let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                // try_new short-circuits when the derived Merkle root matches the
-                // trusted root, so this stays as cheap as the previous `verify_path_only`
-                // check on the fast path and only does a leader sig verify on mismatch.
-                let leader_pk = self.epoch_info.epoch_info().leader(*slot).pubkey;
-                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), &leader_pk) else {
+                let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
+                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };
@@ -512,9 +509,8 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
-            Box::new(BlockstoreImpl::new(blockstore_tx)),
-        ));
+        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> =
+            Arc::new(RwLock::new(Box::new(BlockstoreImpl::new(blockstore_tx))));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
@@ -669,7 +665,7 @@ mod tests {
         for slice_shreds in shreds.clone() {
             let mut b = ctx.blockstore.write().await;
             for shred in slice_shreds {
-                let _ = b.add_shred_from_disseminator(shred).await;
+                let _ = b.add_shred_from_dissemination(shred).await;
             }
         }
         assert_eq!(
