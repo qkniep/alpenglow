@@ -223,7 +223,8 @@ impl Blockstore for BlockstoreImpl {
     /// Stores a new shred in the blockstore.
     ///
     /// This shred is stored in the default spot without a known block hash.
-    /// For shreds obtained through repair, `add_shred_from_repair` should be used instead.
+    /// For shreds obtained through repair,
+    /// [`Blockstore::add_shred_from_repair`] should be used instead.
     /// Compared to that function, this one checks for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
@@ -261,7 +262,7 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// This shred is stored in a spot associated with the given block`hash`.
     /// For shreds obtained through block dissemination,
-    /// `add_shred_from_dissemination` should be used instead.
+    /// [`Blockstore::add_shred_from_dissemination`] should be used instead.
     /// Compared to that function, this one does not check for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
