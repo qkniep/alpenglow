@@ -6,9 +6,11 @@
 mod slot_block_data;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;
+use tokio::sync::RwLock;
 use tokio::sync::mpsc::Sender;
 
 pub use self::slot_block_data::AddShredError;
@@ -93,6 +95,9 @@ pub trait Blockstore {
         slice_index: SliceIndex,
     ) -> Option<DoubleMerkleProof>;
 }
+
+/// Shared, lock-protected handle to a [`Blockstore`] trait object.
+pub type SharedBlockstore = Arc<RwLock<dyn Blockstore + Send + Sync>>;
 
 /// Blockstore is the fundamental data structure holding block data per slot.
 pub struct BlockstoreImpl {
