@@ -13,7 +13,7 @@ mod weighted_shuffle;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use moka::future::Cache;
+use quick_cache::sync::Cache;
 use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
@@ -30,7 +30,7 @@ pub const DEFAULT_FANOUT: usize = 200;
 ///
 /// A [`TurbineTree`] takes roughly 1600 bytes of memory to store.
 /// So, caching up to 2^16 trees occupies roughly 100 MiB of memory.
-const MAX_CACHED_TREES: u64 = 65536;
+const MAX_CACHED_TREES: usize = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
 pub struct Turbine<N: Network> {
@@ -86,9 +86,7 @@ where
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn send_shred_to_root(&self, shred: &Shred) -> std::io::Result<()> {
-        let tree = self
-            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
-            .await;
+        let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
         let root = tree.get_root();
         let addr = self
             .epoch_info
@@ -105,9 +103,7 @@ where
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> std::io::Result<()> {
-        let tree = self
-            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
-            .await;
+        let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
         let addrs = tree.get_children().iter().map(|child| {
             self.epoch_info
                 .epoch_info()
@@ -120,8 +116,8 @@ where
 
     /// Returns the correct Turbine tree for the given slot and shred index.
     /// If the tree is cached, it is returned, otherwise it is built and cached.
-    async fn get_tree(&self, slot: Slot, shred: usize) -> TurbineTree {
-        if let Some(tree) = self.tree_cache.get(&(slot, shred)).await {
+    fn get_tree(&self, slot: Slot, shred: usize) -> TurbineTree {
+        if let Some(tree) = self.tree_cache.get(&(slot, shred)) {
             return tree;
         }
         let tree = TurbineTree::new(
@@ -131,7 +127,7 @@ where
             slot,
             shred,
         );
-        self.tree_cache.insert((slot, shred), tree.clone()).await;
+        self.tree_cache.insert((slot, shred), tree.clone());
         tree
     }
 }
