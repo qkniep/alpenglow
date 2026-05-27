@@ -2,10 +2,12 @@ queue_rules:
   - name: default
     merge_method: squash
     batch_size: 3
-    batch_max_wait_time: 1 min
+    batch_max_wait_time: 5 m
     checks_timeout: 30 min
     queue_conditions:
       - base = main
       - -draft
       - -conflict
-      - "label = state: queued"
+    merge_conditions:
+      - and:
+          - "label = state: queued"
