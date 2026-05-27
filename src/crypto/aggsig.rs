@@ -304,9 +304,8 @@ impl AggregateSignature {
     /// Panics if:
     /// - `sigs` and `indices` have different lengths,
     /// - both `sigs` and `indices` are empty,
-    /// - any validator index is `>= num_bits`.
-    ///
-    /// In debug builds, also panics if `indices` contains a duplicate.
+    /// - any validator index is `>= num_bits`,
+    /// - `indices` contains a duplicate.
     #[must_use]
     pub fn new<'a>(
         sigs: impl IntoIterator<Item = &'a IndividualSignature>,
@@ -339,7 +338,7 @@ impl AggregateSignature {
                 bit_idx < num_bits,
                 "validator index {bit_idx} >= num_bits {num_bits}",
             );
-            debug_assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
+            assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
             // does not check subgroup membership (`sig_groupcheck=false`)
             agg_sig
                 .add_signature(&sig.0, false)
