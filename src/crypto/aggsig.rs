@@ -285,21 +285,42 @@ impl AggregateSignature {
     ///
     /// Augments the aggregate signature with a bitmask of length `num_bits`,
     /// where the bits in `indices` are set to 1.
+    ///
+    /// Requirements:
+    /// - `sigs` must not be empty,
+    /// - `sigs` and `indices` must have the same length,
+    /// - the `i`-th signature must belong to the `i`-th validator id,
+    /// - each validator ID must appear at most once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `sigs` and `indices` have different length, or if `sigs` is empty.
+    /// In debug builds, also panics if `indices` contains a duplicate.
     #[must_use]
     pub fn new<'a>(
         sigs: impl IntoIterator<Item = &'a IndividualSignature>,
         indices: impl IntoIterator<Item = ValidatorId>,
         num_bits: usize,
     ) -> Self {
-        let mut sigs_iter = sigs.into_iter();
-        let mut agg_sig = BlstAggSig::from_signature(&sigs_iter.next().unwrap().0);
-        for sig in sigs_iter {
-            agg_sig.add_signature(&sig.0, true).unwrap();
-        }
+        let mut sigs = sigs.into_iter();
+        let mut indices = indices.into_iter();
+        let next_pair = || match (sigs.next(), indices.next()) {
+            (Some(s), Some(i)) => Some((s, i)),
+            (None, None) => None,
+            _ => panic!("sigs and indices length mismatch"),
+        };
+        let mut pairs = std::iter::from_fn(next_pair);
 
         let mut bitmask = bitvec::bitvec![0; num_bits];
-        for i in indices {
-            bitmask.set(i.as_index(), true);
+        let (first_sig, first_idx) = pairs.next().expect("sigs and indices must not be empty");
+        let mut agg_sig = BlstAggSig::from_signature(&first_sig.0);
+        bitmask.set(first_idx.as_index(), true);
+
+        for (sig, idx) in pairs {
+            let bit_idx = idx.as_index();
+            debug_assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
+            agg_sig.add_signature(&sig.0, true).unwrap();
+            bitmask.set(bit_idx, true);
         }
 
         Self {
@@ -448,6 +469,30 @@ mod tests {
         assert!(!aggsig.verify(msg, &[pk1, pk3, pk2]));
         assert!(!aggsig.verify(msg, &[pk2, pk3, pk1]));
         assert!(!aggsig.verify(msg, &[pk3, pk1, pk2]));
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate signer")]
+    fn duplicate_signer_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+
+        let _ =
+            AggregateSignature::new(&[sig1, sig1], [ValidatorId::new(0), ValidatorId::new(0)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn length_mismatch_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        // one sig, two validator ids
+        let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+        // two sigs, one validator id
+        let _ = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0)], 2);
     }
 
     #[test]
