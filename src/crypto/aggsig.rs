@@ -497,9 +497,20 @@ mod tests {
     fn duplicate_signer_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
 
-        let _ =
-            AggregateSignature::new(&[sig1, sig1], [ValidatorId::new(0), ValidatorId::new(0)], 2);
+        // [v0, v1, v0] — the duplicate is reached only after a non-duplicate
+        // has already been added, exercising the in-loop assert path.
+        let _ = AggregateSignature::new(
+            &[sig1, sig2, sig1],
+            [
+                ValidatorId::new(0),
+                ValidatorId::new(1),
+                ValidatorId::new(0),
+            ],
+            2,
+        );
     }
 
     #[test]
