@@ -302,34 +302,29 @@ impl AggregateSignature {
         indices: impl IntoIterator<Item = ValidatorId>,
         num_bits: usize,
     ) -> Self {
-        let mut sigs_iter = sigs.into_iter();
-        let mut indices_iter = indices.into_iter();
-        let mut bitmask = bitvec::bitvec![0; num_bits];
-        let mut agg_sig: Option<BlstAggSig> = None;
+        let mut sigs = sigs.into_iter();
+        let mut indices = indices.into_iter();
+        let next_pair = || match (sigs.next(), indices.next()) {
+            (Some(s), Some(i)) => Some((s, i)),
+            (None, None) => None,
+            _ => panic!("sigs and indices length mismatch"),
+        };
+        let mut pairs = std::iter::from_fn(next_pair);
 
-        loop {
-            match (sigs_iter.next(), indices_iter.next()) {
-                (Some(sig), Some(idx)) => {
-                    let bit_idx = idx.as_index();
-                    debug_assert!(
-                        bitmask.get(bit_idx).as_deref() != Some(&true),
-                        "duplicate signer index {bit_idx}",
-                    );
-                    bitmask.set(bit_idx, true);
-                    match &mut agg_sig {
-                        Some(a) => a.add_signature(&sig.0, true).unwrap(),
-                        None => agg_sig = Some(BlstAggSig::from_signature(&sig.0)),
-                    }
-                }
-                (None, None) => break,
-                _ => panic!("sigs and indices length mismatch"),
-            }
+        let mut bitmask = bitvec::bitvec![0; num_bits];
+        let (first_sig, first_idx) = pairs.next().expect("sigs and indices must not be empty");
+        let mut agg_sig = BlstAggSig::from_signature(&first_sig.0);
+        bitmask.set(first_idx.as_index(), true);
+
+        for (sig, idx) in pairs {
+            let bit_idx = idx.as_index();
+            debug_assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
+            agg_sig.add_signature(&sig.0, true).unwrap();
+            bitmask.set(bit_idx, true);
         }
 
         Self {
-            sig: agg_sig
-                .expect("at least one signature required")
-                .to_signature(),
+            sig: agg_sig.to_signature(),
             bitmask,
         }
     }
