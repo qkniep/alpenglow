@@ -505,16 +505,41 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "length mismatch")]
-    fn length_mismatch_panics() {
+    fn length_mismatch_panics_fewer_sigs() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
-        // one sig, two validator ids
         let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+    }
 
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn length_mismatch_panics_fewer_indices() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
         let sk2 = SecretKey::new(&mut rand::rng());
         let sig2 = sk2.sign(b"msg");
-        // two sigs, one validator id
         let _ = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "validator index")]
+    fn out_of_bounds_first_index_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        // num_bits=2, but the only validator id is 2 (>= num_bits)
+        let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(2)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "validator index")]
+    fn out_of_bounds_later_index_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+        // num_bits=2, first index ok, second index 2 (>= num_bits)
+        let _ =
+            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(2)], 2);
     }
 
     #[test]
