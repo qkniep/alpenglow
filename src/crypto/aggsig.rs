@@ -97,6 +97,11 @@ impl PublicKey {
 /// An individual signature as part of the aggregate signature scheme.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
+///
+/// # Invariant
+///
+/// Always in the prime-order subgroup (and not the identity).
+/// [`AggregateSignature::new`] relies on this to skip subgroup checks.
 //
 // NOTE: Deriving `PartialEq` and `Eq` to support testing.
 // It only makes sense beccause the underlying signature scheme happens to be deterministic and unique.
@@ -112,9 +117,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let sig_bytes = reader.take_borrowed(UNCOMPRESSED_SIG_SIZE)?;
-        // `sig_validate` enforces the prime-order subgroup membership (and rejects
-        // the identity), so the resulting `IndividualSignature` is safe to feed
-        // into `BlstAggSig::{from_signature, add_signature}` without further checks.
+        // perform subgroup check, and identity check (`true`)
         let sig = BlstSignature::sig_validate(sig_bytes, true).map_err(|e| {
             warn!("encountered invalid BLS sig: {e:?}");
             wincode::ReadError::Custom("invalid BLS signature")
@@ -325,6 +328,7 @@ impl AggregateSignature {
             first_bit_idx < num_bits,
             "validator ID {first_bit_idx} >= num_bits {num_bits}",
         );
+        // does not check subgroup membership
         let mut agg_sig = BlstAggSig::from_signature(&first_sig.0);
         bitmask.set(first_bit_idx, true);
 
@@ -335,9 +339,7 @@ impl AggregateSignature {
                 "validator ID {bit_idx} >= num_bits {num_bits}",
             );
             assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
-            // `sig_groupcheck=false` matches `from_signature` above; both rely on the
-            // `IndividualSignature` invariant that the inner point is in G1. With
-            // groupcheck off `add_signature` is infallible.
+            // does not check subgroup membership (`sig_groupcheck=false`)
             agg_sig
                 .add_signature(&sig.0, false)
                 .expect("add_signature is infallible when sig_groupcheck is false");
