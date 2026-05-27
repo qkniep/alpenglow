@@ -4,6 +4,7 @@ queue_rules:
     batch_size: 3
     batch_max_wait_time: 1 min
     checks_timeout: 30 min
+    autoqueue: true
     queue_conditions:
       - base = main
       - -draft
