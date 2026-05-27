@@ -1128,8 +1128,7 @@ mod tests {
         let slot = Slot::new(0);
         let num_validators = ctx.epoch_info.epoch_info().validators().len() as u64;
 
-        // claim a signer id past the validator set; sign with any sk — we should
-        // bail with UnknownSigner before signature verification runs.
+        // claim a `signer` out-of-bounds for validator set
         let vote = Vote::new_notar(
             slot,
             GENESIS_BLOCK_HASH,
