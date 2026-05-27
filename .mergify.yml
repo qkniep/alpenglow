@@ -11,8 +11,5 @@ queue_rules:
       - "label = state: queued"
 
 merge_protections:
-  - name: default
-    if:
-      - base = main
-    auto_merge_conditions:
-      - "label = state: queued"
+  auto_merge_conditions:
+    - "label = state: queued"
