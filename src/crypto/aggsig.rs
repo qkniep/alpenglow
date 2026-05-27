@@ -287,14 +287,16 @@ impl AggregateSignature {
     /// where the bits in `indices` are set to 1.
     ///
     /// `sigs` and `indices` must be in lockstep: the `n`-th signature must
-    /// belong to the `n`-th validator id. Duplicate validator ids are silently
-    /// dropped (their signature is not re-aggregated) so the bitmask and the
-    /// underlying aggregate always agree on who signed.
+    /// belong to the `n`-th validator id. Each validator id must appear at most
+    /// once, so the bitmask and the underlying aggregate agree on who signed
+    /// (a repeated signer would double-count its contribution while the
+    /// bitmask still marks it as one signer).
     ///
     /// # Panics
     ///
     /// Panics if `sigs` and `indices` produce a different number of items, or
-    /// if `sigs` is empty.
+    /// if `sigs` is empty. In debug builds, also panics if `indices` contains a
+    /// duplicate.
     #[must_use]
     pub fn new<'a>(
         sigs: impl IntoIterator<Item = &'a IndividualSignature>,
@@ -310,13 +312,10 @@ impl AggregateSignature {
             match (sigs_iter.next(), indices_iter.next()) {
                 (Some(sig), Some(idx)) => {
                     let bit_idx = idx.as_index();
-                    // Bind the aggregate to the bitmask: each signer contributes
-                    // exactly one signature. Dropping duplicates here prevents a
-                    // double-counted contribution that would later fail
-                    // `fast_aggregate_verify` opaquely.
-                    if bitmask.get(bit_idx).as_deref() == Some(&true) {
-                        continue;
-                    }
+                    debug_assert!(
+                        bitmask.get(bit_idx).as_deref() != Some(&true),
+                        "AggregateSignature::new: duplicate signer index {bit_idx}",
+                    );
                     bitmask.set(bit_idx, true);
                     match agg_sig.as_mut() {
                         Some(a) => {
@@ -483,37 +482,15 @@ mod tests {
     }
 
     /// A signer listed twice in `votes` must not double-count: the bitmask
-    /// records one bit, and the aggregate must include the signature only once.
+    /// records one bit while the aggregate adds two contributions.
     #[test]
-    fn duplicate_signer_is_deduped() {
-        let msg = b"blst is such a blast";
-
+    #[should_panic(expected = "duplicate signer")]
+    fn duplicate_signer_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
-        let pk1 = sk1.to_pk();
-        let sig1 = sk1.sign(msg);
-        let sk2 = SecretKey::new(&mut rand::rng());
-        let pk2 = sk2.to_pk();
-        let sig2 = sk2.sign(msg);
+        let sig1 = sk1.sign(b"msg");
 
-        // sk1 appears twice — must collapse to one contribution.
-        let aggsig = AggregateSignature::new(
-            &[sig1, sig1, sig2],
-            [
-                ValidatorId::new(0),
-                ValidatorId::new(0),
-                ValidatorId::new(1),
-            ],
-            2,
-        );
-        let signers: Vec<_> = aggsig.signers().collect();
-        assert_eq!(signers, vec![ValidatorId::new(0), ValidatorId::new(1)]);
-        assert!(aggsig.verify(msg, &[pk1, pk2]));
-        assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk2]));
-
-        // Equivalent to deduplicated input.
-        let reference =
-            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
-        assert_eq!(aggsig, reference);
+        let _ =
+            AggregateSignature::new(&[sig1, sig1], [ValidatorId::new(0), ValidatorId::new(0)], 2);
     }
 
     /// Mismatched `sigs` and `indices` lengths previously let a caller forge a
