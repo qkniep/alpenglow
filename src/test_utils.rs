@@ -97,9 +97,8 @@ pub fn create_random_shredded_block(
     }
     let merkle_roots = shreds
         .iter()
-        .map(|slice_shreds| slice_shreds[0].merkle_root())
-        .collect::<Vec<_>>();
-    let tree = DoubleMerkleTree::new(&merkle_roots);
+        .map(|slice_shreds| slice_shreds[0].merkle_root());
+    let tree = DoubleMerkleTree::new(merkle_roots);
     let block_hash = tree.get_root();
     (block_hash, tree, shreds)
 }

@@ -16,8 +16,8 @@ use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
 use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use log::info;
 
 /// Alpenglow performance test with simulated network.
@@ -32,9 +32,6 @@ struct Args {
 #[tokio::main]
 #[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     let args = Args::parse();
     logging::enable_logforth();
 
