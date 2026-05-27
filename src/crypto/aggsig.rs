@@ -314,7 +314,7 @@ impl AggregateSignature {
                     let bit_idx = idx.as_index();
                     debug_assert!(
                         bitmask.get(bit_idx).as_deref() != Some(&true),
-                        "AggregateSignature::new: duplicate signer index {bit_idx}",
+                        "duplicate signer index {bit_idx}",
                     );
                     bitmask.set(bit_idx, true);
                     match agg_sig.as_mut() {
@@ -327,13 +327,13 @@ impl AggregateSignature {
                     }
                 }
                 (None, None) => break,
-                _ => panic!("AggregateSignature::new: sigs and indices length mismatch"),
+                _ => panic!("sigs and indices length mismatch"),
             }
         }
 
         Self {
             sig: agg_sig
-                .expect("AggregateSignature::new requires at least one signature")
+                .expect("at least one signature required")
                 .to_signature(),
             bitmask,
         }
