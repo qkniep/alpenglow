@@ -19,7 +19,7 @@ use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot;
+use tokio::sync::{RwLock, oneshot};
 
 use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
@@ -124,6 +124,9 @@ pub trait Pool {
     fn parents_ready(&self, slot: Slot) -> &[BlockId];
     fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>>;
 }
+
+/// Shared, lock-protected handle to a [`Pool`] trait object.
+pub type SharedPool = Arc<RwLock<dyn Pool + Send + Sync>>;
 
 /// Pool is the central consensus data structure.
 ///

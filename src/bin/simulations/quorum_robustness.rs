@@ -18,7 +18,7 @@ use std::sync::RwLock;
 
 use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, QuorumSamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
-use color_eyre::Result;
+use anyhow::Result;
 use log::debug;
 use rand::prelude::*;
 use rayon::prelude::*;
