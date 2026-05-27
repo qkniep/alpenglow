@@ -316,13 +316,9 @@ impl AggregateSignature {
                         "duplicate signer index {bit_idx}",
                     );
                     bitmask.set(bit_idx, true);
-                    match agg_sig.as_mut() {
-                        Some(a) => {
-                            a.add_signature(&sig.0, true).unwrap();
-                        }
-                        None => {
-                            agg_sig = Some(BlstAggSig::from_signature(&sig.0));
-                        }
+                    match &mut agg_sig {
+                        Some(a) => a.add_signature(&sig.0, true).unwrap(),
+                        None => agg_sig = Some(BlstAggSig::from_signature(&sig.0)),
                     }
                 }
                 (None, None) => break,
