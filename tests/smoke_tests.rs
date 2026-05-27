@@ -9,7 +9,7 @@
 //! Tests are organized in two tiers:
 //! - **Help tests** (fast, always run): verify the CLI parses and the binary links.
 //! - **Launch tests** (slow, `#[ignore]`): actually start the binary, let it run for
-//!   a few seconds, and verify it makes progress. Run via `./test.sh smoke` or
+//!   a few seconds, and verify it makes progress. Run via `just test-smoke` or
 //!   `cargo nextest run --test smoke_tests --run-ignored=all`.
 
 use std::io::{Read, Write};
