@@ -542,6 +542,17 @@ mod tests {
     }
 
     #[test]
+    fn identity_signature_rejected() {
+        // BLS12-381 G1 uncompressed encoding of the identity point: only the
+        // infinity flag (bit 6 of byte 0) is set.
+        let mut identity = [0u8; UNCOMPRESSED_SIG_SIZE];
+        identity[0] = 0b_0100_0000;
+
+        let result: wincode::ReadResult<IndividualSignature> = wincode::deserialize(&identity);
+        assert!(result.is_err(), "identity signature must be rejected");
+    }
+
+    #[test]
     fn serialize_toml() {
         #[derive(Serialize, Deserialize)]
         struct KeyPair {
