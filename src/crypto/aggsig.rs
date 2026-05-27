@@ -293,11 +293,16 @@ impl AggregateSignature {
     /// - `sigs` must not be empty,
     /// - `sigs` and `indices` must have the same length,
     /// - the `i`-th signature must belong to the `i`-th validator id,
+    /// - each validator index must be less than `num_bits`,
     /// - each validator ID must appear at most once.
     ///
     /// # Panics
     ///
-    /// Panics if `sigs` and `indices` have different length, or if `sigs` is empty.
+    /// Panics if:
+    /// - `sigs` and `indices` have different lengths,
+    /// - both `sigs` and `indices` are empty,
+    /// - any validator index is `>= num_bits`.
+    ///
     /// In debug builds, also panics if `indices` contains a duplicate.
     #[must_use]
     pub fn new<'a>(
@@ -316,11 +321,20 @@ impl AggregateSignature {
 
         let mut bitmask = bitvec::bitvec![0; num_bits];
         let (first_sig, first_idx) = pairs.next().expect("sigs and indices must not be empty");
+        let first_bit_idx = first_idx.as_index();
+        assert!(
+            first_bit_idx < num_bits,
+            "validator index {first_bit_idx} >= num_bits {num_bits}",
+        );
         let mut agg_sig = BlstAggSig::from_signature(&first_sig.0);
-        bitmask.set(first_idx.as_index(), true);
+        bitmask.set(first_bit_idx, true);
 
         for (sig, idx) in pairs {
             let bit_idx = idx.as_index();
+            assert!(
+                bit_idx < num_bits,
+                "validator index {bit_idx} >= num_bits {num_bits}",
+            );
             debug_assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
             // `sig_groupcheck=false` matches `from_signature` above; both rely on the
             // `IndividualSignature` invariant that the inner point is in G1. With
