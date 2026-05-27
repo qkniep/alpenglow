@@ -4,14 +4,8 @@ queue_rules:
     batch_size: 3
     batch_max_wait_time: 1 min
     checks_timeout: 30 min
-
-pull_request_rules:
-  - name: Auto-queue labeled PRs
-    conditions:
+    queue_conditions:
       - base = main
       - -draft
       - -conflict
       - "label = state: queued"
-    actions:
-      queue:
-        name: default
