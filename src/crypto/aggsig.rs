@@ -286,17 +286,16 @@ impl AggregateSignature {
     /// Augments the aggregate signature with a bitmask of length `num_bits`,
     /// where the bits in `indices` are set to 1.
     ///
-    /// `sigs` and `indices` must be in lockstep: the `n`-th signature must
-    /// belong to the `n`-th validator id. Each validator id must appear at most
-    /// once, so the bitmask and the underlying aggregate agree on who signed
-    /// (a repeated signer would double-count its contribution while the
-    /// bitmask still marks it as one signer).
+    /// Requirements:
+    /// - `sigs` must not be empty,
+    /// - `sigs` and `indices` must have the same length,
+    /// - the `i`-th signature must belong to the `i`-th validator id,
+    /// - each validator ID must appear at most once.
     ///
     /// # Panics
     ///
-    /// Panics if `sigs` and `indices` produce a different number of items, or
-    /// if `sigs` is empty. In debug builds, also panics if `indices` contains a
-    /// duplicate.
+    /// Panics if `sigs` and `indices` have different length, or if `sigs` is empty.
+    /// In debug builds, also panics if `indices` contains a duplicate.
     #[must_use]
     pub fn new<'a>(
         sigs: impl IntoIterator<Item = &'a IndividualSignature>,
