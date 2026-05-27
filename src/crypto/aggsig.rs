@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "length mismatch")]
-    fn length_mismatch_panics_fewer_sigs() {
+    fn length_mismatch_fewer_sigs_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
         let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(0), ValidatorId::new(1)], 2);
@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "length mismatch")]
-    fn length_mismatch_panics_fewer_indices() {
+    fn length_mismatch_fewer_indices_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
         let sk2 = SecretKey::new(&mut rand::rng());
