@@ -112,9 +112,12 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let sig_bytes = reader.take_borrowed(UNCOMPRESSED_SIG_SIZE)?;
-        let sig = BlstSignature::deserialize(sig_bytes).map_err(|e| {
+        // `sig_validate` enforces the prime-order subgroup membership (and rejects
+        // the identity), so the resulting `IndividualSignature` is safe to feed
+        // into `BlstAggSig::{from_signature, add_signature}` without further checks.
+        let sig = BlstSignature::sig_validate(sig_bytes, true).map_err(|e| {
             warn!("encountered invalid BLS sig: {e:?}");
-            wincode::ReadError::Custom("invalid BLS encoding")
+            wincode::ReadError::Custom("invalid BLS signature")
         })?;
         dst.write(IndividualSignature(sig));
         wincode::ReadResult::Ok(())
@@ -319,7 +322,12 @@ impl AggregateSignature {
         for (sig, idx) in pairs {
             let bit_idx = idx.as_index();
             debug_assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
-            agg_sig.add_signature(&sig.0, true).unwrap();
+            // `sig_groupcheck=false` matches `from_signature` above; both rely on the
+            // `IndividualSignature` invariant that the inner point is in G1. With
+            // groupcheck off `add_signature` is infallible.
+            agg_sig
+                .add_signature(&sig.0, false)
+                .expect("add_signature is infallible when sig_groupcheck is false");
             bitmask.set(bit_idx, true);
         }
 
