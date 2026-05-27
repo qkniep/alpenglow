@@ -460,8 +460,8 @@ impl Pool for PoolImpl {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
-        // reject votes from validators outside the current epoch's set; without
-        // this, the `validator()` indexing below would panic on byzantine input.
+        // reject votes from validators outside the current epoch's set,
+        // otherwise `validator()` indexing below would panic on byzantine input
         let epoch = self.epoch_info.epoch_info();
         if vote.signer().as_index() >= epoch.validators().len() {
             return Err(AddVoteError::UnknownSigner);
