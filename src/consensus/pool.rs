@@ -76,6 +76,8 @@ impl PoolEvent {
 pub enum AddVoteError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
+    #[error("signer is not a validator in the current epoch")]
+    UnknownSigner,
     #[error("invalid signature on the vote")]
     InvalidSignature,
     #[error("duplicate vote")]
@@ -458,19 +460,21 @@ impl Pool for PoolImpl {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
+        // reject votes from validators outside the current epoch's set; without
+        // this, the `validator()` indexing below would panic on byzantine input.
+        let epoch = self.epoch_info.epoch_info();
+        if vote.signer().as_index() >= epoch.validators().len() {
+            return Err(AddVoteError::UnknownSigner);
+        }
+
         // verify signature
-        let pk = &self
-            .epoch_info
-            .epoch_info()
-            .validator(vote.signer())
-            .voting_pubkey;
+        let pk = &epoch.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
             return Err(AddVoteError::InvalidSignature);
         }
 
         // check if vote is valid and should be counted
-        let voter = vote.signer();
-        let voter_stake = self.epoch_info.epoch_info().validator(voter).stake;
+        let voter_stake = epoch.validator(vote.signer()).stake;
         if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if self.slot_state(slot).should_ignore_vote(&vote) {
@@ -1115,6 +1119,32 @@ mod tests {
         assert_eq!(
             ctx.pool.add_cert(Cert::Skip(skip_cert)).await,
             Err(AddCertError::Duplicate)
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_signer_votes() {
+        let mut ctx = setup();
+        let slot = Slot::new(0);
+        let num_validators = ctx.epoch_info.epoch_info().validators().len() as u64;
+
+        // claim a signer id past the validator set; sign with any sk — we should
+        // bail with UnknownSigner before signature verification runs.
+        let vote = Vote::new_notar(
+            slot,
+            GENESIS_BLOCK_HASH,
+            &ctx.sks[0],
+            ValidatorId::new(num_validators),
+        );
+        assert_eq!(
+            ctx.pool.add_vote(vote).await,
+            Err(AddVoteError::UnknownSigner)
+        );
+
+        let vote = Vote::new_skip(slot, &ctx.sks[0], ValidatorId::new(u64::MAX));
+        assert_eq!(
+            ctx.pool.add_vote(vote).await,
+            Err(AddVoteError::UnknownSigner)
         );
     }
 
