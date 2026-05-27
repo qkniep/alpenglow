@@ -9,7 +9,7 @@ use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::vote::{
-    FinalVote, NotarFallbackVote, NotarVote, SignedVote, SkipFallbackVote, SkipVote, VoteKind,
+    FinalVote, NotarFallbackVote, NotarVote, SignedVote, SkipFallbackVote, SkipVote, VotePayload,
 };
 use crate::consensus::EpochInfo;
 use crate::crypto::merkle::BlockHash;
@@ -238,7 +238,7 @@ impl NotarCert {
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
-        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
+        let vote_bytes = VotePayload::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
 
@@ -373,14 +373,14 @@ impl NotarFallbackCert {
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
 
-        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
+        let vote_bytes = VotePayload::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         let sig1_valid = self
             .agg_sig_notar
             .as_ref()
             .is_none_or(|s| s.verify(&vote_bytes, &pks));
 
         let vote_bytes =
-            VoteKind::NotarFallback(self.slot, self.block_hash.clone()).bytes_to_sign();
+            VotePayload::NotarFallback(self.slot, self.block_hash.clone()).bytes_to_sign();
         let sig2_valid = self
             .agg_sig_notar_fallback
             .as_ref()
@@ -512,13 +512,13 @@ impl SkipCert {
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
 
-        let vote_bytes = VoteKind::Skip(self.slot).bytes_to_sign();
+        let vote_bytes = VotePayload::Skip(self.slot).bytes_to_sign();
         let sig1_valid = self
             .agg_sig_skip
             .as_ref()
             .is_none_or(|s| s.verify(&vote_bytes, &pks));
 
-        let vote_bytes = VoteKind::SkipFallback(self.slot).bytes_to_sign();
+        let vote_bytes = VotePayload::SkipFallback(self.slot).bytes_to_sign();
         let sig2_valid = self
             .agg_sig_skip_fallback
             .as_ref()
@@ -603,7 +603,7 @@ impl FastFinalCert {
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
-        let vote_bytes = VoteKind::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
+        let vote_bytes = VotePayload::Notar(self.slot, self.block_hash.clone()).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
 
@@ -682,7 +682,7 @@ impl FinalCert {
     #[must_use]
     pub fn check_sig(&self, validators: &[ValidatorInfo]) -> bool {
         let pks: Vec<_> = validators.iter().map(|v| v.voting_pubkey).collect();
-        let vote_bytes = VoteKind::Final(self.slot).bytes_to_sign();
+        let vote_bytes = VotePayload::Final(self.slot).bytes_to_sign();
         self.agg_sig.verify(&vote_bytes, &pks)
     }
 }

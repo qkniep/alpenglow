@@ -15,10 +15,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, trace, warn};
-use tokio::sync::RwLock;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{Blockstore, DELTA, Pool, ValidatorEpochInfo};
+use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -103,7 +102,7 @@ impl RepairResponse {
 /// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
 pub struct RepairRequestHandler<N: Network> {
     epoch_info: Arc<ValidatorEpochInfo>,
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    blockstore: SharedBlockstore,
     network: N,
 }
 
@@ -117,7 +116,7 @@ where
     /// The blockstore will be used to handle the repair requests.
     pub fn new(
         epoch_info: Arc<ValidatorEpochInfo>,
-        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        blockstore: SharedBlockstore,
         network: N,
     ) -> Self {
         Self {
@@ -212,8 +211,8 @@ where
 /// This is used by the node to repair blocks that it is missing.
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
 pub struct Repair<N: Network> {
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    blockstore: SharedBlockstore,
+    pool: SharedPool,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
     request_timeouts: BinaryHeap<(Instant, Hash)>,
@@ -231,8 +230,8 @@ where
     /// Given `network` will be used for sending repair requests and receiving repair responses.
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
-        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
-        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+        blockstore: SharedBlockstore,
+        pool: SharedPool,
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
     ) -> Self {
@@ -298,7 +297,7 @@ where
 
     /// Handles a repair response, storing the received data.
     ///
-    /// If the response contains a shred, it will be stored in the [`Blockstore`].
+    /// If the response contains a shred, it will be stored in the blockstore.
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
     /// Does nothing if the provided `response` is not well-formed.
     #[hotpath::measure]
@@ -385,11 +384,8 @@ where
                 let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                // try_new short-circuits when the derived Merkle root matches the
-                // trusted root, so this stays as cheap as the previous `verify_path_only`
-                // check on the fast path and only does a leader sig verify on mismatch.
-                let leader_pk = self.epoch_info.epoch_info().leader(*slot).pubkey;
-                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), &leader_pk) else {
+                let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
+                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };
@@ -460,6 +456,7 @@ where
 mod tests {
     use std::collections::BTreeSet;
 
+    use tokio::sync::RwLock;
     use tokio::sync::mpsc::Sender;
 
     use super::*;
@@ -480,7 +477,7 @@ mod tests {
     /// - Validator 1: has repair set up, is not the leader.
     struct TestContext {
         repair_tx: Sender<BlockId>,
-        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+        blockstore: SharedBlockstore,
         /// Validator 0's network endpoint for handling repair requests
         /// (receives [`RepairRequest`] messages, sends [`RepairResponse`] messages).
         v0_request_net: SimulatedNetwork<RepairResponse, RepairRequest>,
@@ -512,15 +509,16 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>> = Arc::new(RwLock::new(
-            Box::new(BlockstoreImpl::new(blockstore_tx)),
-        ));
+        let blockstore: SharedBlockstore =
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
-        let pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>> = Arc::new(RwLock::new(Box::new(
-            PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx.clone()),
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
+            epoch_info.clone(),
+            pool_tx,
+            repair_tx.clone(),
         )));
 
         // create and start Repair instance
@@ -669,7 +667,7 @@ mod tests {
         for slice_shreds in shreds.clone() {
             let mut b = ctx.blockstore.write().await;
             for shred in slice_shreds {
-                let _ = b.add_shred_from_disseminator(shred).await;
+                let _ = b.add_shred_from_dissemination(shred).await;
             }
         }
         assert_eq!(

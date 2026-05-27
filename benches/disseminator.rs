@@ -62,6 +62,6 @@ fn turbine_tree(bencher: divan::Bencher) {
             (shred, turbine1, turbine2)
         })
         .bench_values(|(shred, turbine1, _turbine2)| {
-            futures::executor::block_on(turbine1.send_shred_to_root(&shred)).unwrap()
+            futures::executor::block_on(turbine1.send_shred_to_root(shred.as_shred())).unwrap()
         });
 }

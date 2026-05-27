@@ -40,7 +40,7 @@ pub(super) struct SlotBlockData {
     /// Spot for storing blocks that might later be received via repair.
     pub(super) repaired: BTreeMap<BlockHash, BlockData>,
     /// Tracks whether we observed the leader misbehaving.
-    /// Once misbehavior is observed, we stop accepting additional [`Shred`]s through dissemination.
+    /// If we do, we stop adding [`ValidatedShred`]s from dissemination.
     leader_misbehaved: bool,
 }
 
@@ -59,12 +59,12 @@ impl SlotBlockData {
     ///
     /// The shred must already have a verified leader signature (see [`ValidatedShred`]).
     /// Checks for leader equivocation against any previously stored shred for the slice.
-    pub(super) fn add_shred_from_disseminator(
+    pub(super) fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        assert_eq!(shred.payload().header.slot, self.slot);
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
             debug!("recevied shred from misbehaving leader, not adding to blockstore");
             return Err(AddShredError::InvalidShred);
@@ -89,7 +89,7 @@ impl SlotBlockData {
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        assert_eq!(shred.payload().header.slot, self.slot);
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
             .repaired
             .entry(hash)
@@ -163,11 +163,10 @@ impl BlockData {
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        assert!(shred.payload().header.slot == self.slot);
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
 
-        // Both this shred and any cached root carry a verified leader signature,
-        // so a mismatch implies the leader signed two roots for the same slice.
+        // different valid signatures for the same slice -> leader equivocation
         if let Some(cached) = self.merkle_root_cache.get(&slice_index)
             && cached != shred.merkle_root()
         {
@@ -182,7 +181,7 @@ impl BlockData {
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
-        assert!(header.slot == self.slot);
+        debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
 
         // populate Merkle root cache

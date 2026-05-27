@@ -14,7 +14,7 @@ use alpenglow::disseminator::rotor::FaitAccompli1Sampler;
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use color_eyre::Result;
+use anyhow::Result;
 
 use super::parameters::{AdversaryStrength, PyjamaParameters};
 use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};

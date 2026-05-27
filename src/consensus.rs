@@ -30,7 +30,7 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
@@ -39,10 +39,12 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
+pub use self::blockstore::{
+    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
+};
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
-pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl};
+pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
@@ -50,7 +52,7 @@ use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shred_verifier::{NUM_VERIFY_WORKERS, ShredVerifier};
-use crate::shredder::ValidatedShred;
+use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -106,9 +108,9 @@ where
     epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    pool: SharedPool,
 
     /// Block production (i.e. leader side) component of the consensus protocol.
     block_producer: Arc<BlockProducer<D, T>>,
@@ -161,13 +163,13 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore: Box<dyn Blockstore + Send + Sync> =
-            Box::new(BlockstoreImpl::new(blockstore_tx));
-        let blockstore = Arc::new(RwLock::new(blockstore));
-
-        let pool: Box<dyn Pool + Send + Sync> =
-            Box::new(PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx));
-        let pool = Arc::new(RwLock::new(pool));
+        let blockstore: SharedBlockstore =
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
+            epoch_info.clone(),
+            pool_tx,
+            repair_tx,
+        )));
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
@@ -292,7 +294,7 @@ where
             .validator(self.epoch_info.own_id())
     }
 
-    pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
+    pub fn get_pool(&self) -> SharedPool {
         Arc::clone(&self.pool)
     }
 
@@ -374,10 +376,9 @@ where
     #[hotpath::measure]
     async fn handle_validated_shred(&self, shred: ValidatedShred) -> std::io::Result<()> {
         // potentially forward shred
-        self.disseminator.forward(&shred).await?;
+        self.disseminator.forward(validated.as_shred()).await?;
 
         // if we are the leader, we already have the shred
-        let slot = shred.payload().header.slot;
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
@@ -387,7 +388,7 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(shred)
+            .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;

@@ -3,11 +3,9 @@
 
 //! Defines the [`ValidatedShred`] type.
 
-use std::ops::{Deref, DerefMut};
-
 use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ShredPayload};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
@@ -23,8 +21,9 @@ pub enum ShredVerifyError {
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
 ///
-/// The slice's Merkle root is cached at construction time so callers (and
-/// equivocation checks) don't need to re-derive it from the proof.
+/// The slice's Merkle root is derived and cached at construction time
+/// because it is needed for signature verification anyways.
+/// So calling [`ValidatedShred::merkle_root`] does't re-calculate it.
 #[derive(Clone, Debug)]
 pub struct ValidatedShred {
     shred: Shred,
@@ -91,23 +90,33 @@ impl ValidatedShred {
         &self.merkle_root
     }
 
+    /// References the payload contained in the inner [`Shred`].
+    #[must_use]
+    pub fn payload(&self) -> &ShredPayload {
+        self.shred.payload()
+    }
+
+    /// Returns `true` iff the inner [`Shred`] is a data shred.
+    #[must_use]
+    pub fn is_data(&self) -> bool {
+        self.shred.is_data()
+    }
+
+    /// Returns `true` iff the inner [`Shred`] is a coding shred.
+    #[must_use]
+    pub fn is_coding(&self) -> bool {
+        self.shred.is_coding()
+    }
+
+    /// Borrows the inner [`Shred`].
+    #[must_use]
+    pub fn as_shred(&self) -> &Shred {
+        &self.shred
+    }
+
     /// Get access to the inner [`Shred`] consuming self.
     pub fn into_shred(self) -> Shred {
         self.shred
-    }
-}
-
-impl Deref for ValidatedShred {
-    type Target = Shred;
-
-    fn deref(&self) -> &Self::Target {
-        &self.shred
-    }
-}
-
-impl DerefMut for ValidatedShred {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.shred
     }
 }
 
