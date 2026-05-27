@@ -481,8 +481,6 @@ mod tests {
         assert!(!aggsig.verify(msg, &[pk3, pk1, pk2]));
     }
 
-    /// A signer listed twice in `votes` must not double-count: the bitmask
-    /// records one bit while the aggregate adds two contributions.
     #[test]
     #[should_panic(expected = "duplicate signer")]
     fn duplicate_signer_panics() {
@@ -493,15 +491,18 @@ mod tests {
             AggregateSignature::new(&[sig1, sig1], [ValidatorId::new(0), ValidatorId::new(0)], 2);
     }
 
-    /// Mismatched `sigs` and `indices` lengths previously let a caller forge a
-    /// bitmask naming signers whose signatures weren't aggregated.
     #[test]
     #[should_panic(expected = "length mismatch")]
     fn length_mismatch_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
-        // one sig, two named signers
+        // one sig, two validator ids
         let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+        // two sigs, one validator id
+        let _ = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0)], 2);
     }
 
     #[test]
