@@ -10,6 +10,6 @@ queue_rules:
       - -conflict
       - "label = state: queued"
 
-merge_protections:
+merge_protections_settings:
   auto_merge_conditions:
     - "label = state: queued"
