@@ -5,7 +5,7 @@
 //!
 //!
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use log::info;
 use rand::prelude::*;
@@ -26,9 +26,9 @@ pub(crate) struct PyjamaParameters {
 
 /// Specific instance of the Ryse protocol.
 pub(crate) struct PyjamaInstance {
-    pub(crate) leader: ValidatorId,
-    pub(crate) proposers: Vec<ValidatorId>,
-    pub(crate) relays: Vec<ValidatorId>,
+    pub(crate) leader: ValidatorIndex,
+    pub(crate) proposers: Vec<ValidatorIndex>,
+    pub(crate) relays: Vec<ValidatorIndex>,
     pub(crate) params: PyjamaParameters,
 }
 
@@ -232,16 +232,16 @@ impl PyjamaParameters {
     /// This analyzes the worst case where a batch got `self.should_decode_threshold` attestations.
     pub(crate) fn permanent_liveness_failure_probability(
         &self,
-        adv_stength: AdversaryStrength,
+        adv_strength: AdversaryStrength,
     ) -> f64 {
         // probability that the adversary can withhold enough shreds
-        let byzantine = adv_stength.byzantine;
+        let byzantine = adv_strength.byzantine;
         let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
         let relays_needed = self.should_decode_threshold - self.can_decode_threshold;
         1.0 - relays_dist.cdf(relays_needed - 1)
     }
 
-    /// Calculates and prints attack sucess probabilities.
+    /// Calculates and prints attack success probabilities.
     ///
     /// Capabilities of the adversary are specified in the `adv_strength` parameter.
     pub(crate) fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {

@@ -25,7 +25,7 @@ use owo_colors::{AnsiColors, OwoColorize};
 
 /// Endpoint used for OTLP trace export when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
 #[cfg(feature = "telemetry")]
-const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4317";
+pub const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4317";
 
 #[derive(Clone, Debug)]
 struct MinimalLogforthLayout {

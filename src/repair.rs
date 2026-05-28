@@ -24,7 +24,7 @@ use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
 use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
-use crate::{BlockId, ValidatorId};
+use crate::{BlockId, ValidatorIndex};
 
 /// Maximum time to wait for a response to a repair request.
 ///
@@ -47,7 +47,7 @@ impl RepairRequestType {
     fn hash(&self) -> Hash {
         let repair = RepairRequest {
             req_type: self.clone(),
-            sender: ValidatorId::new(0),
+            sender: ValidatorIndex::new(0),
         };
         let msg_bytes = wincode::serialize(&repair).unwrap();
         hash(&msg_bytes)
@@ -58,7 +58,7 @@ impl RepairRequestType {
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequest {
     /// The validator that sent the message.
-    sender: ValidatorId,
+    sender: ValidatorIndex,
     /// The type of repair message sent.
     req_type: RepairRequestType,
 }
@@ -195,7 +195,7 @@ where
     async fn send_response(
         &self,
         response: RepairResponse,
-        validator: ValidatorId,
+        validator: ValidatorIndex,
     ) -> std::io::Result<()> {
         let to = self
             .epoch_info
@@ -252,7 +252,7 @@ where
     /// Main loop of the repair protocol.
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
-    /// Inititates the corresponding repair process and handles ongoing repairs.
+    /// Initiates the corresponding repair process and handles ongoing repairs.
     pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
         loop {
             let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
@@ -460,7 +460,7 @@ mod tests {
     use tokio::sync::mpsc::Sender;
 
     use super::*;
-    use crate::ValidatorId;
+    use crate::ValidatorIndex;
     use crate::consensus::{BlockstoreImpl, EpochInfo, PoolImpl};
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
@@ -499,13 +499,13 @@ mod tests {
         validators[1].repair_response_address = localhost_ip_sockaddr(3);
 
         let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
-        let v0_repair_request_network = core.join_unlimited(ValidatorId::new(0)).await;
-        let v0_repair_network = core.join_unlimited(ValidatorId::new(1)).await;
-        let v1_repair_request_network = core.join_unlimited(ValidatorId::new(2)).await;
-        let v1_repair_network = core.join_unlimited(ValidatorId::new(3)).await;
+        let v0_repair_request_network = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let v0_repair_network = core.join_unlimited(ValidatorIndex::new(1)).await;
+        let v1_repair_request_network = core.join_unlimited(ValidatorIndex::new(2)).await;
+        let v1_repair_network = core.join_unlimited(ValidatorIndex::new(3)).await;
 
         let epoch_info = EpochInfo::new(validators);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(1), epoch_info));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
@@ -685,12 +685,12 @@ mod tests {
         // request last slice root to learn how many slices there are
         let request = RepairRequest {
             req_type: RepairRequestType::LastSliceRoot(block_to_repair.clone()),
-            sender: ValidatorId::new(0),
+            sender: ValidatorIndex::new(0),
         };
         let port1 = localhost_ip_sockaddr(2);
         ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
-        // verify reponse
+        // verify response
         let msg = ctx.v0_reply_net.receive().await.unwrap();
         let RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) = msg else {
             panic!("not LastSliceRoot response");
@@ -710,7 +710,7 @@ mod tests {
         for slice in SliceIndex::all().take(SLICES) {
             let request = RepairRequest {
                 req_type: RepairRequestType::SliceRoot(block_to_repair.clone(), slice),
-                sender: ValidatorId::new(0),
+                sender: ValidatorIndex::new(0),
             };
             ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
@@ -733,7 +733,7 @@ mod tests {
             for shred_index in ShredIndex::all() {
                 let request = RepairRequest {
                     req_type: RepairRequestType::Shred(block_to_repair.clone(), slice, shred_index),
-                    sender: ValidatorId::new(0),
+                    sender: ValidatorIndex::new(0),
                 };
                 ctx.v0_reply_net.send(&request, port1).await.unwrap();
 

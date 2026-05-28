@@ -12,11 +12,11 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 
 use super::SimulatedNetwork;
 use super::token_bucket::TokenBucket;
-use crate::ValidatorId;
+use crate::ValidatorIndex;
 
 struct SimulatedPacket {
-    _from: ValidatorId,
-    to: ValidatorId,
+    _from: ValidatorIndex,
+    to: ValidatorIndex,
     payload: Vec<u8>,
     deliver_at: Instant,
 }
@@ -45,9 +45,9 @@ impl Eq for SimulatedPacket {}
 /// Messages sent by nodes into the network core are then delayed accordingly.
 pub struct SimulatedNetworkCore {
     /// Map from node ID to channel for delivering packets.
-    nodes: Arc<RwLock<HashMap<ValidatorId, mpsc::Sender<SimulatedPacket>>>>,
+    nodes: Arc<RwLock<HashMap<ValidatorIndex, mpsc::Sender<SimulatedPacket>>>>,
     /// Latency between each pair of nodes.
-    latencies: RwLock<HashMap<(ValidatorId, ValidatorId), Duration>>,
+    latencies: RwLock<HashMap<(ValidatorIndex, ValidatorIndex), Duration>>,
     /// Fallback latency to use for any link that is not configured.
     default_latency: Duration,
     /// Maximum jitter to apply to each packet in milliseconds.
@@ -63,7 +63,7 @@ impl SimulatedNetworkCore {
     pub fn new(latency_ms: u64, jitter_ms: f64, packet_loss: f64) -> Self {
         let pending = Arc::new(Mutex::new(BinaryHeap::<SimulatedPacket>::new()));
         let nodes = Arc::new(RwLock::new(HashMap::<
-            ValidatorId,
+            ValidatorIndex,
             mpsc::Sender<SimulatedPacket>,
         >::new()));
 
@@ -126,7 +126,10 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For limited bandwidth, use [`Self::join`] instead.
-    pub async fn join_unlimited<S, R>(self: &Arc<Self>, id: ValidatorId) -> SimulatedNetwork<S, R> {
+    pub async fn join_unlimited<S, R>(
+        self: &Arc<Self>,
+        id: ValidatorIndex,
+    ) -> SimulatedNetwork<S, R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(65536);
         // background -> receiver
@@ -164,7 +167,7 @@ impl SimulatedNetworkCore {
     /// For unlimited bandwidth, use [`Self::join_unlimited`] instead.
     pub async fn join<S, R>(
         self: &Arc<Self>,
-        id: ValidatorId,
+        id: ValidatorIndex,
         up_bandwidth: usize,
         down_bandwidth: usize,
     ) -> SimulatedNetwork<S, R> {
@@ -204,7 +207,12 @@ impl SimulatedNetworkCore {
     ///
     /// The latency is symmetric in both directions.
     /// For asymmetric links, use [`Self::set_asymmetric_latency`] instead.
-    pub async fn set_latency(&self, node1: ValidatorId, node2: ValidatorId, latency: Duration) {
+    pub async fn set_latency(
+        &self,
+        node1: ValidatorIndex,
+        node2: ValidatorIndex,
+        latency: Duration,
+    ) {
         self.latencies.write().await.insert((node1, node2), latency);
         self.latencies.write().await.insert((node2, node1), latency);
     }
@@ -215,8 +223,8 @@ impl SimulatedNetworkCore {
     /// For symmetric links, use [`Self::set_latency`] instead.
     pub async fn set_asymmetric_latency(
         &self,
-        from: ValidatorId,
-        to: ValidatorId,
+        from: ValidatorIndex,
+        to: ValidatorIndex,
         latency: Duration,
     ) {
         self.latencies.write().await.insert((from, to), latency);
@@ -225,7 +233,7 @@ impl SimulatedNetworkCore {
     /// Sends a simulated message from one node to another.
     ///
     /// This schedules delivery for the message after the correct propagation delay.
-    pub async fn send(&self, payload: Vec<u8>, from: ValidatorId, to: ValidatorId) {
+    pub async fn send(&self, payload: Vec<u8>, from: ValidatorIndex, to: ValidatorIndex) {
         if rand::rng().random_range(0.0..1.0) < self.per_packet_loss_probability {
             return;
         }
@@ -281,11 +289,11 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2 = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1 = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2 = core.join_unlimited(ValidatorIndex::new(1)).await;
         core.set_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(1),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(1),
             Duration::from_millis(10),
         )
         .await;
@@ -323,17 +331,17 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2 = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1 = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2 = core.join_unlimited(ValidatorIndex::new(1)).await;
         core.set_asymmetric_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(1),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(1),
             Duration::from_millis(10),
         )
         .await;
         core.set_asymmetric_latency(
-            ValidatorId::new(1),
-            ValidatorId::new(0),
+            ValidatorIndex::new(1),
+            ValidatorIndex::new(0),
             Duration::from_millis(100),
         )
         .await;
@@ -370,21 +378,21 @@ mod tests {
         // set up network with three nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1: SimulatedNetwork<PingOrPong, PingOrPong> =
-            core.join_unlimited(ValidatorId::new(0)).await;
+            core.join_unlimited(ValidatorIndex::new(0)).await;
         let net2: SimulatedNetwork<PingOrPong, PingOrPong> =
-            core.join_unlimited(ValidatorId::new(1)).await;
+            core.join_unlimited(ValidatorIndex::new(1)).await;
         let net3: SimulatedNetwork<PingOrPong, PingOrPong> =
-            core.join_unlimited(ValidatorId::new(2)).await;
+            core.join_unlimited(ValidatorIndex::new(2)).await;
         let sock0 = localhost_ip_sockaddr(0);
         core.set_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(1),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(1),
             Duration::from_millis(10),
         )
         .await;
         core.set_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(2),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(2),
             Duration::from_millis(20),
         )
         .await;
@@ -419,8 +427,8 @@ mod tests {
     async fn packet_loss() {
         // set up network with two nodes and 50% packet loss
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.5));
-        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorIndex::new(1)).await;
 
         // send 1000 pings
         let msg = Ping::default();

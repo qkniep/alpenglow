@@ -1,0 +1,6 @@
+[files]
+extend-exclude = ["data/", "*.txt"]
+
+[default.extend-words]
+strat = "strat"
+ba = "ba"

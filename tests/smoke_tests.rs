@@ -156,4 +156,4 @@ fn performance_test_short() {
 
 // NOTE: `simulations` does not have a launch smoke test.
 // The binary takes many minutes to complete - too long for this test.
-// The help test above verifies the binary compiles adn starts up correctly.
+// The help test above verifies the binary compiles and starts up correctly.
