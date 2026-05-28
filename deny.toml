@@ -22,8 +22,8 @@ ignore = [
 
 [licenses]
 # alpenglow itself ships as Apache-2.0. The allowlist below covers the
-# permissive licenses found in the current dependency tree (run `cargo license`
-# to refresh). Add SPDX identifiers as the tree grows.
+# permissive licenses found in the current dependency tree (review with
+# `cargo deny check licenses`). Add SPDX identifiers as the tree grows.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
