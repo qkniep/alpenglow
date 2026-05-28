@@ -164,7 +164,7 @@ where
                 Some(RepairResponse::LastSliceRoot(
                     request.req_type.clone(),
                     last_slice,
-                    root.clone(),
+                    root,
                     proof,
                 ))
             }
@@ -174,7 +174,7 @@ where
                 let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
                 Some(RepairResponse::SliceRoot(
                     request.req_type.clone(),
-                    root.clone(),
+                    root,
                     proof,
                 ))
             }
@@ -385,10 +385,19 @@ where
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
-                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
+                // Always verify the signature: a matching Merkle root alone does not
+                // authenticate the header (e.g. `is_last`), so the cached slice root
+                // must not be used to skip verification here.
+                let Ok(validated) = ValidatedShred::try_new(shred, None, leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };
+                // The leader-signed Merkle root must match the slice root we already
+                // proved; a valid signature over a different root is equivocation.
+                if validated.merkle_root() != root {
+                    warn!("repair response (Shred) with Merkle root not matching known slice root");
+                    return;
+                }
 
                 // store shred
                 let res = self

@@ -334,8 +334,16 @@ where
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // validate shred before forwarding or inserting
         let slot = shred.payload().header.slot;
+        let slice_index = shred.payload().header.slice_index;
         let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
+        // Reuse the leader signature already verified for this slice, if any, so
+        // further shreds of the same slice skip the expensive Ed25519 verify.
+        let cached = self
+            .blockstore
+            .read()
+            .await
+            .cached_commitment(slot, slice_index);
+        let validated = match ValidatedShred::try_new(shred, cached.as_ref(), &leader_pk) {
             Ok(v) => v,
             Err(_) => return Ok(()),
         };

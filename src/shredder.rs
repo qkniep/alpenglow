@@ -45,24 +45,33 @@ use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
 /// Number of bytes in the message that the leader signs for each slice.
 ///
 /// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `merkle_root` (32 B).
+const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
+
+/// Byte string the leader signs for each shred in a slice.
+///
 /// Binding the [`SliceHeader`] into the signature prevents cross-slot replay:
 /// a shred from slot `S` cannot be re-framed as a shred from slot `S'` (even by
-/// the same leader) without invalidating the signature.
-const SIGNED_MESSAGE_LEN: usize = 8 + 8 + 1 + 32;
+/// the same leader) without invalidating the signature. [`SliceCommitment::new`]
+/// is the single source of truth for what the leader signature covers —
+/// extending the authenticated content means extending this constructor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
 
-/// Builds the byte string the leader signs for each shred in a slice.
-///
-/// See [`SIGNED_MESSAGE_LEN`] for the layout and rationale.
-pub(super) fn signed_message(
-    header: &SliceHeader,
-    merkle_root: &SliceRoot,
-) -> [u8; SIGNED_MESSAGE_LEN] {
-    let mut buf = [0u8; SIGNED_MESSAGE_LEN];
-    buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
-    buf[8..16].copy_from_slice(&(header.slice_index.inner() as u64).to_le_bytes());
-    buf[16] = u8::from(header.is_last);
-    buf[17..49].copy_from_slice(merkle_root.as_ref());
-    buf
+impl SliceCommitment {
+    pub(crate) fn new(header: &SliceHeader, merkle_root: &SliceRoot) -> Self {
+        let mut buf = [0u8; SLICE_COMMITMENT_LEN];
+        buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
+        buf[8..16].copy_from_slice(&(header.slice_index.inner() as u64).to_le_bytes());
+        buf[16] = u8::from(header.is_last);
+        buf[17..49].copy_from_slice(merkle_root.as_ref());
+        Self(buf)
+    }
+}
+
+impl AsRef<[u8]> for SliceCommitment {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 /// Number of data shreds the payload of a slice is split into.
@@ -560,7 +569,7 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(&signed_message(&header, &merkle_root));
+    let merkle_root_sig = sk.sign(SliceCommitment::new(&header, &merkle_root).as_ref());
 
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);

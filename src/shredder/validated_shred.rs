@@ -5,14 +5,14 @@
 
 use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
-use crate::shredder::{Shred, ShredPayload, signed_message};
+use crate::shredder::{Shred, ShredPayload, SliceCommitment};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
 pub enum ShredVerifyError {
     /// The signature verification failed.
     InvalidSignature,
-    /// Leader showed equivocation: a valid signature was seen on a different Merkle root.
+    /// Leader showed equivocation: a valid signature was seen for a different commitment.
     Equivocation,
 }
 
@@ -33,8 +33,15 @@ pub struct ValidatedShred {
 impl ValidatedShred {
     /// Performs various verification checks on the [`Shred`] and if they succeed, returns a shred.
     ///
-    /// `cached_merkle_root`: Refers to Merkle root of the slice, if known from earlier shred.
-    /// It is used to potentially skip expensive signature verification or detect equivocation.
+    /// `cached_commitment`: The [`SliceCommitment`] of an earlier shred verified for
+    /// the same slice, if any. Used to skip expensive signature verification when the new
+    /// shred reproduces the exact same authenticated content, and to detect leader
+    /// equivocation otherwise.
+    ///
+    /// The fast path **must** compare the full commitment — comparing only the Merkle
+    /// root would let header tampering (e.g. flipping `is_last`) slip through, since the
+    /// Merkle root commits to payload data but not to the [`SliceHeader`] fields the
+    /// signature covers.
     ///
     /// # Errors
     ///
@@ -42,28 +49,28 @@ impl ValidatedShred {
     #[hotpath::measure]
     pub fn try_new(
         shred: Shred,
-        cached_merkle_root: Option<&SliceRoot>,
+        cached_commitment: Option<&SliceCommitment>,
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
         let derived_root = shred.merkle_root();
-        let msg = signed_message(&shred.payload().header, &derived_root);
+        let msg = SliceCommitment::new(&shred.payload().header, &derived_root);
 
-        match cached_merkle_root {
-            Some(root) => {
-                if root == &derived_root {
+        match cached_commitment {
+            Some(cached) => {
+                if cached == &msg {
                     return Ok(Self {
                         shred,
                         merkle_root: derived_root,
                     });
                 }
-                if shred.merkle_root_sig.verify(&msg, pk) {
+                if shred.merkle_root_sig.verify(msg.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             None => {
-                if shred.merkle_root_sig.verify(&msg, pk) {
+                if shred.merkle_root_sig.verify(msg.as_ref(), pk) {
                     Ok(Self {
                         shred,
                         merkle_root: derived_root,
@@ -73,6 +80,16 @@ impl ValidatedShred {
                 }
             }
         }
+    }
+
+    /// The [`SliceCommitment`] the leader's signature covers for this shred.
+    ///
+    /// Suitable for seeding a cache to short-circuit re-verification of further
+    /// shreds in the same slice (see [`ValidatedShred::try_new`]). Uses the cached
+    /// Merkle root, so it does not re-derive it from the proof.
+    #[must_use]
+    pub fn commitment(&self) -> SliceCommitment {
+        SliceCommitment::new(&self.shred.payload().header, &self.merkle_root)
     }
 
     /// Creates a new [`ValidatedShred`] when the inner [`Shred`] does not need to be verified.
@@ -142,7 +159,7 @@ mod tests {
     #[test]
     fn shred_verification() {
         let (shred, sk) = create_random_shred();
-        let merkle_root = shred.merkle_root();
+        let cached = SliceCommitment::new(&shred.payload().header, &shred.merkle_root());
         let random_pk = SecretKey::new(&mut rng()).to_pk();
 
         // checking against other public key should fail
@@ -157,19 +174,25 @@ mod tests {
 
         // checking against other public key should fail
         // and should not be considered as equivocation
-        let res = ValidatedShred::try_new(invalid_shred.clone(), Some(&merkle_root), &random_pk);
+        let res = ValidatedShred::try_new(invalid_shred.clone(), Some(&cached), &random_pk);
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
 
         // checking different shred (with different Merkle root and valid sig)
-        // against existing Merkle root should fail and detect equivocation
-        let res =
-            ValidatedShred::try_new(invalid_shred, Some(&merkle_root), &invalid_shred_sk.to_pk());
+        // against existing signed message should fail and detect equivocation
+        let res = ValidatedShred::try_new(invalid_shred, Some(&cached), &invalid_shred_sk.to_pk());
         assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
 
     /// Mutating any `SliceHeader` field on a real shred must invalidate the
-    /// signature: the leader signs `(header || merkle_root)`, so re-framing a
-    /// shred for a different slot, slice index, or `is_last` flag is rejected.
+    /// signature on **both** verification paths:
+    /// - cold path (`cached_commitment = None`): full Ed25519 verify fails.
+    /// - fast path (`cached_commitment = Some`): the cached bytes mismatch the
+    ///   tampered shred's commitment, forcing a re-verify that then fails.
+    ///
+    /// The fast path is the regression-critical one: comparing only the Merkle
+    /// root in the cache would let header tampering (e.g. flipping `is_last` on
+    /// a shred whose data is identical to one we've already accepted) slip
+    /// through without ever re-checking the signature.
     #[test]
     fn header_is_bound_to_signature() {
         use crate::Slot;
@@ -177,27 +200,41 @@ mod tests {
 
         let (shred, sk) = create_random_shred();
         let pk = sk.to_pk();
+        let cached = SliceCommitment::new(&shred.payload().header, &shred.merkle_root());
 
-        // baseline: original shred verifies
+        // baseline: original shred verifies on both paths
         assert!(ValidatedShred::try_new(shred.clone(), None, &pk).is_ok());
+        assert!(ValidatedShred::try_new(shred.clone(), Some(&cached), &pk).is_ok());
+
+        // Each mutation tampers one header field and must be rejected on both
+        // verification paths. `expect_invalid` runs both.
+        let expect_invalid = |tampered: Shred| {
+            for cache in [None, Some(&cached)] {
+                let res = ValidatedShred::try_new(tampered.clone(), cache, &pk);
+                assert!(
+                    matches!(res, Err(ShredVerifyError::InvalidSignature)),
+                    "tampered header accepted (cached={}): {res:?}",
+                    cache.is_some(),
+                );
+            }
+        };
 
         // cross-slot replay: mutate header.slot
         let mut tampered = shred.clone();
         let original_slot = tampered.payload().header.slot;
         tampered.payload_mut().header.slot = Slot::new(original_slot.inner() + 1);
-        let res = ValidatedShred::try_new(tampered, None, &pk);
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+        expect_invalid(tampered);
 
         // mutate header.slice_index
         let mut tampered = shred.clone();
         tampered.payload_mut().header.slice_index = SliceIndex::new_unchecked(7);
-        let res = ValidatedShred::try_new(tampered, None, &pk);
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+        expect_invalid(tampered);
 
-        // mutate header.is_last
+        // mutate header.is_last — regression case: same Merkle root as cached,
+        // only the header bit differs. Caching just the root would have
+        // accepted this on the fast path.
         let mut tampered = shred.clone();
         tampered.payload_mut().header.is_last = !tampered.payload().header.is_last;
-        let res = ValidatedShred::try_new(tampered, None, &pk);
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+        expect_invalid(tampered);
     }
 }

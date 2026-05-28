@@ -17,7 +17,7 @@ pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, ValidatedShred};
+use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, SliceCommitment, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
 
@@ -79,9 +79,11 @@ pub trait Blockstore {
     #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    #[allow(clippy::needless_lifetimes)]
-    fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
-    -> Option<&'a SliceRoot>;
+    fn get_slice_root(&self, block_id: &BlockId, slice: SliceIndex) -> Option<SliceRoot>;
+    /// Cached [`SliceCommitment`] of an already-verified shred for the disseminated
+    /// block's `slice`, if any. Lets the dissemination path skip re-verifying the
+    /// leader signature for further shreds of the same slice.
+    fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
@@ -337,13 +339,24 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold any shred for that slice.
-    fn get_slice_root<'a>(
-        &'a self,
-        block_id: &BlockId,
-        slice_index: SliceIndex,
-    ) -> Option<&'a SliceRoot> {
+    fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<SliceRoot> {
         let block_data = self.get_block_data(block_id)?;
-        block_data.merkle_root_cache.get(&slice_index)
+        block_data
+            .shreds
+            .get(&slice_index)?
+            .iter()
+            .find_map(|s| s.as_ref())
+            .map(|s| s.merkle_root().clone())
+    }
+
+    /// Cached [`SliceCommitment`] of an already-verified shred for the disseminated
+    /// block's `slice`, if any.
+    fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment> {
+        self.slot_data(slot)?
+            .disseminated
+            .commitment_cache
+            .get(&slice)
+            .copied()
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
