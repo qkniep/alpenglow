@@ -74,6 +74,7 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
+    async fn report_equivocation(&mut self, slot: Slot);
     #[allow(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     #[allow(clippy::needless_lifetimes)]
@@ -294,6 +295,21 @@ impl Blockstore for BlockstoreImpl {
         {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
+        }
+    }
+
+    /// Records that the leader equivocated for `slot` and notifies Votor.
+    ///
+    /// Called when an out-of-band check (e.g. a repair-response shred whose
+    /// signature is valid on a Merkle root other than the one anchored in the
+    /// block hash we requested) proves leader equivocation without the shred
+    /// ever reaching [`Blockstore::add_shred_from_dissemination`] or
+    /// [`Blockstore::add_shred_from_repair`]. Idempotent across repeat calls
+    /// and across paths that have already flagged the slot.
+    async fn report_equivocation(&mut self, slot: Slot) {
+        if self.slot_data_mut(slot).mark_leader_misbehaved() {
+            self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
+                .await;
         }
     }
 
