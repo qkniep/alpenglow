@@ -296,15 +296,15 @@ impl AggregateSignature {
     /// - `sigs` must not be empty,
     /// - `sigs` and `indices` must have the same length,
     /// - the `i`-th signature must belong to the `i`-th validator id,
-    /// - each validator index must be less than `num_bits`,
+    /// - each validator ID must be less than `num_bits`,
     /// - each validator ID must appear at most once.
     ///
     /// # Panics
     ///
     /// Panics if:
     /// - `sigs` and `indices` have different lengths,
-    /// - both `sigs` and `indices` are empty,
-    /// - any validator index is `>= num_bits`,
+    /// - `sigs` is empty,
+    /// - any validator ID is `>= num_bits`, or
     /// - `indices` contains a duplicate.
     #[must_use]
     pub fn new<'a>(
@@ -326,7 +326,7 @@ impl AggregateSignature {
         let first_bit_idx = first_idx.as_index();
         assert!(
             first_bit_idx < num_bits,
-            "validator index {first_bit_idx} >= num_bits {num_bits}",
+            "validator ID {first_bit_idx} >= num_bits {num_bits}",
         );
         // does not check subgroup membership
         let mut agg_sig = BlstAggSig::from_signature(&first_sig.0);
@@ -336,7 +336,7 @@ impl AggregateSignature {
             let bit_idx = idx.as_index();
             assert!(
                 bit_idx < num_bits,
-                "validator index {bit_idx} >= num_bits {num_bits}",
+                "validator ID {bit_idx} >= num_bits {num_bits}",
             );
             assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
             // does not check subgroup membership (`sig_groupcheck=false`)
@@ -499,23 +499,70 @@ mod tests {
     fn duplicate_signer_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
 
-        let _ =
-            AggregateSignature::new(&[sig1, sig1], [ValidatorId::new(0), ValidatorId::new(0)], 2);
+        // [v0, v1, v0] — the duplicate is reached only after a non-duplicate
+        // has already been added, exercising the in-loop assert path.
+        let _ = AggregateSignature::new(
+            &[sig1, sig2, sig1],
+            [
+                ValidatorId::new(0),
+                ValidatorId::new(1),
+                ValidatorId::new(0),
+            ],
+            2,
+        );
     }
 
     #[test]
     #[should_panic(expected = "length mismatch")]
-    fn length_mismatch_panics() {
+    fn length_mismatch_fewer_sigs_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
         let sig1 = sk1.sign(b"msg");
-        // one sig, two validator ids
         let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+    }
 
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn length_mismatch_fewer_indices_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
         let sk2 = SecretKey::new(&mut rand::rng());
         let sig2 = sk2.sign(b"msg");
-        // two sigs, one validator id
         let _ = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "validator ID")]
+    fn out_of_bounds_first_index_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        // num_bits=2, but the only validator id is 2 (>= num_bits)
+        let _ = AggregateSignature::new(&[sig1], [ValidatorId::new(2)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "validator ID")]
+    fn out_of_bounds_later_index_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+        // num_bits=2, first index ok, second index 2 (>= num_bits)
+        let _ =
+            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(2)], 2);
+    }
+
+    #[test]
+    fn identity_signature_rejected() {
+        // BLS12-381 G1 uncompressed encoding of the identity point: only the
+        // infinity flag (bit 6 of byte 0) is set.
+        let mut identity = [0u8; UNCOMPRESSED_SIG_SIZE];
+        identity[0] = 0b_0100_0000;
+
+        let result: wincode::ReadResult<IndividualSignature> = wincode::deserialize(&identity);
+        assert!(result.is_err(), "identity signature must be rejected");
     }
 
     #[test]
