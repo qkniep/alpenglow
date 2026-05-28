@@ -19,7 +19,7 @@ inputs:
     required: false
     default: ""
   workspaces:
-    description: "Passed to Swatinem/rust-cache; set when the Cargo workspace isn't at the repo root (e.g. fuzz)."
+    description: "Passed to actions-rust-lang/setup-rust-toolchain as `cache-workspaces`; use when a Cargo workspace is not at the repo root, in the format `path -> target` (for example, `fuzz -> target`)."
     required: false
     default: ""
 
