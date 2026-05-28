@@ -842,7 +842,11 @@ mod tests {
         let (sks, info) = create_signers(2);
 
         // one skip + one skip-fallback
-        let skip_votes = vec![SkipVote::new(Slot::genesis(), &sks[0], ValidatorIndex::new(0))];
+        let skip_votes = vec![SkipVote::new(
+            Slot::genesis(),
+            &sks[0],
+            ValidatorIndex::new(0),
+        )];
         let sf_votes = vec![SkipFallbackVote::new(
             Slot::genesis(),
             &sks[1],
@@ -892,7 +896,8 @@ mod tests {
 
         // slot mismatch: notar vote in different slot than notar-fallback
         let nv = NotarVote::new(Slot::new(2), hash.clone(), &sks[0], ValidatorIndex::new(0));
-        let nfv = NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let nfv =
+            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
         let res = NotarFallbackCert::try_new(&[nv], &[nfv], &info);
         assert_eq!(res.err(), Some(CertError::SlotMismatch));
 
@@ -1070,13 +1075,15 @@ mod tests {
 
         // valid sig
         let nv = NotarVote::new(Slot::new(1), hash.clone(), &sks[0], ValidatorIndex::new(0));
-        let nfv = NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let nfv =
+            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
         let cert = NotarFallbackCert::try_new(&[nv], &[nfv], &info).unwrap();
         assert!(cert.check_sig(&info));
 
         // invalid sig (wrong key for validator 0)
         let nv = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(0));
-        let nfv = NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let nfv =
+            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
         let cert = NotarFallbackCert::try_new(&[nv], &[nfv], &info).unwrap();
         assert!(!cert.check_sig(&info));
     }
