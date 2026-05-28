@@ -1,39 +1,52 @@
 name: "Rust setup"
-description: "Installs Rust toolchain, tools, and configures caching + sccache"
+description: "Installs a Rust toolchain with specified components, targets, and tools, and configures caching."
 
 inputs:
   toolchain:
+    description: "Rust toolchain to install: stable, nightly, or an explicit version."
     required: false
     default: stable
+  components:
+    description: "Comma-separated rustup components (e.g. rust-src, miri). If omitted, defaults to rustfmt and clippy; if set to an empty string, an empty value is forwarded to setup-rust-toolchain."
+    required: false
+    default: "rustfmt, clippy"
+  targets:
+    description: "Comma-separated cross-compilation targets (e.g. thumbv7em-none-eabihf). Empty installs none."
+    required: false
+    default: ""
+  tools:
+    description: "Comma-separated cargo tools to install via taiki-e/install-action (e.g. nextest, cargo-deny). Empty installs none."
+    required: false
+    default: ""
+  workspaces:
+    description: "Passed to actions-rust-lang/setup-rust-toolchain as `cache-workspaces`; use when a Cargo workspace is not at the repo root, in the format `path -> target` (for example, `fuzz -> target`)."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
   steps:
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
       with:
         toolchain: ${{ inputs.toolchain }}
-        components: rustfmt, clippy
+        components: ${{ inputs.components }}
+        target: ${{ inputs.targets }}
+        cache-all-crates: true
+        cache-workspaces: ${{ inputs.workspaces }}
 
     - name: Install cargo tools
-      uses: taiki-e/install-action@v2
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@f48d2f8ba2b452934c948b7be1a768079c3632ff # v2
       with:
-        tool: nextest,cargo-audit,cargo-license,cargo-machete
+        tool: ${{ inputs.tools }}
 
-    - name: Rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        cache-all-crates: true
-
-    - name: Setup sccache
-      uses: mozilla-actions/sccache-action@v0.0.9
-      env:
-        SCCACHE_GHA_ENABLED: "true"
-        RUSTC_WRAPPER: "sccache"
+    # generate lockfile if not committed yet
+    - name: Ensure Cargo.lock
+      shell: bash
+      run: test -f Cargo.lock || cargo generate-lockfile
 
     - name: Set env
       shell: bash
       run: |
         echo "CARGO_TERM_COLOR=always" >> $GITHUB_ENV
-        echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-        echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV

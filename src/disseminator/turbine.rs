@@ -312,12 +312,12 @@ mod tests {
             }
             // parent-child compatibility
             for child in tree.get_children() {
-                let childs_parent = trees[child.as_usize()].1.get_parent();
-                assert_eq!(childs_parent, Some(*v));
+                let c_parent = trees[child.as_usize()].1.get_parent();
+                assert_eq!(c_parent, Some(*v));
             }
             if let Some(parent) = tree.get_parent() {
-                let parents_children = trees[parent.as_usize()].1.get_children();
-                assert!(parents_children.contains(v));
+                let p_children = trees[parent.as_usize()].1.get_children();
+                assert!(p_children.contains(v));
             }
         }
     }
