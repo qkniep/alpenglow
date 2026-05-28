@@ -10,7 +10,7 @@
 mod latency;
 mod robustness;
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use rand::prelude::*;
 
@@ -83,9 +83,9 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Builder for RotorInstanceBu
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct RotorInstance {
     /// Leader validator.
-    pub(crate) leader: ValidatorId,
+    pub(crate) leader: ValidatorIndex,
     /// Relays for each slice, and each shred within a slice.
-    pub(crate) relays: Vec<Vec<ValidatorId>>,
+    pub(crate) relays: Vec<Vec<ValidatorIndex>>,
     /// Parameters this instance corresponds to.
     pub(crate) params: RotorParams,
 }
