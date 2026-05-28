@@ -126,7 +126,10 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For limited bandwidth, use [`Self::join`] instead.
-    pub async fn join_unlimited<S, R>(self: &Arc<Self>, id: ValidatorIndex) -> SimulatedNetwork<S, R> {
+    pub async fn join_unlimited<S, R>(
+        self: &Arc<Self>,
+        id: ValidatorIndex,
+    ) -> SimulatedNetwork<S, R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(65536);
         // background -> receiver
@@ -204,7 +207,12 @@ impl SimulatedNetworkCore {
     ///
     /// The latency is symmetric in both directions.
     /// For asymmetric links, use [`Self::set_asymmetric_latency`] instead.
-    pub async fn set_latency(&self, node1: ValidatorIndex, node2: ValidatorIndex, latency: Duration) {
+    pub async fn set_latency(
+        &self,
+        node1: ValidatorIndex,
+        node2: ValidatorIndex,
+        latency: Duration,
+    ) {
         self.latencies.write().await.insert((node1, node2), latency);
         self.latencies.write().await.insert((node2, node1), latency);
     }
