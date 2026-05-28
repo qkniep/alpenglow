@@ -34,6 +34,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 mod alpenglow;
+mod binomial;
 mod discrete_event_simulator;
 mod pyjama;
 mod quorum_robustness;
