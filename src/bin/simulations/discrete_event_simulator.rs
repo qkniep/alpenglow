@@ -272,7 +272,11 @@ impl SimulationEnvironment {
     }
 
     /// Finds the latency between the `sender` and `receiver` validators.
-    pub(crate) fn propagation_delay(&self, sender: ValidatorIndex, receiver: ValidatorIndex) -> SimTime {
+    pub(crate) fn propagation_delay(
+        &self,
+        sender: ValidatorIndex,
+        receiver: ValidatorIndex,
+    ) -> SimTime {
         let sender_server = self.ping_servers[sender.as_usize()].id;
         let receiver_server = self.ping_servers[receiver.as_usize()].id;
         let rtt_ping_ms = get_ping(sender_server, receiver_server).unwrap();

@@ -433,12 +433,21 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
-        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorIndex::new(0));
+        let vote = Vote::new_notar(
+            Slot::new(0),
+            GENESIS_BLOCK_HASH,
+            &sk,
+            ValidatorIndex::new(0),
+        );
         assert!(matches!(vote, Vote::Notar(_)));
         assert!(vote.check_sig(&pk));
 
-        let vote =
-            Vote::new_notar_fallback(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorIndex::new(0));
+        let vote = Vote::new_notar_fallback(
+            Slot::new(0),
+            GENESIS_BLOCK_HASH,
+            &sk,
+            ValidatorIndex::new(0),
+        );
         assert!(matches!(vote, Vote::NotarFallback(_)));
         assert!(vote.check_sig(&pk));
 

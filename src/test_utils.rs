@@ -17,7 +17,9 @@ use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
-use crate::{BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorIndex, ValidatorInfo};
+use crate::{
+    BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorIndex, ValidatorInfo,
+};
 
 /// A simple ping network message.
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
