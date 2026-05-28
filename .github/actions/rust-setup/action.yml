@@ -7,7 +7,7 @@ inputs:
     required: false
     default: stable
   components:
-    description: "Comma-separated rustup components (e.g. rust-src, miri). Empty installs rustfmt and clippy."
+    description: "Comma-separated rustup components (e.g. rust-src, miri). If omitted, defaults to rustfmt and clippy; if set to an empty string, an empty value is forwarded to setup-rust-toolchain."
     required: false
     default: "rustfmt, clippy"
   targets:
