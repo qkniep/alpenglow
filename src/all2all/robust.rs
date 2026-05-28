@@ -16,7 +16,7 @@ use crate::consensus::ConsensusMessage;
 use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the robust all-to-all broadcast protocol.
-// TODO: acutally make more robust (retransmits, ...)
+// TODO: actually make more robust (retransmits, ...)
 pub struct RobustAll2All<N: Network> {
     validators: Vec<ValidatorInfo>,
     network: N,

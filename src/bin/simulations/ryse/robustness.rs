@@ -29,7 +29,7 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
 pub(crate) fn run_robustness_tests() {
     let params = RyseParameters::new(NUM_PROPOSERS, NUM_RELAYS);
     params.print_failure_probabilities(ADVERSARY_STRENGTH);
-    let optimal_params = params.optmize(ADVERSARY_STRENGTH);
+    let optimal_params = params.optimize(ADVERSARY_STRENGTH);
     optimal_params.print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 

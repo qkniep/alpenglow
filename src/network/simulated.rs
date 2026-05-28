@@ -187,7 +187,7 @@ mod tests {
         let t_latency = 2.0 * MAX_DATA_PER_SLICE as f64 / 32_768.0;
         let p_latency = 0.1;
         let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
-        let min = p_latency + t_latency * expansion_ratio; // accoutn for erasure coding
+        let min = p_latency + t_latency * expansion_ratio; // account for erasure coding
         let max = p_latency + t_latency * expansion_ratio * 1.41; // +36% metadata overhead, +5% margin
 
         // background task: receive shreds and measure latency
@@ -287,8 +287,10 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorIndex::new(0)).await;
-        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorIndex::new(1)).await;
+        let net1: SimulatedNetwork<Shred, Shred> =
+            core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2: SimulatedNetwork<Shred, Shred> =
+            core.join_unlimited(ValidatorIndex::new(1)).await;
 
         // create a full block (1024 slices)
         let mut shredder = RegularShredder::default();

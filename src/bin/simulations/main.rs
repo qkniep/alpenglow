@@ -154,7 +154,7 @@ fn main() -> Result<()> {
     }
 
     if RUN_ROTOR_ROBUSTNESS_TESTS {
-        // create saftey evaluation file
+        // create safety evaluation file
         let filename = PathBuf::from("data")
             .join("output")
             .join("simulations")

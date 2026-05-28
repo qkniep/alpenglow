@@ -261,7 +261,7 @@ impl PoolImpl {
             .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 
-    /// Fetches all certficates for the provided range of `slots`.
+    /// Fetches all certificates for the provided range of `slots`.
     fn get_certs(&self, slots: impl RangeBounds<Slot>) -> Vec<Cert> {
         let mut certs = Vec::new();
         for (_, slot_state) in self.slot_states.range(slots) {
@@ -284,7 +284,7 @@ impl PoolImpl {
         certs
     }
 
-    /// Fetches finalization certficates for given `slot`, if any.
+    /// Fetches finalization certificates for given `slot`, if any.
     ///
     /// Prefers fast-finalization over slow-finalization, if it's available.
     /// In that case this returns only the fast-finalization certificate.
@@ -1063,7 +1063,12 @@ mod tests {
         let slot = Slot::new(0);
 
         // insert a notar vote from validator 0
-        let vote1 = Vote::new_notar(slot, GENESIS_BLOCK_HASH, &ctx.sks[0], ValidatorIndex::new(0));
+        let vote1 = Vote::new_notar(
+            slot,
+            GENESIS_BLOCK_HASH,
+            &ctx.sks[0],
+            ValidatorIndex::new(0),
+        );
         assert_eq!(ctx.pool.add_vote(vote1.clone()).await, Ok(()));
 
         // insert a skip vote from validator 1
@@ -1159,8 +1164,11 @@ mod tests {
         // dismiss old votes
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
             for v in 0..11 {
-                let vote =
-                    Vote::new_final(Slot::new(slot), &ctx.sks[v as usize], ValidatorIndex::new(v));
+                let vote = Vote::new_final(
+                    Slot::new(slot),
+                    &ctx.sks[v as usize],
+                    ValidatorIndex::new(v),
+                );
                 assert_eq!(
                     ctx.pool.add_vote(vote).await,
                     Err(AddVoteError::SlotOutOfBounds)
@@ -1205,7 +1213,13 @@ mod tests {
         // dismiss old certs
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
             let skip_votes: Vec<SkipVote> = (0..11)
-                .map(|v| SkipVote::new(Slot::new(slot), &ctx.sks[v as usize], ValidatorIndex::new(v)))
+                .map(|v| {
+                    SkipVote::new(
+                        Slot::new(slot),
+                        &ctx.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
                 .collect();
             let skip_cert =
                 SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators())

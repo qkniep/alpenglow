@@ -11,7 +11,7 @@ use clap::Parser;
 use log::info;
 use rand::prelude::*;
 
-/// Worklaod generator for benchmarks.
+/// Workload generator for benchmarks.
 #[derive(Debug, Clone, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {

@@ -196,7 +196,7 @@ pub trait Shredder: Default {
     /// Maximum number of payload bytes that fit into a slice.
     ///
     /// For the regular shredder, this is [`MAX_DATA_PER_SLICE`].
-    /// However, this can be less if the specfic shredder adds some overhead.
+    /// However, this can be less if the specific shredder adds some overhead.
     const MAX_DATA_SIZE: usize;
 
     /// When [`Shredder::shred`] is called, how many data shreds will be produced.
@@ -367,7 +367,7 @@ impl Default for CodingOnlyShredder {
 pub struct PetsShredder(ReedSolomonCoder);
 
 impl Shredder for PetsShredder {
-    // needs 16 bytes for symmmetric encryption key
+    // needs 16 bytes for symmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
@@ -449,7 +449,7 @@ impl Default for PetsShredder {
 pub struct AontShredder(ReedSolomonCoder);
 
 impl Shredder for AontShredder {
-    // needs 16 bytes for symmmetric encryption key
+    // needs 16 bytes for symmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;

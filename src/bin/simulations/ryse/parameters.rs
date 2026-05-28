@@ -92,7 +92,7 @@ impl RyseParameters {
     }
 
     /// Creates a new builder instance, with the provided sampling strategies.
-    pub(crate) fn optmize(&self, adv_strength: AdversaryStrength) -> Self {
+    pub(crate) fn optimize(&self, adv_strength: AdversaryStrength) -> Self {
         let mut optimal_params = *self;
         let mut optimal_attack_prob = self.any_attack_probability(adv_strength);
 

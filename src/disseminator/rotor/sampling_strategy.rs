@@ -432,10 +432,10 @@ pub struct PartitionSampler {
 }
 
 impl PartitionSampler {
-    /// Creates a new `ParitionSampler` instance.
+    /// Creates a new `PartitionSampler` instance.
     ///
     /// Partitions the given validators into `num_bins` bins of equal stake.
-    /// Paritioning is done randomly by splitting a randomly permuted list of nodes.
+    /// Partitioning is done randomly by splitting a randomly permuted list of nodes.
     pub fn new(validators: Vec<ValidatorInfo>, num_bins: usize) -> Self {
         if num_bins == 0 {
             return Self {
