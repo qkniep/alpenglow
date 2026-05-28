@@ -1,0 +1,3 @@
+# Normalize line endings to LF in the repository and on checkout across all
+# platforms. Git auto-detects binary files and leaves them untouched.
+* text=auto eol=lf
