@@ -185,7 +185,7 @@ impl<A: All2All> Votor<A> {
                 self.bad_window.insert(slot);
             }
             PoolEvent::CertCreated(cert) => {
-                match cert.as_ref() {
+                match &cert {
                     Cert::Notar(_) => {
                         self.block_notarized
                             .insert(cert.slot(), cert.block_hash().cloned().unwrap());
@@ -198,7 +198,7 @@ impl<A: All2All> Votor<A> {
                     }
                     _ => {}
                 }
-                self.all2all.broadcast(&(*cert).into()).await.unwrap();
+                self.all2all.broadcast(&cert.into()).await.unwrap();
             }
             PoolEvent::Standstill(_, certs, votes) => {
                 for cert in certs {
@@ -477,7 +477,7 @@ mod tests {
             ctx.epoch_info.validators(),
         ));
         ctx.pool_tx
-            .send(PoolEvent::CertCreated(Box::new(cert)))
+            .send(PoolEvent::CertCreated(cert))
             .await
             .unwrap();
         match ctx.other_a2a.receive().await.unwrap() {
