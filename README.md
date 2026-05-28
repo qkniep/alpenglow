@@ -57,7 +57,7 @@ The more extensive test suite, including some slow tests, can be run like this:
 
 ## Standalone node
 
-There is a rudimentary implementation of a standalone node in the `node` binary. To use it, please do the folowing.
+There is a rudimentary implementation of a standalone node in the `node` binary. To use it, please do the following.
 
 ### Define the cluster
 Since there is no gossip and stake manipulation in this prototype, you need to define all peers manually in advance. To do that, prepare a text file defining the socket addresses of the nodes that will be used in the test, e.g.

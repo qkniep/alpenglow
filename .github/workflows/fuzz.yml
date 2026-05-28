@@ -1,0 +1,53 @@
+name: Fuzz
+
+# Longer fuzzing run on a weekly schedule. The rust.yml `fuzz` job does a 30s
+# smoke run per target on every PR; this one runs each target for 30 minutes.
+# Switch the cron to daily, or bump -max_total_time below, to fuzz more aggressively.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC. Note: scheduled runs only fire on the default branch.
+    - cron: "0 6 * * 1"
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    # Headroom over -max_total_time=1800 (30m) per target for checkout, nightly
+    # + cargo-fuzz install, and building targets. Bump both together if you
+    # raise the per-target budget or add many targets.
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: nightly
+          # The fuzz harness is its own crate under fuzz/, not the repo-root workspace.
+          components: ""
+          tools: cargo-fuzz
+          workspaces: "fuzz"
+
+      - name: Fuzz (30 min per target)
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          for target in $(cargo +nightly fuzz list); do
+            echo "::group::Fuzzing $target"
+            cargo +nightly fuzz run --target "$host" "$target" -- -max_total_time=1800 -timeout=10
+            echo "::endgroup::"
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

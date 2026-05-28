@@ -53,8 +53,8 @@ pub trait Network: Send + Sync {
 
     /// Sends the `message` to all the addresses in `addrs`.
     ///
-    /// Note that a possible strategy for the implementators is to send to one address after another.
-    /// In this strategy, it is possible that if sending to one address fails, the implementator gives up sending to the remaining addresses.
+    /// Note that a possible strategy for the implementers is to send to one address after another.
+    /// In this strategy, it is possible that if sending to one address fails, the implementer gives up sending to the remaining addresses.
     /// This means that the function is not atomic, if it fails, some messages may still have been sent.
     //
     // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
@@ -67,7 +67,7 @@ pub trait Network: Send + Sync {
     /// Sends the `message` to `addr`.
     async fn send(&self, message: &Self::Send, addr: SocketAddr) -> std::io::Result<()>;
 
-    // TODO: implement brodcast at `Network` level?
+    // TODO: implement broadcast at `Network` level?
 
     async fn receive(&self) -> std::io::Result<Self::Recv>;
 }

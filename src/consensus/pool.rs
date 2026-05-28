@@ -258,7 +258,7 @@ impl PoolImpl {
             .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 
-    /// Fetches all certficates for the provided range of `slots`.
+    /// Fetches all certificates for the provided range of `slots`.
     fn get_certs(&self, slots: impl RangeBounds<Slot>) -> Vec<Cert> {
         let mut certs = Vec::new();
         for (_, slot_state) in self.slot_states.range(slots) {
@@ -281,7 +281,7 @@ impl PoolImpl {
         certs
     }
 
-    /// Fetches finalization certficates for given `slot`, if any.
+    /// Fetches finalization certificates for given `slot`, if any.
     ///
     /// Prefers fast-finalization over slow-finalization, if it's available.
     /// In that case this returns only the fast-finalization certificate.

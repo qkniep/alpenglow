@@ -252,7 +252,7 @@ where
     /// Main loop of the repair protocol.
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
-    /// Inititates the corresponding repair process and handles ongoing repairs.
+    /// Initiates the corresponding repair process and handles ongoing repairs.
     pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
         loop {
             let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
@@ -690,7 +690,7 @@ mod tests {
         let port1 = localhost_ip_sockaddr(2);
         ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
-        // verify reponse
+        // verify response
         let msg = ctx.v0_reply_net.receive().await.unwrap();
         let RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) = msg else {
             panic!("not LastSliceRoot response");
