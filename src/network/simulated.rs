@@ -287,8 +287,10 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorIndex::new(0)).await;
-        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorIndex::new(1)).await;
+        let net1: SimulatedNetwork<Shred, Shred> =
+            core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2: SimulatedNetwork<Shred, Shred> =
+            core.join_unlimited(ValidatorIndex::new(1)).await;
 
         // create a full block (1024 slices)
         let mut shredder = RegularShredder::default();

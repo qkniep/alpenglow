@@ -91,8 +91,14 @@ mod tests {
     #[test]
     fn basic() {
         let mut resource = Resource::new(2);
-        assert_eq!(resource.time_next_free(ValidatorIndex::new(0)), SimTime::ZERO);
-        assert_eq!(resource.time_next_free(ValidatorIndex::new(1)), SimTime::ZERO);
+        assert_eq!(
+            resource.time_next_free(ValidatorIndex::new(0)),
+            SimTime::ZERO
+        );
+        assert_eq!(
+            resource.time_next_free(ValidatorIndex::new(1)),
+            SimTime::ZERO
+        );
 
         // schedule resource on validator 0 for time 1-11
         assert_eq!(
@@ -115,6 +121,9 @@ mod tests {
         );
 
         // resource still free on other validator
-        assert_eq!(resource.time_next_free(ValidatorIndex::new(1)), SimTime::ZERO);
+        assert_eq!(
+            resource.time_next_free(ValidatorIndex::new(1)),
+            SimTime::ZERO
+        );
     }
 }

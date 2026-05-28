@@ -685,7 +685,10 @@ mod tests {
 
         // 33% notar alone has no effect
         let vote = Vote::new_notar(slot, hash.clone(), &sks[1], ValidatorIndex::new(1));
-        let voter_stake = epoch_info.epoch_info().validator(ValidatorIndex::new(1)).stake;
+        let voter_stake = epoch_info
+            .epoch_info()
+            .validator(ValidatorIndex::new(1))
+            .stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert!(events.is_empty());
@@ -693,7 +696,10 @@ mod tests {
 
         // additional 33% skip should lead to safe-to-notar
         let vote = Vote::new_skip(slot, &sks[0], ValidatorIndex::new(0));
-        let voter_stake = epoch_info.epoch_info().validator(ValidatorIndex::new(0)).stake;
+        let voter_stake = epoch_info
+            .epoch_info()
+            .validator(ValidatorIndex::new(0))
+            .stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);
