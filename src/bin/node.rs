@@ -14,7 +14,7 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
-use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use alpenglow::{Stake, Transaction, ValidatorIndex, ValidatorInfo, logging};
 use anyhow::{Context, Result};
 use clap::Parser;
 use fastrace::prelude::*;
@@ -93,7 +93,7 @@ type Node = Alpenglow<
 fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
     let epoch_info = Arc::new(ValidatorEpochInfo::new(
-        ValidatorId::new(config.id),
+        ValidatorIndex::new(config.id),
         EpochInfo::new(config.gossip.clone()),
     ));
     let start_port = config.port;
@@ -139,7 +139,7 @@ async fn create_node_configs(
         ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(id),
+            id: ValidatorIndex::new(id),
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),

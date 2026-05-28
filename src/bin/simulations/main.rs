@@ -56,7 +56,7 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{Stake, ValidatorId, ValidatorInfo, logging};
+use ::alpenglow::{Stake, ValidatorIndex, ValidatorInfo, logging};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
@@ -187,7 +187,7 @@ fn run_tests_for_stake_distribution(
     // sort by stake (from highest to lowest)
     validators_and_ping_servers.sort_by_key(|(v, _)| Reverse(v.stake));
     for (i, (v, _)) in validators_and_ping_servers.iter_mut().enumerate() {
-        v.id = ValidatorId::new(i as u64);
+        v.id = ValidatorIndex::new(i as u64);
     }
 
     // extract the validators only
