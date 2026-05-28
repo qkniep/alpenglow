@@ -17,7 +17,7 @@ use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ValidatedShred};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload};
-use crate::{BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorId, ValidatorInfo};
+use crate::{BlockId, MAX_TRANSACTION_SIZE, Slot, Stake, Transaction, ValidatorIndex, ValidatorInfo};
 
 /// A simple ping network message.
 #[derive(Clone, Debug, Default, SchemaRead, SchemaWrite)]
@@ -46,7 +46,7 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
         sks.push(signature::SecretKey::new(&mut rng));
         voting_sks.push(SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(i),
+            id: ValidatorIndex::new(i),
             stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
@@ -76,7 +76,7 @@ pub async fn generate_all2all_instances(
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {
-        let network = core.join_unlimited(ValidatorId::new(i as u64)).await;
+        let network = core.join_unlimited(ValidatorIndex::new(i as u64)).await;
         all2all.push(TrivialAll2All::new(validators.clone(), network));
     }
     all2all

@@ -5,7 +5,7 @@
 //!
 //!
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use log::info;
 use rand::prelude::*;
@@ -26,9 +26,9 @@ pub(crate) struct PyjamaParameters {
 
 /// Specific instance of the Ryse protocol.
 pub(crate) struct PyjamaInstance {
-    pub(crate) leader: ValidatorId,
-    pub(crate) proposers: Vec<ValidatorId>,
-    pub(crate) relays: Vec<ValidatorId>,
+    pub(crate) leader: ValidatorIndex,
+    pub(crate) proposers: Vec<ValidatorIndex>,
+    pub(crate) relays: Vec<ValidatorIndex>,
     pub(crate) params: PyjamaParameters,
 }
 

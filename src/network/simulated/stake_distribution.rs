@@ -29,7 +29,7 @@ use super::ping_data::{PingServer, coordinates_for_city, find_closest_ping_serve
 use crate::crypto::aggsig;
 use crate::crypto::signature::SecretKey;
 use crate::network::dontcare_sockaddr;
-use crate::{Stake, ValidatorId, ValidatorInfo};
+use crate::{Stake, ValidatorIndex, ValidatorInfo};
 
 /// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
@@ -200,7 +200,7 @@ pub fn validators_from_validator_data(
     let mut validators = Vec::new();
     for v in validator_data {
         if let Some(stake) = v.active_stake() {
-            let id = ValidatorId::new(validators.len() as u64);
+            let id = ValidatorIndex::new(validators.len() as u64);
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
@@ -233,7 +233,7 @@ pub fn validators_from_validator_data(
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         validators_with_ping_data.push((
             ValidatorInfo {
-                id: ValidatorId::new(validators_with_ping_data.len() as u64),
+                id: ValidatorIndex::new(validators_with_ping_data.len() as u64),
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
@@ -271,7 +271,7 @@ pub fn validators_from_validator_data(
 
     // give validators with ping data consecutive IDs
     for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
-        v.0.id = ValidatorId::new(i as u64);
+        v.0.id = ValidatorIndex::new(i as u64);
     }
 
     (validators, validators_with_ping_data)

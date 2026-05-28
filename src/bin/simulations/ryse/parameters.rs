@@ -5,7 +5,7 @@
 //!
 //!
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 use alpenglow::disseminator::rotor::QuorumSamplingStrategy;
 use log::info;
 use rand::prelude::*;
@@ -31,8 +31,8 @@ pub(crate) struct RyseParameters {
 /// Specific instance of the Ryse protocol.
 #[derive(Clone, Debug)]
 pub(crate) struct RyseInstance {
-    pub(crate) leaders: Vec<ValidatorId>,
-    pub(crate) relays: Vec<Vec<ValidatorId>>,
+    pub(crate) leaders: Vec<ValidatorIndex>,
+    pub(crate) relays: Vec<Vec<ValidatorIndex>>,
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
