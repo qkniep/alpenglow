@@ -33,26 +33,26 @@ After that, the simulations can be run like this:
 RUST_LOG="simulations=debug" cargo run --release --bin=simulations
 ```
 
-## Benchmarks
+## Development
 
-Some micro-benchmarks can be run like this:
+Common tasks (tests, lints, benches, fuzzing, coverage, ...) are exposed as
+[`just`](https://just.systems) recipes. Bootstrap with `cargo install just`,
+then install the rest of the toolchain:
 
 ```bash
-cargo bench
+just setup
 ```
 
-## Tests
-
-Regular tests can be run like this:
+Run `just` (no args) to list every recipe. The most useful ones:
 
 ```bash
-./test.sh
-```
-
-The more extensive test suite, including some slow tests, can be run like this:
-
-```bash
-./test.sh slow
+just test          # fast test suite (default)
+just test-slow     # the full suite, including ignored release-only tests
+just test-ci       # same set CI runs: fast + doc + smoke + sequential
+just check         # everything CI checks: fmt, clippy, build, doc, deny, machete, typos, fuzz, tests
+just bench         # micro-benchmarks (divan)
+just fuzz          # run every fuzz target for 30s
+just coverage      # HTML coverage report
 ```
 
 ## Standalone node
