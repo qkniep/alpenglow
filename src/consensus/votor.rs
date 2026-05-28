@@ -33,6 +33,8 @@ use crate::{All2All, Slot, ValidatorIndex};
 pub struct Votor<A: All2All> {
     /// Per-slot voting state, keyed by slot.
     slots: BTreeMap<Slot, SlotState>,
+    /// Highest slot known to be finalized; state for earlier slots is pruned.
+    finalized_slot: Slot,
 
     /// Own validator index.
     validator_index: ValidatorIndex,
@@ -81,6 +83,7 @@ impl<A: All2All> Votor<A> {
 
         let votor = Self {
             slots,
+            finalized_slot: Slot::genesis(),
             validator_index,
             voting_key,
             pool_receiver,
@@ -131,10 +134,28 @@ impl<A: All2All> Votor<A> {
         self.slots.entry(slot).or_default()
     }
 
+    /// Drops voting state for slots below the highest finalized slot.
+    ///
+    /// After this, [`Self::slots`] only contains entries for slots
+    /// `>= self.finalized_slot`.
+    fn prune(&mut self) {
+        self.slots = self.slots.split_off(&self.finalized_slot);
+    }
+
     async fn handle_pool_event(&mut self, event: PoolEvent) {
         let slot = event.slot();
-        if self.is_retired(slot) {
-            trace!("ignoring pool event for retired slot {slot}");
+        // Advance the prune watermark on finalization. This runs ahead of the
+        // guard below because we retire a slot when we cast its final vote, so
+        // by the time the matching certificate returns the slot is usually
+        // already retired and would otherwise be ignored.
+        if let PoolEvent::CertCreated(cert) = &event
+            && matches!(cert.as_ref(), Cert::Final(_) | Cert::FastFinal(_))
+        {
+            self.finalized_slot = self.finalized_slot.max(cert.slot());
+            self.prune();
+        }
+        if slot < self.finalized_slot || self.is_retired(slot) {
+            trace!("ignoring pool event for old or retired slot {slot}");
             return;
         }
         trace!("votor pool event: {event:?}");
@@ -196,8 +217,8 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
         let slot = event.slot();
-        if self.is_retired(slot) {
-            trace!("ignoring blockstore event for retired slot {slot}");
+        if slot < self.finalized_slot || self.is_retired(slot) {
+            trace!("ignoring blockstore event for old or retired slot {slot}");
             return;
         }
         trace!("votor blockstore event: {event:?}");
@@ -226,8 +247,8 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_timeout_event(&mut self, event: VotorTimeout) {
         let slot = event.slot();
-        if self.is_retired(slot) {
-            trace!("ignoring timeout for retired slot {slot}");
+        if slot < self.finalized_slot || self.is_retired(slot) {
+            trace!("ignoring timeout for old or retired slot {slot}");
             return;
         }
         trace!("votor timeout event: {event:?}");
@@ -395,7 +416,7 @@ struct SlotState {
     received_shred: bool,
     /// Block waiting for previous slots to be notarized.
     pending_block: Option<BlockInfo>,
-    /// Whether Votor is done with this slot.
+    /// Whether Votor is done with this slot (`ItsOver` in the paper).
     retired: bool,
 }
 
@@ -407,7 +428,7 @@ mod tests {
 
     use super::*;
     use crate::all2all::TrivialAll2All;
-    use crate::consensus::cert::NotarCert;
+    use crate::consensus::cert::{FinalCert, NotarCert};
     use crate::consensus::{ConsensusMessage, EpochInfo};
     use crate::crypto::Hash;
     use crate::network::SimulatedNetwork;
@@ -636,5 +657,51 @@ mod tests {
             }
             m => panic!("other msg: {m:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn prunes_finalized_slots() {
+        let (sks, epoch_info) = generate_validators(2);
+        let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
+        let (_pool_tx, pool_rx) = mpsc::channel(100);
+        let (_blockstore_tx, blockstore_rx) = mpsc::channel(100);
+        let other_a2a = a2a.pop().unwrap();
+        let votor_a2a = a2a.pop().unwrap();
+        let mut votor = Votor::new(
+            ValidatorIndex::new(0),
+            sks[0].clone(),
+            pool_rx,
+            blockstore_rx,
+            Arc::new(votor_a2a),
+        );
+
+        // drain broadcasts so votor's sends never block on the bounded network
+        tokio::spawn(async move { while other_a2a.receive().await.is_ok() {} });
+
+        // populate per-slot state for a handful of slots
+        for i in 1..=5u64 {
+            votor
+                .handle_blockstore_event(BlockstoreEvent::FirstShred(Slot::new(i)))
+                .await;
+        }
+        assert!((0..=5).all(|i| votor.slots.contains_key(&Slot::new(i))));
+
+        // finalizing slot 3 should drop all state for slots < 3
+        let Vote::Final(final_vote) =
+            Vote::new_final(Slot::new(3), &sks[1], ValidatorIndex::new(1))
+        else {
+            unreachable!()
+        };
+        let cert = Cert::Final(FinalCert::new_unchecked(
+            &[final_vote],
+            epoch_info.validators(),
+        ));
+        votor
+            .handle_pool_event(PoolEvent::CertCreated(Box::new(cert)))
+            .await;
+
+        assert_eq!(votor.finalized_slot, Slot::new(3));
+        assert!(votor.slots.keys().all(|s| *s >= Slot::new(3)));
+        assert!(!votor.slots.contains_key(&Slot::genesis()));
     }
 }
