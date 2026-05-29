@@ -79,7 +79,7 @@ impl<'a> ValidatedShreds<'a> {
             .iter()
             .take(data_shreds)
             .filter_map(|s| {
-                s.as_ref().map(|s| match &s.payload_type {
+                s.as_ref().map(|s| match &s.as_shred().payload_type {
                     ShredPayloadType::Data(d) => (*d.shred_index, d.data.as_slice()),
                     // constructor ensures all shreds up to data_shreds are data
                     ShredPayloadType::Coding(_) => panic!("should be a data shred"),
@@ -94,7 +94,7 @@ impl<'a> ValidatedShreds<'a> {
     pub(super) fn coding_shred_payloads(self) -> impl Iterator<Item = (usize, &'a [u8])> {
         let data_shreds = self.data_shreds;
         self.shreds.iter().skip(data_shreds).filter_map(move |s| {
-            s.as_ref().map(|s| match &s.payload_type {
+            s.as_ref().map(|s| match &s.as_shred().payload_type {
                 ShredPayloadType::Coding(c) => (*c.shred_index - data_shreds, c.data.as_slice()),
                 // constructor ensures all shreds after data_shreds are coding
                 ShredPayloadType::Data(_) => panic!("should be a coding shred"),

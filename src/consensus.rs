@@ -23,14 +23,14 @@ mod cert;
 mod epoch_info;
 mod pool;
 mod vote;
-pub(crate) mod votor;
+mod votor;
 
 use std::marker::{Send, Sync};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
@@ -39,17 +39,19 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
-pub use self::cert::{Cert, NotarCert};
+pub use self::blockstore::{
+    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
+};
+pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
-pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl};
+pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
-use self::votor::Votor;
+pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
+use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -105,9 +107,9 @@ where
     epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    pool: SharedPool,
 
     /// Block production (i.e. leader side) component of the consensus protocol.
     block_producer: Arc<BlockProducer<D, T>>,
@@ -131,23 +133,23 @@ where
 {
     /// Creates a new Alpenglow consensus node.
     ///
-    /// `repair_network` - [`RepairNetwork`] for sending requests and receiving responses.
-    /// `repair_request_network` - [`RepairRequestNetwork`] for answering incoming requests.
+    /// `repair_requester_network` - [`RepairRequesterNetwork`] for sending requests and receiving responses.
+    /// `repair_responder_network` - [`RepairResponderNetwork`] for answering incoming requests.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn new<RN, RR>(
+    pub fn new<RQ, RP>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
-        repair_network: RN,
-        repair_request_network: RR,
+        repair_requester_network: RQ,
+        repair_responder_network: RP,
         epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
     ) -> Self
     where
-        RR: RepairRequestNetwork + 'static,
-        RN: RepairNetwork + 'static,
+        RQ: RepairRequesterNetwork + 'static,
+        RP: RepairResponderNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
@@ -155,18 +157,19 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore: Box<dyn Blockstore + Send + Sync> =
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx));
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let blockstore: SharedBlockstore =
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
 
-        let pool: Box<dyn Pool + Send + Sync> =
-            Box::new(PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx));
-        let pool = Arc::new(RwLock::new(pool));
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
+            epoch_info.clone(),
+            pool_tx,
+            repair_tx,
+        )));
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
             blockstore.clone(),
-            repair_request_network,
+            repair_responder_network,
         );
         let _repair_request_handler =
             tokio::spawn(async move { repair_request_handler.run().await });
@@ -174,7 +177,7 @@ where
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
-            repair_network,
+            repair_requester_network,
             epoch_info.clone(),
         );
 
@@ -263,7 +266,7 @@ where
             .validator(self.epoch_info.own_id())
     }
 
-    pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
+    pub fn get_pool(&self) -> SharedPool {
         Arc::clone(&self.pool)
     }
 
@@ -329,11 +332,18 @@ where
     #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
+        // validate shred before forwarding or inserting
+        let slot = shred.payload().header.slot;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
+        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+
         // potentially forward shred
-        self.disseminator.forward(&shred).await?;
+        self.disseminator.forward(validated.as_shred()).await?;
 
         // if we are the leader, we already have the shred
-        let slot = shred.payload().header.slot;
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
@@ -343,7 +353,7 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(shred)
+            .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
             let mut guard = self.pool.write().await;

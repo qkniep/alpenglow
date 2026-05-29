@@ -7,8 +7,8 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use alpenglow::logging;
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use log::{debug, info};
 use time::OffsetDateTime;
 use tokio::net::UdpSocket;
@@ -106,9 +106,6 @@ struct VoteMsg {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
 
     logging::enable_logforth_stderr();
 

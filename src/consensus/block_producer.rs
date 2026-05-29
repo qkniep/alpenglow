@@ -7,17 +7,17 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use either::Either;
 use fastrace::Span;
 use log::{debug, info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
+use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -39,14 +39,19 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    pool: SharedPool,
 
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
     /// Network connection to receive transactions from clients.
     txs_receiver: T,
+
+    /// Pool of shredders for shredding produced slices.
+    ///
+    /// Reused across slices to avoid reallocating Reed-Solomon working memory.
+    shredders: ShredderPool<RegularShredder>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -70,8 +75,8 @@ where
         epoch_info: Arc<ValidatorEpochInfo>,
         disseminator: Arc<D>,
         txs_receiver: T,
-        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
-        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+        blockstore: SharedBlockstore,
+        pool: SharedPool,
         cancel_token: CancellationToken,
         delta_block: Duration,
         delta_first_slice: Duration,
@@ -84,6 +89,8 @@ where
             pool,
             disseminator,
             txs_receiver,
+            // block production is sequential, so a single shredder is enough
+            shredders: ShredderPool::with_size(1),
             cancel_token,
             delta_block,
             delta_first_slice,
@@ -290,14 +297,21 @@ where
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
-            self.disseminator.send(&s).await?;
+            self.disseminator.send(s.as_shred()).await?;
             // PERF: move expensive add_shred() call out of block production
             let block = self
                 .blockstore
                 .write()
                 .await
-                .add_own_shred_as_leader(s)
+                .add_shred_from_dissemination(s)
                 .await;
+            debug_assert!(
+                !matches!(
+                    block,
+                    Err(AddShredError::InvalidShred | AddShredError::Equivocation),
+                ),
+                "leader produced bad shreds"
+            );
             if let Ok(Some(block_info)) = block {
                 assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash.clone());
@@ -447,8 +461,8 @@ enum SlotReady {
 ///
 /// See [`SlotReady`] for what is returned.
 async fn wait_for_first_slot(
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    pool: SharedPool,
+    blockstore: SharedBlockstore,
     first_slot_in_window: Slot,
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
@@ -508,6 +522,7 @@ mod tests {
     use std::time::Duration;
 
     use mockall::{Sequence, predicate};
+    use tokio::sync::RwLock;
 
     use super::*;
     use crate::consensus::blockstore::MockBlockstore;
@@ -518,7 +533,7 @@ mod tests {
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
-    use crate::{Transaction, ValidatorId};
+    use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -571,10 +586,8 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_genesis() {
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(MockPool::new());
-        let pool = Arc::new(RwLock::new(pool));
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let pool: SharedPool = Arc::new(RwLock::new(MockPool::new()));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
 
         let status = wait_for_first_slot(pool, blockstore, Slot::genesis()).await;
         assert!(matches!(status, SlotReady::Ready(_)));
@@ -582,8 +595,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_already_ready() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
 
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
@@ -593,8 +605,7 @@ mod tests {
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
             .return_once(move |_slot| Either::Left(p));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
 
         let status = wait_for_first_slot(pool, blockstore, slot).await;
         match status {
@@ -605,8 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_ready_later() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
 
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
@@ -617,8 +627,7 @@ mod tests {
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
             .return_once(move |_slot| Either::Right(rx));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
 
         let status = wait_for_first_slot(pool, blockstore, slot).await;
         match status {
@@ -637,11 +646,9 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info));
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
-        let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(blockstore));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
         let disseminator = Arc::new(disseminator);
         let txs_receiver = UdpNetwork::new_with_any_port();
         let cancel_token = CancellationToken::new();
@@ -675,13 +682,13 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_shred_from_dissemination()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_shred_from_dissemination()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
@@ -741,12 +748,12 @@ mod tests {
 
         // handle first slice
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_shred_from_dissemination()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_shred_from_dissemination()
             .times(1)
             .in_sequence(&mut seq)
             .return_once(move |_| {
@@ -760,13 +767,13 @@ mod tests {
 
         // handle second slice
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_shred_from_dissemination()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_shred_from_dissemination()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {

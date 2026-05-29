@@ -10,7 +10,7 @@
 //!
 //! ```
 //! use alpenglow::crypto::aggsig::{AggregateSignature, SecretKey};
-//! use alpenglow::ValidatorId;
+//! use alpenglow::ValidatorIndex;
 //!
 //! let msg = b"hello world";
 //!
@@ -22,7 +22,7 @@
 //! let pk2 = sk2.to_pk();
 //! let sig2 = sk2.sign(msg);
 //!
-//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+//! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [ValidatorIndex::new(0), ValidatorIndex::new(1)], 2);
 //! assert!(aggsig.verify(msg, &[pk1, pk2]));
 //! ```
 
@@ -41,7 +41,7 @@ use static_assertions::const_assert_eq;
 use wincode::config::Config;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::ValidatorId;
+use crate::ValidatorIndex;
 
 /// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
 const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
@@ -97,9 +97,14 @@ impl PublicKey {
 /// An individual signature as part of the aggregate signature scheme.
 ///
 /// This is a wrapper around [`blst::min_sig::Signature`].
+///
+/// # Invariant
+///
+/// Always in the prime-order subgroup (and not the identity).
+/// [`AggregateSignature::new`] relies on this to skip subgroup checks.
 //
 // NOTE: Deriving `PartialEq` and `Eq` to support testing.
-// It only makes sense beccause the underlying signature scheme happens to be deterministic and unique.
+// It only makes sense because the underlying signature scheme happens to be deterministic and unique.
 // Reevaluate if we change the signature scheme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndividualSignature(BlstSignature);
@@ -112,9 +117,10 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let sig_bytes = reader.take_borrowed(UNCOMPRESSED_SIG_SIZE)?;
-        let sig = BlstSignature::deserialize(sig_bytes).map_err(|e| {
+        // perform subgroup check, and identity check (`true`)
+        let sig = BlstSignature::sig_validate(sig_bytes, true).map_err(|e| {
             warn!("encountered invalid BLS sig: {e:?}");
-            wincode::ReadError::Custom("invalid BLS encoding")
+            wincode::ReadError::Custom("invalid BLS signature")
         })?;
         dst.write(IndividualSignature(sig));
         wincode::ReadResult::Ok(())
@@ -276,7 +282,11 @@ impl IndividualSignature {
     /// Verifies that this is a valid signature of `msg` under `pk`.
     #[must_use]
     pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
-        self.0.verify(true, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+        // Skip the signature subgroup check (`sig_groupcheck=false`): the type
+        // invariant already guarantees prime-order subgroup membership, as it is
+        // established when signing and re-checked on deserialization (see `read`).
+        // Re-checking here would be redundant.
+        self.0.verify(false, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
     }
 }
 
@@ -285,21 +295,59 @@ impl AggregateSignature {
     ///
     /// Augments the aggregate signature with a bitmask of length `num_bits`,
     /// where the bits in `indices` are set to 1.
+    ///
+    /// Requirements:
+    /// - `sigs` must not be empty,
+    /// - `sigs` and `indices` must have the same length,
+    /// - the `i`-th signature must belong to the `i`-th validator index,
+    /// - each validator index must be less than `num_bits`,
+    /// - each validator index must appear at most once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - `sigs` and `indices` have different lengths,
+    /// - `sigs` is empty,
+    /// - any validator index is `>= num_bits`, or
+    /// - `indices` contains a duplicate.
     #[must_use]
     pub fn new<'a>(
         sigs: impl IntoIterator<Item = &'a IndividualSignature>,
-        indices: impl IntoIterator<Item = ValidatorId>,
+        indices: impl IntoIterator<Item = ValidatorIndex>,
         num_bits: usize,
     ) -> Self {
-        let mut sigs_iter = sigs.into_iter();
-        let mut agg_sig = BlstAggSig::from_signature(&sigs_iter.next().unwrap().0);
-        for sig in sigs_iter {
-            agg_sig.add_signature(&sig.0, true).unwrap();
-        }
+        let mut sigs = sigs.into_iter();
+        let mut indices = indices.into_iter();
+        let next_pair = || match (sigs.next(), indices.next()) {
+            (Some(s), Some(i)) => Some((s, i)),
+            (None, None) => None,
+            _ => panic!("sigs and indices length mismatch"),
+        };
+        let mut pairs = std::iter::from_fn(next_pair);
 
         let mut bitmask = bitvec::bitvec![0; num_bits];
-        for i in indices {
-            bitmask.set(i.as_index(), true);
+        let (first_sig, first_idx) = pairs.next().expect("sigs and indices must not be empty");
+        let first_bit_idx = first_idx.as_usize();
+        assert!(
+            first_bit_idx < num_bits,
+            "validator index {first_bit_idx} >= num_bits {num_bits}",
+        );
+        // does not check subgroup membership
+        let mut agg_sig = BlstAggSig::from_signature(&first_sig.0);
+        bitmask.set(first_bit_idx, true);
+
+        for (sig, idx) in pairs {
+            let bit_idx = idx.as_usize();
+            assert!(
+                bit_idx < num_bits,
+                "validator index {bit_idx} >= num_bits {num_bits}",
+            );
+            assert!(!bitmask[bit_idx], "duplicate signer index {bit_idx}");
+            // does not check subgroup membership (`sig_groupcheck=false`)
+            agg_sig
+                .add_signature(&sig.0, false)
+                .expect("add_signature is infallible when sig_groupcheck is false");
+            bitmask.set(bit_idx, true);
         }
 
         Self {
@@ -314,7 +362,7 @@ impl AggregateSignature {
         if self.bitmask.len() != pks.len() {
             return false;
         }
-        let pks: Vec<_> = self.signers().map(|v| &pks[v.as_index()].0).collect();
+        let pks: Vec<_> = self.signers().map(|v| &pks[v.as_usize()].0).collect();
         let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
@@ -332,17 +380,19 @@ impl AggregateSignature {
 
     /// Returns `true` iff this validator's signature is part of the aggregate.
     #[must_use]
-    pub fn is_signer(&self, validator_id: ValidatorId) -> bool {
+    pub fn is_signer(&self, validator_index: ValidatorIndex) -> bool {
         *self
             .bitmask
-            .get(validator_id.as_index())
+            .get(validator_index.as_usize())
             .as_deref()
             .unwrap_or(&false)
     }
 
     /// Iterates over all signers of this aggregate signature.
-    pub fn signers(&self) -> impl Iterator<Item = ValidatorId> {
-        self.bitmask.iter_ones().map(|i| ValidatorId::new(i as u64))
+    pub fn signers(&self) -> impl Iterator<Item = ValidatorIndex> {
+        self.bitmask
+            .iter_ones()
+            .map(|i| ValidatorIndex::new(i as u64))
     }
 }
 
@@ -375,8 +425,11 @@ mod tests {
         assert!(sig1.verify(msg, &pk1));
         assert!(sig2.verify(msg, &pk2));
 
-        let mut aggsig =
-            AggregateSignature::new(&[sig1, sig2], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+        let mut aggsig = AggregateSignature::new(
+            &[sig1, sig2],
+            [ValidatorIndex::new(0), ValidatorIndex::new(1)],
+            2,
+        );
 
         // check aggregate signature
         assert!(aggsig.verify(msg, &[pk1, pk2]));
@@ -429,15 +482,18 @@ mod tests {
         assert!(sig3.verify(msg, &pk3));
 
         // only aggregate over 2/3 signatures
-        let aggsig =
-            AggregateSignature::new(&[sig1, sig3], [ValidatorId::new(0), ValidatorId::new(2)], 3);
+        let aggsig = AggregateSignature::new(
+            &[sig1, sig3],
+            [ValidatorIndex::new(0), ValidatorIndex::new(2)],
+            3,
+        );
 
         // check signers bitmask
         let signers: Vec<_> = aggsig.signers().collect();
         assert_eq!(signers.len(), 2);
-        assert!(signers.contains(&ValidatorId::new(0)));
-        assert!(!signers.contains(&ValidatorId::new(1)));
-        assert!(signers.contains(&ValidatorId::new(2)));
+        assert!(signers.contains(&ValidatorIndex::new(0)));
+        assert!(!signers.contains(&ValidatorIndex::new(1)));
+        assert!(signers.contains(&ValidatorIndex::new(2)));
 
         // check aggregate signature
         assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk3]));
@@ -448,6 +504,81 @@ mod tests {
         assert!(!aggsig.verify(msg, &[pk1, pk3, pk2]));
         assert!(!aggsig.verify(msg, &[pk2, pk3, pk1]));
         assert!(!aggsig.verify(msg, &[pk3, pk1, pk2]));
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate signer")]
+    fn duplicate_signer_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+
+        // [v0, v1, v0] — the duplicate is reached only after a non-duplicate
+        // has already been added, exercising the in-loop assert path.
+        let _ = AggregateSignature::new(
+            &[sig1, sig2, sig1],
+            [
+                ValidatorIndex::new(0),
+                ValidatorIndex::new(1),
+                ValidatorIndex::new(0),
+            ],
+            2,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn length_mismatch_fewer_sigs_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        let _ =
+            AggregateSignature::new(&[sig1], [ValidatorIndex::new(0), ValidatorIndex::new(1)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn length_mismatch_fewer_indices_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+        let _ = AggregateSignature::new(&[sig1, sig2], [ValidatorIndex::new(0)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "validator index")]
+    fn out_of_bounds_first_index_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        // num_bits=2, but the only validator index is 2 (>= num_bits)
+        let _ = AggregateSignature::new(&[sig1], [ValidatorIndex::new(2)], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "validator index")]
+    fn out_of_bounds_later_index_panics() {
+        let sk1 = SecretKey::new(&mut rand::rng());
+        let sig1 = sk1.sign(b"msg");
+        let sk2 = SecretKey::new(&mut rand::rng());
+        let sig2 = sk2.sign(b"msg");
+        // num_bits=2, first index ok, second index 2 (>= num_bits)
+        let _ = AggregateSignature::new(
+            &[sig1, sig2],
+            [ValidatorIndex::new(0), ValidatorIndex::new(2)],
+            2,
+        );
+    }
+
+    #[test]
+    fn identity_signature_rejected() {
+        // BLS12-381 G1 uncompressed encoding of the identity point: only the
+        // infinity flag (bit 6 of byte 0) is set.
+        let mut identity = [0u8; UNCOMPRESSED_SIG_SIZE];
+        identity[0] = 0b_0100_0000;
+
+        let result: wincode::ReadResult<IndividualSignature> = wincode::deserialize(&identity);
+        assert!(result.is_err(), "identity signature must be rejected");
     }
 
     #[test]

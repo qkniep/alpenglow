@@ -112,7 +112,7 @@ impl ReedSolomonCoder {
             .for_each(|chunk| {
                 self.encoder
                     .add_original_shard(chunk)
-                    .expect("adding correct number of chunks of currect size");
+                    .expect("adding correct number of chunks of correct size");
                 data.push(chunk.to_vec());
             });
 

@@ -4,7 +4,7 @@
 use tokio::time::{Duration, Instant, sleep};
 
 /// Token bucket for rate limiting.
-pub struct TokenBucket {
+pub(super) struct TokenBucket {
     /// Current number of tokens in the bucket.
     bucket: usize,
     /// Maximum number of tokens the bucket can hold.
@@ -18,7 +18,7 @@ pub struct TokenBucket {
 impl TokenBucket {
     /// Creates a new token bucket with the given refill rate.
     #[must_use]
-    pub fn new(refill_rate: usize) -> Self {
+    pub(super) fn new(refill_rate: usize) -> Self {
         Self {
             bucket: 1500,
             capacity: 1000 * 1500,
@@ -29,7 +29,7 @@ impl TokenBucket {
 
     /// Refills the bucket with the correct number of tokens,
     /// based on the time since the last refill.
-    pub fn refill(&mut self) {
+    pub(super) fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill);
         let added = (self.refill_rate as f64 * elapsed.as_nanos() as f64 / 1e9) as usize;
@@ -38,7 +38,7 @@ impl TokenBucket {
     }
 
     /// Waits until the bucket has at least `bytes` tokens.
-    pub async fn wait_for(&mut self, tokens: usize) {
+    pub(super) async fn wait_for(&mut self, tokens: usize) {
         loop {
             self.refill();
 

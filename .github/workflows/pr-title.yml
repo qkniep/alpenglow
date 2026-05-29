@@ -1,0 +1,42 @@
+# Validates that every pull request title follows Conventional Commits
+# (https://www.conventionalcommits.org). PRs are squash-merged, so the title
+# becomes the commit message on `main`.
+#
+# WIP support: prefix a title with "[WIP] " to mark a PR as in progress. The
+# action then reports the "action-semantic-pull-request" commit status as
+# *pending* (instead of failing the title check), so the PR can't be merged
+# until you drop the prefix and give it a real type. GitHub draft PRs do the
+# same job if you prefer. To actually block the merge, add that status to your
+# branch protection's required checks.
+#
+# Runs on pull_request_target so it also works for PRs from forks: the token
+# is writable in the base context, which the pending-status feature needs. It
+# only reads the title from the event payload — no PR code is checked out — so
+# the elevated trigger is safe.
+name: PR title
+
+permissions:
+  pull-requests: read
+  statuses: write
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Types default to the Conventional Commits set. We only opt into the
+      # [WIP] prefix here.
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          wip: true

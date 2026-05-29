@@ -1,107 +1,163 @@
 name: Rust
 
+# Least privilege: every job here only reads the repo. Scope up per-job if one
+# ever needs to write (e.g. commit, comment, or push).
+permissions:
+  contents: read
+
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: true
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
 
+# Always-on core suite. Optional checks live in their own workflow files
+# (coverage.yml, fuzz.yml, sanitizers.yml, security-audit.yml, scorecard.yml,
+# pr-title.yml) so a check can be disabled by deleting a single file.
 jobs:
-  main:
+  # Cheap checks grouped onto one runner so they share a single boot + checkout.
+  # Reports failure only after each step ran (`if: ${{ !cancelled() }}`).
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: nightly
+          components: rustfmt
+          tools: editorconfig-checker
+
+      - name: Check formatting
+        run: cargo +nightly fmt --all -- --check
+
+      - name: Check editorconfig compliance
+        if: ${{ !cancelled() }}
+        run: editorconfig-checker
+
+      - name: Check spelling
+        if: ${{ !cancelled() }}
+        uses: crate-ci/typos@7b04f660f4ee4f048d18fd341887cf28dfbedfe2 # v1
+
+      # Lints these workflow files for syntax errors, bad expressions, and (via
+      # the runner's preinstalled shellcheck) issues in `run:` scripts. Pinned
+      # to a release rather than a marketplace action to keep the dependency
+      # auditable; the tarball is checksum-verified before extraction.
+      - name: actionlint
+        if: ${{ !cancelled() }}
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+        run: |
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xz -f actionlint.tar.gz actionlint
+          ./actionlint -color
+
+  clippy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          tools: nextest
+      - uses: ./.github/actions/download-data
+
+      - name: Tests (fast + doc + smoke + sequential)
+        run: |
+          cargo nextest run --all-targets --all-features --locked
+          cargo test --doc --all-features --locked
+          cargo nextest run --all-features --release --locked \
+            --test smoke_tests --run-ignored=all
+          cargo nextest run --release --jobs=1 --run-ignored=only --locked \
+            network::simulated::core::tests::asymmetric \
+            network::simulated::core::tests::symmetric \
+            network::simulated::token_bucket::tests::extreme_rate \
+            max_crashes \
+            repair::tests::repair_large_block \
+            three_nodes_crash
+        env:
+          RUST_BACKTRACE: "1"
+
+  fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
-      - uses: actions/checkout@v6
-      
-      - name: Install tools
-        uses: taiki-e/install-action@v2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
         with:
-          tool: nextest,cargo-llvm-cov,cargo-machete
+          toolchain: nightly
+          # The fuzz harness is its own crate under fuzz/, not the repo-root workspace.
+          components: ""
+          tools: cargo-fuzz
+          workspaces: "fuzz"
 
-      - name: Cache rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-all-crates: true
-
-      - name: Cache build files
-        uses: mozilla-actions/sccache-action@v0.0.9
-      
-      - name: Cache downloaded data
-        id: cache-data
-        uses: actions/cache@v5
-        with:
-          path: ./data
-          key: data-v1  # Change this if the dataset version changes
-
-      - name: Download data if needed
+      - name: Fuzz (30s per target, smoke run)
         run: |
-          if [ ! -f data/dataset.ok ]; then
-            ./download_data.sh
-            touch data/dataset.ok
-          fi
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          for target in $(cargo +nightly fuzz list); do
+            echo "Fuzzing $target..."
+            cargo +nightly fuzz run --target "$host" "$target" -- -max_total_time=30
+          done
 
-      - name: Build (debug)
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-        run: cargo build --all-targets --all-features --verbose
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
+  build:
+    # Release-only: debug compilation of all targets is already covered by
+    # `test`, and release-only breakage is rare, so this only runs on `main`
+    # pushes. `push` only fires on main (see triggers above).
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
 
       - name: Build (release)
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-        run: cargo build --all-targets --all-features --release --verbose
+        run: cargo build --all-targets --all-features --release --locked
 
-      - name: Linting (clippy)
-        run: cargo clippy --all-targets --all-features -- -Dwarnings
-
-      - name: Unused dependencies
-        run: cargo machete
-
-      - name: Run tests
-        run: ./test.sh ci
-
-      # test coverage
-      - name: Collect coverage data
-        if: github.actor != 'dependabot[bot]'
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-        run: cargo llvm-cov --lcov --all-features --workspace --ignore-filename-regex='(benches|src/bin|src/main.rs)' --release --output-path lcov.info nextest
-
-      - name: Upload coverage to Codecov
-        if: github.actor != 'dependabot[bot]'
-        uses: codecov/codecov-action@v6
-        with:
-          fail_ci_if_error: true
-          files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
-          verbose: true
-
-  rustfmt:
+  security:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
         with:
-          components: rustfmt
+          tools: cargo-deny,cargo-machete
 
-      - name: Run rustfmt
-        run: cargo +nightly fmt --all -- --check
+      - name: Cargo deny (advisories, licenses, bans, sources)
+        run: cargo deny check
+
+      - name: Unused deps
+        run: cargo machete
 
   docs:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
 
       - name: Build docs
-        run: cargo doc --no-deps --document-private-items
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --all-features --locked
