@@ -17,7 +17,9 @@
 //! - [`stake_distribution`] for working with the Solana mainnet stake distribution.
 
 mod core;
+#[cfg(any(test, feature = "simulations"))]
 pub mod ping_data;
+#[cfg(any(test, feature = "simulations"))]
 pub mod stake_distribution;
 mod token_bucket;
 
@@ -35,13 +37,13 @@ use wincode::{SchemaRead, SchemaWrite};
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
 use super::Network;
-use crate::ValidatorId;
+use crate::ValidatorIndex;
 use crate::network::MTU_BYTES;
 
 /// A simulated network interface for local testing and simulations.
 pub struct SimulatedNetwork<S, R> {
     /// ID of the validator this network interface belongs to.
-    id: ValidatorId,
+    id: ValidatorIndex,
     /// Reference to the simulated network core this interface is attached to.
     network_core: Arc<SimulatedNetworkCore>,
     /// Receiver for incoming messages.
@@ -52,7 +54,7 @@ pub struct SimulatedNetwork<S, R> {
 }
 
 impl<S, R> SimulatedNetwork<S, R> {
-    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorId) -> std::io::Result<()> {
+    async fn send_byte_vec(&self, bytes: Vec<u8>, to: ValidatorIndex) -> std::io::Result<()> {
         if let Some(limiter) = &self.limiter {
             limiter.write().await.wait_for(bytes.len()).await;
         }
@@ -62,8 +64,8 @@ impl<S, R> SimulatedNetwork<S, R> {
 
     async fn send_serialized(&self, bytes: Vec<u8>, addr: SocketAddr) -> std::io::Result<()> {
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let validator_id = ValidatorId::new(addr.port() as u64);
-        self.send_byte_vec(bytes, validator_id).await?;
+        let validator_index = ValidatorIndex::new(addr.port() as u64);
+        self.send_byte_vec(bytes, validator_index).await?;
         Ok(())
     }
 }
@@ -128,14 +130,14 @@ mod tests {
     use crate::test_utils::Ping;
     use crate::types::slice::create_slice_payload_with_invalid_txs;
     use crate::types::{Slice, SliceHeader, SliceIndex};
-    use crate::{Slot, ValidatorId};
+    use crate::{Slot, ValidatorIndex};
 
     #[tokio::test]
     async fn basic() {
         // set up network with two nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-        let net1 = core.join(ValidatorId::new(0), 8192, 8192).await;
-        let net2 = core.join(ValidatorId::new(1), 8192, 8192).await;
+        let net1 = core.join(ValidatorIndex::new(0), 8192, 8192).await;
+        let net2 = core.join(ValidatorIndex::new(1), 8192, 8192).await;
         let msg = Ping::default();
 
         // one direction
@@ -162,9 +164,9 @@ mod tests {
                 .with_packet_loss(0.0),
         );
         let net1: SimulatedNetwork<Shred, Shred> =
-            core.join(ValidatorId::new(0), 32_768, 32_768).await; // 32 KiB/s
+            core.join(ValidatorIndex::new(0), 32_768, 32_768).await; // 32 KiB/s
         let net2: SimulatedNetwork<Shred, Shred> =
-            core.join(ValidatorId::new(1), 32_768, 32_768).await; // 32 KiB/s
+            core.join(ValidatorIndex::new(1), 32_768, 32_768).await; // 32 KiB/s
 
         // create 2 slices
         let mut shredder = RegularShredder::default();
@@ -187,7 +189,7 @@ mod tests {
         let t_latency = 2.0 * MAX_DATA_PER_SLICE as f64 / 32_768.0;
         let p_latency = 0.1;
         let expansion_ratio = (TOTAL_SHREDS as f64) / (DATA_SHREDS as f64);
-        let min = p_latency + t_latency * expansion_ratio; // accoutn for erasure coding
+        let min = p_latency + t_latency * expansion_ratio; // account for erasure coding
         let max = p_latency + t_latency * expansion_ratio * 1.41; // +36% metadata overhead, +5% margin
 
         // background task: receive shreds and measure latency
@@ -204,7 +206,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(shred.as_shred(), localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -222,10 +226,10 @@ mod tests {
                 .with_packet_loss(0.0),
         );
         let net1: SimulatedNetwork<Shred, Shred> = core
-            .join(ValidatorId::new(0), 104_857_600, 104_857_600)
+            .join(ValidatorIndex::new(0), 104_857_600, 104_857_600)
             .await; // 100 MiB/s
         let net2: SimulatedNetwork<Shred, Shred> = core
-            .join(ValidatorId::new(1), 104_857_600, 104_857_600)
+            .join(ValidatorIndex::new(1), 104_857_600, 104_857_600)
             .await; // 100 MiB/s
 
         // create a full block (1024 slices)
@@ -266,7 +270,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(shred.as_shred(), localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();
@@ -283,8 +289,10 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2: SimulatedNetwork<Shred, Shred> = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1: SimulatedNetwork<Shred, Shred> =
+            core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2: SimulatedNetwork<Shred, Shred> =
+            core.join_unlimited(ValidatorIndex::new(1)).await;
 
         // create a full block (1024 slices)
         let mut shredder = RegularShredder::default();
@@ -324,7 +332,9 @@ mod tests {
         });
 
         for shred in shreds {
-            net1.send(&shred, localhost_ip_sockaddr(1)).await.unwrap();
+            net1.send(shred.as_shred(), localhost_ip_sockaddr(1))
+                .await
+                .unwrap();
         }
 
         let latency = tokio::join!(receiver).0.unwrap();

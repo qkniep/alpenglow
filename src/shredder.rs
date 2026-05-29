@@ -196,7 +196,7 @@ pub trait Shredder: Default {
     /// Maximum number of payload bytes that fit into a slice.
     ///
     /// For the regular shredder, this is [`MAX_DATA_PER_SLICE`].
-    /// However, this can be less if the specfic shredder adds some overhead.
+    /// However, this can be less if the specific shredder adds some overhead.
     const MAX_DATA_SIZE: usize;
 
     /// When [`Shredder::shred`] is called, how many data shreds will be produced.
@@ -282,7 +282,7 @@ impl Shredder for RegularShredder {
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
@@ -291,7 +291,7 @@ impl Shredder for RegularShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -333,7 +333,7 @@ impl Shredder for CodingOnlyShredder {
         let payload = SlicePayload::from(payload_bytes.as_slice());
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         raw_shreds.data = vec![];
@@ -343,7 +343,7 @@ impl Shredder for CodingOnlyShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -367,7 +367,7 @@ impl Default for CodingOnlyShredder {
 pub struct PetsShredder(ReedSolomonCoder);
 
 impl Shredder for PetsShredder {
-    // needs 16 bytes for symmmetric encryption key
+    // needs 16 bytes for symmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
@@ -407,7 +407,7 @@ impl Shredder for PetsShredder {
         }
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         raw_shreds.data.pop();
@@ -425,7 +425,7 @@ impl Shredder for PetsShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -449,7 +449,7 @@ impl Default for PetsShredder {
 pub struct AontShredder(ReedSolomonCoder);
 
 impl Shredder for AontShredder {
-    // needs 16 bytes for symmmetric encryption key
+    // needs 16 bytes for symmetric encryption key
     const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
@@ -490,7 +490,7 @@ impl Shredder for AontShredder {
         }
 
         let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root();
+        let merkle_root = any_shred.merkle_root().clone();
 
         // additional Merkle tree validity check
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
@@ -512,7 +512,7 @@ impl Shredder for AontShredder {
         let header = slice.to_header();
 
         // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.merkle_root_sig;
+        let leader_sig = any_shred.as_shred().merkle_root_sig;
         let reconstructed_shreds =
             create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
 
@@ -659,7 +659,7 @@ fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
 
 #[cfg(test)]
 mod tests {
-    use color_eyre::Result;
+    use anyhow::Result;
 
     use super::*;
     use crate::types::slice::create_slice_with_invalid_txs;
