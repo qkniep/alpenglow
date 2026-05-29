@@ -16,12 +16,12 @@ use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
-use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
+use crate::types::{ReconstructedSlice, Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
 /// Produces blocks from transactions and dissminates them.
@@ -354,46 +354,47 @@ where
     ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
         let is_last = header.is_last;
-        let slice = Slice::from_parts(header, payload);
-        let mut maybe_block_hash = None;
+        // Keep the payload so we can hand a ready-made slice to the blockstore,
+        // instead of making it Reed-Solomon-decode our own data back out.
+        let slice = Slice::from_parts(header, payload.clone());
         let shreds = self
             .shredders
             .checkout()
             .expect("pool always has a shredder, block production is sequential")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
-        for s in shreds {
+
+        for s in &shreds {
             self.disseminator.send(s.as_shred()).await?;
-            // PERF: move expensive add_shred() call out of block production
-            let block = self
-                .blockstore
-                .write()
-                .await
-                .add_shred_from_dissemination(s)
-                .await;
-            debug_assert!(
-                !matches!(
-                    block,
-                    Err(AddShredError::InvalidShred | AddShredError::Equivocation),
-                ),
-                "leader produced bad shreds"
-            );
-            if let Ok(Some(block_info)) = block {
-                assert!(maybe_block_hash.is_none());
-                maybe_block_hash = Some(block_info.hash.clone());
+        }
+
+        // Fast path: we already have every shred and the reconstructed slice, so
+        // the blockstore can skip RS-decode, Merkle verification and the
+        // per-shred lock churn. The completed block hands back (slot, hash).
+        let merkle_root = shreds[0].merkle_root().clone();
+        let slice = ReconstructedSlice::from_shreds(payload, &shreds[0], merkle_root);
+        let block_info = self
+            .blockstore
+            .write()
+            .await
+            .add_own_slice(slice, shreds)
+            .await;
+
+        match block_info {
+            Some(block_info) => {
+                debug_assert!(is_last, "block completed before its last slice");
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
                     .write()
                     .await
                     .add_block(block_id, block_info.parent)
                     .await;
+                Ok(Some(block_info.hash))
             }
-        }
-        if is_last {
-            Ok(Some(maybe_block_hash.unwrap()))
-        } else {
-            assert!(maybe_block_hash.is_none());
-            Ok(None)
+            None => {
+                debug_assert!(!is_last, "last slice did not complete the block");
+                Ok(None)
+            }
         }
     }
 }
@@ -541,7 +542,6 @@ mod tests {
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
-    use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
     use crate::{Transaction, ValidatorIndex};
 
@@ -686,24 +686,16 @@ mod tests {
             parent: (slot.prev(), hash_prev.clone()),
         };
 
-        // Handles TOTAL_SHRED number of calls.
-        // The first TOTAL_SHRED - 1 calls return None.
-        // The last call returns Some.
-        let mut seq = Sequence::new();
+        // The producer ingests its own block one slice at a time via the fast
+        // path; a single-slice block completes on the only `add_own_slice` call.
         let mut blockstore = MockBlockstore::new();
-        blockstore
-            .expect_add_shred_from_dissemination()
-            .times(TOTAL_SHREDS - 1)
-            .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_slice()
             .times(1)
-            .in_sequence(&mut seq)
-            .returning(move |_| {
+            .returning(move |_slice, _shreds| {
                 let bi = bi.clone();
-                Box::pin(async move { Ok(Some(bi)) })
+                Box::pin(async move { Some(bi) })
             });
 
         let mut pool = MockPool::new();
@@ -756,43 +748,29 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
 
-        // handle first slice
+        // first slice: signal completion, then wait for the parent-ready event
+        // before the producer moves on to the second slice
         blockstore
-            .expect_add_shred_from_dissemination()
-            .times(TOTAL_SHREDS - 1)
-            .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
-        blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_slice()
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(move |_| {
+            .return_once(move |_slice, _shreds| {
                 Box::pin(async move {
-                    // last shred; wait for the parent ready event to be sent before continuing
                     first_slice_finished_tx.send(()).unwrap();
                     let () = start_second_slice_rx.await.unwrap();
-                    Ok(None)
+                    None
                 })
             });
 
-        // handle second slice
-        blockstore
-            .expect_add_shred_from_dissemination()
-            .times(TOTAL_SHREDS - 1)
-            .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
+        // second (last) slice: block is constructed with the new parent
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_slice()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_| {
+            .returning(move |_slice, _shreds| {
                 let nbi = nbi.clone();
-                Box::pin(async {
-                    // final shred of second slice
-                    // block is constructed with the new parent
-                    Ok(Some(nbi))
-                })
+                Box::pin(async move { Some(nbi) })
             });
 
         let mut pool = MockPool::new();

@@ -103,6 +103,21 @@ impl SlotBlockData {
                 AddShredError::Duplicate => (),
             })
     }
+
+    /// Ingests a slice that the local node produced itself (as the leader).
+    ///
+    /// Unlike [`Self::add_shred_from_dissemination`], the caller already holds
+    /// all [`TOTAL_SHREDS`] freshly produced shreds and the matching
+    /// [`ReconstructedSlice`], so no Reed-Solomon decoding, Merkle verification,
+    /// or equivocation check is performed — the data is correct by construction.
+    pub(super) fn add_own_slice(
+        &mut self,
+        slice: ReconstructedSlice,
+        shreds: [ValidatedShred; TOTAL_SHREDS],
+    ) -> Vec<BlockstoreEvent> {
+        debug_assert_eq!(slice.slot, self.slot);
+        self.disseminated.add_own_slice(slice, shreds)
+    }
 }
 
 /// Returned value from [`BlockData::try_reconstruct_slice`]
@@ -239,6 +254,57 @@ impl BlockData {
                 })),
             },
         }
+    }
+
+    /// Ingests a slice produced locally (the leader's own block).
+    ///
+    /// Stores all shreds and the already-reconstructed slice directly, skipping
+    /// Reed-Solomon decoding and re-verification, then assembles the block if
+    /// this was the last slice. Leaves the same state behind as the
+    /// dissemination path (shreds, slices, caches, double-Merkle tree, completed
+    /// block) and returns the same events.
+    fn add_own_slice(
+        &mut self,
+        slice: ReconstructedSlice,
+        shreds: [ValidatedShred; TOTAL_SHREDS],
+    ) -> Vec<BlockstoreEvent> {
+        debug_assert_eq!(slice.slot, self.slot);
+        let slice_index = slice.slice_index;
+        let is_first = self.shreds.is_empty();
+
+        // Merkle root is trusted: we built and signed these shreds ourselves.
+        self.merkle_root_cache
+            .entry(slice_index)
+            .or_insert_with(|| slice.merkle_root().clone());
+
+        // mirror the last-slice bookkeeping from `add_validated_shred`
+        if slice.is_last {
+            self.last_slice = Some(slice_index);
+            self.slices.retain(|&ind, _| ind <= slice_index);
+            self.shreds.retain(|&ind, _| ind <= slice_index);
+        }
+
+        // store everything directly — no `deshred()` / RS decode
+        self.shreds.insert(slice_index, shreds.map(Some));
+        self.slices.insert(slice_index, slice);
+
+        let mut events = Vec::new();
+        if is_first {
+            events.push(BlockstoreEvent::FirstShred(self.slot));
+        }
+        match self.try_reconstruct_block() {
+            ReconstructBlockResult::NoAction => {}
+            ReconstructBlockResult::Complete(block_info) => {
+                events.push(BlockstoreEvent::Block {
+                    slot: self.slot,
+                    block_info,
+                });
+            }
+            ReconstructBlockResult::Error => {
+                debug_assert!(false, "leader produced a block that failed reconstruction");
+            }
+        }
+        events
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
