@@ -500,11 +500,7 @@ mod tests {
         let mut engine = DummyExecution::new(tx);
 
         // Execute a parent (with `parent_tx`), then an identical child on top.
-        let child_root = |engine: &mut DummyExecution,
-                          parent_slot,
-                          parent_tx,
-                          child_slot,
-                          rx: &mut mpsc::Receiver<_>| {
+        let mut child_root = move |parent_slot, parent_tx, child_slot| {
             let parent = InProgressBlock::Pending(Slot::new(parent_slot));
             engine.begin_block(parent.clone(), None);
             engine.execute_transactions(parent, vec![Transaction(parent_tx)]);
@@ -524,8 +520,8 @@ mod tests {
         // parents executed different transactions. Seeding from the parent's
         // computed state hash makes that upstream divergence reach the child;
         // seeding from the parent block hash alone would collide here.
-        let child_a = child_root(&mut engine, 1, vec![1], 2, &mut rx);
-        let child_b = child_root(&mut engine, 3, vec![2], 4, &mut rx);
+        let child_a = child_root(1, vec![1], 2);
+        let child_b = child_root(3, vec![2], 4);
         assert_ne!(child_a, child_b);
     }
 }
