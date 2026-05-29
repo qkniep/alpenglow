@@ -45,27 +45,33 @@ impl VotorTimeout {
     }
 }
 
+/// Per-slot voting state tracked by [`Votor`].
+#[derive(Default)]
+struct SlotState {
+    /// Whether we already voted notar or skip for this slot.
+    voted: bool,
+    /// The hash we voted notar for, if any.
+    voted_notar: Option<BlockHash>,
+    /// Whether the 'bad window' flag is set for this slot.
+    bad_window: bool,
+    /// Hash of the block with a notarization certificate (not notar-fallback).
+    block_notarized: Option<BlockHash>,
+    /// Valid parents for this slot, as `(parent_slot, parent_hash)` pairs.
+    parents_ready: BTreeSet<(Slot, BlockHash)>,
+    /// Whether we received at least one shred for this slot.
+    received_shred: bool,
+    /// Block waiting for previous slots to be notarized.
+    pending_block: Option<BlockInfo>,
+    /// Whether Votor is done with this slot.
+    retired: bool,
+}
+
 /// Votor implements the decision process of which votes to cast.
 ///
 /// It keeps some state for each slot and checks the conditions for voting.
 pub struct Votor<A: All2All> {
-    // TODO: merge all of these into `SlotState` struct?
-    /// Indicates for which slots we already voted notar or skip.
-    voted: BTreeSet<Slot>,
-    /// Indicates for which slots we already voted notar and for what hash.
-    voted_notar: BTreeMap<Slot, BlockHash>,
-    /// Indicates for which slots we set the 'bad window' flag.
-    bad_window: BTreeSet<Slot>,
-    /// Blocks that have a notarization certificate (not notar-fallback).
-    block_notarized: BTreeMap<Slot, BlockHash>,
-    /// Indicates for which slots the given (slot, hash) pair is a valid parent.
-    parents_ready: BTreeSet<(Slot, Slot, BlockHash)>,
-    /// Indicates for which slots we received at least one shred.
-    received_shred: BTreeSet<Slot>,
-    /// Blocks that are waiting for previous slots to be notarized.
-    pending_blocks: BTreeMap<Slot, BlockInfo>,
-    /// Slots that Votor is done with.
-    retired_slots: BTreeSet<Slot>,
+    /// Per-slot voting state, keyed by slot.
+    slots: BTreeMap<Slot, SlotState>,
 
     /// Own validator index.
     validator_index: ValidatorIndex,
@@ -99,28 +105,21 @@ impl<A: All2All> Votor<A> {
     ) -> Self {
         let (timeout_sender, timeout_receiver) = tokio::sync::mpsc::channel(256);
 
-        // add dummy genesis block to some of the data structures
-        let voted = [Slot::genesis()].into_iter().collect();
-        let voted_notar = [(Slot::genesis(), GENESIS_BLOCK_HASH)]
-            .into_iter()
-            .collect();
-        let block_notarized = [(Slot::genesis(), GENESIS_BLOCK_HASH)]
-            .into_iter()
-            .collect();
-        let parents_ready = [(Slot::genesis(), Slot::genesis(), GENESIS_BLOCK_HASH)]
-            .into_iter()
-            .collect();
-        let retired_slots = [Slot::genesis()].into_iter().collect();
+        // pre-populate the dummy genesis block's state
+        let genesis_state = SlotState {
+            voted: true,
+            voted_notar: Some(GENESIS_BLOCK_HASH),
+            block_notarized: Some(GENESIS_BLOCK_HASH),
+            parents_ready: [(Slot::genesis(), GENESIS_BLOCK_HASH)]
+                .into_iter()
+                .collect(),
+            retired: true,
+            ..Default::default()
+        };
+        let slots = [(Slot::genesis(), genesis_state)].into_iter().collect();
 
         let votor = Self {
-            voted,
-            voted_notar,
-            bad_window: BTreeSet::new(),
-            block_notarized,
-            parents_ready,
-            received_shred: BTreeSet::new(),
-            pending_blocks: BTreeMap::new(),
-            retired_slots,
+            slots,
             validator_index,
             voting_key,
             pool_receiver,
@@ -150,9 +149,30 @@ impl<A: All2All> Votor<A> {
         Ok(())
     }
 
+    /// Returns `true` iff the given slot has been retired.
+    fn is_retired(&self, slot: Slot) -> bool {
+        self.slots.get(&slot).is_some_and(|s| s.retired)
+    }
+
+    /// Returns `true` iff we already voted notar or skip for the given slot.
+    fn has_voted(&self, slot: Slot) -> bool {
+        self.slots.get(&slot).is_some_and(|s| s.voted)
+    }
+
+    /// Returns `true` iff we received at least one shred for the given slot.
+    fn received_shred(&self, slot: Slot) -> bool {
+        self.slots.get(&slot).is_some_and(|s| s.received_shred)
+    }
+
+    /// Returns a mutable reference to the given slot's state, inserting a
+    /// default (empty) state if none exists yet.
+    fn state_mut(&mut self, slot: Slot) -> &mut SlotState {
+        self.slots.entry(slot).or_default()
+    }
+
     async fn handle_pool_event(&mut self, event: PoolEvent) {
         let slot = event.slot();
-        if self.retired_slots.contains(&slot) {
+        if self.is_retired(slot) {
             trace!("ignoring pool event for retired slot {slot}");
             return;
         }
@@ -165,7 +185,9 @@ impl<A: All2All> Votor<A> {
             } => {
                 let h = parent_hash.short_hex();
                 trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
-                self.parents_ready.insert((slot, parent_slot, parent_hash));
+                self.state_mut(slot)
+                    .parents_ready
+                    .insert((parent_slot, parent_hash));
                 self.check_pending_blocks().await;
                 self.set_timeouts(slot);
             }
@@ -175,20 +197,20 @@ impl<A: All2All> Votor<A> {
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
                 self.all2all.broadcast(&vote.into()).await.unwrap();
                 self.try_skip_window(slot).await;
-                self.bad_window.insert(slot);
+                self.state_mut(slot).bad_window = true;
             }
             PoolEvent::SafeToSkip(slot) => {
                 debug!("voted skip-fallback in slot {slot}");
                 let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_index);
                 self.all2all.broadcast(&vote.into()).await.unwrap();
                 self.try_skip_window(slot).await;
-                self.bad_window.insert(slot);
+                self.state_mut(slot).bad_window = true;
             }
             PoolEvent::CertCreated(cert) => {
                 match cert.as_ref() {
                     Cert::Notar(_) => {
-                        self.block_notarized
-                            .insert(cert.slot(), cert.block_hash().cloned().unwrap());
+                        self.state_mut(cert.slot()).block_notarized =
+                            Some(cert.block_hash().cloned().unwrap());
                         self.try_final(cert.slot(), cert.block_hash().cloned().unwrap())
                             .await;
                     }
@@ -213,21 +235,21 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
         let slot = event.slot();
-        if self.retired_slots.contains(&slot) {
+        if self.is_retired(slot) {
             trace!("ignoring blockstore event for retired slot {slot}");
             return;
         }
         trace!("votor blockstore event: {event:?}");
         match event {
             BlockstoreEvent::FirstShred(slot) => {
-                self.received_shred.insert(slot);
+                self.state_mut(slot).received_shred = true;
             }
             BlockstoreEvent::InvalidBlock(slot) => {
                 warn!("invalid block from leader for slot {slot}, skipping window");
                 self.try_skip_window(slot).await;
             }
             BlockstoreEvent::Block { slot, block_info } => {
-                if self.voted.contains(&slot) {
+                if self.has_voted(slot) {
                     let h = block_info.hash.short_hex();
                     warn!("not voting for block {h} in slot {slot}, already voted");
                     return;
@@ -235,7 +257,7 @@ impl<A: All2All> Votor<A> {
                 if self.try_notar(slot, block_info.clone()).await {
                     self.check_pending_blocks().await;
                 } else {
-                    self.pending_blocks.insert(slot, block_info);
+                    self.state_mut(slot).pending_block = Some(block_info);
                 }
             }
         }
@@ -243,7 +265,7 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_timeout_event(&mut self, event: VotorTimeout) {
         let slot = event.slot();
-        if self.retired_slots.contains(&slot) {
+        if self.is_retired(slot) {
             trace!("ignoring timeout for retired slot {slot}");
             return;
         }
@@ -251,13 +273,13 @@ impl<A: All2All> Votor<A> {
         match event {
             VotorTimeout::Timeout(slot) => {
                 trace!("timeout for slot {slot}");
-                if !self.voted.contains(&slot) {
+                if !self.has_voted(slot) {
                     self.try_skip_window(slot).await;
                 }
             }
             VotorTimeout::TimeoutCrashedLeader(slot) => {
                 trace!("timeout (crashed leader) for slot {slot}");
-                if !self.received_shred.contains(&slot) && !self.voted.contains(&slot) {
+                if !self.received_shred(slot) && !self.has_voted(slot) {
                     self.try_skip_window(slot).await;
                 }
             }
@@ -302,9 +324,10 @@ impl<A: All2All> Votor<A> {
         } = block_info;
         let first_slot_in_window = slot.first_slot_in_window();
         if slot == first_slot_in_window {
-            let valid_parent =
-                self.parents_ready
-                    .contains(&(slot, parent_slot, parent_hash.clone()));
+            let valid_parent = self.slots.get(&slot).is_some_and(|s| {
+                s.parents_ready
+                    .contains(&(parent_slot, parent_hash.clone()))
+            });
             let h = parent_hash.short_hex();
             trace!(
                 "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
@@ -313,29 +336,35 @@ impl<A: All2All> Votor<A> {
                 return false;
             }
         } else if parent_slot != slot.prev()
-            || self.voted_notar.get(&parent_slot) != Some(&parent_hash)
+            || self
+                .slots
+                .get(&parent_slot)
+                .and_then(|s| s.voted_notar.as_ref())
+                != Some(&parent_hash)
         {
             return false;
         }
         debug!("voted notar for slot {slot}");
         let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_index);
         self.all2all.broadcast(&vote.into()).await.unwrap();
-        self.voted.insert(slot);
-        self.voted_notar.insert(slot, hash.clone());
-        self.pending_blocks.remove(&slot);
+        let state = self.state_mut(slot);
+        state.voted = true;
+        state.voted_notar = Some(hash.clone());
+        state.pending_block = None;
         self.try_final(slot, hash).await;
         true
     }
 
     /// Sends a finalization vote for the given block if the conditions are met.
     async fn try_final(&mut self, slot: Slot, hash: BlockHash) {
-        let notarized = self.block_notarized.get(&slot) == Some(&hash);
-        let voted_notar = self.voted_notar.get(&slot) == Some(&hash);
-        let not_bad = !self.bad_window.contains(&slot);
+        let state = self.slots.get(&slot);
+        let notarized = state.and_then(|s| s.block_notarized.as_ref()) == Some(&hash);
+        let voted_notar = state.and_then(|s| s.voted_notar.as_ref()) == Some(&hash);
+        let not_bad = !state.is_some_and(|s| s.bad_window);
         if notarized && voted_notar && not_bad {
             let vote = Vote::new_final(slot, &self.voting_key, self.validator_index);
             self.all2all.broadcast(&vote.into()).await.unwrap();
-            self.retired_slots.insert(slot);
+            self.state_mut(slot).retired = true;
         }
     }
 
@@ -343,10 +372,12 @@ impl<A: All2All> Votor<A> {
     async fn try_skip_window(&mut self, slot: Slot) {
         trace!("try skip window of slot {slot}");
         for s in slot.slots_in_window() {
-            if self.voted.insert(s) {
+            let state = self.state_mut(s);
+            if !state.voted {
+                state.voted = true;
+                state.bad_window = true;
                 let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
                 self.all2all.broadcast(&vote.into()).await.unwrap();
-                self.bad_window.insert(s);
                 debug!("voted skip for slot {s}");
             }
         }
@@ -354,10 +385,15 @@ impl<A: All2All> Votor<A> {
 
     /// Checks if we can vote on any of the pending blocks by now.
     async fn check_pending_blocks(&mut self) {
-        let slots: Vec<_> = self.pending_blocks.keys().copied().collect();
-        for slot in &slots {
-            if let Some(block_info) = self.pending_blocks.get(slot) {
-                self.try_notar(*slot, block_info.clone()).await;
+        let slots: Vec<_> = self
+            .slots
+            .iter()
+            .filter(|(_, s)| s.pending_block.is_some())
+            .map(|(slot, _)| *slot)
+            .collect();
+        for slot in slots {
+            if let Some(block_info) = self.slots.get(&slot).and_then(|s| s.pending_block.clone()) {
+                self.try_notar(slot, block_info).await;
             }
         }
     }
