@@ -48,7 +48,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Network connection to receive transactions from clients.
     txs_receiver: T,
     /// Pool of shredders, reused across all slices and blocks we produce.
-    shredder_pool: ShredderPool<RegularShredder>,
+    shredders: ShredderPool<RegularShredder>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -87,7 +87,7 @@ where
             disseminator,
             txs_receiver,
             // block production is sequential, so a single shredder is enough
-            shredder_pool: ShredderPool::with_size(1),
+            shredders: ShredderPool::with_size(1),
             cancel_token,
             delta_block,
             delta_first_slice,
@@ -279,7 +279,7 @@ where
         let slice = Slice::from_parts(header, payload);
         let mut maybe_block_hash = None;
         let shreds = self
-            .shredder_pool
+            .shredders
             .checkout()
             .expect("pool always has a shredder available for sequential block production")
             .shred(slice, &self.secret_key)
