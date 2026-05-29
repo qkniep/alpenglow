@@ -254,41 +254,54 @@ impl Event for LatencyEvent {
             }
             Self::Execution => {
                 let consensus_start_time = dependency_timings[0][instance.leader as usize];
-                // TODO: find better way of integrating sub-protocol
-                let slices_required = if instance.params.quick_release {
-                    instance.params.num_proposers.div_ceil(11)
-                } else {
-                    instance.params.num_proposers.div_ceil(2)
-                        + instance.params.num_proposers.div_ceil(11)
-                } as usize;
-                let rotor_params = RotorParams {
-                    data_shreds: DATA_SHREDS,
-                    shreds: TOTAL_SHREDS,
-                    slices: slices_required,
-                };
-                let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
-                    StakeWeightedSampler::new(environment.validators.clone()),
-                    StakeWeightedSampler::new(environment.validators.clone()),
-                    rotor_params,
-                );
-                let builder = crate::alpenglow::LatencySimInstanceBuilder::new(
-                    rotor_builder,
-                    crate::alpenglow::LatencySimParams::new(rotor_params, 4, 1),
-                );
-                let mut consensus_instance = builder.build(&mut rand::rng());
                 let reconstruct_times = dependency_timings[1].to_vec();
-                consensus_instance =
-                    consensus_instance.with_external_validity_times(reconstruct_times);
-                let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
-                    builder,
-                    environment.clone(),
-                );
-                let mut timings = Timings::new(consensus_start_time);
-                engine.run(&consensus_instance, &mut timings);
-                timings
-                    .get(crate::alpenglow::LatencyEvent::BlockValid)
-                    .unwrap()
-                    .to_vec()
+                // TODO: find better way of integrating sub-protocol
+                if instance.params.quick_release {
+                    let slices_required = instance.params.num_proposers.div_ceil(11) as usize;
+                    let block_bytes = slices_required * TOTAL_SHREDS * MAX_DATA_PER_SHRED;
+                    let block_tx_time =
+                        environment.transmission_delay(block_bytes, instance.leader);
+                    (0..environment.num_validators())
+                        .map(|v| {
+                            let recv = consensus_start_time
+                                + block_tx_time
+                                + environment.propagation_delay(instance.leader, v as ValidatorId);
+                            recv.max(reconstruct_times[v])
+                        })
+                        .collect()
+                } else {
+                    let slices_required = (instance.params.num_proposers.div_ceil(2)
+                        + instance.params.num_proposers.div_ceil(11))
+                        as usize;
+                    let rotor_params = RotorParams {
+                        data_shreds: DATA_SHREDS,
+                        shreds: TOTAL_SHREDS,
+                        slices: slices_required,
+                    };
+                    let rotor_builder = crate::rotor::RotorInstanceBuilder::new(
+                        StakeWeightedSampler::new(environment.validators.clone()),
+                        StakeWeightedSampler::new(environment.validators.clone()),
+                        rotor_params,
+                    );
+                    let builder = crate::alpenglow::LatencySimInstanceBuilder::new(
+                        rotor_builder,
+                        crate::alpenglow::LatencySimParams::new(rotor_params, 4, 1),
+                    );
+                    let mut consensus_instance = builder.build(&mut rand::rng());
+                    let reconstruct_times = dependency_timings[1].to_vec();
+                    consensus_instance =
+                        consensus_instance.with_external_validity_times(reconstruct_times);
+                    let engine = SimulationEngine::<AlpenglowLatencySimulation<_, _>>::new(
+                        builder,
+                        environment.clone(),
+                    );
+                    let mut timings = Timings::new(consensus_start_time);
+                    engine.run(&consensus_instance, &mut timings);
+                    timings
+                        .get(crate::alpenglow::LatencyEvent::BlockValid)
+                        .unwrap()
+                        .to_vec()
+                }
             }
             Self::Consensus => {
                 let consensus_start_time = dependency_timings[0][instance.leader as usize];

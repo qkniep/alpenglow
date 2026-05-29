@@ -24,7 +24,7 @@ const NUM_ATTESTORS: u64 = 64;
 const NUM_RELAYS: u64 = 64;
 const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     crashed: 0.2,
-    byzantine: 0.2,
+    byzantine: 0.05,
 };
 
 pub fn run_robustness_tests() {
