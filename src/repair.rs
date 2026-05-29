@@ -315,19 +315,26 @@ where
     ///
     /// If the response contains a shred, it will be stored in the blockstore.
     /// Otherwise, metadata is stored in the [`Repair`] struct itself.
-    /// Does nothing if the provided `response` is not well-formed.
+    ///
+    /// The request is only marked completed (see [`Repair::mark_completed`])
+    /// once the response has been accepted, i.e. after its variant-specific
+    /// validation passes. A malformed or invalid response is ignored without
+    /// touching `outstanding_requests`, so the request stays in flight: the
+    /// pending timeout can still retry it and a valid response from one of the
+    /// other peers it was fanned out to can still be accepted. A `Nack` is not
+    /// marked completed either, as that path immediately retries the request.
     #[hotpath::measure]
     async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
         let request_hash = response.request_type().hash();
 
         // check whether we are (still) waiting on response to this request
-        if self.outstanding_requests.remove(&request_hash).is_none() {
+        if !self.outstanding_requests.contains_key(&request_hash) {
             self.prune_completed();
             if self.recently_completed.contains(&request_hash) {
                 // Expected: each request is fanned out to several peers and
-                // retried on timeout, so the first response clears the
-                // outstanding entry and the rest arrive as duplicates.
+                // retried on timeout, so the first accepted response marks it
+                // completed and the rest arrive as duplicates.
                 debug!(
                     "ignoring duplicate repair response for already-answered request {response:?}"
                 );
@@ -336,10 +343,11 @@ where
             }
             return;
         }
-        self.note_completed(request_hash);
 
         match response {
             RepairResponse::Nack(req_type) => {
+                // Leave the request outstanding and retry immediately; do not
+                // mark it completed, as it has not been answered yet.
                 debug!("received NACK for repair request {req_type:?}, retrying immediately");
                 self.send_request(req_type).await.unwrap();
             }
@@ -359,6 +367,7 @@ where
                     warn!("repair response (LastSliceRoot) with invalid proof");
                     return;
                 }
+                self.mark_completed(request_hash);
 
                 // store slice Merkle root
                 self.slice_roots
@@ -383,6 +392,7 @@ where
                     warn!("repair response (SliceRoot) with invalid proof");
                     return;
                 }
+                self.mark_completed(request_hash);
 
                 // store slice Merkle root
                 self.slice_roots.insert((block_id.clone(), slice), root);
@@ -416,6 +426,7 @@ where
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };
+                self.mark_completed(request_hash);
 
                 // store shred
                 let res = self
@@ -441,10 +452,13 @@ where
         }
     }
 
-    /// Records that we have just received a response for `hash`, so that any
-    /// further responses for it (from the other peers it was sent to, or from
-    /// retries) can be recognised as duplicates for [`COMPLETED_REQUEST_GRACE`].
-    fn note_completed(&mut self, hash: Hash) {
+    /// Marks the request identified by `hash` as completed once its response
+    /// has been accepted: stops tracking it as outstanding and remembers it for
+    /// [`COMPLETED_REQUEST_GRACE`], so that any further responses for it (from
+    /// the other peers it was sent to, or from retries) can be recognised as
+    /// duplicates rather than mistaken for responses we never asked for.
+    fn mark_completed(&mut self, hash: Hash) {
+        self.outstanding_requests.remove(&hash);
         self.prune_completed();
         if self.recently_completed.insert(hash.clone()) {
             let expiry = Instant::now() + COMPLETED_REQUEST_GRACE;
@@ -801,5 +815,111 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A malformed/invalid response must not "poison" an in-flight request.
+    /// The request stays outstanding, so a valid response that arrives
+    /// afterwards (e.g. from one of the other peers it was fanned out to, or
+    /// after the timeout retry) is still accepted.
+    #[tokio::test]
+    async fn valid_response_accepted_after_invalid() {
+        const SLICES: usize = 1;
+        let ctx = setup().await;
+
+        // create a block to repair
+        let slot = Slot::genesis().next();
+        let (block_hash, merkle_tree, shreds) =
+            create_random_shredded_block(slot, SLICES, &ctx.leader_sk);
+        let block_to_repair = (slot, block_hash);
+
+        // ask repair instance to repair this block
+        ctx.repair_tx.send(block_to_repair.clone()).await.unwrap();
+
+        // expect LastSliceRoot request first
+        let msg = ctx.v0_request_net.receive().await.unwrap();
+        let req_type = RepairRequestType::LastSliceRoot(block_to_repair.clone());
+        assert_eq!(msg.req_type, req_type);
+        let port1 = localhost_ip_sockaddr(2);
+
+        // answer with an INVALID response first: a bogus slice root makes the
+        // Merkle proof check fail, so the response must be rejected.
+        let bad_response = RepairResponse::LastSliceRoot(
+            req_type.clone(),
+            SliceIndex::new_unchecked(SLICES - 1),
+            SliceRoot::from(hash(b"not the real slice root")),
+            merkle_tree.create_proof(SLICES - 1),
+        );
+        ctx.v0_request_net.send(&bad_response, port1).await.unwrap();
+
+        // then answer the same request with the correct response
+        let good_response = RepairResponse::LastSliceRoot(
+            req_type,
+            SliceIndex::new_unchecked(SLICES - 1),
+            shreds.last().unwrap()[0].merkle_root().clone(),
+            merkle_tree.create_proof(SLICES - 1),
+        );
+        ctx.v0_request_net
+            .send(&good_response, port1)
+            .await
+            .unwrap();
+
+        // the valid response must be accepted despite the earlier invalid one:
+        // repair proceeds to request the slice root for slice 0.
+        let msg = tokio::time::timeout(Duration::from_secs(1), ctx.v0_request_net.receive())
+            .await
+            .expect("repair did not progress after a valid response followed an invalid one")
+            .unwrap();
+        let want = RepairRequestType::SliceRoot(block_to_repair, SliceIndex::new_unchecked(0));
+        assert_eq!(msg.req_type, want);
+    }
+
+    /// Two correct responses for the same request (e.g. from two of the peers
+    /// it was fanned out to) must be handled gracefully: the first is accepted
+    /// and the second is recognised as a duplicate, not reprocessed.
+    #[tokio::test]
+    async fn duplicate_correct_responses_are_deduplicated() {
+        const SLICES: usize = 1;
+        let ctx = setup().await;
+
+        // create a block to repair
+        let slot = Slot::genesis().next();
+        let (block_hash, merkle_tree, shreds) =
+            create_random_shredded_block(slot, SLICES, &ctx.leader_sk);
+        let block_to_repair = (slot, block_hash);
+
+        // ask repair instance to repair this block
+        ctx.repair_tx.send(block_to_repair.clone()).await.unwrap();
+
+        // expect LastSliceRoot request first
+        let msg = ctx.v0_request_net.receive().await.unwrap();
+        let req_type = RepairRequestType::LastSliceRoot(block_to_repair.clone());
+        assert_eq!(msg.req_type, req_type);
+        let port1 = localhost_ip_sockaddr(2);
+
+        // send the same valid response twice
+        let response = RepairResponse::LastSliceRoot(
+            req_type,
+            SliceIndex::new_unchecked(SLICES - 1),
+            shreds.last().unwrap()[0].merkle_root().clone(),
+            merkle_tree.create_proof(SLICES - 1),
+        );
+        ctx.v0_request_net.send(&response, port1).await.unwrap();
+        ctx.v0_request_net.send(&response, port1).await.unwrap();
+
+        // the first response is accepted: repair requests the slice root.
+        let msg = ctx.v0_request_net.receive().await.unwrap();
+        let want = RepairRequestType::SliceRoot(block_to_repair, SliceIndex::new_unchecked(0));
+        assert_eq!(msg.req_type, want);
+
+        // the second response is a duplicate: it must not trigger another
+        // fan-out of the same request. The window is well below REPAIR_TIMEOUT,
+        // so a retry can't account for any further request either.
+        let extra =
+            tokio::time::timeout(Duration::from_millis(150), ctx.v0_request_net.receive()).await;
+        assert!(
+            extra.is_err(),
+            "duplicate response was reprocessed, causing a redundant request: {:?}",
+            extra.ok().map(|m| m.unwrap().req_type),
+        );
     }
 }
