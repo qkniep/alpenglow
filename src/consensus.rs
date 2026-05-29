@@ -52,7 +52,7 @@ use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shred_verifier::{NUM_VERIFY_WORKERS, ShredVerifier};
-use crate::shredder::{Shred, ValidatedShred};
+use crate::shredder::ValidatedShred;
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -280,8 +280,7 @@ where
         standstill_loop.abort();
         prod_loop.abort();
 
-        let (msg_res, validated_res, prod_res) =
-            tokio::join!(msg_loop, validated_loop, prod_loop);
+        let (msg_res, validated_res, prod_res) = tokio::join!(msg_loop, validated_loop, prod_loop);
         msg_res??;
         validated_res??;
         prod_res??;
@@ -374,7 +373,9 @@ where
 
     #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
-    async fn handle_validated_shred(&self, shred: ValidatedShred) -> std::io::Result<()> {
+    async fn handle_validated_shred(&self, validated: ValidatedShred) -> std::io::Result<()> {
+        let slot = validated.payload().header.slot;
+
         // potentially forward shred
         self.disseminator.forward(validated.as_shred()).await?;
 

@@ -6,6 +6,7 @@
 mod slot_block_data;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;

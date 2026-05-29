@@ -13,7 +13,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use fastrace::Span;
+use fastrace::future::FutureExt;
+use log::error;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::consensus::ValidatorEpochInfo;
@@ -48,16 +52,30 @@ impl ShredVerifier {
         assert!(num_workers > 0);
         let (output_tx, output_rx) = mpsc::channel(VERIFY_QUEUE_SIZE);
         let mut worker_txs = Vec::with_capacity(num_workers);
+        let mut workers = JoinSet::new();
         for _ in 0..num_workers {
             let (input_tx, input_rx) = mpsc::channel(VERIFY_QUEUE_SIZE);
             worker_txs.push(input_tx);
             let output_tx = output_tx.clone();
             let epoch_info = epoch_info.clone();
             let cancel_token = cancel_token.clone();
-            tokio::spawn(
-                async move { Self::worker(input_rx, output_tx, epoch_info, cancel_token).await },
+            let span = Span::enter_with_local_parent("shred verify worker");
+            workers.spawn(
+                async move { Self::worker(input_rx, output_tx, epoch_info, cancel_token).await }
+                    .in_span(span),
             );
         }
+        // Supervise the workers. On clean shutdown each returns normally (the
+        // cancel token fired or its input channel closed), so a `JoinError`
+        // here means a worker panicked; without this it would vanish silently
+        // and shrink the pool until shred ingestion stalls.
+        tokio::spawn(async move {
+            while let Some(res) = workers.join_next().await {
+                if let Err(err) = res {
+                    error!("shred verify worker terminated unexpectedly: {err}");
+                }
+            }
+        });
         let verifier = Self {
             worker_txs,
             next: AtomicUsize::new(0),
@@ -84,16 +102,26 @@ impl ShredVerifier {
             tokio::select! {
                 res = input_rx.recv() => {
                     let Some(shred) = res else { break };
-                    let slot = shred.payload().header.slot;
-                    let leader_pk = epoch_info.epoch_info().leader(slot).pubkey;
-                    if let Ok(validated) = ValidatedShred::try_new(shred, None, &leader_pk)
-                        && output_tx.send(validated).await.is_err()
-                    {
-                        break;
+                    if let Some(validated) = Self::verify(&epoch_info, shred) {
+                        // Send under the cancel token too: a full output queue must
+                        // not pin the worker past shutdown.
+                        tokio::select! {
+                            res = output_tx.send(validated) => if res.is_err() { break },
+                            () = cancel_token.cancelled() => break,
+                        }
                     }
                 }
                 () = cancel_token.cancelled() => break,
             }
         }
+    }
+
+    /// Verifies a single shred's signature against the slot leader's key,
+    /// returning `None` (dropping the shred) if verification fails.
+    #[fastrace::trace(short_name = true)]
+    fn verify(epoch_info: &ValidatorEpochInfo, shred: Shred) -> Option<ValidatedShred> {
+        let slot = shred.payload().header.slot;
+        let leader_pk = epoch_info.epoch_info().leader(slot).pubkey;
+        ValidatedShred::try_new(shred, None, &leader_pk).ok()
     }
 }
