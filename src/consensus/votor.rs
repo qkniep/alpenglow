@@ -33,7 +33,7 @@ use crate::{All2All, Slot, ValidatorIndex};
 pub struct Votor<A: All2All> {
     /// Per-slot voting state, keyed by slot.
     slots: BTreeMap<Slot, SlotState>,
-    /// Highest slot known to be finalized; state for earlier slots is pruned.
+    /// Highest slot known to be finalized. State for earlier slots is pruned.
     finalized_slot: Slot,
 
     /// Own validator index.
