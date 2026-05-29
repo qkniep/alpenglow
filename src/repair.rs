@@ -201,7 +201,7 @@ where
             .epoch_info
             .epoch_info()
             .validator(validator)
-            .repair_response_address;
+            .repair_requester_address;
         self.network.send(&response, to).await
     }
 }
@@ -448,7 +448,7 @@ where
         while peer_info.id == self.epoch_info.own_id() {
             peer_info = self.sampler.sample_info(&mut rng);
         }
-        peer_info.repair_request_address
+        peer_info.repair_responder_address
     }
 }
 
@@ -493,16 +493,16 @@ mod tests {
         let leader_key = SecretKey::new(&mut rand::rng());
         let mut validators = epoch_info.validators().to_vec();
         validators[0].pubkey = leader_key.to_pk();
-        validators[0].repair_request_address = localhost_ip_sockaddr(0);
-        validators[0].repair_response_address = localhost_ip_sockaddr(1);
-        validators[1].repair_request_address = localhost_ip_sockaddr(2);
-        validators[1].repair_response_address = localhost_ip_sockaddr(3);
+        validators[0].repair_requester_address = localhost_ip_sockaddr(0);
+        validators[0].repair_responder_address = localhost_ip_sockaddr(1);
+        validators[1].repair_requester_address = localhost_ip_sockaddr(2);
+        validators[1].repair_responder_address = localhost_ip_sockaddr(3);
 
         let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
-        let v0_repair_responder_network = core.join_unlimited(ValidatorIndex::new(0)).await;
-        let v0_repair_requester_network = core.join_unlimited(ValidatorIndex::new(1)).await;
-        let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(2)).await;
-        let v1_repair_requester_network = core.join_unlimited(ValidatorIndex::new(3)).await;
+        let v0_repair_requester_network = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let v0_repair_responder_network = core.join_unlimited(ValidatorIndex::new(1)).await;
+        let v1_repair_requester_network = core.join_unlimited(ValidatorIndex::new(2)).await;
+        let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(3)).await;
 
         let epoch_info = EpochInfo::new(validators);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
@@ -590,7 +590,8 @@ mod tests {
             shreds.last().unwrap()[0].merkle_root().clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
-        let port1 = localhost_ip_sockaddr(3);
+        // responses go to v1's repair requester socket (joined at index 2)
+        let port1 = localhost_ip_sockaddr(2);
         ctx.v0_request_net.send(&response, port1).await.unwrap();
 
         // expect SliceRoot requests next
@@ -687,7 +688,8 @@ mod tests {
             req_type: RepairRequestType::LastSliceRoot(block_to_repair.clone()),
             sender: ValidatorIndex::new(0),
         };
-        let port1 = localhost_ip_sockaddr(2);
+        // requests go to v1's repair responder socket (joined at index 3)
+        let port1 = localhost_ip_sockaddr(3);
         ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
         // verify response

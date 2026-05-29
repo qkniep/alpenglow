@@ -122,10 +122,10 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr((id).try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
-        let repair_request_address =
+        let repair_requester_address =
             localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
-        let repair_response_address =
-            localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
+        let repair_responder_address =
+            localhost_ip_sockaddr(repair_responder_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id: ValidatorIndex::new(id),
             stake: Stake::new(1),
@@ -133,8 +133,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address,
             disseminator_address,
-            repair_request_address,
-            repair_response_address,
+            repair_requester_address,
+            repair_responder_address,
         });
     }
 

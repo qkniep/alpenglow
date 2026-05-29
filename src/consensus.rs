@@ -148,8 +148,8 @@ where
         txs_receiver: T,
     ) -> Self
     where
-        RP: RepairResponderNetwork + 'static,
         RQ: RepairRequesterNetwork + 'static,
+        RP: RepairResponderNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);

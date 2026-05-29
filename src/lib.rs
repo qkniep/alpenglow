@@ -83,10 +83,10 @@ pub struct ValidatorInfo {
     pub voting_pubkey: aggsig::PublicKey,
     pub all2all_address: SocketAddr,
     pub disseminator_address: SocketAddr,
-    /// Send [`RepairRequest`] messages to this address to ask the node to repair a block.
-    pub repair_request_address: SocketAddr,
-    /// Send [`RepairResponse`] messages to this address when replying to a node's [`RepairRequest`] message.
-    pub repair_response_address: SocketAddr,
+    /// Address of the node's repair requester; send [`RepairResponse`] messages here when replying to its [`RepairRequest`].
+    pub repair_requester_address: SocketAddr,
+    /// Address of the node's repair responder; send [`RepairRequest`] messages here to ask it to repair a block.
+    pub repair_responder_address: SocketAddr,
 }
 
 type TestNode = Alpenglow<
@@ -134,8 +134,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr(network.all2all.port());
         let disseminator_address = localhost_ip_sockaddr(network.disseminator.port());
-        let repair_response_address = localhost_ip_sockaddr(network.repair_requester.port());
-        let repair_request_address = localhost_ip_sockaddr(network.repair_responder.port());
+        let repair_requester_address = localhost_ip_sockaddr(network.repair_requester.port());
+        let repair_responder_address = localhost_ip_sockaddr(network.repair_responder.port());
         validators.push(ValidatorInfo {
             id: ValidatorIndex::new(id as u64),
             stake: Stake::new(1),
@@ -143,8 +143,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             voting_pubkey: voting_sks[id].to_pk(),
             all2all_address,
             disseminator_address,
-            repair_request_address,
-            repair_response_address,
+            repair_requester_address,
+            repair_responder_address,
         });
     }
 

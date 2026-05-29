@@ -54,8 +54,8 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
             voting_pubkey: voting_sks[i as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(0),
             disseminator_address: localhost_ip_sockaddr(0),
-            repair_request_address: localhost_ip_sockaddr(0),
-            repair_response_address: localhost_ip_sockaddr(0),
+            repair_requester_address: localhost_ip_sockaddr(0),
+            repair_responder_address: localhost_ip_sockaddr(0),
         });
     }
     let epoch_info = EpochInfo::new(validators);
