@@ -3,11 +3,9 @@
 
 //! Defines the [`ValidatedShred`] type.
 
-use std::ops::{Deref, DerefMut};
-
 use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ShredPayload};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Debug)]
@@ -22,9 +20,15 @@ pub enum ShredVerifyError {
 ///
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
-#[repr(transparent)]
+///
+/// The slice's Merkle root is derived and cached at construction time
+/// because it is needed for signature verification anyways.
+/// So calling [`ValidatedShred::merkle_root`] does't re-calculate it.
 #[derive(Clone, Debug)]
-pub struct ValidatedShred(Shred);
+pub struct ValidatedShred {
+    shred: Shred,
+    merkle_root: SliceRoot,
+}
 
 impl ValidatedShred {
     /// Performs various verification checks on the [`Shred`] and if they succeed, returns a shred.
@@ -35,6 +39,7 @@ impl ValidatedShred {
     /// # Errors
     ///
     /// Returns [`ShredVerifyError`] if the [`Shred`] does not pass all verification checks.
+    #[hotpath::measure]
     pub fn try_new(
         shred: Shred,
         cached_merkle_root: Option<&SliceRoot>,
@@ -45,7 +50,10 @@ impl ValidatedShred {
         match cached_merkle_root {
             Some(root) => {
                 if root == &derived_root {
-                    return Ok(Self(shred));
+                    return Ok(Self {
+                        shred,
+                        merkle_root: derived_root,
+                    });
                 }
                 if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
@@ -55,7 +63,10 @@ impl ValidatedShred {
             }
             None => {
                 if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
-                    Ok(Self(shred))
+                    Ok(Self {
+                        shred,
+                        merkle_root: derived_root,
+                    })
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
@@ -67,26 +78,45 @@ impl ValidatedShred {
     ///
     /// Used only by the parent module to create a validated shred when it is guaranteed that the inner shred comes from verified sources and does not need to be verified.
     pub(super) fn new_validated(shred: Shred) -> Self {
-        Self(shred)
+        let merkle_root = shred.merkle_root();
+        Self { shred, merkle_root }
+    }
+
+    /// Returns the cached Merkle root of the slice this shred belongs to.
+    ///
+    /// Unlike [`Shred::merkle_root`], this does not re-derive the root from the proof.
+    #[must_use]
+    pub fn merkle_root(&self) -> &SliceRoot {
+        &self.merkle_root
+    }
+
+    /// References the payload contained in the inner [`Shred`].
+    #[must_use]
+    pub fn payload(&self) -> &ShredPayload {
+        self.shred.payload()
+    }
+
+    /// Returns `true` iff the inner [`Shred`] is a data shred.
+    #[must_use]
+    pub fn is_data(&self) -> bool {
+        self.shred.is_data()
+    }
+
+    /// Returns `true` iff the inner [`Shred`] is a coding shred.
+    #[must_use]
+    pub fn is_coding(&self) -> bool {
+        self.shred.is_coding()
+    }
+
+    /// Borrows the inner [`Shred`].
+    #[must_use]
+    pub fn as_shred(&self) -> &Shred {
+        &self.shred
     }
 
     /// Get access to the inner [`Shred`] consuming self.
     pub fn into_shred(self) -> Shred {
-        self.0
-    }
-}
-
-impl Deref for ValidatedShred {
-    type Target = Shred;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ValidatedShred {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        self.shred
     }
 }
 

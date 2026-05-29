@@ -28,14 +28,14 @@ use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::{BlockId, Slot};
 
 /// Keeps track of the parent-ready condition across slots.
-pub struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
+pub(super) struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
 
 impl ParentReadyTracker {
     /// Marks the given block as notarized-fallback.
     ///
     /// Returns a list of any newly connected parents.
     /// All of these will have the given block ID as the parent.
-    pub fn mark_notar_fallback(&mut self, id: &BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
+    pub(super) fn mark_notar_fallback(&mut self, id: &BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
         let (slot, hash) = id.clone();
         let state = self.slot_state(slot);
         if !state.mark_notar_fallback(hash) {
@@ -60,7 +60,7 @@ impl ParentReadyTracker {
     /// Marks the given slot as skipped.
     ///
     /// Returns a list of any newly connected parents.
-    pub fn mark_skipped(&mut self, marked_slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
+    pub(super) fn mark_skipped(&mut self, marked_slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
         let state = self.slot_state(marked_slot);
         if !state.mark_skip() {
             return SmallVec::new();
@@ -111,7 +111,7 @@ impl ParentReadyTracker {
     ///
     /// Returns at most one newly ready parent (for the highest slot).
     /// For consistency with other functions it still returns a `Vec`.
-    pub fn handle_finalization(
+    pub(super) fn handle_finalization(
         &mut self,
         event: FinalizationEvent,
     ) -> SmallVec<[(Slot, BlockId); 1]> {
@@ -134,7 +134,7 @@ impl ParentReadyTracker {
     /// Returns list of all valid parents for the given slot, as of now.
     ///
     /// The list can be empty if there are no valid parents yet.
-    pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
+    pub(super) fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.0
             .get(&slot)
             .map_or(&[], |state| state.ready_block_ids())
@@ -143,7 +143,7 @@ impl ParentReadyTracker {
     /// Returns a ready parent if available, otherwise returns a oneshot channel.
     ///
     /// The oneshot channel will receive the first ready parent once it becomes available.
-    pub fn wait_for_parent_ready(
+    pub(super) fn wait_for_parent_ready(
         &mut self,
         slot: Slot,
     ) -> Either<BlockId, oneshot::Receiver<BlockId>> {

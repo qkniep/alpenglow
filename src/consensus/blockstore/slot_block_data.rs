@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Data structure holding shreds, slices and blocks for a specific slot.
+//!
+//!
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -9,21 +11,18 @@ use std::collections::btree_map::Entry;
 use log::{debug, trace, warn};
 use thiserror::Error;
 
-use super::BlockInfo;
-use crate::crypto::Hash;
+use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
-use crate::crypto::signature::PublicKey;
-use crate::shredder::{
-    DeshredError, RegularShredder, Shred, ShredVerifyError, Shredder, TOTAL_SHREDS, ValidatedShred,
-};
+use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
+///
+/// Signature verification is performed by the caller (via [`ValidatedShred`])
+/// before invoking the blockstore, so signature failures cannot surface here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddShredError {
-    #[error("shred has invalid signature")]
-    InvalidSignature,
     #[error("shred is already stored")]
     Duplicate,
     #[error("shred shows leader equivocation")]
@@ -32,36 +31,8 @@ pub enum AddShredError {
     InvalidShred,
 }
 
-impl From<ShredVerifyError> for AddShredError {
-    fn from(src: ShredVerifyError) -> Self {
-        match src {
-            ShredVerifyError::InvalidSignature => AddShredError::InvalidSignature,
-            ShredVerifyError::Equivocation => AddShredError::Equivocation,
-        }
-    }
-}
-
-/// Events emitted by [`BlockData`] when shreds are added.
-///
-/// These are interpreted by [`super::super::BlockstoreImpl`], which routes them
-/// to the votor event channel and/or the execution event channel as appropriate.
-pub(super) enum BlockDataEvent {
-    /// First shred for this slot was received.
-    FirstShred,
-    /// A slice was successfully reconstructed from shreds.
-    SliceReconstructed(SliceIndex),
-    /// All slices are present and the block is fully reconstructed.
-    ///
-    /// `state_hash` is the execution state hash extracted from the last slice's
-    /// data suffix, placed there by the proposer before shredding.
-    BlockReady {
-        block_info: BlockInfo,
-        state_hash: Hash,
-    },
-}
-
 /// Holds all data corresponding to any blocks for a single slot.
-pub struct SlotBlockData {
+pub(super) struct SlotBlockData {
     /// Slot number this data corresponds to.
     slot: Slot,
     /// Spot for storing the block that was received via block dissemination.
@@ -69,13 +40,13 @@ pub struct SlotBlockData {
     /// Spot for storing blocks that might later be received via repair.
     pub(super) repaired: BTreeMap<BlockHash, BlockData>,
     /// Tracks whether we observed the leader misbehaving.
-    /// Once misbehavior is observed, we stop accepting additional [`Shred`]s through dissemination.
+    /// If we do, we stop adding [`ValidatedShred`]s from dissemination.
     leader_misbehaved: bool,
 }
 
 impl SlotBlockData {
     /// Creates a new empty structure for a slot's block data.
-    pub fn new(slot: Slot) -> Self {
+    pub(super) fn new(slot: Slot) -> Self {
         Self {
             slot,
             disseminated: BlockData::new(slot),
@@ -84,58 +55,52 @@ impl SlotBlockData {
         }
     }
 
-    /// Adds a shred received via block dissemination.
-    pub fn add_shred_from_disseminator(
+    /// Adds a shred receive via block dissemination in the corresponding spot.
+    ///
+    /// The shred must already have a verified leader signature (see [`ValidatedShred`]).
+    /// Checks for leader equivocation against any previously stored shred for the slice.
+    pub(super) fn add_shred_from_dissemination(
         &mut self,
-        shred: Shred,
-        leader_pk: PublicKey,
+        shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Vec<BlockDataEvent>, AddShredError> {
-        assert_eq!(shred.payload().header.slot, self.slot);
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
             debug!("received shred from misbehaving leader, not adding to blockstore");
             return Err(AddShredError::InvalidShred);
         }
         self.disseminated
-            .add_shred(shred, leader_pk, shredder)
+            .add_shred(shred, shredder)
             .inspect_err(|err| match err {
                 AddShredError::Equivocation | AddShredError::InvalidShred => {
                     self.leader_misbehaved = true;
                 }
-                _ => (),
+                AddShredError::Duplicate => (),
             })
     }
 
-    /// Adds a pre-validated shred produced by this node as leader.
-    pub fn add_own_shred_as_leader(
-        &mut self,
-        validated_shred: ValidatedShred,
-        shredder: &mut RegularShredder,
-    ) -> Result<Vec<BlockDataEvent>, AddShredError> {
-        self.disseminated
-            .add_validated_shred(validated_shred, shredder)
-    }
-
     /// Adds a shred received via repair to the spot given by block hash.
-    pub fn add_shred_from_repair(
+    ///
+    /// The shred must already have a verified leader signature (see [`ValidatedShred`]).
+    /// Performs validity checks except for leader equivocation across blocks.
+    pub(super) fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
-        shred: Shred,
-        leader_pk: PublicKey,
+        shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Vec<BlockDataEvent>, AddShredError> {
-        assert_eq!(shred.payload().header.slot, self.slot);
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         let block_data = self
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
         block_data
-            .add_shred(shred, leader_pk, shredder)
+            .add_shred(shred, shredder)
             .inspect_err(|err| match err {
                 AddShredError::Equivocation | AddShredError::InvalidShred => {
                     self.leader_misbehaved = true;
                 }
-                _ => (),
+                AddShredError::Duplicate => (),
             })
     }
 }
@@ -157,11 +122,12 @@ enum ReconstructBlockResult {
     /// Encountered an error reconstructing the block.
     Error,
     /// Block successfully reconstructed.
-    Complete(BlockInfo, Hash),
+    /// [`BlockInfo`] describing the block is returned.
+    Complete(BlockInfo),
 }
 
 /// Holds all data corresponding to a single block.
-pub struct BlockData {
+pub(super) struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
     /// Potentially completely restored block.
@@ -176,13 +142,11 @@ pub struct BlockData {
     pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
     /// Cache of Merkle roots for which the leader signature has been verified.
     pub(super) merkle_root_cache: BTreeMap<SliceIndex, SliceRoot>,
-    /// Execution state hash extracted from the last slice's data, once reconstructed.
-    last_slice_state_hash: Option<Hash>,
 }
 
 impl BlockData {
     /// Create a new spot for storing data of a single block.
-    pub fn new(slot: Slot) -> Self {
+    pub(super) fn new(slot: Slot) -> Self {
         Self {
             slot,
             completed: None,
@@ -191,37 +155,38 @@ impl BlockData {
             last_slice: None,
             double_merkle_tree: None,
             merkle_root_cache: BTreeMap::new(),
-            last_slice_state_hash: None,
         }
     }
 
     fn add_shred(
         &mut self,
-        shred: Shred,
-        leader_pk: PublicKey,
+        shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Vec<BlockDataEvent>, AddShredError> {
-        assert!(shred.payload().header.slot == self.slot);
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+        debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
-        let cached_merkle_root = self.merkle_root_cache.get(&slice_index);
-        let validated_shred = ValidatedShred::try_new(shred, cached_merkle_root, &leader_pk)?;
-        self.add_validated_shred(validated_shred, shredder)
+
+        // different valid signatures for the same slice -> leader equivocation
+        if let Some(cached) = self.merkle_root_cache.get(&slice_index)
+            && cached != shred.merkle_root()
+        {
+            return Err(AddShredError::Equivocation);
+        }
+        self.add_validated_shred(shred, shredder)
     }
 
     fn add_validated_shred(
         &mut self,
         validated_shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Vec<BlockDataEvent>, AddShredError> {
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let header = &validated_shred.payload().header;
-        assert!(header.slot == self.slot);
+        debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
 
         // populate Merkle root cache
-        let cached_merkle_root = self.merkle_root_cache.entry(slice_index);
-        if let Entry::Vacant(entry) = cached_merkle_root {
-            let derived_root = validated_shred.merkle_root();
-            entry.insert(derived_root);
+        if let Entry::Vacant(entry) = self.merkle_root_cache.entry(slice_index) {
+            entry.insert(validated_shred.merkle_root().clone());
         }
 
         match (header.is_last, self.last_slice) {
@@ -259,36 +224,27 @@ impl BlockData {
         slice_shreds[*shred_index] = Some(validated_shred);
 
         if is_first_shred {
-            return Ok(vec![BlockDataEvent::FirstShred]);
+            return Ok(Some(BlockstoreEvent::FirstShred(self.slot)));
         }
 
-        let mut events = Vec::new();
         match self.try_reconstruct_slice(slice_index, shredder) {
-            ReconstructSliceResult::NoAction => {}
-            ReconstructSliceResult::Error => return Err(AddShredError::InvalidShred),
-            ReconstructSliceResult::Complete => {
-                events.push(BlockDataEvent::SliceReconstructed(slice_index));
-                match self.try_reconstruct_block() {
-                    ReconstructBlockResult::NoAction => {}
-                    ReconstructBlockResult::Error => return Err(AddShredError::InvalidShred),
-                    ReconstructBlockResult::Complete(block_info, state_hash) => {
-                        events.push(BlockDataEvent::BlockReady {
-                            block_info,
-                            state_hash,
-                        });
-                    }
-                }
-            }
+            ReconstructSliceResult::NoAction => Ok(None),
+            ReconstructSliceResult::Error => Err(AddShredError::InvalidShred),
+            ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
+                ReconstructBlockResult::NoAction => Ok(None),
+                ReconstructBlockResult::Error => Err(AddShredError::InvalidShred),
+                ReconstructBlockResult::Complete(block_info) => Ok(Some(BlockstoreEvent::Block {
+                    slot: self.slot,
+                    block_info,
+                })),
+            },
         }
-        Ok(events)
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
     ///
-    /// For the last slice, strips the trailing [`STATE_HASH_SIZE`] bytes (the
-    /// execution state hash appended by the proposer) from the slice data and
-    /// stores it in [`Self::last_slice_state_hash`] for later use in
-    /// [`Self::try_reconstruct_block`].
+    /// See [`ReconstructSliceResult`] for more info on what the function returns.
+    #[hotpath::measure]
     fn try_reconstruct_slice(
         &mut self,
         index: SliceIndex,
@@ -304,12 +260,13 @@ impl BlockData {
             Entry::Vacant(entry) => entry,
         };
 
+        // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (mut reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
+        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
             Ok(output) => output,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
             rest => {
-                warn!("deshredding failed with {rest:?}");
+                warn!("deshreding failed with {rest:?}");
                 return ReconstructSliceResult::Error;
             }
         };
@@ -321,20 +278,7 @@ impl BlockData {
             return ReconstructSliceResult::Error;
         }
 
-        // For the last slice, extract and strip the execution state hash suffix.
-        if reconstructed_slice.is_last {
-            match reconstructed_slice.strip_state_hash_suffix() {
-                Some(state_hash) => self.last_slice_state_hash = Some(state_hash),
-                None => {
-                    warn!(
-                        "last slice {} in slot {} too short to contain state hash",
-                        index, self.slot
-                    );
-                    return ReconstructSliceResult::Error;
-                }
-            }
-        }
-
+        // insert reconstructed slice and shreds
         entry.insert(reconstructed_slice);
         let mut reconstructed_shreds = reconstructed_shreds.map(Some);
         std::mem::swap(slice_shreds, &mut reconstructed_shreds);
@@ -343,7 +287,10 @@ impl BlockData {
         ReconstructSliceResult::Complete
     }
 
-    /// Reconstructs the block if all slices are present.
+    /// Reconstructs the block if the blockstore contains all slices.
+    ///
+    /// See [`ReconstructBlockResult`] for more info on what the function returns.
+    #[hotpath::measure]
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
         if self.completed.is_some() {
             trace!("already have block for slot {}", self.slot);
@@ -356,15 +303,6 @@ impl BlockData {
             trace!("don't have all slices for slot {} yet", self.slot);
             return ReconstructBlockResult::NoAction;
         }
-        let Some(state_hash) = self.last_slice_state_hash.clone() else {
-            // This should not happen: last_slice is set iff try_reconstruct_slice
-            // ran for the last slice, which always sets last_slice_state_hash.
-            warn!(
-                "block complete but state hash missing in slot {}",
-                self.slot
-            );
-            return ReconstructBlockResult::Error;
-        };
 
         // calculate double-Merkle tree & block hash
         let merkle_roots = self.slices.values().map(|s| s.merkle_root());
@@ -374,6 +312,7 @@ impl BlockData {
 
         // reconstruct block header
         let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
+        // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
         let mut parent = first_slice.parent.clone().unwrap();
         let mut parent_switched = false;
 
@@ -415,11 +354,12 @@ impl BlockData {
         let block_info = BlockInfo::from(&block);
         self.completed = Some((block_hash, block));
 
+        // clean up raw slices
         for slice_index in last_slice.until() {
             self.slices.remove(&slice_index);
         }
 
-        ReconstructBlockResult::Complete(block_info, state_hash)
+        ReconstructBlockResult::Complete(block_info)
     }
 }
 
@@ -435,48 +375,51 @@ mod tests {
         block_data: &mut BlockData,
         slice: Slice,
         sk: &SecretKey,
-    ) -> (Vec<BlockDataEvent>, Result<(), AddShredError>) {
+    ) -> (Vec<BlockstoreEvent>, Result<(), AddShredError>) {
         let mut shredder = RegularShredder::default();
-        let pk = sk.to_pk();
         let shreds = shredder.shred(slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
-            match block_data.add_shred(shred.into_shred(), pk, &mut shredder) {
-                Ok(evs) => events.extend(evs),
-                Err(AddShredError::Duplicate) => {}
+            match block_data.add_shred(shred, &mut shredder) {
+                Ok(Some(event)) => {
+                    events.push(event);
+                }
+                Ok(None) | Err(AddShredError::Duplicate) => (),
                 Err(err) => return (events, Err(err)),
             }
         }
         (events, Ok(()))
     }
 
-    fn get_block_info_from_events(events: &[BlockDataEvent]) -> Option<&BlockInfo> {
-        events.iter().find_map(|e| match e {
-            BlockDataEvent::BlockReady { block_info, .. } => Some(block_info),
-            _ => None,
-        })
+    fn get_block_hash_from_votor_event(event: &BlockstoreEvent) -> BlockHash {
+        match event {
+            BlockstoreEvent::Block {
+                slot: _,
+                block_info: BlockInfo { hash, parent: _ },
+            } => hash.clone(),
+            _ => panic!(),
+        }
     }
 
     #[test]
     fn reconstruct_slice_and_shreds() {
         let sk = SecretKey::new(&mut rand::rng());
-        let pk = sk.to_pk();
         let slot = Slot::new(123);
 
+        // manage to construct block from just enough shreds
         let slices = create_random_block(slot, 1);
         let mut block_data = BlockData::new(slot);
         let mut shredder = RegularShredder::default();
         let shreds = shredder.shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            events.extend(
-                block_data
-                    .add_shred(shred.into_shred(), pk, &mut shredder)
-                    .unwrap(),
-            );
+            if let Some(event) = block_data.add_shred(shred, &mut shredder).unwrap() {
+                events.push(event);
+            }
         }
         assert!(block_data.completed.is_some());
 
+        // all shreds should have been reconstructed
         let slice_shreds = block_data.shreds.get(&SliceIndex::first()).unwrap();
         assert_eq!(slice_shreds.len(), TOTAL_SHREDS);
         for shred_index in ShredIndex::all() {
@@ -489,26 +432,36 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::new(123);
 
-        // valid block reconstructs successfully
+        // manage to construct a valid block
         let slices = create_random_block(slot, 1);
         let (events, res) =
             handle_slice(&mut BlockData::new(slices[0].slot), slices[0].clone(), &sk);
         let () = res.unwrap();
-        assert_eq!(events.len(), 3); // FirstShred + SliceReconstructed + BlockReady
-        assert!(matches!(events[0], BlockDataEvent::FirstShred));
-        assert!(matches!(events[1], BlockDataEvent::SliceReconstructed(_)));
-        assert!(get_block_info_from_events(&events).is_some());
+        assert_eq!(events.len(), 2);
+        let first_shred_event = BlockstoreEvent::FirstShred(slot);
+        assert_eq!(events[0].clone(), first_shred_event);
+        let hash = get_block_hash_from_votor_event(&events[1]);
+        let block_event = BlockstoreEvent::Block {
+            slot,
+            block_info: BlockInfo {
+                hash,
+                parent: slices[0].parent.clone().unwrap(),
+            },
+        };
+        assert_eq!(events[1].clone(), block_event);
 
-        // block with missing parent does not reconstruct
+        // do not construct a valid block when slice is invalid
         let mut slices = create_random_block(slot, 1);
         slices[0].parent = None;
         let (events, res) =
             handle_slice(&mut BlockData::new(slices[0].slot), slices[0].clone(), &sk);
         assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], BlockDataEvent::FirstShred));
+        let first_shred_event = BlockstoreEvent::FirstShred(slot);
+        assert_eq!(events[0].clone(), first_shred_event);
     }
 
+    // If a subsequent slice switches parent to the original, the block is not reconstructed.
     #[test]
     fn reconstruct_block_optimistic_handover_duplicate_parent() {
         let sk = SecretKey::new(&mut rand::rng());
@@ -527,16 +480,14 @@ mod tests {
                 assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
             }
         }
-        // Block reconstruction failed, so no BlockReady event fired.
-        // SliceReconstructed events may have been emitted for slices that decoded
-        // successfully before the error was detected.
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, BlockDataEvent::BlockReady { .. }))
-        );
+        assert_eq!(events.len(), 1);
+        match events[0] {
+            BlockstoreEvent::FirstShred(s) => assert_eq!(slot, s),
+            _ => panic!(),
+        }
     }
 
+    // Two switches of parents do not reconstruct block.
     #[test]
     fn reconstruct_block_optimistic_handover_two_switches() {
         let sk = SecretKey::new(&mut rand::rng());
@@ -561,13 +512,14 @@ mod tests {
                 assert_eq!(res.unwrap_err(), AddShredError::InvalidShred);
             }
         }
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, BlockDataEvent::BlockReady { .. }))
-        );
+        assert_eq!(events.len(), 1);
+        match events[0] {
+            BlockstoreEvent::FirstShred(s) => assert_eq!(slot, s),
+            _ => panic!(),
+        }
     }
 
+    // Optimistic handover works.
     #[test]
     fn reconstruct_block_optimistic_handover_works() {
         let sk = SecretKey::new(&mut rand::rng());
@@ -585,8 +537,20 @@ mod tests {
             events.append(&mut evs);
             let () = res.unwrap();
         }
-
-        let block_info = get_block_info_from_events(&events).expect("block should be ready");
-        assert_eq!(block_info.parent, slice_1_parent);
+        assert_eq!(events.len(), 2);
+        match events[0] {
+            BlockstoreEvent::FirstShred(s) => assert_eq!(slot, s),
+            _ => panic!(),
+        }
+        match &events[1] {
+            BlockstoreEvent::Block {
+                slot: ret_slot,
+                block_info,
+            } => {
+                assert_eq!(*ret_slot, slot);
+                assert_eq!(block_info.parent, slice_1_parent);
+            }
+            _ => panic!(),
+        }
     }
 }

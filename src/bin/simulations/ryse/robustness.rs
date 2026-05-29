@@ -14,7 +14,7 @@ use alpenglow::disseminator::rotor::FaitAccompli1Sampler;
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use color_eyre::Result;
+use anyhow::Result;
 
 use super::parameters::{AdversaryStrength, RyseParameters};
 use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
@@ -26,14 +26,14 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     byzantine: 0.2,
 };
 
-pub fn run_robustness_tests() {
+pub(crate) fn run_robustness_tests() {
     let params = RyseParameters::new(NUM_PROPOSERS, NUM_RELAYS);
     params.print_failure_probabilities(ADVERSARY_STRENGTH);
-    let optimal_params = params.optmize(ADVERSARY_STRENGTH);
+    let optimal_params = params.optimize(ADVERSARY_STRENGTH);
     optimal_params.print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
-pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
+pub(crate) fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let proposer_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), NUM_PROPOSERS);
@@ -66,6 +66,7 @@ pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
     let test = QuorumRobustnessTest::new(
         validators,
         "solana".to_string(),
+        "fa1_iid".to_string(),
         vec![proposer_sampler, relay_sampler],
         vec![0, 1],
         vec![params.num_leaders as usize, params.num_relays as usize],
@@ -81,6 +82,9 @@ pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
         .join("output")
         .join(filename)
         .with_extension("csv");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let file = File::create(path)?;
     let mut csv_file = csv::Writer::from_writer(file);
 

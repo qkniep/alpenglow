@@ -5,46 +5,47 @@
 //!
 //!
 
-use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::ValidatorIndex;
+use alpenglow::disseminator::rotor::QuorumSamplingStrategy;
 use log::info;
 use rand::prelude::*;
-use statrs::distribution::{Binomial, DiscreteCDF};
 
+use crate::binomial::binomial_cdf;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Ryse MCP protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct RyseParameters {
+pub(crate) struct RyseParameters {
     /// Number of slices in a block.
-    pub num_slices: u64,
+    pub(crate) num_slices: u64,
     /// Number of leaders concurrently proposing in each slot.
-    pub num_leaders: u64,
+    pub(crate) num_leaders: u64,
     /// Number of relays to use in the modified Rotor disseminator.
-    pub num_relays: u64,
+    pub(crate) num_relays: u64,
     /// Number of shreds required to successfully decode a block.
-    pub decode_threshold: u64,
+    pub(crate) decode_threshold: u64,
     /// Number of relays' signatures required for a block to become notarized.
-    pub relay_notar_threshold: u64,
+    pub(crate) relay_notar_threshold: u64,
 }
 
 /// Specific instance of the Ryse protocol.
 #[derive(Clone, Debug)]
-pub struct RyseInstance {
-    pub leaders: Vec<ValidatorId>,
-    pub relays: Vec<Vec<ValidatorId>>,
+pub(crate) struct RyseInstance {
+    pub(crate) leaders: Vec<ValidatorIndex>,
+    pub(crate) relays: Vec<Vec<ValidatorIndex>>,
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
-pub struct RyseInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
+pub(crate) struct RyseInstanceBuilder<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> {
     leader_sampler: L,
     relay_sampler: R,
     params: RyseParameters,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> RyseInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> RyseInstanceBuilder<L, R> {
     /// Creates a new builder instance, with the provided sampling strategies.
-    pub fn new(leader_sampler: L, relay_sampler: R, params: RyseParameters) -> Self {
+    pub(crate) fn new(leader_sampler: L, relay_sampler: R, params: RyseParameters) -> Self {
+        assert_eq!(relay_sampler.quorum_size(), params.num_relays as usize);
         Self {
             leader_sampler,
             relay_sampler,
@@ -53,20 +54,15 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RyseInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L, R> {
+impl<L: QuorumSamplingStrategy, R: QuorumSamplingStrategy> Builder for RyseInstanceBuilder<L, R> {
     type Params = RyseParameters;
     type Instance = RyseInstance;
 
     fn build(&self, rng: &mut impl Rng) -> RyseInstance {
         RyseInstance {
-            leaders: self
-                .leader_sampler
-                .sample_multiple(self.params.num_leaders as usize, rng),
+            leaders: self.leader_sampler.sample_quorum(rng),
             relays: (0..self.params.num_slices)
-                .map(|_| {
-                    self.relay_sampler
-                        .sample_multiple(self.params.num_relays as usize, rng)
-                })
+                .map(|_| self.relay_sampler.sample_quorum(rng))
                 .collect(),
         }
     }
@@ -78,14 +74,14 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RyseInstanceBuilder<L
 
 /// Adversary strength.
 #[derive(Clone, Copy, Debug)]
-pub struct AdversaryStrength {
-    pub crashed: f64,
-    pub byzantine: f64,
+pub(crate) struct AdversaryStrength {
+    pub(crate) crashed: f64,
+    pub(crate) byzantine: f64,
 }
 
 impl RyseParameters {
     /// Generates a new balanced parameter set, equally resistant against all attacks.
-    pub fn new(num_leaders: u64, num_relays: u64) -> Self {
+    pub(crate) fn new(num_leaders: u64, num_relays: u64) -> Self {
         Self {
             num_leaders,
             num_relays,
@@ -96,7 +92,7 @@ impl RyseParameters {
     }
 
     /// Creates a new builder instance, with the provided sampling strategies.
-    pub fn optmize(&self, adv_strength: AdversaryStrength) -> Self {
+    pub(crate) fn optimize(&self, adv_strength: AdversaryStrength) -> Self {
         let mut optimal_params = *self;
         let mut optimal_attack_prob = self.any_attack_probability(adv_strength);
 
@@ -121,7 +117,7 @@ impl RyseParameters {
     }
 
     /// Returns the probability that the adversary can make any attack in a slot.
-    pub fn any_attack_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn any_attack_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         self.break_hiding_probability(adv_strength)
             .max(self.selective_censorship_probability(adv_strength))
             .max(self.temporary_liveness_failure_probability(adv_strength))
@@ -131,33 +127,33 @@ impl RyseParameters {
     ///
     /// This attack is easier for the adversary if no nodes are crashed.
     /// So, this is the case that we consider here to get a worst-case analysis.
-    pub fn break_hiding_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn break_hiding_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that the adversary controls enough relays to decrypt before proposing
         let byzantine = adv_strength.byzantine;
-        let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
         let relays_needed =
             (self.relay_notar_threshold + self.decode_threshold).saturating_sub(self.num_relays);
-        1.0 - relays_dist.cdf(relays_needed.saturating_sub(1))
+        1.0 - binomial_cdf(byzantine, self.num_relays, relays_needed.saturating_sub(1))
     }
 
     /// Probability that the adversary can selectively censor leaders in a slot.
-    pub fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let leaders_dist = Binomial::new(failed, self.num_leaders).unwrap();
-        let prob_all_leaders = 1.0 - leaders_dist.cdf(self.num_leaders - 1);
+        let prob_all_leaders = 1.0 - binomial_cdf(failed, self.num_leaders, self.num_leaders - 1);
 
         // probability that the adversary can exclude all leaders
-        let relays_dist = Binomial::new(failed, self.num_relays).unwrap();
         let relays_needed = self.num_relays - self.relay_notar_threshold;
-        let prob_censor_relays = 1.0 - relays_dist.cdf(relays_needed - 1);
+        let prob_censor_relays = 1.0 - binomial_cdf(failed, self.num_relays, relays_needed - 1);
 
         // probability that either attack works
         1.0 - (1.0 - prob_all_leaders) * (1.0 - prob_censor_relays)
     }
 
     /// Probability that the adversary can cause a temporary liveness failure in a slot.
-    pub fn temporary_liveness_failure_probability(&self, adv_strength: AdversaryStrength) -> f64 {
+    pub(crate) fn temporary_liveness_failure_probability(
+        &self,
+        adv_strength: AdversaryStrength,
+    ) -> f64 {
         // there is no better liveness attack than the selective-censorship attack
         self.selective_censorship_probability(adv_strength)
     }
@@ -165,7 +161,7 @@ impl RyseParameters {
     /// Calculates the attack probabilities and prints them.
     ///
     /// Capabilities of the adversary are specified in the `adv_strength` parameter.
-    pub fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
+    pub(crate) fn print_failure_probabilities(&self, adv_strength: AdversaryStrength) {
         info!(
             "Ryse parameters: leaders={}, relays={}, {:.2}/{:.2}",
             self.num_leaders,

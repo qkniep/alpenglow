@@ -1,42 +1,25 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
-
 use alpenglow::{create_test_nodes, logging};
-use color_eyre::Result;
-use fastrace::collector::Config;
+use anyhow::Result;
+use clap::Parser;
 use fastrace::prelude::*;
-use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-use opentelemetry::{InstrumentationScope, KeyValue};
-use opentelemetry_otlp::{SpanExporter, WithExportConfig};
-use opentelemetry_sdk::Resource;
+
+/// Local Alpenglow cluster for testing and development.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Args {}
 
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
+    Args::parse();
 
-    // enable `fastrace` tracing
-    let reporter = OpenTelemetryReporter::new(
-        SpanExporter::builder()
-            .with_tonic()
-            .with_endpoint("http://127.0.0.1:4317".to_string())
-            .with_protocol(opentelemetry_otlp::Protocol::Grpc)
-            .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
-            .build()
-            .expect("initialize oltp exporter"),
-        Cow::Owned(
-            Resource::builder()
-                .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
-                .build(),
-        ),
-        InstrumentationScope::builder("alpenglow")
-            .with_version(env!("CARGO_PKG_VERSION"))
-            .build(),
-    );
-    fastrace::set_reporter(reporter, Config::default());
+    // enable `fastrace` tracing via OpenTelemetry export (only with `telemetry` feature)
+    #[cfg(feature = "telemetry")]
+    logging::enable_otel_tracing("alpenglow-main")?;
 
     logging::enable_logforth();
 
@@ -44,7 +27,7 @@ async fn main() -> Result<()> {
         let parent = SpanContext::random();
 
         // spawn local cluster
-        let nodes = create_test_nodes(2);
+        let nodes = create_test_nodes(6);
         let mut node_tasks = Vec::new();
         let mut cancel_tokens = Vec::new();
         for (i, node) in nodes.into_iter().enumerate() {

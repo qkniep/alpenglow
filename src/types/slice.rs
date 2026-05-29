@@ -9,17 +9,10 @@ use rand::prelude::*;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::crypto::Hash;
 use crate::crypto::merkle::{BlockHash, SliceRoot};
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, Slot};
-
-/// Size in bytes of the execution state hash appended to the last slice's data.
-///
-/// The proposer appends this suffix before shredding; validators strip it before
-/// deserializing transactions. It matches the serialized size of [`struct@Hash`].
-pub(crate) const STATE_HASH_SIZE: usize = 32;
 
 /// A slice is the unit of data between block and shred, before shredding.
 ///
@@ -123,22 +116,6 @@ impl ReconstructedSlice {
     pub fn merkle_root(&self) -> &SliceRoot {
         &self.merkle_root
     }
-
-    /// Strips the trailing [`STATE_HASH_SIZE`] bytes from the slice data and
-    /// returns them as the execution state hash.
-    ///
-    /// Called during reconstruction of the last slice to separate the
-    /// execution state hash (appended by the proposer) from transaction data.
-    /// Returns `None` if the data is too short.
-    pub(crate) fn strip_state_hash_suffix(&mut self) -> Option<Hash> {
-        if self.inner.data.len() < STATE_HASH_SIZE {
-            return None;
-        }
-        let split = self.inner.data.len() - STATE_HASH_SIZE;
-        let hash: Hash = wincode::deserialize(&self.inner.data[split..]).ok()?;
-        self.inner.data.truncate(split);
-        Some(hash)
-    }
 }
 
 impl Deref for ReconstructedSlice {
@@ -195,7 +172,7 @@ impl From<&[u8]> for SlicePayload {
     fn from(payload: &[u8]) -> Self {
         assert!(
             payload.len() <= MAX_DATA_PER_SLICE,
-            "payload.len()={} {MAX_DATA_PER_SLICE}",
+            "payload.len()={} > {MAX_DATA_PER_SLICE}",
             payload.len()
         );
         wincode::deserialize(payload).unwrap()

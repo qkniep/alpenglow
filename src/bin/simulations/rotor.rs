@@ -7,31 +7,31 @@
 //! - Latency simulation for block dissemination via Rotor.
 //! - Robustness simulation against liveness and safety failures.
 
-pub mod latency;
-pub mod robustness;
+pub(crate) mod latency;
+pub(crate) mod robustness;
 
-use alpenglow::ValidatorId;
-use alpenglow::disseminator::rotor::SamplingStrategy;
+use alpenglow::ValidatorIndex;
+use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use rand::prelude::*;
 
-pub use self::latency::{LatencyEvent, RotorLatencySimulation};
-pub use self::robustness::run_rotor_robustness_test;
+pub(crate) use self::latency::{LatencyEvent, RotorLatencySimulation};
+pub(crate) use self::robustness::run_rotor_robustness_test;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Rotor protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RotorParams {
+pub(crate) struct RotorParams {
     /// Number of shreds needed to recover the data.
-    pub data_shreds: usize,
+    pub(crate) data_shreds: usize,
     /// Number of shreds that make up a slice.
-    pub shreds: usize,
+    pub(crate) shreds: usize,
     /// Number of slices that make up a block.
-    pub slices: usize,
+    pub(crate) slices: usize,
 }
 
 impl RotorParams {
     /// Creates a new set of Rotor parameters.
-    pub fn new(data_shreds: usize, shreds: usize, slices: usize) -> Self {
+    pub(crate) fn new(data_shreds: usize, shreds: usize, slices: usize) -> Self {
         Self {
             data_shreds,
             shreds,
@@ -42,15 +42,16 @@ impl RotorParams {
 
 /// Builder for Rotor instances with a specific set of parameters.
 #[derive(Debug)]
-pub struct RotorInstanceBuilder<L: SamplingStrategy, R: SamplingStrategy> {
-    pub leader_sampler: L,
-    pub rotor_sampler: R,
-    pub params: RotorParams,
+pub(crate) struct RotorInstanceBuilder<L: SamplingStrategy, R: QuorumSamplingStrategy> {
+    pub(crate) leader_sampler: L,
+    pub(crate) rotor_sampler: R,
+    pub(crate) params: RotorParams,
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> RotorInstanceBuilder<L, R> {
     /// Creates a new builder instance, with the provided sampling strategies.
-    pub fn new(leader_sampler: L, rotor_sampler: R, params: RotorParams) -> Self {
+    pub(crate) fn new(leader_sampler: L, rotor_sampler: R, params: RotorParams) -> Self {
+        assert_eq!(rotor_sampler.quorum_size(), params.shreds);
         Self {
             leader_sampler,
             rotor_sampler,
@@ -59,7 +60,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> RotorInstanceBuilder<L, R> {
     }
 }
 
-impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
+impl<L: SamplingStrategy, R: QuorumSamplingStrategy> Builder for RotorInstanceBuilder<L, R> {
     type Params = RotorParams;
     type Instance = RotorInstance;
 
@@ -67,7 +68,7 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
         RotorInstance {
             leader: self.leader_sampler.sample(rng),
             relays: (0..self.params.slices)
-                .map(|_| self.rotor_sampler.sample_multiple(self.params.shreds, rng))
+                .map(|_| self.rotor_sampler.sample_quorum(rng))
                 .collect(),
             params: self.params,
         }
@@ -80,11 +81,11 @@ impl<L: SamplingStrategy, R: SamplingStrategy> Builder for RotorInstanceBuilder<
 
 /// Specific instance of the Rotor protocol.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RotorInstance {
+pub(crate) struct RotorInstance {
     /// Leader validator.
-    pub leader: ValidatorId,
+    pub(crate) leader: ValidatorIndex,
     /// Relays for each slice, and each shred within a slice.
-    pub relays: Vec<Vec<ValidatorId>>,
+    pub(crate) relays: Vec<Vec<ValidatorIndex>>,
     /// Parameters this instance corresponds to.
-    pub params: RotorParams,
+    pub(crate) params: RotorParams,
 }

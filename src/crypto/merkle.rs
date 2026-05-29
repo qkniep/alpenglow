@@ -217,6 +217,13 @@ impl MerkleRoot for DoubleMerkleRoot {
     }
 }
 
+impl DoubleMerkleRoot {
+    /// Returns a short hex string of the first 4 bytes, for use in logging.
+    pub fn short_hex(&self) -> String {
+        hex::encode(&self.0.as_ref()[..4])
+    }
+}
+
 #[repr(transparent)]
 #[derive(Clone, Debug, PartialEq, Eq, From, Into, SchemaRead, SchemaWrite)]
 pub struct DoubleMerkleProof(Vec<Hash>);

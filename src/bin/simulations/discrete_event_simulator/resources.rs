@@ -7,15 +7,15 @@
 
 // TODO: introduce notion of a shared resource?
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 
 use crate::discrete_event_simulator::SimTime;
 
 /// Tracks resource utilization across all resources and validators.
 // TODO: add other resources
 #[derive(Clone, Debug)]
-pub struct Resources {
-    pub network: Resource,
+pub(crate) struct Resources {
+    pub(crate) network: Resource,
     // pub cpu: Resource,
 }
 
@@ -23,7 +23,7 @@ impl Resources {
     /// Creates a new resource utilization tracker.
     ///
     /// All validators start with all resources free to be used.
-    pub fn new(num_validators: usize) -> Self {
+    pub(crate) fn new(num_validators: usize) -> Self {
         Self {
             network: Resource::new(num_validators),
             // cpu: Resource::new(num_validators),
@@ -33,7 +33,7 @@ impl Resources {
 
 /// Tracks resource utilization for a single resource.
 #[derive(Clone, Debug)]
-pub struct Resource {
+pub(crate) struct Resource {
     next_free: Vec<SimTime>,
 }
 
@@ -41,19 +41,19 @@ impl Resource {
     /// Creates a new resource.
     ///
     /// All validators start with this resource free to be used.
-    pub fn new(num_validators: usize) -> Self {
+    pub(crate) fn new(num_validators: usize) -> Self {
         Self {
             next_free: vec![SimTime::ZERO; num_validators],
         }
     }
 
     /// Returns the next time this resource will be free.
-    pub fn time_next_free(&self, validator: ValidatorId) -> SimTime {
-        self.next_free[validator.as_index()]
+    pub(crate) fn time_next_free(&self, validator: ValidatorIndex) -> SimTime {
+        self.next_free[validator.as_usize()]
     }
 
     /// Returns the next time this resource will be free, after `time`.
-    pub fn time_next_free_after(&self, validator: ValidatorId, time: SimTime) -> SimTime {
+    pub(crate) fn time_next_free_after(&self, validator: ValidatorIndex, time: SimTime) -> SimTime {
         time.max(self.time_next_free(validator))
     }
 
@@ -61,9 +61,9 @@ impl Resource {
     ///
     /// First, finds the next time this resource will be free after `target_start_time`.
     /// Then, reserves the resource for `duration` starting at that time.
-    pub fn schedule(
+    pub(crate) fn schedule(
         &mut self,
-        validator: ValidatorId,
+        validator: ValidatorIndex,
         target_start_time: SimTime,
         duration: SimTime,
     ) -> SimTime {
@@ -74,12 +74,12 @@ impl Resource {
     /// Reserves the resource for `duration` starting at `start_time`.
     fn reserve(
         &mut self,
-        validator: ValidatorId,
+        validator: ValidatorIndex,
         start_time: SimTime,
         duration: SimTime,
     ) -> SimTime {
         let end_time = start_time + duration;
-        self.next_free[validator.as_index()] = end_time;
+        self.next_free[validator.as_usize()] = end_time;
         end_time
     }
 }
@@ -91,30 +91,39 @@ mod tests {
     #[test]
     fn basic() {
         let mut resource = Resource::new(2);
-        assert_eq!(resource.time_next_free(ValidatorId::new(0)), SimTime::ZERO);
-        assert_eq!(resource.time_next_free(ValidatorId::new(1)), SimTime::ZERO);
+        assert_eq!(
+            resource.time_next_free(ValidatorIndex::new(0)),
+            SimTime::ZERO
+        );
+        assert_eq!(
+            resource.time_next_free(ValidatorIndex::new(1)),
+            SimTime::ZERO
+        );
 
         // schedule resource on validator 0 for time 1-11
         assert_eq!(
-            resource.schedule(ValidatorId::new(0), SimTime::new(1), SimTime::new(10)),
+            resource.schedule(ValidatorIndex::new(0), SimTime::new(1), SimTime::new(10)),
             SimTime::new(11)
         );
 
         // next free works
         assert_eq!(
-            resource.time_next_free(ValidatorId::new(0)),
+            resource.time_next_free(ValidatorIndex::new(0)),
             SimTime::new(11)
         );
         assert_eq!(
-            resource.time_next_free_after(ValidatorId::new(0), SimTime::new(10)),
+            resource.time_next_free_after(ValidatorIndex::new(0), SimTime::new(10)),
             SimTime::new(11)
         );
         assert_eq!(
-            resource.time_next_free_after(ValidatorId::new(0), SimTime::new(20)),
+            resource.time_next_free_after(ValidatorIndex::new(0), SimTime::new(20)),
             SimTime::new(20)
         );
 
         // resource still free on other validator
-        assert_eq!(resource.time_next_free(ValidatorId::new(1)), SimTime::ZERO);
+        assert_eq!(
+            resource.time_next_free(ValidatorIndex::new(1)),
+            SimTime::ZERO
+        );
     }
 }

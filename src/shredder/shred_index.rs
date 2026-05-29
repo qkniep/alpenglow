@@ -35,6 +35,12 @@ impl ShredIndex {
     pub(crate) fn all() -> impl Iterator<Item = Self> {
         (0..TOTAL_SHREDS).map(Self)
     }
+
+    /// Returns the inner `usize`.
+    #[must_use]
+    pub fn inner(&self) -> usize {
+        self.0
+    }
 }
 
 impl Deref for ShredIndex {

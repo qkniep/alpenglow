@@ -15,16 +15,17 @@ use std::sync::Arc;
 use either::Either;
 use smallvec::SmallVec;
 
-use super::SlashableOffence;
+use super::{PoolEvent, SlashableOffence};
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
-use crate::consensus::vote::VoteKind;
-use crate::consensus::votor::VotorEvent;
-use crate::consensus::{Cert, ValidatorEpochInfo, Vote};
+use crate::consensus::{
+    Cert, FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, ValidatorEpochInfo,
+    Vote,
+};
 use crate::crypto::merkle::BlockHash;
 use crate::{BlockId, Slot, Stake};
 
 /// Data structure holding pool state for a single slot.
-pub struct SlotState {
+pub(super) struct SlotState {
     /// Votes for this slot, contains all vote types and validators.
     pub(super) votes: SlotVotes,
     /// Running stake totals for different types of votes.
@@ -48,21 +49,21 @@ pub struct SlotState {
 }
 
 // PERF: replace storing Votes (50% size overhead) with storing only signatures?
-pub struct SlotVotes {
-    /// Notarization votes for all validators (indexed by `ValidatorId`).
-    pub(super) notar: Vec<Option<Vote>>,
-    /// Notar-fallback votes for all validators (indexed by `ValidatorId`).
-    pub(super) notar_fallback: Vec<BTreeMap<BlockHash, Vote>>,
-    /// Skip votes for all validators (indexed by `ValidatorId`).
-    pub(super) skip: Vec<Option<Vote>>,
-    /// Skip-fallback votes for all validators (indexed by `ValidatorId`).
-    pub(super) skip_fallback: Vec<Option<Vote>>,
-    /// Finalization votes for all validators (indexed by `ValidatorId`).
-    pub(super) finalize: Vec<Option<Vote>>,
+pub(super) struct SlotVotes {
+    /// Notarization votes for all validators (indexed by `ValidatorIndex`).
+    pub(super) notar: Vec<Option<NotarVote>>,
+    /// Notar-fallback votes for all validators (indexed by `ValidatorIndex`).
+    pub(super) notar_fallback: Vec<BTreeMap<BlockHash, NotarFallbackVote>>,
+    /// Skip votes for all validators (indexed by `ValidatorIndex`).
+    pub(super) skip: Vec<Option<SkipVote>>,
+    /// Skip-fallback votes for all validators (indexed by `ValidatorIndex`).
+    pub(super) skip_fallback: Vec<Option<SkipFallbackVote>>,
+    /// Finalization votes for all validators (indexed by `ValidatorIndex`).
+    pub(super) finalize: Vec<Option<FinalVote>>,
 }
 
 #[derive(Default)]
-pub struct SlotVotedStake {
+pub(super) struct SlotVotedStake {
     /// Amount of stake for each block has for which we have a notarization vote.
     pub(super) notar: BTreeMap<BlockHash, Stake>,
     /// Amount of stake for each block hash for which we have a notar-fallback vote.
@@ -80,7 +81,7 @@ pub struct SlotVotedStake {
 }
 
 #[derive(Default)]
-pub struct SlotCertificates {
+pub(super) struct SlotCertificates {
     /// Notarization certificate for this slot, if it exists.
     pub(super) notar: Option<NotarCert>,
     /// Notar-fallback certificates for this slot, if any.
@@ -101,7 +102,7 @@ enum ParentStatus {
 
 /// Possible states for the safe-to-notar check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SafeToNotarStatus {
+pub(super) enum SafeToNotarStatus {
     SafeToNotar,
     MissingBlock,
     AwaitingVotes,
@@ -109,7 +110,7 @@ pub enum SafeToNotarStatus {
 
 type SlotStateOutputs = (
     SmallVec<[Cert; 2]>,
-    SmallVec<[VotorEvent; 2]>,
+    SmallVec<[PoolEvent; 2]>,
     SmallVec<[(Slot, BlockHash); 1]>,
 );
 
@@ -117,7 +118,7 @@ impl SlotState {
     /// Creates a new container for votes and certificates for a single slot.
     ///
     /// Initially, it is completely empty.
-    pub fn new(slot: Slot, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
+    pub(super) fn new(slot: Slot, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             votes: SlotVotes::new(epoch_info.epoch_info().validators().len()),
             voted_stakes: SlotVotedStake::default(),
@@ -133,7 +134,7 @@ impl SlotState {
     }
 
     /// Adds a certificate to this slot.
-    pub fn add_cert(&mut self, cert: Cert) {
+    pub(super) fn add_cert(&mut self, cert: Cert) {
         match cert {
             Cert::Notar(n) => self.certificates.notar = Some(n),
             Cert::NotarFallback(n) => {
@@ -153,34 +154,35 @@ impl SlotState {
     /// new certificates and checking other conditions, like safe-to-notar.
     ///
     /// Returns potentially created certificates and newly emitted votor events.
-    pub fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
+    pub(super) fn add_vote(&mut self, vote: Vote, voter_stake: Stake) -> SlotStateOutputs {
         let slot = vote.slot();
         let voter = vote.signer();
-        let v = voter.as_index();
+        let v = voter.as_usize();
 
-        let (certs_created, mut votor_events, mut blocks_to_repair) = match vote.kind() {
-            VoteKind::Notar(_, block_hash) => {
-                let outputs = self.count_notar_stake(slot, block_hash, voter_stake);
-                self.votes.notar[v] = Some(vote);
+        let (certs_created, mut votor_events, mut blocks_to_repair) = match vote {
+            Vote::Notar(notar_vote) => {
+                let outputs = self.count_notar_stake(slot, notar_vote.block_hash(), voter_stake);
+                self.votes.notar[v] = Some(notar_vote);
                 outputs
             }
-            VoteKind::NotarFallback(_, block_hash) => {
-                let outputs = self.count_notar_fallback_stake(block_hash, voter_stake);
-                let res = self.votes.notar_fallback[v].insert(block_hash.clone(), vote);
+            Vote::NotarFallback(nf_vote) => {
+                let outputs = self.count_notar_fallback_stake(nf_vote.block_hash(), voter_stake);
+                let block_hash = nf_vote.block_hash().clone();
+                let res = self.votes.notar_fallback[v].insert(block_hash, nf_vote);
                 assert!(res.is_none());
                 outputs
             }
-            VoteKind::Skip(_) => {
-                self.votes.skip[v] = Some(vote);
+            Vote::Skip(skip_vote) => {
+                self.votes.skip[v] = Some(skip_vote);
                 self.voted_stakes.notar_or_skip += voter_stake;
                 self.count_skip_stake(slot, voter_stake, false)
             }
-            VoteKind::SkipFallback(_) => {
-                self.votes.skip_fallback[v] = Some(vote);
+            Vote::SkipFallback(sf_vote) => {
+                self.votes.skip_fallback[v] = Some(sf_vote);
                 self.count_skip_stake(slot, voter_stake, true)
             }
-            VoteKind::Final(_) => {
-                self.votes.finalize[v] = Some(vote);
+            Vote::Final(final_vote) => {
+                self.votes.finalize[v] = Some(final_vote);
                 self.count_finalize_stake(voter_stake)
             }
         };
@@ -193,7 +195,7 @@ impl SlotState {
                 }
                 match self.check_safe_to_notar(hash.clone()) {
                     SafeToNotarStatus::SafeToNotar => {
-                        votor_events.push(VotorEvent::SafeToNotar(slot, hash));
+                        votor_events.push(PoolEvent::SafeToNotar(slot, hash));
                     }
                     SafeToNotarStatus::MissingBlock => blocks_to_repair.push((slot, hash)),
                     SafeToNotarStatus::AwaitingVotes => {}
@@ -205,7 +207,7 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
-    pub fn notify_parent_known(&mut self, hash: BlockHash) {
+    pub(super) fn notify_parent_known(&mut self, hash: BlockHash) {
         self.parents.entry(hash).or_insert(ParentStatus::Known);
     }
 
@@ -214,10 +216,10 @@ impl SlotState {
     /// # Panics
     ///
     /// If [`SlotState::notify_parent_known`] has not yet been called for this block.
-    pub fn notify_parent_certified(
+    pub(super) fn notify_parent_certified(
         &mut self,
         hash: BlockHash,
-    ) -> Option<Either<VotorEvent, BlockId>> {
+    ) -> Option<Either<PoolEvent, BlockId>> {
         let Some(parent_info) = self.parents.get_mut(&hash) else {
             panic!("parent not known")
         };
@@ -229,7 +231,7 @@ impl SlotState {
         }
         match self.check_safe_to_notar(hash.clone()) {
             SafeToNotarStatus::SafeToNotar => {
-                Some(Either::Left(VotorEvent::SafeToNotar(self.slot, hash)))
+                Some(Either::Left(PoolEvent::SafeToNotar(self.slot, hash)))
             }
             SafeToNotarStatus::MissingBlock => Some(Either::Right((self.slot, hash))),
             SafeToNotarStatus::AwaitingVotes => None,
@@ -265,7 +267,7 @@ impl SlotState {
         if !self.sent_safe_to_notar.contains(block_hash) {
             match self.check_safe_to_notar(block_hash.clone()) {
                 SafeToNotarStatus::SafeToNotar => {
-                    votor_events.push(VotorEvent::SafeToNotar(slot, block_hash.clone()));
+                    votor_events.push(PoolEvent::SafeToNotar(slot, block_hash.clone()));
                 }
                 SafeToNotarStatus::MissingBlock => {
                     blocks_to_repair.push((slot, block_hash.clone()));
@@ -278,9 +280,9 @@ impl SlotState {
                 .epoch_info
                 .epoch_info()
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id().as_index()].is_some()
+            && self.votes.notar[self.epoch_info.own_id().as_usize()].is_some()
         {
-            votor_events.push(VotorEvent::SafeToSkip(slot));
+            votor_events.push(PoolEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
         let nf_stake = *self
@@ -294,10 +296,13 @@ impl SlotState {
             .is_quorum(nf_stake + notar_stake)
             && !self.is_notar_fallback(block_hash)
         {
-            let mut votes = self.votes.notar_votes(block_hash);
-            votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert =
-                NotarFallbackCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let notar_votes = self.votes.notar_votes(block_hash);
+            let nf_votes = self.votes.notar_fallback_votes(block_hash);
+            let cert = NotarFallbackCert::new_unchecked(
+                &notar_votes,
+                &nf_votes,
+                self.epoch_info.epoch_info().validators(),
+            );
             new_certs.push(Cert::NotarFallback(cert));
         }
         if self.epoch_info.epoch_info().is_quorum(notar_stake) && self.certificates.notar.is_none()
@@ -343,10 +348,13 @@ impl SlotState {
             .is_quorum(nf_stake + notar_stake)
             && !self.is_notar_fallback(block_hash)
         {
-            let mut votes = self.votes.notar_votes(block_hash);
-            votes.extend(self.votes.notar_fallback_votes(block_hash));
-            let cert =
-                NotarFallbackCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let notar_votes = self.votes.notar_votes(block_hash);
+            let nf_votes = self.votes.notar_fallback_votes(block_hash);
+            let cert = NotarFallbackCert::new_unchecked(
+                &notar_votes,
+                &nf_votes,
+                self.epoch_info.epoch_info().validators(),
+            );
             new_certs.push(Cert::NotarFallback(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -372,7 +380,7 @@ impl SlotState {
             }
             match self.check_safe_to_notar(hash.clone()) {
                 SafeToNotarStatus::SafeToNotar => {
-                    votor_events.push(VotorEvent::SafeToNotar(slot, hash));
+                    votor_events.push(PoolEvent::SafeToNotar(slot, hash));
                 }
                 SafeToNotarStatus::MissingBlock => blocks_to_repair.push((slot, hash)),
                 SafeToNotarStatus::AwaitingVotes => {}
@@ -382,9 +390,13 @@ impl SlotState {
         if self.epoch_info.epoch_info().is_quorum(total_skip_stake)
             && self.certificates.skip.is_none()
         {
-            let mut votes = self.votes.skip_votes();
-            votes.extend(self.votes.skip_fallback_votes());
-            let cert = SkipCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let skip_votes = self.votes.skip_votes();
+            let sf_votes = self.votes.skip_fallback_votes();
+            let cert = SkipCert::new_unchecked(
+                &skip_votes,
+                &sf_votes,
+                self.epoch_info.epoch_info().validators(),
+            );
             new_certs.push(Cert::Skip(cert));
         }
         if !self.sent_safe_to_skip
@@ -392,9 +404,9 @@ impl SlotState {
                 .epoch_info
                 .epoch_info()
                 .is_weak_quorum(self.voted_stakes.notar_or_skip - self.voted_stakes.top_notar)
-            && self.votes.notar[self.epoch_info.own_id().as_index()].is_some()
+            && self.votes.notar[self.epoch_info.own_id().as_usize()].is_some()
         {
-            votor_events.push(VotorEvent::SafeToSkip(slot));
+            votor_events.push(PoolEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
         (new_certs, votor_events, blocks_to_repair)
@@ -424,39 +436,39 @@ impl SlotState {
     ///
     /// This has to be called before dismissing potential duplicates, as
     /// according to `should_ignore_vote()`.
-    pub fn check_slashable_offence(&self, vote: &Vote) -> Option<SlashableOffence> {
+    pub(super) fn check_slashable_offence(&self, vote: &Vote) -> Option<SlashableOffence> {
         let slot = vote.slot();
         let voter = vote.signer();
-        let v = voter.as_index();
-        match vote.kind() {
-            VoteKind::Notar(_, block_hash) => {
+        let v = voter.as_usize();
+        match vote {
+            Vote::Notar(notar_vote) => {
                 if self.votes.skip[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
-                if let Some(notar_vote) = &self.votes.notar[v]
-                    && block_hash != notar_vote.block_hash().unwrap()
+                if let Some(existing) = &self.votes.notar[v]
+                    && notar_vote.block_hash() != existing.block_hash()
                 {
                     return Some(SlashableOffence::NotarDifferentHash(voter, slot));
                 }
             }
-            VoteKind::NotarFallback(_, _) => {
+            Vote::NotarFallback(_) => {
                 if self.votes.finalize[v].is_some() {
                     return Some(SlashableOffence::NotarFallbackAndFinalize(voter, slot));
                 }
             }
-            VoteKind::Skip(_) => {
+            Vote::Skip(_) => {
                 if self.votes.finalize[v].is_some() {
                     return Some(SlashableOffence::SkipAndFinalize(voter, slot));
                 } else if self.votes.notar[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
             }
-            VoteKind::SkipFallback(_) => {
+            Vote::SkipFallback(_) => {
                 if self.votes.finalize[v].is_some() {
                     return Some(SlashableOffence::SkipAndFinalize(voter, slot));
                 }
             }
-            VoteKind::Final(_) => {
+            Vote::Final(_) => {
                 if self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some() {
                     return Some(SlashableOffence::SkipAndFinalize(voter, slot));
                 } else if !self.votes.notar_fallback[v].is_empty() {
@@ -471,17 +483,17 @@ impl SlotState {
     ///
     /// Votes for which this returns `true` should never be counted.
     /// Doing so could lead to double counting.
-    pub fn should_ignore_vote(&self, vote: &Vote) -> bool {
-        let v = vote.signer().as_index();
-        match vote.kind() {
-            VoteKind::Notar(_, _) => self.votes.notar[v].is_some(),
-            VoteKind::NotarFallback(_, block_hash) => {
-                self.votes.notar_fallback[v].contains_key(block_hash)
+    pub(super) fn should_ignore_vote(&self, vote: &Vote) -> bool {
+        let v = vote.signer().as_usize();
+        match vote {
+            Vote::Notar(_) => self.votes.notar[v].is_some(),
+            Vote::NotarFallback(nf_vote) => {
+                self.votes.notar_fallback[v].contains_key(nf_vote.block_hash())
             }
-            VoteKind::Skip(_) | VoteKind::SkipFallback(_) => {
+            Vote::Skip(_) | Vote::SkipFallback(_) => {
                 self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some()
             }
-            VoteKind::Final(_) => self.votes.finalize[v].is_some(),
+            Vote::Final(_) => self.votes.finalize[v].is_some(),
         }
     }
 
@@ -518,8 +530,8 @@ impl SlotState {
 
         // check own vote
         let own_id = self.epoch_info.own_id();
-        let skip = &self.votes.skip[own_id.as_index()];
-        let notar = &self.votes.notar[own_id.as_index()];
+        let skip = &self.votes.skip[own_id.as_usize()];
+        let notar = &self.votes.notar[own_id.as_usize()];
 
         match (skip, notar) {
             (Some(_), _) => {
@@ -528,7 +540,7 @@ impl SlotState {
                 SafeToNotarStatus::SafeToNotar
             }
             (_, Some(n)) => {
-                if n.block_hash().unwrap() != &block_hash {
+                if n.block_hash() != &block_hash {
                     self.pending_safe_to_notar.remove(&block_hash);
                     self.sent_safe_to_notar.insert(block_hash);
                     SafeToNotarStatus::SafeToNotar
@@ -544,7 +556,7 @@ impl SlotState {
     }
 
     /// Checks whether the given block hash has a notar-fallback cert in this slot.
-    pub fn is_notar_fallback(&self, block_hash: &BlockHash) -> bool {
+    pub(super) fn is_notar_fallback(&self, block_hash: &BlockHash) -> bool {
         self.certificates
             .notar_fallback
             .iter()
@@ -556,7 +568,7 @@ impl SlotVotes {
     /// Creates a new container for votes for the given number of validators.
     ///
     /// Initially, it contains no votes.
-    pub fn new(num_validators: usize) -> Self {
+    pub(super) fn new(num_validators: usize) -> Self {
         Self {
             notar: vec![None; num_validators],
             notar_fallback: vec![BTreeMap::new(); num_validators],
@@ -568,12 +580,12 @@ impl SlotVotes {
 
     /// Returns all notarization votes for the given block hash.
     // PERF: return iterators here (to avoid memory allocation)?
-    pub fn notar_votes(&self, block_hash: &BlockHash) -> Vec<Vote> {
+    pub(super) fn notar_votes(&self, block_hash: &BlockHash) -> Vec<NotarVote> {
         self.notar
             .iter()
             .filter_map(|vote| {
                 vote.as_ref()
-                    .and_then(|vote| (vote.block_hash().unwrap() == block_hash).then_some(vote))
+                    .and_then(|vote| (vote.block_hash() == block_hash).then_some(vote))
             })
             .cloned()
             .collect()
@@ -581,7 +593,7 @@ impl SlotVotes {
 
     /// Returns all notar-fallback votes for the given block hash.
     // PERF: return iterators here (to avoid memory allocation)?
-    pub fn notar_fallback_votes(&self, block_hash: &BlockHash) -> Vec<Vote> {
+    pub(super) fn notar_fallback_votes(&self, block_hash: &BlockHash) -> Vec<NotarFallbackVote> {
         self.notar_fallback
             .iter()
             .filter_map(|m| m.get(block_hash).cloned())
@@ -590,19 +602,19 @@ impl SlotVotes {
 
     /// Returns all skip votes for this slot.
     // PERF: return iterators here (to avoid memory allocation)?
-    pub fn skip_votes(&self) -> Vec<Vote> {
+    pub(super) fn skip_votes(&self) -> Vec<SkipVote> {
         self.skip.iter().filter_map(Clone::clone).collect()
     }
 
     /// Returns all skip-fallback votes for this slot.
     // PERF: return iterators here (to avoid memory allocation)?
-    pub fn skip_fallback_votes(&self) -> Vec<Vote> {
+    pub(super) fn skip_fallback_votes(&self) -> Vec<SkipFallbackVote> {
         self.skip_fallback.iter().filter_map(Clone::clone).collect()
     }
 
     /// Returns all finalization votes for this slot.
     // PERF: return iterators here (to avoid memory allocation)?
-    pub fn final_votes(&self) -> Vec<Vote> {
+    pub(super) fn final_votes(&self) -> Vec<FinalVote> {
         self.finalize.iter().filter_map(Clone::clone).collect()
     }
 }
@@ -610,14 +622,14 @@ impl SlotVotes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ValidatorId;
+    use crate::ValidatorIndex;
     use crate::consensus::EpochInfo;
     use crate::crypto::Hash;
     use crate::test_utils::generate_validators;
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
     fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
-        Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info))
+        Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info))
     }
 
     #[test]
@@ -626,10 +638,10 @@ mod tests {
         let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
-        let votes: Vec<_> = sks
+        let votes: Vec<NotarVote> = sks
             .iter()
             .enumerate()
-            .map(|(i, sk)| Vote::new_notar(slot, hash.clone(), sk, ValidatorId::new(i as u64)))
+            .map(|(i, sk)| NotarVote::new(slot, hash.clone(), sk, ValidatorIndex::new(i as u64)))
             .collect();
         let cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
         assert!(slot_state.certificates.notar.is_none());
@@ -644,10 +656,10 @@ mod tests {
         let (slot, hash): BlockId = (Slot::new(1), Hash::random_for_test().into());
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
         for (i, sk) in sks.iter().enumerate() {
-            let vote = Vote::new_notar(slot, hash.clone(), sk, ValidatorId::new(i as u64));
+            let vote = Vote::new_notar(slot, hash.clone(), sk, ValidatorIndex::new(i as u64));
             let voter_stake = epoch_info
                 .epoch_info()
-                .validator(ValidatorId::new(i as u64))
+                .validator(ValidatorIndex::new(i as u64))
                 .stake;
             assert!(slot_state.votes.notar[i].is_none());
             slot_state.add_vote(vote.clone(), voter_stake);
@@ -672,22 +684,28 @@ mod tests {
         slot_state.notify_parent_certified(hash.clone());
 
         // 33% notar alone has no effect
-        let vote = Vote::new_notar(slot, hash.clone(), &sks[1], ValidatorId::new(1));
-        let voter_stake = epoch_info.epoch_info().validator(ValidatorId::new(1)).stake;
+        let vote = Vote::new_notar(slot, hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let voter_stake = epoch_info
+            .epoch_info()
+            .validator(ValidatorIndex::new(1))
+            .stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert!(events.is_empty());
         assert!(blocks.is_empty());
 
         // additional 33% skip should lead to safe-to-notar
-        let vote = Vote::new_skip(slot, &sks[0], ValidatorId::new(0));
-        let voter_stake = epoch_info.epoch_info().validator(ValidatorId::new(0)).stake;
+        let vote = Vote::new_skip(slot, &sks[0], ValidatorIndex::new(0));
+        let voter_stake = epoch_info
+            .epoch_info()
+            .validator(ValidatorIndex::new(0))
+            .stake;
         let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);
         assert!(blocks.is_empty());
         match &events[0] {
-            VotorEvent::SafeToNotar(s, h) => {
+            PoolEvent::SafeToNotar(s, h) => {
                 assert_eq!(*s, slot);
                 assert_eq!(*h, hash);
             }

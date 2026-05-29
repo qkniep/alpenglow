@@ -10,30 +10,39 @@ use alpenglow::consensus::{ConsensusMessage, EpochInfo, ValidatorEpochInfo};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
-use alpenglow::disseminator::rotor::StakeWeightedSampler;
+use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
-use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
-use color_eyre::Result;
+use alpenglow::{Alpenglow, Stake, Transaction, ValidatorIndex, ValidatorInfo, logging};
+use anyhow::Result;
+use clap::Parser;
 use log::info;
 
+/// Alpenglow performance test with simulated network.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Args {
+    /// Duration of the performance test in seconds.
+    #[arg(long, default_value_t = 60)]
+    duration_secs: u64,
+}
+
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
+    let args = Args::parse();
+    logging::enable_logforth();
 
-    logging::enable_logforth_stderr();
-
-    latency_test(11).await;
+    latency_test(11, args.duration_secs).await;
 
     Ok(())
 }
 
 type TestNode = Alpenglow<
     TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>,
-    Rotor<SimulatedNetwork<Shred, Shred>, StakeWeightedSampler>,
+    Rotor<SimulatedNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>,
     UdpNetwork<Transaction, Transaction>,
 >;
 
@@ -42,10 +51,10 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let mut tx_receivers = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect::<VecDeque<_>>();
-    let mut repair_networks = (0..count)
+    let mut repair_requester_networks = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect::<VecDeque<_>>();
-    let mut repair_request_networks = (0..count)
+    let mut repair_responder_networks = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect::<VecDeque<_>>();
 
@@ -54,48 +63,48 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let mut all2all_networks = VecDeque::new();
     let mut disseminator_networks = VecDeque::new();
     for i in 0..count {
-        all2all_networks.push_back(core.join_unlimited(ValidatorId::new(i)).await);
-        disseminator_networks.push_back(core.join_unlimited(ValidatorId::new(i + count)).await);
+        all2all_networks.push_back(core.join_unlimited(ValidatorIndex::new(i)).await);
+        disseminator_networks.push_back(core.join_unlimited(ValidatorIndex::new(i + count)).await);
     }
 
     for a in 0..count {
         for b in 0..count {
             if a < 6 && b < 6 {
                 core.set_latency(
-                    ValidatorId::new(a),
-                    ValidatorId::new(b),
+                    ValidatorIndex::new(a),
+                    ValidatorIndex::new(b),
                     Duration::from_millis(20),
                 )
                 .await;
                 core.set_latency(
-                    ValidatorId::new(a + count),
-                    ValidatorId::new(b + count),
+                    ValidatorIndex::new(a + count),
+                    ValidatorIndex::new(b + count),
                     Duration::from_millis(20),
                 )
                 .await;
             } else if (6..10).contains(&a) && (6..10).contains(&b) {
                 core.set_latency(
-                    ValidatorId::new(a),
-                    ValidatorId::new(b),
+                    ValidatorIndex::new(a),
+                    ValidatorIndex::new(b),
                     Duration::from_millis(60),
                 )
                 .await;
                 core.set_latency(
-                    ValidatorId::new(a + count),
-                    ValidatorId::new(b + count),
+                    ValidatorIndex::new(a + count),
+                    ValidatorIndex::new(b + count),
                     Duration::from_millis(60),
                 )
                 .await;
             } else {
                 core.set_latency(
-                    ValidatorId::new(a),
-                    ValidatorId::new(b),
+                    ValidatorIndex::new(a),
+                    ValidatorIndex::new(b),
                     Duration::from_millis(100),
                 )
                 .await;
                 core.set_latency(
-                    ValidatorId::new(a + count),
-                    ValidatorId::new(b + count),
+                    ValidatorIndex::new(a + count),
+                    ValidatorIndex::new(b + count),
                     Duration::from_millis(100),
                 )
                 .await;
@@ -113,17 +122,19 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr((id).try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
-        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
-        let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let repair_requester_address =
+            localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
+        let repair_responder_address =
+            localhost_ip_sockaddr(repair_responder_networks[id as usize].port());
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(id),
+            id: ValidatorIndex::new(id),
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address,
             disseminator_address,
-            repair_request_address,
-            repair_response_address,
+            repair_requester_address,
+            repair_responder_address,
         });
     }
 
@@ -139,25 +150,24 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator_networks.pop_front().unwrap(),
                 epoch_info.clone(),
             );
-            let repair_network = repair_networks.pop_front().unwrap();
-            let repair_request_network = repair_request_networks.pop_front().unwrap();
+            let repair_requester_network = repair_requester_networks.pop_front().unwrap();
+            let repair_responder_network = repair_responder_networks.pop_front().unwrap();
             let txs_receiver = tx_receivers.pop_front().unwrap();
             Alpenglow::new(
-                sks[v.id.as_index()].clone(),
-                voting_sks[v.id.as_index()].clone(),
+                sks[v.id.as_usize()].clone(),
+                voting_sks[v.id.as_usize()].clone(),
                 all2all,
                 disseminator,
-                repair_network,
-                repair_request_network,
+                repair_requester_network,
+                repair_responder_network,
                 epoch_info,
                 txs_receiver,
-                None,
             )
         })
         .collect()
 }
 
-async fn latency_test(num_nodes: usize) {
+async fn latency_test(num_nodes: usize, duration_secs: u64) {
     // start `num_nodes` nodes
     let nodes = create_test_nodes(num_nodes as u64).await;
     let mut node_cancel_tokens = Vec::new();
@@ -174,7 +184,7 @@ async fn latency_test(num_nodes: usize) {
         let mut finalized = vec![Slot::new(0); pools.len()];
         let mut times = vec![Instant::now(); pools.len()];
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
             for (i, pool) in pools.iter().enumerate() {
                 if cancel_tokens[i].is_cancelled() {
                     continue;
@@ -195,8 +205,7 @@ async fn latency_test(num_nodes: usize) {
     });
 
     // let it run for a while
-    let delay = tokio::time::Duration::from_secs(60);
-    tokio::time::sleep(delay).await;
+    tokio::time::sleep(Duration::from_secs(duration_secs)).await;
 
     liveness_tester.abort();
     assert!(liveness_tester.await.unwrap_err().is_cancelled());
