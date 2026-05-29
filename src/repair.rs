@@ -509,8 +509,9 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
+        let (exec_tx, _exec_rx) = tokio::sync::mpsc::channel(100);
         let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx, exec_tx)));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);

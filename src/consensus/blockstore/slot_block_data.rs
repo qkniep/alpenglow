@@ -13,9 +13,10 @@ use thiserror::Error;
 
 use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
+use crate::execution::{InProgressBlock, SliceEvent};
 use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
 use crate::types::{ReconstructedSlice, SliceIndex};
-use crate::{Block, Slot};
+use crate::{Block, Slot, Transaction};
 
 /// Errors that may be encountered when adding a shred.
 ///
@@ -30,6 +31,14 @@ pub enum AddShredError {
     #[error("shred was invalid and leader did not equivocate")]
     InvalidShred,
 }
+
+/// Outcome of adding a shred.
+///
+/// The optional [`BlockstoreEvent`] drives the voting path (forwarded to Votor).
+/// The [`SliceEvent`]s carry the block's transactions for the execution engine;
+/// they are non-empty only on the shred that completes a block (in slice order),
+/// and the blockstore forwards them only on the dissemination path.
+type AddShredOk = (Option<BlockstoreEvent>, Vec<SliceEvent>);
 
 /// Holds all data corresponding to any blocks for a single slot.
 pub(super) struct SlotBlockData {
@@ -63,7 +72,7 @@ impl SlotBlockData {
         &mut self,
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+    ) -> Result<AddShredOk, AddShredError> {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
             debug!("received shred from misbehaving leader, not adding to blockstore");
@@ -88,12 +97,13 @@ impl SlotBlockData {
         hash: BlockHash,
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+    ) -> Result<AddShredOk, AddShredError> {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
+        let slot = self.slot;
         let block_data = self
             .repaired
-            .entry(hash)
-            .or_insert_with(|| BlockData::new(self.slot));
+            .entry(hash.clone())
+            .or_insert_with(|| BlockData::new_repaired(slot, hash));
         block_data
             .add_shred(shred, shredder)
             .inspect_err(|err| match err {
@@ -122,14 +132,23 @@ enum ReconstructBlockResult {
     /// Encountered an error reconstructing the block.
     Error,
     /// Block successfully reconstructed.
-    /// [`BlockInfo`] describing the block is returned.
-    Complete(BlockInfo),
+    ///
+    /// Returns the [`BlockInfo`] describing the block, plus one [`SliceEvent`]
+    /// per slice (in slice-index order) carrying that slice's transactions for
+    /// the execution engine.
+    Complete(BlockInfo, Vec<SliceEvent>),
 }
 
 /// Holds all data corresponding to a single block.
 pub(super) struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
+    /// Identifier handed to the execution engine for this block's slices.
+    ///
+    /// [`InProgressBlock::Pending`] for the disseminated spot (hash unknown
+    /// while streaming) and [`InProgressBlock::Known`] for repaired spots (hash
+    /// known upfront).
+    exec_id: InProgressBlock,
     /// Potentially completely restored block.
     pub(super) completed: Option<(BlockHash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
@@ -145,10 +164,20 @@ pub(super) struct BlockData {
 }
 
 impl BlockData {
-    /// Create a new spot for storing data of a single block.
+    /// Creates a new spot for a block arriving via dissemination (hash unknown).
     pub(super) fn new(slot: Slot) -> Self {
+        Self::with_exec_id(slot, InProgressBlock::Pending(slot))
+    }
+
+    /// Creates a new spot for a block arriving via repair under a known `hash`.
+    pub(super) fn new_repaired(slot: Slot, hash: BlockHash) -> Self {
+        Self::with_exec_id(slot, InProgressBlock::Known((slot, hash)))
+    }
+
+    fn with_exec_id(slot: Slot, exec_id: InProgressBlock) -> Self {
         Self {
             slot,
+            exec_id,
             completed: None,
             shreds: BTreeMap::new(),
             slices: BTreeMap::new(),
@@ -162,7 +191,7 @@ impl BlockData {
         &mut self,
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+    ) -> Result<AddShredOk, AddShredError> {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
 
@@ -179,7 +208,7 @@ impl BlockData {
         &mut self,
         validated_shred: ValidatedShred,
         shredder: &mut RegularShredder,
-    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+    ) -> Result<AddShredOk, AddShredError> {
         let header = &validated_shred.payload().header;
         debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
@@ -224,19 +253,22 @@ impl BlockData {
         slice_shreds[*shred_index] = Some(validated_shred);
 
         if is_first_shred {
-            return Ok(Some(BlockstoreEvent::FirstShred(self.slot)));
+            return Ok((Some(BlockstoreEvent::FirstShred(self.slot)), Vec::new()));
         }
 
         match self.try_reconstruct_slice(slice_index, shredder) {
-            ReconstructSliceResult::NoAction => Ok(None),
+            ReconstructSliceResult::NoAction => Ok((None, Vec::new())),
             ReconstructSliceResult::Error => Err(AddShredError::InvalidShred),
             ReconstructSliceResult::Complete => match self.try_reconstruct_block() {
-                ReconstructBlockResult::NoAction => Ok(None),
+                ReconstructBlockResult::NoAction => Ok((None, Vec::new())),
                 ReconstructBlockResult::Error => Err(AddShredError::InvalidShred),
-                ReconstructBlockResult::Complete(block_info) => Ok(Some(BlockstoreEvent::Block {
-                    slot: self.slot,
-                    block_info,
-                })),
+                ReconstructBlockResult::Complete(block_info, slices) => Ok((
+                    Some(BlockstoreEvent::Block {
+                        slot: self.slot,
+                        block_info,
+                    }),
+                    slices,
+                )),
             },
         }
     }
@@ -316,7 +348,9 @@ impl BlockData {
         let mut parent = first_slice.parent.clone().unwrap();
         let mut parent_switched = false;
 
-        let mut transactions = vec![];
+        // Decode each slice's transactions once, both to validate the payload and
+        // to hand the transactions to the execution engine via `SliceEvent`s.
+        let mut slice_events = Vec::with_capacity(self.slices.len());
         for (ind, slice) in &self.slices {
             // handle optimistic handover
             if !ind.is_first()
@@ -334,14 +368,23 @@ impl BlockData {
                 parent = new_parent;
             }
 
-            let mut txs = match wincode::deserialize(&slice.data) {
+            let transactions: Vec<Transaction> = match wincode::deserialize(&slice.data) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("decoding slice {ind} failed with {err:?}");
                     return ReconstructBlockResult::Error;
                 }
             };
-            transactions.append(&mut txs);
+            slice_events.push(SliceEvent {
+                id: self.exec_id.clone(),
+                is_last: slice.is_last,
+                parent: None,
+                transactions,
+            });
+        }
+        // The first slice carries the resolved (post-handover) parent for the engine.
+        if let Some(first) = slice_events.first_mut() {
+            first.parent = Some(parent.clone());
         }
 
         let block = Block {
@@ -349,7 +392,9 @@ impl BlockData {
             hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
-            _transactions: transactions,
+            // Transactions are forwarded to the execution engine via `slice_events`
+            // instead of being retained here (the field is otherwise unused).
+            _transactions: Vec::new(),
         };
         let block_info = BlockInfo::from(&block);
         self.completed = Some((block_hash, block));
@@ -359,7 +404,7 @@ impl BlockData {
             self.slices.remove(&slice_index);
         }
 
-        ReconstructBlockResult::Complete(block_info)
+        ReconstructBlockResult::Complete(block_info, slice_events)
     }
 }
 
@@ -381,10 +426,10 @@ mod tests {
         let mut events = vec![];
         for shred in shreds {
             match block_data.add_shred(shred, &mut shredder) {
-                Ok(Some(event)) => {
+                Ok((Some(event), _slices)) => {
                     events.push(event);
                 }
-                Ok(None) | Err(AddShredError::Duplicate) => (),
+                Ok((None, _)) | Err(AddShredError::Duplicate) => (),
                 Err(err) => return (events, Err(err)),
             }
         }
@@ -413,7 +458,7 @@ mod tests {
         let shreds = shredder.shred(slices[0].clone(), &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
-            if let Some(event) = block_data.add_shred(shred, &mut shredder).unwrap() {
+            if let (Some(event), _slices) = block_data.add_shred(shred, &mut shredder).unwrap() {
                 events.push(event);
             }
         }

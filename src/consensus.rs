@@ -25,6 +25,7 @@ mod pool;
 mod vote;
 mod votor;
 
+use std::collections::BTreeMap;
 use std::marker::{Send, Sync};
 use std::num::NonZeroU64;
 use std::sync::Arc;
@@ -33,7 +34,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use static_assertions::const_assert;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -49,11 +50,12 @@ pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, 
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
+use crate::execution::{DummyExecution, ExecutionEngine, ExecutionEvent, ExecutionInput};
 use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, BlockId, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 pub const DELTA: Duration = Duration::from_millis(250);
@@ -123,6 +125,8 @@ where
     cancel_token: CancellationToken,
     /// Votor task handle.
     votor_handle: tokio::task::JoinHandle<()>,
+    /// Execution engine task handle.
+    execution_handle: tokio::task::JoinHandle<()>,
 }
 
 impl<A, D, T> Alpenglow<A, D, T>
@@ -155,10 +159,14 @@ where
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
         let (pool_tx, pool_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
+        // Execution feed: the blockstore streams reconstructed blocks to the
+        // engine, which reports results back on its own event channel.
+        let (exec_tx, exec_rx) = mpsc::channel(1024);
+        let (exec_event_tx, exec_event_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
         let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx, exec_tx)));
 
         let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
             epoch_info.clone(),
@@ -212,6 +220,21 @@ where
             DELTA_FIRST_SLICE,
         ));
 
+        // Always-on execution engine. `DummyExecution` does minimal work (counts
+        // transactions and folds a rolling state hash) so it stays out of the way
+        // of consensus measurements; swap the engine here to plug in a real one.
+        let execution = DummyExecution::new(exec_event_tx);
+        let execution_handle = tokio::spawn(
+            execution_loop(
+                execution,
+                exec_rx,
+                exec_event_rx,
+                pool.clone(),
+                cancel_token.clone(),
+            )
+            .in_span(Span::enter_with_local_parent("execution loop")),
+        );
+
         Self {
             epoch_info,
             blockstore,
@@ -221,6 +244,7 @@ where
             disseminator,
             cancel_token,
             votor_handle,
+            execution_handle,
         }
     }
 
@@ -250,6 +274,7 @@ where
 
         node.cancel_token.cancelled().await;
         node.votor_handle.abort();
+        node.execution_handle.abort();
         msg_loop.abort();
         standstill_loop.abort();
         prod_loop.abort();
@@ -361,5 +386,89 @@ where
             guard.add_block(block_id, block_info.parent).await;
         }
         Ok(())
+    }
+}
+
+/// Drives an [`ExecutionEngine`] from the blockstore's execution feed.
+///
+/// Consumes [`ExecutionInput`]s emitted by the blockstore (per-slice transactions
+/// followed by a completion marker), drives the engine through its
+/// `begin_block` / `execute_transactions` / `end_block` lifecycle, and drains the
+/// engine's [`ExecutionEvent`]s. Execution heads are pruned by calling `finalize`
+/// as the [`Pool`] advances its finalized slot.
+///
+/// The loop is decoupled from voting: it observes blocks but never feeds back
+/// into consensus, so execution stays out of the way of consensus measurements.
+async fn execution_loop<E: ExecutionEngine>(
+    mut engine: E,
+    mut exec_rx: mpsc::Receiver<ExecutionInput>,
+    mut event_rx: mpsc::Receiver<ExecutionEvent>,
+    pool: SharedPool,
+    cancel_token: CancellationToken,
+) {
+    // Most recently executed block per slot, so `finalize` gets a real block id.
+    let mut executed: BTreeMap<Slot, BlockId> = BTreeMap::new();
+    let mut finalized_slot = Slot::genesis();
+    let mut prune_tick = tokio::time::interval(DELTA_BLOCK);
+
+    loop {
+        tokio::select! {
+            input = exec_rx.recv() => {
+                let Some(input) = input else { break };
+                match input {
+                    ExecutionInput::Slice(slice) => {
+                        // `slice.id` is `Pending(slot)` for dissemination and
+                        // `Known(block_id)` for repair.
+                        // The first slice of a block carries the resolved parent.
+                        if slice.parent.is_some() {
+                            engine.begin_block(slice.id.clone(), slice.parent);
+                        }
+                        engine.execute_transactions(slice.id, slice.transactions);
+                    }
+                    ExecutionInput::Complete { block_id } => {
+                        engine.end_block(block_id.clone());
+                        executed.insert(block_id.0, block_id);
+                    }
+                }
+                // Drain engine results promptly so its event channel cannot fill.
+                while let Ok(event) = event_rx.try_recv() {
+                    log_execution_event(&event);
+                }
+            }
+            _ = prune_tick.tick() => {
+                let slot = pool.read().await.finalized_slot();
+                if slot > finalized_slot {
+                    finalized_slot = slot;
+                    // Finalizing the highest executed block at or below `slot`
+                    // prunes all older execution heads.
+                    if let Some((_, block_id)) = executed.range(..=slot).next_back() {
+                        engine.finalize(block_id.clone());
+                    }
+                    executed.retain(|s, _| *s > slot);
+                }
+            }
+            () = cancel_token.cancelled() => break,
+        }
+    }
+}
+
+/// Logs the outcome reported by the execution engine for a block.
+fn log_execution_event(event: &ExecutionEvent) {
+    match event {
+        ExecutionEvent::BlockExecuted { block_id, result } => {
+            debug!(
+                "executed block {} in slot {} ({} transactions)",
+                block_id.1.short_hex(),
+                block_id.0,
+                result.tx_count,
+            );
+        }
+        ExecutionEvent::BlockFailed { block_id, error } => {
+            warn!(
+                "execution failed for block {} in slot {}: {error:?}",
+                block_id.1.short_hex(),
+                block_id.0,
+            );
+        }
     }
 }
