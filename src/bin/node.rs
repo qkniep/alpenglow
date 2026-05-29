@@ -101,8 +101,8 @@ fn create_node(config: ConfigFile) -> Node {
     let all2all = TrivialAll2All::new(config.gossip, network);
     let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
-    let repair_network = UdpNetwork::new(start_port + 2);
-    let repair_request_network = UdpNetwork::new(start_port + 3);
+    let repair_request_network = UdpNetwork::new(start_port + 2);
+    let repair_network = UdpNetwork::new(start_port + 3);
     let txs_receiver = UdpNetwork::new(start_port + 4);
     Alpenglow::new(
         config.identity_key,
