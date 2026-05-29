@@ -22,6 +22,8 @@ mod blockstore;
 mod cert;
 mod epoch_info;
 mod pool;
+mod validated_cert;
+mod validated_vote;
 mod vote;
 mod votor;
 
@@ -45,6 +47,8 @@ pub use self::blockstore::{
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
+pub use self::validated_cert::{CertVerifyError, ValidatedCert};
+pub use self::validated_vote::{ValidatedVote, VoteVerifyError};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
@@ -314,18 +318,42 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: ConsensusMessage) {
         trace!("received all2all msg: {msg:?}");
+
+        // Verify signatures (plus signer/threshold sanity) *before* taking the
+        // pool lock, mirroring the `ValidatedShred` pattern on the shred path.
+        // This keeps the expensive BLS work off the critical section, so that
+        // `Pool::add_vote`/`add_cert` only have to merge into per-slot state.
+        let epoch_info = self.epoch_info.epoch_info();
         match msg {
-            ConsensusMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
-                Ok(()) => {}
-                Err(AddVoteError::Slashable(offence)) => {
-                    warn!("slashable offence detected: {offence}");
+            ConsensusMessage::Vote(v) => {
+                let vote = match ValidatedVote::try_new(v, epoch_info) {
+                    Ok(vote) => vote,
+                    Err(err) => {
+                        trace!("ignoring invalid vote: {err}");
+                        return;
+                    }
+                };
+                match self.pool.write().await.add_vote(vote).await {
+                    Ok(()) => {}
+                    Err(AddVoteError::Slashable(offence)) => {
+                        warn!("slashable offence detected: {offence}");
+                    }
+                    Err(err) => trace!("ignoring invalid vote: {err}"),
                 }
-                Err(err) => trace!("ignoring invalid vote: {err}"),
-            },
-            ConsensusMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
-                Ok(()) => {}
-                Err(err) => trace!("ignoring invalid cert: {err}"),
-            },
+            }
+            ConsensusMessage::Cert(c) => {
+                let cert = match ValidatedCert::try_new(c, epoch_info) {
+                    Ok(cert) => cert,
+                    Err(err) => {
+                        trace!("ignoring invalid cert: {err}");
+                        return;
+                    }
+                };
+                match self.pool.write().await.add_cert(cert).await {
+                    Ok(()) => {}
+                    Err(err) => trace!("ignoring invalid cert: {err}"),
+                }
+            }
         }
     }
 
