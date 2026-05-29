@@ -51,7 +51,7 @@ use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
 use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
-use crate::shred_verifier::{NUM_VERIFY_WORKERS, ShredVerifier};
+use crate::shred_verifier::{MAX_CONCURRENT_VERIFICATIONS, ShredVerifier};
 use crate::shredder::ValidatedShred;
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
@@ -205,8 +205,11 @@ where
 
         let disseminator = Arc::new(disseminator);
 
-        let (shred_verifier, validated_shreds_rx) =
-            ShredVerifier::spawn(NUM_VERIFY_WORKERS, epoch_info.clone(), cancel_token.clone());
+        let (shred_verifier, validated_shreds_rx) = ShredVerifier::spawn(
+            MAX_CONCURRENT_VERIFICATIONS,
+            epoch_info.clone(),
+            cancel_token.clone(),
+        );
         let shred_verifier = Arc::new(shred_verifier);
 
         let block_producer = Arc::new(BlockProducer::new(
@@ -281,9 +284,16 @@ where
         prod_loop.abort();
 
         let (msg_res, validated_res, prod_res) = tokio::join!(msg_loop, validated_loop, prod_loop);
-        msg_res??;
-        validated_res??;
-        prod_res??;
+        // The loops are aborted above once the cancel token fires, so a
+        // `JoinError::Cancelled` is the expected clean-shutdown outcome; only a
+        // task's own error or a genuine panic should propagate.
+        for res in [msg_res, validated_res, prod_res] {
+            match res {
+                Ok(inner) => inner?,
+                Err(err) if err.is_cancelled() => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
         Ok(())
     }
 

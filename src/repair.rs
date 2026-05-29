@@ -384,7 +384,7 @@ where
                 let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
+                let leader_pk = self.epoch_info.leader_pubkey(*slot);
                 let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
