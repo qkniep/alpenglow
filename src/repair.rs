@@ -9,7 +9,7 @@
 //! Each repair response is accompanied by a Merkle proof and can thus be
 //! individually verified.
 
-use std::collections::{BTreeMap, BinaryHeap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -30,6 +30,14 @@ use crate::{BlockId, ValidatorIndex};
 ///
 /// After a request times out we retry it from another node.
 const REPAIR_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
+
+/// How long to remember an already-answered request after its response arrives.
+///
+/// We fan each request out to several peers (see [`Repair::send_request`]) and
+/// retry on timeout, so the same request is typically answered more than once.
+/// Remembering it for this long lets us recognise those extra responses as
+/// duplicates instead of mistaking them for responses we never asked for.
+const COMPLETED_REQUEST_GRACE: Duration = REPAIR_TIMEOUT.checked_mul(2).unwrap();
 
 /// Different types of [`RepairRequest`] messages.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
@@ -216,6 +224,12 @@ pub struct Repair<N: Network> {
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
     request_timeouts: BinaryHeap<(Instant, Hash)>,
+    /// Hashes of requests we have already received a response for, retained for
+    /// [`COMPLETED_REQUEST_GRACE`] so duplicate responses can be told apart from
+    /// responses to requests we never sent.
+    recently_completed: BTreeSet<Hash>,
+    /// Expiry queue for `recently_completed`, ordered by insertion (= expiry) time.
+    completed_expiry: VecDeque<(Instant, Hash)>,
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
@@ -243,6 +257,8 @@ where
             slice_roots: BTreeMap::new(),
             outstanding_requests: BTreeMap::new(),
             request_timeouts: BinaryHeap::new(),
+            recently_completed: BTreeSet::new(),
+            completed_expiry: VecDeque::new(),
             network,
             sampler,
             epoch_info,
@@ -306,10 +322,21 @@ where
         let request_hash = response.request_type().hash();
 
         // check whether we are (still) waiting on response to this request
-        let Some(_) = self.outstanding_requests.remove(&request_hash) else {
-            warn!("received repair response for unknown request {response:?}");
+        if self.outstanding_requests.remove(&request_hash).is_none() {
+            self.prune_completed();
+            if self.recently_completed.contains(&request_hash) {
+                // Expected: each request is fanned out to several peers and
+                // retried on timeout, so the first response clears the
+                // outstanding entry and the rest arrive as duplicates.
+                debug!(
+                    "ignoring duplicate repair response for already-answered request {response:?}"
+                );
+            } else {
+                warn!("received repair response for unknown request {response:?}");
+            }
             return;
-        };
+        }
+        self.note_completed(request_hash);
 
         match response {
             RepairResponse::Nack(req_type) => {
@@ -411,6 +438,29 @@ where
                     );
                 }
             }
+        }
+    }
+
+    /// Records that we have just received a response for `hash`, so that any
+    /// further responses for it (from the other peers it was sent to, or from
+    /// retries) can be recognised as duplicates for [`COMPLETED_REQUEST_GRACE`].
+    fn note_completed(&mut self, hash: Hash) {
+        self.prune_completed();
+        if self.recently_completed.insert(hash.clone()) {
+            let expiry = Instant::now() + COMPLETED_REQUEST_GRACE;
+            self.completed_expiry.push_back((expiry, hash));
+        }
+    }
+
+    /// Drops `recently_completed` entries whose grace period has elapsed.
+    fn prune_completed(&mut self) {
+        let now = Instant::now();
+        while let Some((expiry, _)) = self.completed_expiry.front() {
+            if *expiry > now {
+                break;
+            }
+            let (_, hash) = self.completed_expiry.pop_front().unwrap();
+            self.recently_completed.remove(&hash);
         }
     }
 
