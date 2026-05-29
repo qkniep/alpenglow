@@ -98,8 +98,8 @@ type TestNode = Alpenglow<
 struct Networks {
     all2all: UdpNetwork<ConsensusMessage, ConsensusMessage>,
     disseminator: UdpNetwork<Shred, Shred>,
-    repair: UdpNetwork<RepairRequest, RepairResponse>,
-    repair_request: UdpNetwork<RepairResponse, RepairRequest>,
+    repair_requester: UdpNetwork<RepairRequest, RepairResponse>,
+    repair_responder: UdpNetwork<RepairResponse, RepairRequest>,
     txs: UdpNetwork<Transaction, Transaction>,
 }
 
@@ -108,8 +108,8 @@ impl Networks {
         Self {
             all2all: UdpNetwork::new_with_any_port(),
             disseminator: UdpNetwork::new_with_any_port(),
-            repair: UdpNetwork::new_with_any_port(),
-            repair_request: UdpNetwork::new_with_any_port(),
+            repair_requester: UdpNetwork::new_with_any_port(),
+            repair_responder: UdpNetwork::new_with_any_port(),
             txs: UdpNetwork::new_with_any_port(),
         }
     }
@@ -134,8 +134,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr(network.all2all.port());
         let disseminator_address = localhost_ip_sockaddr(network.disseminator.port());
-        let repair_response_address = localhost_ip_sockaddr(network.repair.port());
-        let repair_request_address = localhost_ip_sockaddr(network.repair_request.port());
+        let repair_response_address = localhost_ip_sockaddr(network.repair_requester.port());
+        let repair_request_address = localhost_ip_sockaddr(network.repair_responder.port());
         validators.push(ValidatorInfo {
             id: ValidatorIndex::new(id as u64),
             stake: Stake::new(1),
@@ -158,16 +158,16 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v, shared_epoch.clone()));
             let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
             let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
-            let repair_network = network.repair;
-            let repair_request_network = network.repair_request;
+            let repair_requester_network = network.repair_requester;
+            let repair_responder_network = network.repair_responder;
             let txs_receiver = network.txs;
             Alpenglow::new(
                 sks[id].clone(),
                 voting_sks[id].clone(),
                 all2all,
                 disseminator,
-                repair_network,
-                repair_request_network,
+                repair_requester_network,
+                repair_responder_network,
                 epoch_info,
                 txs_receiver,
             )

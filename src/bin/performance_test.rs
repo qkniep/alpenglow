@@ -51,10 +51,10 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let mut tx_receivers = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect::<VecDeque<_>>();
-    let mut repair_networks = (0..count)
+    let mut repair_requester_networks = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect::<VecDeque<_>>();
-    let mut repair_request_networks = (0..count)
+    let mut repair_responder_networks = (0..count)
         .map(|_| UdpNetwork::new_with_any_port())
         .collect::<VecDeque<_>>();
 
@@ -122,8 +122,10 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address = localhost_ip_sockaddr((id).try_into().unwrap());
         let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
-        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
-        let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let repair_request_address =
+            localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
+        let repair_response_address =
+            localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
         validators.push(ValidatorInfo {
             id: ValidatorIndex::new(id),
             stake: Stake::new(1),
@@ -148,16 +150,16 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 disseminator_networks.pop_front().unwrap(),
                 epoch_info.clone(),
             );
-            let repair_network = repair_networks.pop_front().unwrap();
-            let repair_request_network = repair_request_networks.pop_front().unwrap();
+            let repair_requester_network = repair_requester_networks.pop_front().unwrap();
+            let repair_responder_network = repair_responder_networks.pop_front().unwrap();
             let txs_receiver = tx_receivers.pop_front().unwrap();
             Alpenglow::new(
                 sks[v.id.as_usize()].clone(),
                 voting_sks[v.id.as_usize()].clone(),
                 all2all,
                 disseminator,
-                repair_network,
-                repair_request_network,
+                repair_requester_network,
+                repair_responder_network,
                 epoch_info,
                 txs_receiver,
             )

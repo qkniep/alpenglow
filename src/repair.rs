@@ -21,7 +21,7 @@ use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
+use crate::network::{Network, RepairRequesterNetwork, RepairResponderNetwork};
 use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorIndex};
@@ -108,7 +108,7 @@ pub struct RepairRequestHandler<N: Network> {
 
 impl<N> RepairRequestHandler<N>
 where
-    N: RepairRequestNetwork,
+    N: RepairResponderNetwork,
 {
     /// Creates a new repair request handler instance.
     ///
@@ -223,7 +223,7 @@ pub struct Repair<N: Network> {
 
 impl<N> Repair<N>
 where
-    N: RepairNetwork,
+    N: RepairRequesterNetwork,
 {
     /// Creates a new repair instance.
     ///
@@ -499,10 +499,10 @@ mod tests {
         validators[1].repair_response_address = localhost_ip_sockaddr(3);
 
         let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
-        let v0_repair_request_network = core.join_unlimited(ValidatorIndex::new(0)).await;
-        let v0_repair_network = core.join_unlimited(ValidatorIndex::new(1)).await;
-        let v1_repair_request_network = core.join_unlimited(ValidatorIndex::new(2)).await;
-        let v1_repair_network = core.join_unlimited(ValidatorIndex::new(3)).await;
+        let v0_repair_responder_network = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let v0_repair_requester_network = core.join_unlimited(ValidatorIndex::new(1)).await;
+        let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(2)).await;
+        let v1_repair_requester_network = core.join_unlimited(ValidatorIndex::new(3)).await;
 
         let epoch_info = EpochInfo::new(validators);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
@@ -525,7 +525,7 @@ mod tests {
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             pool,
-            v1_repair_network,
+            v1_repair_requester_network,
             epoch_info.clone(),
         );
         tokio::spawn(async move {
@@ -535,15 +535,15 @@ mod tests {
             drop(pool_rx);
         });
         let repair_request_handler =
-            RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_request_network);
+            RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_responder_network);
         tokio::spawn(async move {
             repair_request_handler.run().await;
         });
         TestContext {
             repair_tx,
             blockstore,
-            v0_request_net: v0_repair_request_network,
-            v0_reply_net: v0_repair_network,
+            v0_request_net: v0_repair_responder_network,
+            v0_reply_net: v0_repair_requester_network,
             leader_sk: leader_key,
         }
     }
