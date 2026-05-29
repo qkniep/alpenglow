@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
 
 use crate::crypto::Hash;
 use crate::crypto::hash::hash_all;
-use crate::crypto::merkle::GENESIS_BLOCK_HASH;
+use crate::crypto::merkle::{GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::{BlockId, Slot, Transaction};
 
 /// Identifies a block that is currently being executed.

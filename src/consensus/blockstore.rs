@@ -17,6 +17,7 @@ pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
+use crate::execution::{ExecutionInput, SliceEvent};
 use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
@@ -107,6 +108,12 @@ pub struct BlockstoreImpl {
     shredders: ShredderPool<RegularShredder>,
     /// Event channel for sending notifications to Votor.
     votor_channel: Sender<BlockstoreEvent>,
+    /// Channel feeding reconstructed blocks to the execution engine.
+    ///
+    /// Decoupled from `votor_channel`: execution observes blocks but never
+    /// gates voting. Fed only on the dissemination path; see
+    /// [`Self::feed_execution`].
+    exec_channel: Sender<ExecutionInput>,
 }
 
 impl BlockstoreImpl {
@@ -117,11 +124,18 @@ impl BlockstoreImpl {
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
     /// - [`BlockstoreEvent::InvalidBlock`] if leader misbehavior is detected for a block
-    pub fn new(votor_channel: Sender<BlockstoreEvent>) -> Self {
+    ///
+    /// Reconstructed blocks are also fed to `exec_channel` for the execution
+    /// engine; see [`Self::feed_execution`].
+    pub fn new(
+        votor_channel: Sender<BlockstoreEvent>,
+        exec_channel: Sender<ExecutionInput>,
+    ) -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
             votor_channel,
+            exec_channel,
         }
     }
 
@@ -149,6 +163,33 @@ impl BlockstoreImpl {
 
                 Some(block_info)
             }
+        }
+    }
+
+    /// Feeds a freshly reconstructed block to the execution engine.
+    ///
+    /// Sends one [`ExecutionInput::Slice`] per slice (in slice-index order),
+    /// followed by an [`ExecutionInput::Complete`] once the block hash is known.
+    /// `slices` is non-empty (and `event` is [`BlockstoreEvent::Block`]) exactly
+    /// when this shred completed the block.
+    ///
+    /// Execution is observational, so a closed channel (engine shut down) is
+    /// ignored rather than panicking the consensus loop.
+    async fn feed_execution(
+        &self,
+        slot: Slot,
+        event: &Option<BlockstoreEvent>,
+        slices: Vec<SliceEvent>,
+    ) {
+        for slice in slices {
+            let _ = self.exec_channel.send(ExecutionInput::Slice(slice)).await;
+        }
+        if let Some(BlockstoreEvent::Block { block_info, .. }) = event {
+            let block_id = (slot, block_info.hash.clone());
+            let _ = self
+                .exec_channel
+                .send(ExecutionInput::Complete { block_id })
+                .await;
         }
     }
 
@@ -249,18 +290,22 @@ impl Blockstore for BlockstoreImpl {
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self
+        let (event, slices) = match self
             .slot_data_mut(slot)
             .add_shred_from_dissemination(shred, &mut shredder)
         {
-            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
-            Ok(None) => Ok(None),
+            Ok(ok) => ok,
             Err(AddShredError::InvalidShred) => {
                 self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
                     .await;
-                Err(AddShredError::InvalidShred)
+                return Err(AddShredError::InvalidShred);
             }
-            Err(e) => Err(e),
+            Err(e) => return Err(e),
+        };
+        self.feed_execution(slot, &event, slices).await;
+        match event {
+            Some(event) => Ok(self.send_blockstore_event(event).await),
+            None => Ok(None),
         }
     }
 
@@ -288,10 +333,12 @@ impl Blockstore for BlockstoreImpl {
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self
-            .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, &mut shredder)?
-        {
+        // The repair path does not feed execution: the engine streams blocks
+        // from dissemination only, so the reconstructed slices are dropped here.
+        let (event, _slices) =
+            self.slot_data_mut(slot)
+                .add_shred_from_repair(hash, shred, &mut shredder)?;
+        match event {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
         }
@@ -390,16 +437,20 @@ mod tests {
         sk: SecretKey,
         blockstore: BlockstoreImpl,
         _rx: mpsc::Receiver<BlockstoreEvent>,
+        // Kept alive so the execution feed channel stays open during the test.
+        _exec_rx: mpsc::Receiver<ExecutionInput>,
     }
 
     fn setup() -> TestContext {
         let sk = SecretKey::new(&mut rand::rng());
         let (tx, _rx) = mpsc::channel(1000);
-        let blockstore = BlockstoreImpl::new(tx);
+        let (exec_tx, _exec_rx) = mpsc::channel(1000);
+        let blockstore = BlockstoreImpl::new(tx, exec_tx);
         TestContext {
             sk,
             blockstore,
             _rx,
+            _exec_rx,
         }
     }
 
