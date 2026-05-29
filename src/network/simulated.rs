@@ -17,7 +17,9 @@
 //! - [`stake_distribution`] for working with the Solana mainnet stake distribution.
 
 mod core;
+#[cfg(any(test, feature = "simulations"))]
 pub mod ping_data;
+#[cfg(any(test, feature = "simulations"))]
 pub mod stake_distribution;
 mod token_bucket;
 
