@@ -175,18 +175,19 @@ pub trait ExecutionEngine {
 struct BlockExec {
     /// Number of transactions executed so far for this block.
     tx_count: usize,
-    /// Rolling state hash: seeded from the parent block hash and chained over
-    /// each executed transaction. This is the post-state root this node computed.
+    /// Rolling state hash: seeded from the parent's computed state hash (or the
+    /// parent block hash / genesis as a fallback) and chained over each executed
+    /// transaction. This is the post-state root this node computed.
     state_hash: Hash,
 }
 
 /// Placeholder execution engine that counts transactions and chains a state hash.
 ///
 /// Tracks, per in-flight block, the running transaction count and a rolling
-/// state hash (seeded from the parent block hash and folded over each executed
-/// transaction). Emits an [`ExecutionEvent`] carrying both when a block is
-/// completed via [`end_block`](ExecutionEngine::end_block). Does not perform any
-/// real state transitions, and does not validate the computed root.
+/// state hash (seeded from the parent's computed state hash and folded over each
+/// executed transaction). Emits an [`ExecutionEvent`] carrying both when a block
+/// is completed via [`end_block`](ExecutionEngine::end_block). Does not perform
+/// any real state transitions, and does not validate the computed root.
 pub struct DummyExecution {
     /// Per-block execution state for each in-flight block.
     blocks: BTreeMap<InProgressBlock, BlockExec>,
@@ -217,10 +218,26 @@ impl ExecutionEngine for DummyExecution {
                 debug!("begin block in slot {slot} (hash {hash:?}) on parent {parent:?}");
             }
         }
+        // Seed from the parent's *computed* state hash, so divergence in the
+        // parent's execution propagates into every descendant root, the way a
+        // real state root compounds upstream changes forward. Fall back to the
+        // consensus-agreed parent block hash (or genesis) when we haven't
+        // executed the parent ourselves: cold start, repair, or a parent
+        // already pruned by finalization.
         let state_hash = parent
-            .map_or(GENESIS_BLOCK_HASH, |(_, block_hash)| block_hash)
-            .as_hash()
-            .clone();
+            .as_ref()
+            .and_then(|p| {
+                self.blocks
+                    .get(&InProgressBlock::Known(p.clone()))
+                    .or_else(|| self.blocks.get(&InProgressBlock::Pending(p.0)))
+            })
+            .map(|exec| exec.state_hash.clone())
+            .unwrap_or_else(|| {
+                parent
+                    .map_or(GENESIS_BLOCK_HASH, |(_, block_hash)| block_hash)
+                    .as_hash()
+                    .clone()
+            });
         self.blocks.insert(
             id,
             BlockExec {
@@ -475,5 +492,40 @@ mod tests {
         let root_a = report_root(&mut engine, 1, vec![1], &mut rx);
         let root_b = report_root(&mut engine, 2, vec![2], &mut rx);
         assert_ne!(root_a, root_b);
+    }
+
+    #[test]
+    fn parent_state_divergence_propagates_to_child() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        // Execute a parent (with `parent_tx`), then an identical child on top.
+        let child_root = |engine: &mut DummyExecution,
+                          parent_slot,
+                          parent_tx,
+                          child_slot,
+                          rx: &mut mpsc::Receiver<_>| {
+            let parent = InProgressBlock::Pending(Slot::new(parent_slot));
+            engine.begin_block(parent.clone(), None);
+            engine.execute_transactions(parent, vec![Transaction(parent_tx)]);
+            engine.end_block(block_id(parent_slot));
+            rx.try_recv().unwrap(); // consume the parent's event
+
+            let child = InProgressBlock::Pending(Slot::new(child_slot));
+            engine.begin_block(child.clone(), Some(block_id(parent_slot)));
+            engine.execute_transactions(child, vec![Transaction(vec![7])]);
+            engine.end_block(block_id(child_slot));
+            let ExecutionEvent::BlockExecuted { result, .. } = rx.try_recv().unwrap();
+            result.expect("execution should succeed").state_hash
+        };
+
+        // The children share an identical transaction and an identical parent
+        // *block hash* (`block_id` always uses the genesis hash), but their
+        // parents executed different transactions. Seeding from the parent's
+        // computed state hash makes that upstream divergence reach the child;
+        // seeding from the parent block hash alone would collide here.
+        let child_a = child_root(&mut engine, 1, vec![1], 2, &mut rx);
+        let child_b = child_root(&mut engine, 3, vec![2], 4, &mut rx);
+        assert_ne!(child_a, child_b);
     }
 }
