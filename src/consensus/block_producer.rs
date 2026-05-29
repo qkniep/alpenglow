@@ -349,7 +349,7 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
 /// Stops if either the slice cannot fit any more transactions, or time runs out.
 ///
 /// When `reserve_handover_space` is set, space for a parent is reserved even if `parent`
-/// is [`None`], so that an optimistic [`ParentReady`] handover can later attach one without
+/// is [`None`], so that an optimistic `ParentReady` handover can later attach one without
 /// overflowing the slice. Under `FixInt` encoding every `Some(BlockId)` is the same size.
 ///
 /// Returns the completed payload and the remaining time in `duration_left`.
