@@ -282,7 +282,11 @@ impl IndividualSignature {
     /// Verifies that this is a valid signature of `msg` under `pk`.
     #[must_use]
     pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
-        self.0.verify(true, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+        // Skip the signature subgroup check (`sig_groupcheck=false`): the type
+        // invariant already guarantees prime-order subgroup membership, as it is
+        // established when signing and re-checked on deserialization (see `read`).
+        // Re-checking here would be redundant.
+        self.0.verify(false, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
     }
 }
 

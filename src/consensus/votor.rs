@@ -144,10 +144,6 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_pool_event(&mut self, event: PoolEvent) {
         let slot = event.slot();
-        // Advance the prune watermark on finalization. This runs ahead of the
-        // guard below because we retire a slot when we cast its final vote, so
-        // by the time the matching certificate returns the slot is usually
-        // already retired and would otherwise be ignored.
         if let PoolEvent::CertCreated(cert) = &event
             && matches!(cert.as_ref(), Cert::Final(_) | Cert::FastFinal(_))
         {
