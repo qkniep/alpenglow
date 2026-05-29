@@ -201,7 +201,10 @@ where
             // the confirmed parent and gets the full DELTA_BLOCK window.
             let mut handover = None;
             if is_max && let Some(rx) = parent_ready_rx.as_mut().filter(|rx| !rx.is_terminated()) {
-                handover = apply_parent_update(&parent_block_id, rx.await.unwrap());
+                // fall back to optimistic parent if sender was dropped
+                if let Ok(new_parent) = rx.await {
+                    handover = apply_parent_update(&parent_block_id, new_parent);
+                }
                 debug!("starting blocktime timer");
                 duration_left = self.delta_block;
             }
@@ -327,7 +330,6 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
     let (old_slot, old_hash) = old;
     let (new_slot, new_hash) = &new;
     if new_hash != old_hash {
-        assert_ne!(new_slot, old_slot);
         debug!(
             "changed parent from {} in slot {} to {} in slot {}",
             old_hash.short_hex(),
@@ -368,13 +370,11 @@ where
     // +8 to encode number of txs, +8 to encode tx payload length
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // reserve space for: parent info, and
-    // 8 bytes for SlicePayload::data length
-    let sizing_parent = match &parent {
-        Some(_) => parent.clone(),
-        None if reserve_handover_space => Some((Slot::genesis(), GENESIS_BLOCK_HASH)),
-        None => None,
-    };
+    // Reserve space for: parent info, and 8 bytes for SlicePayload::data length.
+    // Uses genesis as sentinel, assuming every `Some(BlockId)` is the same size.
+    // This invariant is pinned by the test `block_id_option_is_fixed_size`.
+    let sizing_parent: Option<BlockId> =
+        (parent.is_some() || reserve_handover_space).then(|| (Slot::genesis(), GENESIS_BLOCK_HASH));
     let parent_encoded_len = wincode::serialized_size(&sizing_parent).unwrap() as usize;
     let buffer_space = MAX_DATA_PER_SLICE - parent_encoded_len - 8;
     let mut buffer = Vec::<u8>::with_capacity(buffer_space);
@@ -429,11 +429,14 @@ async fn race_slice_against_parent_ready(
             (payload, Duration::MAX)
         }
         res = rx => {
-            // got ParentReady while producing this slice
+            // got ParentReady while producing this slice (or the sender was dropped)
             // start timer, accounting for time spent producing this slice
             let start = Instant::now();
             let (mut payload, _) = produce_future.await;
-            if let Some(new) = apply_parent_update(parent_block_id, res.unwrap()) {
+            // A dropped sender resolves to `Err`; keep the optimistic parent rather than panicking.
+            if let Ok(new_parent) = res
+                && let Some(new) = apply_parent_update(parent_block_id, new_parent)
+            {
                 payload.parent = Some(new);
             }
             debug!("starting blocktime timer");
@@ -611,6 +614,19 @@ mod tests {
         // attaching the handover parent after the fact must not overflow the slice
         payload.parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
         assert!(payload.to_bytes().len() <= MAX_DATA_PER_SLICE);
+    }
+
+    /// `produce_slice_payload` reserves handover space sized from a sentinel `Some(genesis)`,
+    /// relying on every `Some(BlockId)` serializing to the same length. Pin that assumption so
+    /// a future encoding change (e.g. switching to VarInt) fails here, not in production.
+    #[test]
+    fn block_id_option_is_fixed_size() {
+        let sentinel: Option<BlockId> = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
+        let other: Option<BlockId> = Some((Slot::new(12_345), Hash::random_for_test().into()));
+        assert_eq!(
+            wincode::serialized_size(&sentinel).unwrap(),
+            wincode::serialized_size(&other).unwrap(),
+        );
     }
 
     #[tokio::test]

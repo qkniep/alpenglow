@@ -33,6 +33,9 @@ use crate::{All2All, Slot, ValidatorIndex};
 pub struct Votor<A: All2All> {
     /// Per-slot voting state, keyed by slot.
     slots: BTreeMap<Slot, SlotState>,
+    /// Index of slots whose [`SlotState::pending_block`] is set, kept in sync with those
+    /// entries so [`Self::check_pending_blocks`] iterates only pending slots, not all slots.
+    pending_block_slots: BTreeSet<Slot>,
 
     /// Own validator index.
     validator_index: ValidatorIndex,
@@ -81,6 +84,7 @@ impl<A: All2All> Votor<A> {
 
         let votor = Self {
             slots,
+            pending_block_slots: BTreeSet::new(),
             validator_index,
             voting_key,
             pool_receiver,
@@ -219,6 +223,7 @@ impl<A: All2All> Votor<A> {
                     self.check_pending_blocks().await;
                 } else {
                     self.state_mut(slot).pending_block = Some(block_info);
+                    self.pending_block_slots.insert(slot);
                 }
             }
         }
@@ -312,6 +317,7 @@ impl<A: All2All> Votor<A> {
         state.voted = true;
         state.voted_notar = Some(hash.clone());
         state.pending_block = None;
+        self.pending_block_slots.remove(&slot);
         self.try_final(slot, hash).await;
         true
     }
@@ -346,12 +352,7 @@ impl<A: All2All> Votor<A> {
 
     /// Checks if we can vote on any of the pending blocks by now.
     async fn check_pending_blocks(&mut self) {
-        let slots: Vec<_> = self
-            .slots
-            .iter()
-            .filter(|(_, s)| s.pending_block.is_some())
-            .map(|(slot, _)| *slot)
-            .collect();
+        let slots: Vec<_> = self.pending_block_slots.iter().copied().collect();
         for slot in slots {
             if let Some(block_info) = self.slots.get(&slot).and_then(|s| s.pending_block.clone()) {
                 self.try_notar(slot, block_info).await;
