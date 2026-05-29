@@ -36,8 +36,8 @@ fn turbine_tree(bencher: divan::Bencher) {
                     voting_pubkey: alpenglow::crypto::aggsig::SecretKey::new(&mut rng).to_pk(),
                     all2all_address: addr,
                     disseminator_address: addr,
-                    repair_request_address: addr,
-                    repair_response_address: addr,
+                    repair_requester_address: addr,
+                    repair_responder_address: addr,
                 })
                 .collect();
             let epoch_info = EpochInfo::new(validators);
