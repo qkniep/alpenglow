@@ -5,8 +5,11 @@
 //!
 //! Sits between the network receive path and the consumers (Rotor relay
 //! forwarding, blockstore ingest). Raw [`Shred`]s are submitted via
-//! [`ShredVerifier::submit`], distributed round-robin across a fixed pool of
-//! worker tasks that run [`ValidatedShred::try_new`], and successfully
+//! [`ShredVerifier::submit`] and distributed round-robin across a fixed pool of
+//! worker tasks. Each worker runs the CPU-bound [`ValidatedShred::try_new`] on
+//! tokio's blocking pool (via [`tokio::task::spawn_blocking`]) so signature
+//! checks don't occupy the async worker threads shared with the rest of the
+//! node; concurrent verifications are bounded by the worker count. Successfully
 //! verified shreds are emitted on the receiver returned from
 //! [`ShredVerifier::spawn`]. Shreds with bad signatures are dropped silently.
 
@@ -86,10 +89,27 @@ impl ShredVerifier {
                     let Some(shred) = res else { break };
                     let slot = shred.payload().header.slot;
                     let leader_pk = epoch_info.epoch_info().leader(slot).pubkey;
-                    if let Ok(validated) = ValidatedShred::try_new(shred, None, &leader_pk)
-                        && output_tx.send(validated).await.is_err()
-                    {
-                        break;
+                    // Run the CPU-bound signature verification on the blocking pool
+                    // rather than inline, so it does not occupy tokio's async worker
+                    // threads (shared with the latency-sensitive consensus tasks).
+                    // Each worker awaits its own verification before pulling the next
+                    // shred, so the number of concurrent blocking jobs is bounded by
+                    // the worker count.
+                    let verified = tokio::task::spawn_blocking(move || {
+                        ValidatedShred::try_new(shred, None, &leader_pk).ok()
+                    })
+                    .await;
+                    match verified {
+                        // verified successfully -> forward downstream
+                        Ok(Some(validated)) => {
+                            if output_tx.send(validated).await.is_err() {
+                                break;
+                            }
+                        }
+                        // bad signature -> drop silently
+                        Ok(None) => {}
+                        // join error (panic or runtime shutdown) -> stop the worker
+                        Err(_) => break,
                     }
                 }
                 () = cancel_token.cancelled() => break,
