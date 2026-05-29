@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use quick_cache::sync::Cache;
 use rand::prelude::*;
 
-pub(crate) use self::weighted_shuffle::WeightedShuffle;
+pub use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
 use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
