@@ -111,7 +111,7 @@ pub struct BlockstoreImpl {
     /// Channel feeding reconstructed blocks to the execution engine.
     ///
     /// Decoupled from `votor_channel`: execution observes blocks but never
-    /// gates voting. Fed only on the dissemination path; see
+    /// gates voting. Fed from both the dissemination and repair paths; see
     /// [`Self::feed_execution`].
     exec_channel: Sender<ExecutionInput>,
 }
@@ -333,11 +333,13 @@ impl Blockstore for BlockstoreImpl {
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        // The repair path does not feed execution: the engine streams blocks
-        // from dissemination only, so the reconstructed slices are dropped here.
-        let (event, _slices) =
+        let (event, slices) =
             self.slot_data_mut(slot)
                 .add_shred_from_repair(hash, shred, &mut shredder)?;
+        // Repaired slices carry an `InProgressBlock::Known` id (hash known
+        // upfront), so the engine keys them separately from the dissemination
+        // path. A block that only ever completes via repair still gets executed.
+        self.feed_execution(slot, &event, slices).await;
         match event {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),

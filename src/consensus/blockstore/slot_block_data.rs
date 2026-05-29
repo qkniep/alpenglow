@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
-use crate::execution::SliceEvent;
+use crate::execution::{InProgressBlock, SliceEvent};
 use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot, Transaction};
@@ -99,10 +99,11 @@ impl SlotBlockData {
         shredder: &mut RegularShredder,
     ) -> Result<AddShredOk, AddShredError> {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
+        let slot = self.slot;
         let block_data = self
             .repaired
-            .entry(hash)
-            .or_insert_with(|| BlockData::new(self.slot));
+            .entry(hash.clone())
+            .or_insert_with(|| BlockData::new_repaired(slot, hash));
         block_data
             .add_shred(shred, shredder)
             .inspect_err(|err| match err {
@@ -142,6 +143,12 @@ enum ReconstructBlockResult {
 pub(super) struct BlockData {
     /// Slot number this block is in.
     slot: Slot,
+    /// Identifier handed to the execution engine for this block's slices.
+    ///
+    /// [`InProgressBlock::Pending`] for the disseminated spot (hash unknown
+    /// while streaming) and [`InProgressBlock::Known`] for repaired spots (hash
+    /// known upfront).
+    exec_id: InProgressBlock,
     /// Potentially completely restored block.
     pub(super) completed: Option<(BlockHash, Block)>,
     /// Any shreds of this block stored so far, indexed by slice index.
@@ -157,10 +164,20 @@ pub(super) struct BlockData {
 }
 
 impl BlockData {
-    /// Create a new spot for storing data of a single block.
+    /// Creates a new spot for a block arriving via dissemination (hash unknown).
     pub(super) fn new(slot: Slot) -> Self {
+        Self::with_exec_id(slot, InProgressBlock::Pending(slot))
+    }
+
+    /// Creates a new spot for a block arriving via repair under a known `hash`.
+    pub(super) fn new_repaired(slot: Slot, hash: BlockHash) -> Self {
+        Self::with_exec_id(slot, InProgressBlock::Known((slot, hash)))
+    }
+
+    fn with_exec_id(slot: Slot, exec_id: InProgressBlock) -> Self {
         Self {
             slot,
+            exec_id,
             completed: None,
             shreds: BTreeMap::new(),
             slices: BTreeMap::new(),
@@ -359,7 +376,7 @@ impl BlockData {
                 }
             };
             slice_events.push(SliceEvent {
-                slot: self.slot,
+                id: self.exec_id.clone(),
                 is_last: slice.is_last,
                 parent: None,
                 transactions,

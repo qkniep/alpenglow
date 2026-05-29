@@ -50,9 +50,7 @@ pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, 
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::execution::{
-    DummyExecution, ExecutionEngine, ExecutionEvent, ExecutionInput, InProgressBlock,
-};
+use crate::execution::{DummyExecution, ExecutionEngine, ExecutionEvent, ExecutionInput};
 use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::{Shred, ValidatedShred};
@@ -419,12 +417,13 @@ async fn execution_loop<E: ExecutionEngine>(
                 let Some(input) = input else { break };
                 match input {
                     ExecutionInput::Slice(slice) => {
-                        let id = InProgressBlock::Pending(slice.slot);
+                        // `slice.id` is `Pending(slot)` for dissemination and
+                        // `Known(block_id)` for repair.
                         // The first slice of a block carries the resolved parent.
                         if slice.parent.is_some() {
-                            engine.begin_block(id.clone(), slice.parent);
+                            engine.begin_block(slice.id.clone(), slice.parent);
                         }
-                        engine.execute_transactions(id, slice.transactions);
+                        engine.execute_transactions(slice.id, slice.transactions);
                     }
                     ExecutionInput::Complete { block_id } => {
                         engine.end_block(block_id.clone());

@@ -111,12 +111,17 @@ pub enum ExecutionError {
 /// for the execution engine to track block state. The first slice of a block
 /// carries the (post-handover) parent block identifier in [`Self::parent`].
 ///
+/// [`Self::id`] identifies the in-progress block the slice belongs to. Blocks
+/// reconstructed from dissemination use [`InProgressBlock::Pending`] (hash not
+/// yet known during streaming); blocks reconstructed from repair use
+/// [`InProgressBlock::Known`] (hash known upfront).
+///
 /// This type is intentionally separate from [`crate::consensus::BlockstoreEvent`]
 /// so that the blockstore can feed execution independently of the voting logic.
 #[derive(Clone, Debug)]
 pub struct SliceEvent {
-    /// Slot this slice belongs to.
-    pub slot: Slot,
+    /// In-progress block this slice belongs to.
+    pub id: InProgressBlock,
     /// Whether this is the last slice of the block.
     pub is_last: bool,
     /// Parent block, set only on the first slice of a block.
