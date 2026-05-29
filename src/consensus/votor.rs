@@ -128,16 +128,16 @@ impl<A: All2All> Votor<A> {
         self.slots.get(&slot).is_some_and(|s| s.received_shred)
     }
 
-    /// Returns a mutable reference to the given slot's state, inserting a
-    /// default (empty) state if none exists yet.
+    /// Returns a mutable reference to the given slot's state.
+    ///
+    /// Inserts a default (empty) state if none exists yet.
     fn state_mut(&mut self, slot: Slot) -> &mut SlotState {
         self.slots.entry(slot).or_default()
     }
 
-    /// Drops voting state for slots below the highest finalized slot.
+    /// Drops voting state for slots before the highest finalized slot.
     ///
-    /// After this, [`Self::slots`] only contains entries for slots
-    /// `>= self.finalized_slot`.
+    /// Afterwards, [`Self::slots`] only contains entries with `slot >= self.finalized_slot`.
     fn prune(&mut self) {
         self.slots = self.slots.split_off(&self.finalized_slot);
     }
@@ -150,7 +150,7 @@ impl<A: All2All> Votor<A> {
             self.finalized_slot = self.finalized_slot.max(cert.slot());
             self.prune();
         }
-        if slot < self.finalized_slot || self.is_retired(slot) {
+        if slot <= self.finalized_slot || self.is_retired(slot) {
             trace!("ignoring pool event for old or retired slot {slot}");
             return;
         }
@@ -213,7 +213,7 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
         let slot = event.slot();
-        if slot < self.finalized_slot || self.is_retired(slot) {
+        if slot <= self.finalized_slot || self.is_retired(slot) {
             trace!("ignoring blockstore event for old or retired slot {slot}");
             return;
         }
@@ -243,7 +243,7 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_timeout_event(&mut self, event: VotorTimeout) {
         let slot = event.slot();
-        if slot < self.finalized_slot || self.is_retired(slot) {
+        if slot <= self.finalized_slot || self.is_retired(slot) {
             trace!("ignoring timeout for old or retired slot {slot}");
             return;
         }
@@ -674,11 +674,10 @@ mod tests {
         // drain broadcasts so votor's sends never block on the bounded network
         tokio::spawn(async move { while other_a2a.receive().await.is_ok() {} });
 
-        // populate per-slot state for a handful of slots
+        // populate per-slot state for a couple slots
         for i in 1..=5u64 {
-            votor
-                .handle_blockstore_event(BlockstoreEvent::FirstShred(Slot::new(i)))
-                .await;
+            let event = BlockstoreEvent::FirstShred(Slot::new(i));
+            votor.handle_blockstore_event(event).await;
         }
         assert!((0..=5).all(|i| votor.slots.contains_key(&Slot::new(i))));
 
