@@ -64,15 +64,10 @@ impl InProgressBlock {
 /// callers consume them via the matching [`mpsc::Receiver`].
 #[derive(Clone, Debug)]
 pub enum ExecutionEvent {
-    /// Execution of a block has completed successfully.
+    /// Execution of a block has completed, successfully or otherwise.
     BlockExecuted {
         block_id: BlockId,
-        result: ExecutionResult,
-    },
-    /// Execution of a block has failed.
-    BlockFailed {
-        block_id: BlockId,
-        error: ExecutionError,
+        result: Result<ExecutionResult, ExecutionError>,
     },
 }
 
@@ -81,10 +76,11 @@ pub enum ExecutionEvent {
 pub struct ExecutionResult {
     /// Number of transactions executed in this block.
     pub tx_count: usize,
-    /// Post-state root this node computed for the block.
+    /// Post-execution state root.
     ///
-    /// The caller compares this against the block's claimed root (or a quorum
-    /// of peers) to detect divergence; the engine itself does not.
+    /// The caller should check this, based on the execution model:
+    /// - Synchronous execution: Check against the block's claimed root.
+    /// - Asynchronous execution: Check against the root finalized by consensus.
     pub state_hash: Hash,
 }
 
@@ -130,9 +126,9 @@ pub struct SliceEvent {
 /// 2. **Streaming**: [`execute_transactions`] is called once per decoded slice
 ///    as data arrives from dissemination, without waiting for the full block.
 /// 3. **Completion**: [`end_block`] signals that all slices for a block have
-///    been received, providing the block hash. The engine should emit a
-///    [`ExecutionEvent::BlockExecuted`] or [`ExecutionEvent::BlockFailed`]
-///    event through its channel.
+///    been received, providing the block hash. The engine should emit an
+///    [`ExecutionEvent::BlockExecuted`] event through its channel, carrying the
+///    execution outcome as a `Result`.
 /// 4. **Finality**: [`finalize`] signals that a block's state is canonical and
 ///    durable, so the engine can commit it and prune all non-ancestor heads.
 ///
@@ -163,16 +159,9 @@ pub trait ExecutionEngine {
     ///
     /// Provides the full [`BlockId`] (including the block hash), which is only
     /// known after the double-Merkle tree has been computed over all slices.
-    /// The engine should emit a [`ExecutionEvent`] through its channel to
-    /// signal the outcome of execution for this block, reporting the computed
-    /// post-state root in [`ExecutionResult::state_hash`].
-    ///
-    /// The engine does *not* validate that root against any expected value:
-    /// whether the computed root agrees with the block's claimed root (or with
-    /// other validators) is a consensus-layer decision, made by whoever consumes
-    /// the [`ExecutionEvent`]. This keeps execution independent of consensus and
-    /// leaves room for asynchronous execution, where no expected root may be
-    /// available when the last slice arrives.
+    /// The engine should emit an [`ExecutionEvent::BlockExecuted`] through its
+    /// channel to signal the outcome of execution for this block, reporting the
+    /// computed post-state root in [`ExecutionResult::state_hash`].
     fn end_block(&mut self, block_id: BlockId);
 
     /// Notifies the engine that `block_id` has been finalized by consensus.
@@ -275,7 +264,10 @@ impl ExecutionEngine for DummyExecution {
             });
         if let Some(result) = result {
             self.event_sender
-                .try_send(ExecutionEvent::BlockExecuted { block_id, result })
+                .try_send(ExecutionEvent::BlockExecuted {
+                    block_id,
+                    result: Ok(result),
+                })
                 .unwrap();
         }
     }
@@ -324,18 +316,14 @@ mod tests {
         let bid = block_id(1);
         engine.end_block(bid.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 3);
-                assert_eq!(
-                    result.state_hash,
-                    expected_state_hash(&GENESIS_BLOCK_HASH, &txs)
-                );
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 3);
+        assert_eq!(
+            result.state_hash,
+            expected_state_hash(&GENESIS_BLOCK_HASH, &txs)
+        );
     }
 
     #[test]
@@ -382,14 +370,10 @@ mod tests {
         let bid = block_id(5);
         engine.end_block(bid.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 7);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 7);
     }
 
     #[test]
@@ -404,14 +388,10 @@ mod tests {
 
         engine.end_block(bid.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 2);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 2);
     }
 
     #[test]
@@ -437,14 +417,10 @@ mod tests {
         let bid2 = block_id(2);
         engine.end_block(bid2.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid2);
-                assert_eq!(result.tx_count, 2);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid2);
+        assert_eq!(result.tx_count, 2);
     }
 
     #[test]
@@ -472,14 +448,11 @@ mod tests {
         engine.end_block(bid.clone());
 
         let expected = expected_state_hash(&GENESIS_BLOCK_HASH, &txs);
-        match rx.try_recv().unwrap() {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 2);
-                assert_eq!(result.state_hash, expected);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 2);
+        assert_eq!(result.state_hash, expected);
     }
 
     #[test]
@@ -493,10 +466,8 @@ mod tests {
                 engine.begin_block(id.clone(), None);
                 engine.execute_transactions(id, vec![Transaction(tx_bytes)]);
                 engine.end_block(block_id(slot));
-                match rx.try_recv().unwrap() {
-                    ExecutionEvent::BlockExecuted { result, .. } => result.state_hash,
-                    ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-                }
+                let ExecutionEvent::BlockExecuted { result, .. } = rx.try_recv().unwrap();
+                result.expect("execution should succeed").state_hash
             };
 
         // Same parent seed, different transactions => different computed root.
