@@ -29,7 +29,7 @@ use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
-use crate::{BlockId, Slot, ValidatorId};
+use crate::{BlockId, Slot, ValidatorIndex};
 
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
@@ -103,13 +103,13 @@ pub enum AddCertError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum SlashableOffence {
     #[error("Validator {0} already voted notar on slot {1} for a different hash")]
-    NotarDifferentHash(ValidatorId, Slot),
+    NotarDifferentHash(ValidatorIndex, Slot),
     #[error("Validator {0} voted both skip and notarize on slot {1}")]
-    SkipAndNotarize(ValidatorId, Slot),
+    SkipAndNotarize(ValidatorIndex, Slot),
     #[error("Validator {0} voted both skip(-fallback) and finalize on slot {1}")]
-    SkipAndFinalize(ValidatorId, Slot),
+    SkipAndFinalize(ValidatorIndex, Slot),
     #[error("Validator {0} voted both notar-fallback and finalize on slot {1}")]
-    NotarFallbackAndFinalize(ValidatorId, Slot),
+    NotarFallbackAndFinalize(ValidatorIndex, Slot),
 }
 
 /// Interface for the Pool.
@@ -261,7 +261,7 @@ impl PoolImpl {
             .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
     }
 
-    /// Fetches all certficates for the provided range of `slots`.
+    /// Fetches all certificates for the provided range of `slots`.
     fn get_certs(&self, slots: impl RangeBounds<Slot>) -> Vec<Cert> {
         let mut certs = Vec::new();
         for (_, slot_state) in self.slot_states.range(slots) {
@@ -284,7 +284,7 @@ impl PoolImpl {
         certs
     }
 
-    /// Fetches finalization certficates for given `slot`, if any.
+    /// Fetches finalization certificates for given `slot`, if any.
     ///
     /// Prefers fast-finalization over slow-finalization, if it's available.
     /// In that case this returns only the fast-finalization certificate.
@@ -312,19 +312,19 @@ impl PoolImpl {
         let mut votes = Vec::new();
         let own_id = self.epoch_info.own_id();
         for (_, slot_state) in self.slot_states.range(slots) {
-            if let Some(vote) = &slot_state.votes.finalize[own_id.as_index()] {
+            if let Some(vote) = &slot_state.votes.finalize[own_id.as_usize()] {
                 votes.push(Vote::Final(vote.clone()));
             }
-            if let Some(vote) = &slot_state.votes.notar[own_id.as_index()] {
+            if let Some(vote) = &slot_state.votes.notar[own_id.as_usize()] {
                 votes.push(Vote::Notar(vote.clone()));
             }
-            for vote in slot_state.votes.notar_fallback[own_id.as_index()].values() {
+            for vote in slot_state.votes.notar_fallback[own_id.as_usize()].values() {
                 votes.push(Vote::NotarFallback(vote.clone()));
             }
-            if let Some(vote) = &slot_state.votes.skip[own_id.as_index()] {
+            if let Some(vote) = &slot_state.votes.skip[own_id.as_usize()] {
                 votes.push(Vote::Skip(vote.clone()));
             }
-            if let Some(vote) = &slot_state.votes.skip_fallback[own_id.as_index()] {
+            if let Some(vote) = &slot_state.votes.skip_fallback[own_id.as_usize()] {
                 votes.push(Vote::SkipFallback(vote.clone()));
             }
         }
@@ -463,7 +463,7 @@ impl Pool for PoolImpl {
         // reject votes from validators outside the current epoch's set,
         // otherwise `validator()` indexing below would panic on byzantine input
         let epoch = self.epoch_info.epoch_info();
-        if vote.signer().as_index() >= epoch.validators().len() {
+        if vote.signer().as_usize() >= epoch.validators().len() {
             return Err(AddVoteError::UnknownSigner);
         }
 
@@ -584,7 +584,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ValidatorId;
+    use crate::ValidatorIndex;
     use crate::consensus::EpochInfo;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::{NotarVote, SkipVote};
@@ -596,7 +596,7 @@ mod tests {
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
     fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
-        Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info))
+        Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info))
     }
 
     struct TestContext {
@@ -629,8 +629,8 @@ mod tests {
             hash: &BlockHash,
             validators: std::ops::Range<usize>,
         ) {
-            for v in validators.map(|v| ValidatorId::new(v as u64)) {
-                let vote = Vote::new_notar(slot, hash.clone(), &self.sks[v.as_index()], v);
+            for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
+                let vote = Vote::new_notar(slot, hash.clone(), &self.sks[v.as_usize()], v);
                 assert_eq!(self.pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -641,22 +641,22 @@ mod tests {
             hash: &BlockHash,
             validators: std::ops::Range<usize>,
         ) {
-            for v in validators.map(|v| ValidatorId::new(v as u64)) {
-                let vote = Vote::new_notar_fallback(slot, hash.clone(), &self.sks[v.as_index()], v);
+            for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
+                let vote = Vote::new_notar_fallback(slot, hash.clone(), &self.sks[v.as_usize()], v);
                 assert_eq!(self.pool.add_vote(vote).await, Ok(()));
             }
         }
 
         async fn add_skip_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
-            for v in validators.map(|v| ValidatorId::new(v as u64)) {
-                let vote = Vote::new_skip(slot, &self.sks[v.as_index()], v);
+            for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
+                let vote = Vote::new_skip(slot, &self.sks[v.as_usize()], v);
                 assert_eq!(self.pool.add_vote(vote).await, Ok(()));
             }
         }
 
         async fn add_final_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
-            for v in validators.map(|v| ValidatorId::new(v as u64)) {
-                let vote = Vote::new_final(slot, &self.sks[v.as_index()], v);
+            for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
+                let vote = Vote::new_final(slot, &self.sks[v.as_usize()], v);
                 assert_eq!(self.pool.add_vote(vote).await, Ok(()));
             }
         }
@@ -671,7 +671,7 @@ mod tests {
             Slot::new(0),
             GENESIS_BLOCK_HASH,
             &wrong_sk,
-            ValidatorId::new(0),
+            ValidatorIndex::new(0),
         );
         assert_eq!(
             ctx.pool.add_vote(vote).await,
@@ -883,7 +883,7 @@ mod tests {
                     slot1,
                     hash1.clone(),
                     &ctx.sks[v as usize],
-                    ValidatorId::new(v),
+                    ValidatorIndex::new(v),
                 )
             })
             .collect();
@@ -1063,11 +1063,16 @@ mod tests {
         let slot = Slot::new(0);
 
         // insert a notar vote from validator 0
-        let vote1 = Vote::new_notar(slot, GENESIS_BLOCK_HASH, &ctx.sks[0], ValidatorId::new(0));
+        let vote1 = Vote::new_notar(
+            slot,
+            GENESIS_BLOCK_HASH,
+            &ctx.sks[0],
+            ValidatorIndex::new(0),
+        );
         assert_eq!(ctx.pool.add_vote(vote1.clone()).await, Ok(()));
 
         // insert a skip vote from validator 1
-        let vote2 = Vote::new_skip(slot, &ctx.sks[1], ValidatorId::new(1));
+        let vote2 = Vote::new_skip(slot, &ctx.sks[1], ValidatorIndex::new(1));
         assert_eq!(ctx.pool.add_vote(vote2.clone()).await, Ok(()));
 
         // inserting same votes again should fail
@@ -1088,7 +1093,7 @@ mod tests {
                     first_slot,
                     hash.clone(),
                     &ctx.sks[v as usize],
-                    ValidatorId::new(v),
+                    ValidatorIndex::new(v),
                 )
             })
             .collect();
@@ -1102,7 +1107,7 @@ mod tests {
         // insert a skip cert for slot 1
         let second_slot = first_slot.next();
         let skip_votes: Vec<SkipVote> = (0..11)
-            .map(|v| SkipVote::new(second_slot, &ctx.sks[v as usize], ValidatorId::new(v)))
+            .map(|v| SkipVote::new(second_slot, &ctx.sks[v as usize], ValidatorIndex::new(v)))
             .collect();
         let skip_cert =
             SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
@@ -1133,14 +1138,14 @@ mod tests {
             slot,
             GENESIS_BLOCK_HASH,
             &ctx.sks[0],
-            ValidatorId::new(num_validators),
+            ValidatorIndex::new(num_validators),
         );
         assert_eq!(
             ctx.pool.add_vote(vote).await,
             Err(AddVoteError::UnknownSigner)
         );
 
-        let vote = Vote::new_skip(slot, &ctx.sks[0], ValidatorId::new(u64::MAX));
+        let vote = Vote::new_skip(slot, &ctx.sks[0], ValidatorIndex::new(u64::MAX));
         assert_eq!(
             ctx.pool.add_vote(vote).await,
             Err(AddVoteError::UnknownSigner)
@@ -1159,8 +1164,11 @@ mod tests {
         // dismiss old votes
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
             for v in 0..11 {
-                let vote =
-                    Vote::new_final(Slot::new(slot), &ctx.sks[v as usize], ValidatorId::new(v));
+                let vote = Vote::new_final(
+                    Slot::new(slot),
+                    &ctx.sks[v as usize],
+                    ValidatorIndex::new(v),
+                );
                 assert_eq!(
                     ctx.pool.add_vote(vote).await,
                     Err(AddVoteError::SlotOutOfBounds)
@@ -1171,7 +1179,7 @@ mod tests {
         // dismiss far-in-the-future vote
         let slot = Slot::new(5 * SLOTS_PER_EPOCH);
         for v in 0..11 {
-            let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorId::new(v));
+            let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
             assert_eq!(
                 ctx.pool.add_vote(vote).await,
                 Err(AddVoteError::SlotOutOfBounds)
@@ -1191,7 +1199,7 @@ mod tests {
                     slot,
                     GENESIS_BLOCK_HASH,
                     &ctx.sks[v as usize],
-                    ValidatorId::new(v),
+                    ValidatorIndex::new(v),
                 )
             })
             .collect();
@@ -1205,7 +1213,13 @@ mod tests {
         // dismiss old certs
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
             let skip_votes: Vec<SkipVote> = (0..11)
-                .map(|v| SkipVote::new(Slot::new(slot), &ctx.sks[v as usize], ValidatorId::new(v)))
+                .map(|v| {
+                    SkipVote::new(
+                        Slot::new(slot),
+                        &ctx.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
                 .collect();
             let skip_cert =
                 SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators())
@@ -1219,7 +1233,7 @@ mod tests {
         // dismiss far-in-the-future certs
         let slot = Slot::new(3 * SLOTS_PER_EPOCH);
         let skip_votes: Vec<SkipVote> = (0..11)
-            .map(|v| SkipVote::new(slot, &ctx.sks[v as usize], ValidatorId::new(v)))
+            .map(|v| SkipVote::new(slot, &ctx.sks[v as usize], ValidatorIndex::new(v)))
             .collect();
         let skip_cert =
             SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
@@ -1278,7 +1292,7 @@ mod tests {
         }
         assert_eq!(votes.len(), 2);
         for vote in votes {
-            assert_eq!(vote.signer(), ValidatorId::new(0));
+            assert_eq!(vote.signer(), ValidatorIndex::new(0));
             if matches!(vote, Vote::Final(_)) {
                 assert_eq!(vote.slot(), slot2);
             } else if matches!(vote, Vote::Notar(_)) {

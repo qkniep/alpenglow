@@ -66,7 +66,7 @@ impl SlotBlockData {
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
         if self.leader_misbehaved {
-            debug!("recevied shred from misbehaving leader, not adding to blockstore");
+            debug!("received shred from misbehaving leader, not adding to blockstore");
             return Err(AddShredError::InvalidShred);
         }
         self.disseminated

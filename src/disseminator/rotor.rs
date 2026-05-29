@@ -25,7 +25,7 @@ pub use self::sampling_strategy::{
     StakeWeightedSampler,
 };
 use super::Disseminator;
-use crate::ValidatorId;
+use crate::ValidatorIndex;
 use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
@@ -122,7 +122,7 @@ where
     ///
     /// Seeds an RNG per slice and calls [`QuorumSamplingStrategy::sample_quorum`]
     /// to get all relays for that slice, then picks the one at the shred's position.
-    fn sample_relay(&self, shred: &Shred) -> ValidatorId {
+    fn sample_relay(&self, shred: &Shred) -> ValidatorIndex {
         let slot = shred.payload().header.slot;
         let slice = shred.payload().header.slice_index.inner();
         let shred = shred.payload().shred_index.inner();
@@ -174,7 +174,7 @@ mod tests {
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-    use crate::{Stake, ValidatorId, ValidatorInfo};
+    use crate::{Stake, ValidatorIndex, ValidatorInfo};
 
     type MyRotor = Rotor<UdpNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>;
 
@@ -186,21 +186,21 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
 
         let epoch_info = EpochInfo::new(validators.clone());
         let mut rotors = Vec::new();
         for i in 0..count {
-            let v = ValidatorId::new(i);
+            let v = ValidatorIndex::new(i);
             let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
             rotors.push(Rotor::new(network, validator_epoch_info));

@@ -21,10 +21,10 @@ use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
+use crate::network::{Network, RepairRequesterNetwork, RepairResponderNetwork};
 use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
-use crate::{BlockId, ValidatorId};
+use crate::{BlockId, ValidatorIndex};
 
 /// Maximum time to wait for a response to a repair request.
 ///
@@ -47,7 +47,7 @@ impl RepairRequestType {
     fn hash(&self) -> Hash {
         let repair = RepairRequest {
             req_type: self.clone(),
-            sender: ValidatorId::new(0),
+            sender: ValidatorIndex::new(0),
         };
         let msg_bytes = wincode::serialize(&repair).unwrap();
         hash(&msg_bytes)
@@ -58,7 +58,7 @@ impl RepairRequestType {
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequest {
     /// The validator that sent the message.
-    sender: ValidatorId,
+    sender: ValidatorIndex,
     /// The type of repair message sent.
     req_type: RepairRequestType,
 }
@@ -108,7 +108,7 @@ pub struct RepairRequestHandler<N: Network> {
 
 impl<N> RepairRequestHandler<N>
 where
-    N: RepairRequestNetwork,
+    N: RepairResponderNetwork,
 {
     /// Creates a new repair request handler instance.
     ///
@@ -132,8 +132,16 @@ where
     /// Looks up the corresponding data in `self.blockstore` and sends replies.
     pub async fn run(&self) {
         loop {
-            let request = self.network.receive().await.unwrap();
-            self.answer_request(request).await.unwrap();
+            let request = match self.network.receive().await {
+                Ok(req) => req,
+                Err(err) => {
+                    warn!("receiving repair request failed: {err}");
+                    continue;
+                }
+            };
+            if let Err(err) = self.answer_request(request).await {
+                warn!("answering repair request failed: {err}");
+            }
         }
     }
 
@@ -207,13 +215,13 @@ where
     async fn send_response(
         &self,
         response: RepairResponse,
-        validator: ValidatorId,
+        validator: ValidatorIndex,
     ) -> std::io::Result<()> {
         let to = self
             .epoch_info
             .epoch_info()
             .validator(validator)
-            .repair_response_address;
+            .repair_requester_address;
         self.network.send(&response, to).await
     }
 }
@@ -235,7 +243,7 @@ pub struct Repair<N: Network> {
 
 impl<N> Repair<N>
 where
-    N: RepairNetwork,
+    N: RepairRequesterNetwork,
 {
     /// Creates a new repair instance.
     ///
@@ -264,7 +272,7 @@ where
     /// Main loop of the repair protocol.
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
-    /// Inititates the corresponding repair process and handles ongoing repairs.
+    /// Initiates the corresponding repair process and handles ongoing repairs.
     pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
         loop {
             let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
@@ -274,7 +282,10 @@ where
             };
             tokio::select! {
                 // handle repair response from network
-                res = self.network.receive() => self.handle_response(res.unwrap()).await,
+                res = self.network.receive() => match res {
+                    Ok(response) => self.handle_response(response).await,
+                    Err(err) => warn!("receiving repair response failed: {err}"),
+                },
                 // handle request for repairing new block
                 Some(block_id) = repair_receiver.recv() => {
                     self.repair_block(block_id).await;
@@ -286,7 +297,9 @@ where
                     };
                     if let Some(request) = self.outstanding_requests.remove(&hash) {
                         debug!("retrying timed-out repair request {request:?}");
-                        self.send_request(request).await.unwrap();
+                        if let Err(err) = self.send_request(request).await {
+                            warn!("sending timed-out repair request failed: {err}");
+                        }
                     }
                 }
             }
@@ -304,7 +317,9 @@ where
 
         debug!("repairing block {h} in slot {slot}");
         let req = RepairRequestType::LastSliceRoot(block_id);
-        self.send_request(req).await.unwrap();
+        if let Err(err) = self.send_request(req).await {
+            warn!("sending initial repair request failed: {err}");
+        }
     }
 
     /// Handles a repair response, storing the received data.
@@ -326,7 +341,9 @@ where
         match response {
             RepairResponse::Nack(req_type) => {
                 debug!("received NACK for repair request {req_type:?}, retrying immediately");
-                self.send_request(req_type).await.unwrap();
+                if let Err(err) = self.send_request(req_type).await {
+                    warn!("retrying NACKed repair request failed: {err}");
+                }
             }
             RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
                 // check validity of response
@@ -354,7 +371,9 @@ where
                 // TODO: already requests shreds for last slice here
                 for slice in last_slice.until() {
                     let req_type = RepairRequestType::SliceRoot(block_id.clone(), slice);
-                    self.send_request(req_type).await.unwrap();
+                    if let Err(err) = self.send_request(req_type).await {
+                        warn!("sending SliceRoot repair request failed: {err}");
+                    }
                 }
             }
             RepairResponse::SliceRoot(req_type, root, proof) => {
@@ -376,7 +395,9 @@ where
                 // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
                 for shred_index in ShredIndex::all() {
                     let req = RepairRequestType::Shred(block_id.clone(), slice, shred_index);
-                    self.send_request(req).await.unwrap();
+                    if let Err(err) = self.send_request(req).await {
+                        warn!("sending Shred repair request failed: {err}");
+                    }
                 }
             }
             RepairResponse::Shred(req_type, shred) => {
@@ -460,7 +481,7 @@ where
         while peer_info.id == self.epoch_info.own_id() {
             peer_info = self.sampler.sample_info(&mut rng);
         }
-        peer_info.repair_request_address
+        peer_info.repair_responder_address
     }
 }
 
@@ -472,7 +493,7 @@ mod tests {
     use tokio::sync::mpsc::Sender;
 
     use super::*;
-    use crate::ValidatorId;
+    use crate::ValidatorIndex;
     use crate::consensus::{BlockstoreImpl, EpochInfo, PoolImpl};
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::crypto::signature::SecretKey;
@@ -506,19 +527,19 @@ mod tests {
         let leader_key = SecretKey::new(&mut rand::rng());
         let mut validators = epoch_info.validators().to_vec();
         validators[0].pubkey = leader_key.to_pk();
-        validators[0].repair_request_address = localhost_ip_sockaddr(0);
-        validators[0].repair_response_address = localhost_ip_sockaddr(1);
-        validators[1].repair_request_address = localhost_ip_sockaddr(2);
-        validators[1].repair_response_address = localhost_ip_sockaddr(3);
+        validators[0].repair_requester_address = localhost_ip_sockaddr(0);
+        validators[0].repair_responder_address = localhost_ip_sockaddr(1);
+        validators[1].repair_requester_address = localhost_ip_sockaddr(2);
+        validators[1].repair_responder_address = localhost_ip_sockaddr(3);
 
         let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
-        let v0_repair_request_network = core.join_unlimited(ValidatorId::new(0)).await;
-        let v0_repair_network = core.join_unlimited(ValidatorId::new(1)).await;
-        let v1_repair_request_network = core.join_unlimited(ValidatorId::new(2)).await;
-        let v1_repair_network = core.join_unlimited(ValidatorId::new(3)).await;
+        let v0_repair_requester_network = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let v0_repair_responder_network = core.join_unlimited(ValidatorIndex::new(1)).await;
+        let v1_repair_requester_network = core.join_unlimited(ValidatorIndex::new(2)).await;
+        let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(3)).await;
 
         let epoch_info = EpochInfo::new(validators);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(1), epoch_info));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
@@ -538,7 +559,7 @@ mod tests {
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             pool,
-            v1_repair_network,
+            v1_repair_requester_network,
             epoch_info.clone(),
         );
         tokio::spawn(async move {
@@ -548,15 +569,15 @@ mod tests {
             drop(pool_rx);
         });
         let repair_request_handler =
-            RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_request_network);
+            RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_responder_network);
         tokio::spawn(async move {
             repair_request_handler.run().await;
         });
         TestContext {
             repair_tx,
             blockstore,
-            v0_request_net: v0_repair_request_network,
-            v0_reply_net: v0_repair_network,
+            v0_request_net: v0_repair_responder_network,
+            v0_reply_net: v0_repair_requester_network,
             leader_sk: leader_key,
         }
     }
@@ -603,7 +624,8 @@ mod tests {
             shreds.last().unwrap()[0].merkle_root().clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
-        let port1 = localhost_ip_sockaddr(3);
+        // responses go to v1's repair requester socket (joined at index 2)
+        let port1 = localhost_ip_sockaddr(2);
         ctx.v0_request_net.send(&response, port1).await.unwrap();
 
         // expect SliceRoot requests next
@@ -729,12 +751,13 @@ mod tests {
         // request last slice root to learn how many slices there are
         let request = RepairRequest {
             req_type: RepairRequestType::LastSliceRoot(block_to_repair.clone()),
-            sender: ValidatorId::new(0),
+            sender: ValidatorIndex::new(0),
         };
-        let port1 = localhost_ip_sockaddr(2);
+        // requests go to v1's repair responder socket (joined at index 3)
+        let port1 = localhost_ip_sockaddr(3);
         ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
-        // verify reponse
+        // verify response
         let msg = ctx.v0_reply_net.receive().await.unwrap();
         let RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) = msg else {
             panic!("not LastSliceRoot response");
@@ -754,7 +777,7 @@ mod tests {
         for slice in SliceIndex::all().take(SLICES) {
             let request = RepairRequest {
                 req_type: RepairRequestType::SliceRoot(block_to_repair.clone(), slice),
-                sender: ValidatorId::new(0),
+                sender: ValidatorIndex::new(0),
             };
             ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
@@ -777,7 +800,7 @@ mod tests {
             for shred_index in ShredIndex::all() {
                 let request = RepairRequest {
                     req_type: RepairRequestType::Shred(block_to_repair.clone(), slice, shred_index),
-                    sender: ValidatorId::new(0),
+                    sender: ValidatorIndex::new(0),
                 };
                 ctx.v0_reply_net.send(&request, port1).await.unwrap();
 

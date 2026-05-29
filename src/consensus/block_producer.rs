@@ -20,7 +20,7 @@ use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpo
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
@@ -46,6 +46,11 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     disseminator: Arc<D>,
     /// Network connection to receive transactions from clients.
     txs_receiver: T,
+
+    /// Pool of shredders for shredding produced slices.
+    ///
+    /// Reused across slices to avoid reallocating Reed-Solomon working memory.
+    shredders: ShredderPool<RegularShredder>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -83,6 +88,8 @@ where
             pool,
             disseminator,
             txs_receiver,
+            // block production is sequential, so a single shredder is enough
+            shredders: ShredderPool::with_size(1),
             cancel_token,
             delta_block,
             delta_first_slice,
@@ -165,7 +172,7 @@ where
 
     /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
     ///
-    /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
+    /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actually parent of the block.
     #[hotpath::measure]
     pub(super) async fn produce_block_parent_not_ready(
         &self,
@@ -349,8 +356,10 @@ where
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload);
         let mut maybe_block_hash = None;
-        // PERF: new shredder every time!
-        let shreds = RegularShredder::default()
+        let shreds = self
+            .shredders
+            .checkout()
+            .expect("pool always has a shredder, block production is sequential")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
@@ -534,7 +543,7 @@ mod tests {
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
-    use crate::{Transaction, ValidatorId};
+    use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -647,7 +656,7 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
         let blockstore: SharedBlockstore = Arc::new(RwLock::new(blockstore));
         let pool: SharedPool = Arc::new(RwLock::new(pool));
         let disseminator = Arc::new(disseminator);

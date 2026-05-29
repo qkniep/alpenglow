@@ -17,7 +17,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::crypto::aggsig::{PublicKey, SecretKey};
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::{IndividualSignature, Signable};
-use crate::{Slot, ValidatorId};
+use crate::{Slot, ValidatorIndex};
 
 /// Payload used internally for computing bytes to sign for a vote.
 ///
@@ -48,7 +48,7 @@ impl Signable for VotePayload {
 /// Implemented by all concrete vote structs to enable generic certificate aggregation.
 pub(crate) trait SignedVote {
     fn sig(&self) -> &IndividualSignature;
-    fn signer(&self) -> ValidatorId;
+    fn signer(&self) -> ValidatorIndex;
 }
 
 /// A signed notarization vote.
@@ -60,13 +60,13 @@ pub struct NotarVote {
     slot: Slot,
     block_hash: BlockHash,
     sig: IndividualSignature,
-    signer: ValidatorId,
+    signer: ValidatorIndex,
 }
 
 impl NotarVote {
     /// Creates a new notarization vote.
     #[must_use]
-    pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         let kind = VotePayload::Notar(slot, block_hash.clone());
         let sig = sk.sign(&kind.bytes_to_sign());
         Self {
@@ -102,7 +102,7 @@ impl SignedVote for NotarVote {
         &self.sig
     }
 
-    fn signer(&self) -> ValidatorId {
+    fn signer(&self) -> ValidatorIndex {
         self.signer
     }
 }
@@ -121,13 +121,13 @@ pub struct NotarFallbackVote {
     slot: Slot,
     block_hash: BlockHash,
     sig: IndividualSignature,
-    signer: ValidatorId,
+    signer: ValidatorIndex,
 }
 
 impl NotarFallbackVote {
     /// Creates a new notar-fallback vote.
     #[must_use]
-    pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new(slot: Slot, block_hash: BlockHash, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         let kind = VotePayload::NotarFallback(slot, block_hash.clone());
         let sig = sk.sign(&kind.bytes_to_sign());
         Self {
@@ -163,7 +163,7 @@ impl SignedVote for NotarFallbackVote {
         &self.sig
     }
 
-    fn signer(&self) -> ValidatorId {
+    fn signer(&self) -> ValidatorIndex {
         self.signer
     }
 }
@@ -175,13 +175,13 @@ impl SignedVote for NotarFallbackVote {
 pub struct SkipVote {
     slot: Slot,
     sig: IndividualSignature,
-    signer: ValidatorId,
+    signer: ValidatorIndex,
 }
 
 impl SkipVote {
     /// Creates a new skip vote.
     #[must_use]
-    pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         let kind = VotePayload::Skip(slot);
         let sig = sk.sign(&kind.bytes_to_sign());
         Self { slot, sig, signer }
@@ -206,7 +206,7 @@ impl SignedVote for SkipVote {
         &self.sig
     }
 
-    fn signer(&self) -> ValidatorId {
+    fn signer(&self) -> ValidatorIndex {
         self.signer
     }
 }
@@ -223,13 +223,13 @@ impl SignedVote for SkipVote {
 pub struct SkipFallbackVote {
     slot: Slot,
     sig: IndividualSignature,
-    signer: ValidatorId,
+    signer: ValidatorIndex,
 }
 
 impl SkipFallbackVote {
     /// Creates a new skip-fallback vote.
     #[must_use]
-    pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         let kind = VotePayload::SkipFallback(slot);
         let sig = sk.sign(&kind.bytes_to_sign());
         Self { slot, sig, signer }
@@ -254,7 +254,7 @@ impl SignedVote for SkipFallbackVote {
         &self.sig
     }
 
-    fn signer(&self) -> ValidatorId {
+    fn signer(&self) -> ValidatorIndex {
         self.signer
     }
 }
@@ -270,13 +270,13 @@ impl SignedVote for SkipFallbackVote {
 pub struct FinalVote {
     slot: Slot,
     sig: IndividualSignature,
-    signer: ValidatorId,
+    signer: ValidatorIndex,
 }
 
 impl FinalVote {
     /// Creates a new finalization vote.
     #[must_use]
-    pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new(slot: Slot, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         let kind = VotePayload::Final(slot);
         let sig = sk.sign(&kind.bytes_to_sign());
         Self { slot, sig, signer }
@@ -301,7 +301,7 @@ impl SignedVote for FinalVote {
         &self.sig
     }
 
-    fn signer(&self) -> ValidatorId {
+    fn signer(&self) -> ValidatorIndex {
         self.signer
     }
 }
@@ -339,7 +339,7 @@ impl Vote {
         slot: Slot,
         block_hash: BlockHash,
         sk: &SecretKey,
-        signer: ValidatorId,
+        signer: ValidatorIndex,
     ) -> Self {
         Self::Notar(NotarVote::new(slot, block_hash, sk, signer))
     }
@@ -350,26 +350,26 @@ impl Vote {
         slot: Slot,
         block_hash: BlockHash,
         sk: &SecretKey,
-        signer: ValidatorId,
+        signer: ValidatorIndex,
     ) -> Self {
         Self::NotarFallback(NotarFallbackVote::new(slot, block_hash, sk, signer))
     }
 
     /// Creates a new skip vote.
     #[must_use]
-    pub fn new_skip(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new_skip(slot: Slot, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         Self::Skip(SkipVote::new(slot, sk, signer))
     }
 
     /// Creates a new skip-fallback vote.
     #[must_use]
-    pub fn new_skip_fallback(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new_skip_fallback(slot: Slot, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         Self::SkipFallback(SkipFallbackVote::new(slot, sk, signer))
     }
 
     /// Creates a new finalization vote.
     #[must_use]
-    pub fn new_final(slot: Slot, sk: &SecretKey, signer: ValidatorId) -> Self {
+    pub fn new_final(slot: Slot, sk: &SecretKey, signer: ValidatorIndex) -> Self {
         Self::Final(FinalVote::new(slot, sk, signer))
     }
 
@@ -412,7 +412,7 @@ impl Vote {
 
     /// Returns the signer of this vote.
     #[must_use]
-    pub const fn signer(&self) -> ValidatorId {
+    pub const fn signer(&self) -> ValidatorIndex {
         match self {
             Self::Notar(v) => v.signer,
             Self::NotarFallback(v) => v.signer,
@@ -433,24 +433,33 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
 
-        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
+        let vote = Vote::new_notar(
+            Slot::new(0),
+            GENESIS_BLOCK_HASH,
+            &sk,
+            ValidatorIndex::new(0),
+        );
         assert!(matches!(vote, Vote::Notar(_)));
         assert!(vote.check_sig(&pk));
 
-        let vote =
-            Vote::new_notar_fallback(Slot::new(0), GENESIS_BLOCK_HASH, &sk, ValidatorId::new(0));
+        let vote = Vote::new_notar_fallback(
+            Slot::new(0),
+            GENESIS_BLOCK_HASH,
+            &sk,
+            ValidatorIndex::new(0),
+        );
         assert!(matches!(vote, Vote::NotarFallback(_)));
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_skip(Slot::new(0), &sk, ValidatorId::new(0));
+        let vote = Vote::new_skip(Slot::new(0), &sk, ValidatorIndex::new(0));
         assert!(matches!(vote, Vote::Skip(_)));
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_skip_fallback(Slot::new(0), &sk, ValidatorId::new(0));
+        let vote = Vote::new_skip_fallback(Slot::new(0), &sk, ValidatorIndex::new(0));
         assert!(matches!(vote, Vote::SkipFallback(_)));
         assert!(vote.check_sig(&pk));
 
-        let vote = Vote::new_final(Slot::new(0), &sk, ValidatorId::new(0));
+        let vote = Vote::new_final(Slot::new(0), &sk, ValidatorIndex::new(0));
         assert!(matches!(vote, Vote::Final(_)));
         assert!(vote.check_sig(&pk));
     }
