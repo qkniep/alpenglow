@@ -328,6 +328,14 @@ where
         trace!("handling repair response: {response:?}");
         let request_hash = response.request_type().hash();
 
+        // TODO: bind responses to the `ValidatorIndex` we queried once the
+        // network channel is authenticated. Data-bearing responses are already
+        // self-validating (Merkle proof + leader signature), but a `Nack`
+        // carries no cryptographic payload, so a forged/replayed Nack matching
+        // an outstanding request can still trigger a spurious retry. Honoring
+        // only responses from peers we actually sent to (over an authenticated
+        // channel) would close that gap and enable peer accountability.
+
         // check whether we are (still) waiting on response to this request
         if !self.outstanding_requests.contains_key(&request_hash) {
             self.prune_completed();
