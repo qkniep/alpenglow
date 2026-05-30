@@ -11,6 +11,7 @@ use super::{ShredPayloadType, TOTAL_SHREDS, ValidatedShred};
 /// - Shreds are in the correct order.
 /// - Shred indices match expected shred type.
 /// - Shreds are all the same size.
+/// - Shred size is non-zero and even (required by the erasure decoder).
 #[derive(Clone, Copy)]
 pub struct ValidatedShreds<'a> {
     shreds: &'a [Option<ValidatedShred>; TOTAL_SHREDS],
@@ -21,8 +22,9 @@ impl<'a> ValidatedShreds<'a> {
     /// Creates a new [`ValidatedShreds`].
     ///
     /// Returns `None` if the input array contains:
-    /// - a shred with the wrong type for the index, or
-    /// - shreds of different sizes.
+    /// - a shred with the wrong type for the index,
+    /// - shreds of different sizes, or
+    /// - shreds with a zero or odd payload size.
     ///
     /// # Panics
     ///
@@ -38,6 +40,13 @@ impl<'a> ValidatedShreds<'a> {
         // check all shred sizes match
         let any_shred = shreds.iter().flatten().next().unwrap();
         let shred_size = any_shred.payload().data.len();
+        // Erasure decoding requires every shard to be non-empty and an even
+        // number of bytes. A malicious leader can sign odd- or zero-sized shreds
+        // that pass Merkle verification, so reject them here rather than
+        // panicking in the Reed-Solomon decoder during reconstruction.
+        if shred_size == 0 || !shred_size.is_multiple_of(2) {
+            return None;
+        }
         for s in shreds.iter().flatten() {
             if s.payload().data.len() != shred_size {
                 return None;
