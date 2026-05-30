@@ -391,7 +391,8 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
     #[must_use]
     fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        *Self::derive_hash_root_last(hash, index, proof).as_hash() == *root.as_hash()
+        Self::derive_hash_root_last(hash, index, proof)
+            .is_some_and(|derived| *derived.as_hash() == *root.as_hash())
     }
 
     /// Derives the root from an element in the tree and its proof.
@@ -415,9 +416,17 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         node.into()
     }
 
+    /// Derives the root from an element claimed to be the last leaf in the tree.
+    ///
+    /// Returns `None` if the proof is longer than the maximum supported tree
+    /// height ([`EMPTY_ROOTS`] has one entry per height), as such a proof cannot
+    /// correspond to any valid tree. This avoids an out-of-bounds index into
+    /// `EMPTY_ROOTS` for an attacker-controlled, over-long proof.
     #[must_use]
-    fn derive_hash_root_last(hash: Hash, index: usize, proof: &Proof) -> Root {
-        assert!(proof.as_ref().len() <= EMPTY_ROOTS.len());
+    fn derive_hash_root_last(hash: Hash, index: usize, proof: &Proof) -> Option<Root> {
+        if proof.as_ref().len() > EMPTY_ROOTS.len() {
+            return None;
+        }
         let mut i = index;
         let mut node = hash;
         for (height, h) in proof.as_ref().iter().enumerate() {
@@ -427,7 +436,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
             };
             i /= 2;
         }
-        node.into()
+        Some(node.into())
     }
 
     /// Hashes some leaf data with a label into a leaf node.
@@ -550,6 +559,21 @@ mod tests {
         let proof = tree.create_proof(32);
         assert!(PlainMerkleTree::check_proof_last(
             &data[32], 32, &root, &proof
+        ));
+    }
+
+    #[test]
+    fn proof_last_overlong_is_rejected() {
+        // A proof longer than the maximum supported tree height must be rejected
+        // gracefully rather than panicking, since it can be attacker-controlled
+        // (e.g. via a `RepairResponse::LastSliceRoot`).
+        let data = vec![b"hello".to_vec(); 33];
+        let tree = PlainMerkleTree::new(&data);
+        let root = tree.get_root();
+
+        let overlong: Vec<Hash> = vec![Hash([0; 32]); EMPTY_ROOTS.len() + 1];
+        assert!(!PlainMerkleTree::check_proof_last(
+            &data[32], 32, &root, &overlong
         ));
     }
 
