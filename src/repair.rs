@@ -692,31 +692,29 @@ mod tests {
     async fn unknown_sender_request_dropped() {
         let ctx = setup().await;
         let num_validators = 2;
+        let block_id = (Slot::genesis().next(), GENESIS_BLOCK_HASH);
 
         // send a request with an out-of-bounds `sender`
         // the handler must drop it instead of panicking on `validator()` lookup
         let request = RepairRequest {
-            req_type: RepairRequestType::LastSliceRoot((
-                Slot::genesis().next(),
-                GENESIS_BLOCK_HASH,
-            )),
+            req_type: RepairRequestType::LastSliceRoot(block_id.clone()),
             sender: ValidatorIndex::new(num_validators),
         };
-        let port1 = localhost_ip_sockaddr(2);
+        let port1 = localhost_ip_sockaddr(3);
         ctx.v0_reply_net.send(&request, port1).await.unwrap();
 
         // no response is expected; verify by following up with a valid request
         // and checking we get its response (proves the handler is still alive)
         let valid_request = RepairRequest {
-            req_type: RepairRequestType::LastSliceRoot((
-                Slot::genesis().next(),
-                GENESIS_BLOCK_HASH,
-            )),
+            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_unchecked(0)),
             sender: ValidatorIndex::new(0),
         };
         ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();
         let msg = ctx.v0_reply_net.receive().await.unwrap();
-        assert!(matches!(msg, RepairResponse::Nack(_)));
+        assert!(matches!(
+            msg,
+            RepairResponse::Nack(RepairRequestType::SliceRoot(..))
+        ));
     }
 
     #[tokio::test]
