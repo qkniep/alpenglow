@@ -152,6 +152,18 @@ where
     #[hotpath::measure]
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
+
+        // drop requests from validators outside the current epoch's set,
+        // otherwise `validator()` indexing in `send_response` would panic on byzantine input
+        let epoch = self.epoch_info.epoch_info();
+        if request.sender.as_usize() >= epoch.validators().len() {
+            warn!(
+                "dropping repair request from unknown validator {:?}",
+                request.sender
+            );
+            return Ok(());
+        }
+
         let response = self
             .try_build_response(&request)
             .await
@@ -483,6 +495,7 @@ mod tests {
     use super::*;
     use crate::ValidatorIndex;
     use crate::consensus::{BlockstoreImpl, EpochInfo, PoolImpl};
+    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
@@ -673,6 +686,35 @@ mod tests {
                 .get_block(&block_to_repair)
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_sender_request_dropped() {
+        let ctx = setup().await;
+        let num_validators = 2;
+        let block_id = (Slot::genesis().next(), GENESIS_BLOCK_HASH);
+
+        // send a request with an out-of-bounds `sender`
+        // the handler must drop it instead of panicking on `validator()` lookup
+        let request = RepairRequest {
+            req_type: RepairRequestType::LastSliceRoot(block_id.clone()),
+            sender: ValidatorIndex::new(num_validators),
+        };
+        let port1 = localhost_ip_sockaddr(3);
+        ctx.v0_reply_net.send(&request, port1).await.unwrap();
+
+        // no response is expected; verify by following up with a valid request
+        // and checking we get its response (proves the handler is still alive)
+        let valid_request = RepairRequest {
+            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_unchecked(0)),
+            sender: ValidatorIndex::new(0),
+        };
+        ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();
+        let msg = ctx.v0_reply_net.receive().await.unwrap();
+        assert!(matches!(
+            msg,
+            RepairResponse::Nack(RepairRequestType::SliceRoot(..))
+        ));
     }
 
     #[tokio::test]
