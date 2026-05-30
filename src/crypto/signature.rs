@@ -14,6 +14,8 @@ use rand::CryptoRng;
 use serde::{Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
+use crate::crypto::Signable;
+
 /// Secret key for the digital signature scheme.
 ///
 /// This is a wrapper around [`ed25519_zebra::SigningKey`].
@@ -54,10 +56,19 @@ impl SecretKey {
         PublicKey(pk)
     }
 
-    /// Signs the byte string `msg` using this secret key.
-    // TODO: use `Signable` here, and add new `sign_bytes` function?
+    /// Signs `msg` using this secret key.
     #[must_use]
-    pub fn sign(&self, msg: &[u8]) -> Signature {
+    pub fn sign(&self, msg: &impl Signable) -> Signature {
+        self.sign_bytes(&msg.bytes_to_sign())
+    }
+
+    /// Signs the raw byte string `msg` using this secret key.
+    ///
+    /// Prefer [`sign`](Self::sign) for protocol messages. Use this only when the
+    /// bytes to sign are not the [`Signable`] representation of some type (e.g. a
+    /// bare hash, where going through [`Signable`] would just add an allocation).
+    #[must_use]
+    pub fn sign_bytes(&self, msg: &[u8]) -> Signature {
         let sig = self.0.sign(msg);
         Signature(sig)
     }
@@ -85,7 +96,13 @@ impl PublicKey {
 impl Signature {
     /// Verifies that this is a valid signature of `msg` under `pk`.
     #[must_use]
-    pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
+    pub fn verify(&self, msg: &impl Signable, pk: &PublicKey) -> bool {
+        self.verify_bytes(&msg.bytes_to_sign(), pk)
+    }
+
+    /// Verifies that this is a valid signature of the raw byte string `msg` under `pk`.
+    #[must_use]
+    pub fn verify_bytes(&self, msg: &[u8], pk: &PublicKey) -> bool {
         pk.0.verify(&self.0, msg).is_ok()
     }
 }
@@ -100,15 +117,15 @@ mod tests {
         let pk = sk.to_pk();
         assert_ne!(sk.as_bytes(), pk.as_bytes());
         let msg = b"ed25519 is pretty fine";
-        let sig = sk.sign(msg);
-        assert!(sig.verify(msg, &pk));
+        let sig = sk.sign_bytes(msg);
+        assert!(sig.verify_bytes(msg, &pk));
     }
 
     #[test]
     fn wincode() {
         let sk = SecretKey::new(&mut rand::rng());
         let msg = b"ed25519 is pretty fine";
-        let sig = sk.sign(msg);
+        let sig = sk.sign_bytes(msg);
         let bytes = wincode::serialize(&sig).unwrap();
         let recovered_sig: Signature = wincode::deserialize(&bytes).unwrap();
         assert_eq!(sig.0.to_bytes(), recovered_sig.0.to_bytes());
