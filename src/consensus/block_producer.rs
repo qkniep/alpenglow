@@ -13,7 +13,7 @@ use fastrace::Span;
 use log::{debug, info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
@@ -23,7 +23,14 @@ use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
-use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
+use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE, Transaction};
+
+/// Capacity of the bounded transaction mempool between the ingest task and block production.
+///
+/// When the producer cannot keep up with the offered load the channel fills and the ingest
+/// task's `send` awaits, so the mempool depth (see [`mpsc::Receiver::len`]) is a direct
+/// backpressure signal between offered and served load.
+const MEMPOOL_CAPACITY: usize = 65_536;
 
 /// Produces blocks from transactions and disseminates them.
 ///
@@ -46,7 +53,10 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
     /// Network connection to receive transactions from clients.
-    txs_receiver: T,
+    ///
+    /// Drained by a dedicated ingest task (see [`ingest_transactions`]) rather than read
+    /// inline during block production, so transaction ingest is decoupled from block rate.
+    txs_receiver: Arc<T>,
     /// Pool of shredders, reused across all slices and blocks we produce.
     shredders: ShredderPool<RegularShredder>,
 
@@ -64,7 +74,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 impl<D, T> BlockProducer<D, T>
 where
     D: Disseminator,
-    T: TransactionNetwork,
+    T: TransactionNetwork + 'static,
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -85,7 +95,7 @@ where
             blockstore,
             pool,
             disseminator,
-            txs_receiver,
+            txs_receiver: Arc::new(txs_receiver),
             // block production is sequential, so a single shredder is enough
             shredders: ShredderPool::with_size(1),
             cancel_token,
@@ -99,6 +109,16 @@ where
     /// Once all previous blocks have been notarized or skipped and the next
     /// slot belongs to our leader window, we will produce a block.
     pub(super) async fn block_production_loop(&self) -> Result<()> {
+        // Drain the transaction socket into a bounded mempool from a dedicated task, so ingest
+        // rate is decoupled from block rate: the producer pulls from `mempool` at its own pace
+        // while the ingest task keeps reading the socket independently.
+        let (mempool_tx, mut mempool) = mpsc::channel(MEMPOOL_CAPACITY);
+        tokio::spawn(ingest_transactions(
+            Arc::clone(&self.txs_receiver),
+            mempool_tx,
+            self.cancel_token.clone(),
+        ));
+
         for first_slot_in_window in Slot::windows() {
             if self.cancel_token.is_cancelled() {
                 break;
@@ -141,7 +161,7 @@ where
             let skip = first_slot_in_window.is_genesis() as usize;
             for slot in first_slot_in_window.slots_in_window().skip(skip) {
                 let start = Instant::now();
-                parent = self.produce_block(slot, parent, rx).await?;
+                parent = self.produce_block(slot, parent, rx, &mut mempool).await?;
                 rx = None;
                 debug!(
                     "produced block {} in {} ms",
@@ -166,6 +186,7 @@ where
         slot: Slot,
         parent_block_id: BlockId,
         mut parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
+        mempool: &mut mpsc::Receiver<Transaction>,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
 
@@ -232,8 +253,7 @@ where
             let (payload, new_duration_left) = if awaiting_handover {
                 // The handover may attach a parent to this slice even when it currently has
                 // none, so reserve parent space regardless of `parent`.
-                let produce_future =
-                    produce_slice_payload(&self.txs_receiver, parent, true, time_for_slice);
+                let produce_future = produce_slice_payload(mempool, parent, true, time_for_slice);
                 pin!(produce_future);
                 race_slice_against_parent_ready(
                     produce_future,
@@ -245,7 +265,7 @@ where
             } else {
                 // The timer is running, so deduct the time spent on this slice from the budget.
                 let (payload, remaining) =
-                    produce_slice_payload(&self.txs_receiver, parent, false, time_for_slice).await;
+                    produce_slice_payload(mempool, parent, false, time_for_slice).await;
                 let elapsed = time_for_slice.saturating_sub(remaining);
                 (payload, duration_left.saturating_sub(elapsed))
             };
@@ -346,7 +366,7 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
 
 /// Collects transactions into a slice payload, waiting up to `duration_left` for more.
 ///
-/// Listens to transactions on `txs_receiver` for at most `duration_left`.
+/// Pulls already-ingested transactions from the bounded `mempool` for at most `duration_left`.
 /// Manually serializes a [`Vec<Transaction>`] to keep track of how much space is left.
 /// Stops if either the slice cannot fit any more transactions, or time runs out.
 ///
@@ -355,16 +375,14 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
 /// overflowing the slice. Under `FixInt` encoding every `Some(BlockId)` is the same size.
 ///
 /// Returns the completed payload and the remaining time in `duration_left`.
-async fn produce_slice_payload<T>(
-    txs_receiver: &T,
+async fn produce_slice_payload(
+    mempool: &mut mpsc::Receiver<Transaction>,
     parent: Option<BlockId>,
     reserve_handover_space: bool,
     duration_left: Duration,
-) -> (SlicePayload, Duration)
-where
-    T: TransactionNetwork,
-{
+) -> (SlicePayload, Duration) {
     let start_time = Instant::now();
+    debug!("producing slice with mempool depth {}", mempool.len());
 
     // each slice should be able hold at least 1 transaction
     // +8 to encode number of txs, +8 to encode tx payload length
@@ -384,13 +402,16 @@ where
 
     let ret = loop {
         let sleep_duration = duration_left.saturating_sub(start_time.elapsed());
-        let res = tokio::select! {
+        let tx = tokio::select! {
             () = sleep(sleep_duration) => {
                 break Duration::ZERO;
             }
-            res = txs_receiver.receive() => res,
+            maybe_tx = mempool.recv() => match maybe_tx {
+                Some(tx) => tx,
+                // Ingest task is gone (shutdown): stop collecting, keep what we have.
+                None => break duration_left.saturating_sub(start_time.elapsed()),
+            },
         };
-        let tx = res.expect("receiving tx");
         tx_count += 1;
         wincode::serialize_into(&mut buffer, &tx).unwrap();
 
@@ -404,6 +425,36 @@ where
     buffer[0..8].copy_from_slice(&tx_count.to_le_bytes());
 
     (SlicePayload::new(parent, buffer), ret)
+}
+
+/// Dedicated transaction ingest task: drains `txs_receiver` into the bounded `mempool`.
+///
+/// Running ingest in its own task decouples the rate at which transactions arrive from the
+/// rate at which the block producer consumes them. The producer pulls from the
+/// [`MEMPOOL_CAPACITY`]-bounded channel at its own pace; when it falls behind, the channel
+/// fills and `send` awaits, making the mempool depth the real backpressure signal between
+/// offered and served load. Runs until cancellation or until the producer drops the receiver.
+async fn ingest_transactions<T: TransactionNetwork>(
+    txs_receiver: Arc<T>,
+    mempool: mpsc::Sender<Transaction>,
+    cancel_token: CancellationToken,
+) {
+    loop {
+        let tx = tokio::select! {
+            () = cancel_token.cancelled() => break,
+            res = txs_receiver.receive() => match res {
+                Ok(tx) => tx,
+                Err(e) => {
+                    warn!("error receiving transaction: {e}");
+                    continue;
+                }
+            },
+        };
+        if mempool.send(tx).await.is_err() {
+            // Block producer dropped the mempool receiver; nothing left to feed.
+            break;
+        }
+    }
 }
 
 /// Race slice payload production against a pending `ParentReady` channel.
@@ -533,19 +584,20 @@ mod tests {
     use crate::consensus::{BlockInfo, ValidatorEpochInfo};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
-    use crate::network::{UdpNetwork, localhost_ip_sockaddr};
+    use crate::network::UdpNetwork;
     use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::generate_validators;
     use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
-        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        // Keep the sender alive so the mempool stays open (empty, not closed).
+        let (_txs_sender, mut mempool) = mpsc::channel(MEMPOOL_CAPACITY);
         let duration_left = Duration::ZERO;
 
         let parent = None;
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
+            produce_slice_payload(&mut mempool, parent.clone(), false, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 8 bytes
@@ -553,7 +605,7 @@ mod tests {
 
         let parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
+            produce_slice_payload(&mut mempool, parent.clone(), false, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 8 bytes
@@ -562,24 +614,21 @@ mod tests {
 
     #[tokio::test]
     async fn produce_slice_full_slices() {
-        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
-        let addr = localhost_ip_sockaddr(txs_receiver.port());
-        let txs_sender: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let (txs_sender, mut mempool) = mpsc::channel(MEMPOOL_CAPACITY);
         // long enough duration so hopefully doesn't fire while collecting txs
         let duration_left = Duration::from_secs(100);
 
         tokio::spawn(async move {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
-                let msg = Transaction(data);
-                txs_sender.send(&msg, addr).await.unwrap();
+                txs_sender.send(Transaction(data)).await.unwrap();
             }
         });
 
         let parent = None;
         let parent_len = wincode::serialized_size(&parent).unwrap() as usize;
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
+            produce_slice_payload(&mut mempool, parent.clone(), false, duration_left).await;
         assert!(maybe_duration > Duration::ZERO);
         assert_eq!(payload.parent, parent);
         let max_len = MAX_DATA_PER_SLICE - parent_len - 8;
@@ -592,21 +641,18 @@ mod tests {
     /// `MAX_DATA_PER_SLICE` after the parent is attached (otherwise shredding would fail).
     #[tokio::test]
     async fn produce_slice_reserves_handover_space() {
-        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
-        let addr = localhost_ip_sockaddr(txs_receiver.port());
-        let txs_sender: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let (txs_sender, mut mempool) = mpsc::channel(MEMPOOL_CAPACITY);
         let duration_left = Duration::from_secs(100);
 
         tokio::spawn(async move {
             for i in 0..255 {
                 let data = vec![i; MAX_TRANSACTION_SIZE];
-                txs_sender.send(&Transaction(data), addr).await.unwrap();
+                txs_sender.send(Transaction(data)).await.unwrap();
             }
         });
 
         // produce a full slice with no parent, but reserving space for a later handover
-        let (mut payload, _) =
-            produce_slice_payload(&txs_receiver, None, true, duration_left).await;
+        let (mut payload, _) = produce_slice_payload(&mut mempool, None, true, duration_left).await;
         assert_eq!(payload.parent, None);
         // the slice is full: it cannot fit another transaction
         assert!(payload.to_bytes().len() + MAX_TRANSACTION_SIZE + 8 > MAX_DATA_PER_SLICE);
@@ -762,8 +808,10 @@ mod tests {
             Duration::from_micros(0),
         );
 
+        // delta is zero, so slices are produced empty without pulling from the mempool
+        let (_txs_sender, mut mempool) = mpsc::channel(MEMPOOL_CAPACITY);
         let ret = block_producer
-            .produce_block(slot, block_info.parent, None)
+            .produce_block(slot, block_info.parent, None, &mut mempool)
             .await
             .unwrap();
         assert_eq!(slot, ret.0);
@@ -860,8 +908,15 @@ mod tests {
             start_second_slice_tx.send(()).unwrap();
         });
 
+        // delta is zero, so slices are produced empty without pulling from the mempool
+        let (_txs_sender, mut mempool) = mpsc::channel(MEMPOOL_CAPACITY);
         let ret = block_producer
-            .produce_block(slot, old_block_info.parent, Some(parent_ready_rx))
+            .produce_block(
+                slot,
+                old_block_info.parent,
+                Some(parent_ready_rx),
+                &mut mempool,
+            )
             .await
             .unwrap();
 
