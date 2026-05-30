@@ -390,14 +390,15 @@ mod tests {
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITHOUT skips
-        let slot4 = slot2.next().next();
+        let slot3 = slot2.next();
         let hash3: BlockHash = Hash::random_for_test().into();
+        let slot4 = slot3.next();
         let hash4: BlockHash = Hash::random_for_test().into();
-        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
+        let event = tracker.add_parent((slot4, hash4.clone()), (slot3, hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
         let event = tracker.mark_fast_finalized(slot4, hash4.clone());
         assert_eq!(event.finalized, Some((slot4, hash4)));
-        assert_eq!(event.implicitly_finalized, vec![(slot4.prev(), hash3)]);
+        assert_eq!(event.implicitly_finalized, vec![(slot3, hash3)]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITH skips
@@ -465,7 +466,7 @@ mod tests {
     fn prune() {
         let mut tracker = FinalityTracker::default();
 
-        // Notarize and connect a chain of blocks across several slots.
+        // notarize and connect (with parent relation) a chain of blocks
         let mut prev = (Slot::genesis(), GENESIS_BLOCK_HASH);
         for s in 1..=6u64 {
             let slot = Slot::new(s);
@@ -474,48 +475,44 @@ mod tests {
             tracker.add_parent((slot, hash.clone()), prev.clone());
             prev = (slot, hash);
         }
-        // Finalize slot 5, implicitly finalizing its ancestors. The whole chain
-        // down to genesis is connected, so the watermark advances to slot 5.
-        tracker.mark_finalized(Slot::new(5));
 
+        // finalize slot 5, implicitly finalizing its ancestors
         let root = Slot::new(5);
+        tracker.mark_finalized(root);
+
+        // this moves the watermark to slot 5
         assert_eq!(tracker.first_unpruned_slot(), root);
-        // Only slots at or above the watermark remain, in both maps.
+
+        // only slots at or above the watermark remain
         assert!(tracker.status.keys().all(|s| *s >= root));
         assert!(tracker.parents.keys().all(|(s, _)| *s >= root));
         assert!(tracker.status.contains_key(&root));
         assert!(!tracker.status.contains_key(&Slot::new(4)));
     }
 
-    /// A slot finalized before the chain connecting it down to the watermark is
-    /// known must not cause the unresolved slots below it to be pruned.
     #[test]
     fn prune_keeps_unresolved_gap() {
         let mut tracker = FinalityTracker::default();
         let hash2: BlockHash = Hash::random_for_test().into();
 
-        // Slot 1 is finalized, but its block hash is not yet known: the chain
-        // has not joined, so it stays unresolved (`FinalPendingNotar`).
+        // finality cert for slot 1 without block hash
         assert_eq!(
             tracker.mark_finalized(Slot::new(1)),
             FinalizationEvent::default()
         );
 
-        // Slot 2 is directly finalized ahead of slot 1, with the connecting
-        // chain still unknown.
+        // slot 2 receives full finalization (final + notar)
         tracker.mark_notarized(Slot::new(2), hash2.clone());
         let event = tracker.mark_finalized(Slot::new(2));
         assert_eq!(event.finalized, Some((Slot::new(2), hash2)));
 
-        // The watermark must NOT advance past the still-unresolved slot 1, even
-        // though slot 2 is finalized. Otherwise slot 1 would be pruned and its
-        // later notarization lost.
+        // cannot prune slot 1 yet
+        // we can't have emitted a `FinalizationEvent` for it yet
         assert_eq!(tracker.highest_finalized_slot(), Slot::new(2));
         assert_eq!(tracker.first_unpruned_slot(), Slot::genesis());
         assert!(tracker.status.contains_key(&Slot::new(1)));
 
-        // Once slot 1's notarization arrives and the chain joins, it resolves
-        // and the watermark catches up across the now-contiguous prefix.
+        // can catch up once continuous chain is fully finalized
         let hash1: BlockHash = Hash::random_for_test().into();
         tracker.add_parent(
             (Slot::new(1), hash1.clone()),
