@@ -55,7 +55,8 @@ pub(crate) trait SignedVote {
 ///
 /// This vote is cast immediately after obtaining a valid block.
 /// With synchronous execution, this is only after successful execution.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct NotarVote {
     slot: Slot,
     block_hash: BlockHash,
@@ -116,7 +117,8 @@ impl SignedVote for NotarVote {
 /// Requires the validator to see:
 /// - 40% notar votes for the block, OR
 /// - 60% skip votes + notar votes for the block, 20% of which are notar votes.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct NotarFallbackVote {
     slot: Slot,
     block_hash: BlockHash,
@@ -171,7 +173,8 @@ impl SignedVote for NotarFallbackVote {
 /// A signed skip vote.
 ///
 /// This vote is cast when seeing an invalid block or timing out on a slot.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SkipVote {
     slot: Slot,
     sig: IndividualSignature,
@@ -219,7 +222,8 @@ impl SignedVote for SkipVote {
 /// - `skip` is the total stake of skip votes,
 /// - `sum_notar` is the total stake of notar votes, and
 /// - `max_notar` is the stake of notar votes for the most notarized block.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SkipFallbackVote {
     slot: Slot,
     sig: IndividualSignature,
@@ -266,7 +270,8 @@ impl SignedVote for SkipFallbackVote {
 /// Requires that the validator:
 /// - previously voted notar on the block, AND
 /// - did NOT previously vote skip, skip-fallback, or notar-fallback.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct FinalVote {
     slot: Slot,
     sig: IndividualSignature,
@@ -318,7 +323,8 @@ impl SignedVote for FinalVote {
 /// Use this type in contexts where a generic vote is required,
 /// such as when receiving a vote over the network or re-broadcasting during standstill recovery.
 /// For type-safe storage or certificate construction, prefer the concrete vote types.
-#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum Vote {
     /// A notarization vote.
     Notar(NotarVote),
