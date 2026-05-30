@@ -102,11 +102,11 @@ impl PublicKey {
 ///
 /// Always in the prime-order subgroup (and not the identity).
 /// [`AggregateSignature::new`] relies on this to skip subgroup checks.
-//
+#[derive(Clone, Copy, Debug)]
 // NOTE: Deriving `PartialEq` and `Eq` to support testing.
 // It only makes sense because the underlying signature scheme happens to be deterministic and unique.
 // Reevaluate if we change the signature scheme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IndividualSignature(BlstSignature);
 
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
