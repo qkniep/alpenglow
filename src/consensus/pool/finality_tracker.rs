@@ -55,7 +55,6 @@ pub(super) enum FinalizationStatus {
 /// Information about newly finalized slots.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct FinalizationEvent {
-    // TODO: instead use `Option<FinalizationEvent>`?
     /// Directly finalized block, if any.
     pub(super) finalized: Option<BlockId>,
     /// Any implicitly finalized blocks.
