@@ -451,6 +451,7 @@ mod tests {
         pool_tx: mpsc::Sender<PoolEvent>,
         blockstore_tx: mpsc::Sender<BlockstoreEvent>,
         epoch_info: EpochInfo,
+        sks: Vec<SecretKey>,
     }
 
     impl TestContext {
@@ -479,29 +480,41 @@ mod tests {
         }
     }
 
-    async fn start_votor() -> TestContext {
+    /// Creates a fresh [`Votor`] together with the channels and keys needed to drive it.
+    ///
+    /// The returned votor is not started; callers either run its [`Votor::voting_loop`]
+    /// (see [`start_votor`]) or drive its handlers directly.
+    async fn build_votor() -> (Votor<A2A>, TestContext) {
         let (sks, epoch_info) = generate_validators(2);
         let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
         let (pool_tx, pool_rx) = mpsc::channel(100);
         let (blockstore_tx, blockstore_rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let mut votor = Votor::new(
+        let votor = Votor::new(
             ValidatorIndex::new(0),
             sks[0].clone(),
             pool_rx,
             blockstore_rx,
             Arc::new(votor_a2a),
         );
-        tokio::spawn(async move {
-            votor.voting_loop().await.unwrap();
-        });
-        TestContext {
+        let ctx = TestContext {
             other_a2a,
             pool_tx,
             blockstore_tx,
             epoch_info,
-        }
+            sks,
+        };
+        (votor, ctx)
+    }
+
+    /// Builds a votor and spawns its [`Votor::voting_loop`], returning the test context.
+    async fn start_votor() -> TestContext {
+        let (mut votor, ctx) = build_votor().await;
+        tokio::spawn(async move {
+            votor.voting_loop().await.unwrap();
+        });
+        ctx
     }
 
     #[tokio::test]
@@ -670,47 +683,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prunes_finalized_slots() {
-        let (sks, epoch_info) = generate_validators(2);
-        let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
-        let (_pool_tx, pool_rx) = mpsc::channel(100);
-        let (_blockstore_tx, blockstore_rx) = mpsc::channel(100);
-        let other_a2a = a2a.pop().unwrap();
-        let votor_a2a = a2a.pop().unwrap();
-        let mut votor = Votor::new(
-            ValidatorIndex::new(0),
-            sks[0].clone(),
-            pool_rx,
-            blockstore_rx,
-            Arc::new(votor_a2a),
-        );
+    async fn prunes_to_finalized_window() {
+        let (mut votor, ctx) = build_votor().await;
 
         // drain broadcasts so votor's sends never block on the bounded network
+        let other_a2a = ctx.other_a2a;
         tokio::spawn(async move { while other_a2a.receive().await.is_ok() {} });
 
-        // populate per-slot state for a couple slots
-        for i in 1..=5u64 {
+        // finalize a slot that is NOT first in its window and isn't in the genesis window
+        let finalized = Slot::new(SLOTS_PER_WINDOW + 1);
+        let window_start = finalized.first_slot_in_window();
+        assert!(window_start > Slot::genesis());
+        assert!(window_start < finalized);
+
+        // populate per-slot state across the previous window and into the next one
+        let highest = Slot::new(2 * SLOTS_PER_WINDOW);
+        for i in 1..=highest.inner() {
             let event = BlockstoreEvent::FirstShred(Slot::new(i));
             votor.handle_blockstore_event(event).await;
         }
-        assert!((0..=5).all(|i| votor.slots.contains_key(&Slot::new(i))));
+        assert!((0..=highest.inner()).all(|i| votor.slots.contains_key(&Slot::new(i))));
 
-        // finalizing slot 3 should drop all state for slots < 3
+        // finalizing a mid-window slot should drop only the slots before its window
         let Vote::Final(final_vote) =
-            Vote::new_final(Slot::new(3), &sks[1], ValidatorIndex::new(1))
+            Vote::new_final(finalized, &ctx.sks[1], ValidatorIndex::new(1))
         else {
             unreachable!()
         };
         let cert = Cert::Final(FinalCert::new_unchecked(
             &[final_vote],
-            epoch_info.validators(),
+            ctx.epoch_info.validators(),
         ));
-        votor
-            .handle_pool_event(PoolEvent::CertCreated(Box::new(cert)))
-            .await;
+        let event = PoolEvent::CertCreated(Box::new(cert));
+        votor.handle_pool_event(event).await;
+        assert_eq!(votor.finalized_slot, finalized);
 
-        assert_eq!(votor.finalized_slot, Slot::new(3));
-        assert!(votor.slots.keys().all(|s| *s >= Slot::new(3)));
+        // the whole finalized window is kept
+        assert!(votor.slots.keys().all(|s| *s >= window_start));
+        for slot in window_start.slots_in_window() {
+            assert!(
+                votor.slots.contains_key(&slot),
+                "slot {slot} in finalized window should be retained",
+            );
+        }
+
+        // earlier windows are dropped
         assert!(!votor.slots.contains_key(&Slot::genesis()));
+        assert!(!votor.slots.contains_key(&window_start.prev()));
     }
 }
