@@ -156,7 +156,7 @@ where
         // drop requests from validators outside the current epoch's set,
         // otherwise `validator()` indexing in `send_response` would panic on byzantine input
         let epoch = self.epoch_info.epoch_info();
-        if request.sender.as_index() >= epoch.validators().len() {
+        if request.sender.as_usize() >= epoch.validators().len() {
             warn!(
                 "dropping repair request from unknown validator {:?}",
                 request.sender
@@ -700,7 +700,7 @@ mod tests {
                 Slot::genesis().next(),
                 GENESIS_BLOCK_HASH,
             )),
-            sender: ValidatorId::new(num_validators),
+            sender: ValidatorIndex::new(num_validators),
         };
         let port1 = localhost_ip_sockaddr(2);
         ctx.v0_reply_net.send(&request, port1).await.unwrap();
@@ -712,7 +712,7 @@ mod tests {
                 Slot::genesis().next(),
                 GENESIS_BLOCK_HASH,
             )),
-            sender: ValidatorId::new(0),
+            sender: ValidatorIndex::new(0),
         };
         ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();
         let msg = ctx.v0_reply_net.receive().await.unwrap();
