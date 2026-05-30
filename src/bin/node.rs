@@ -40,8 +40,7 @@ struct Args {
     /// Generates configs for a cluster from a file with IPs (one per line).
     #[arg(
         long,
-        help = "Generates config files for a cluster. The provided file should contain one IP address per line,
-     and the generated config files will be named with the provided config name as prefix."
+        help = "Generates config files for a cluster. The provided file should contain one IP address per line"
     )]
     generate_config_files: Option<String>,
     /// Config file name to use.
