@@ -237,13 +237,11 @@ impl PoolImpl {
                 let hash = ff_cert.block_hash().clone();
                 let finalization_event = self.finality_tracker.mark_fast_finalized(slot, hash);
                 self.handle_finalization(finalization_event).await;
-                self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 let finalization_event = self.finality_tracker.mark_finalized(slot);
                 self.handle_finalization(finalization_event).await;
-                self.prune();
             }
         }
 
@@ -331,15 +329,23 @@ impl PoolImpl {
         votes
     }
 
-    /// Cleans up old finalized slots from the pool.
+    /// Cleans up state for slots that the finality tracker has pruned.
     ///
-    /// After this, [`Self::slot_states`] will only contain entries for slots
-    /// >= [`Self::finalized_slot`].
+    /// After this, [`Self::slot_states`] only contains entries for slots at or
+    /// above [`Self::first_unpruned_slot`] = [`FinalityTracker::first_unpruned_slot`].
     fn prune(&mut self) {
-        let last_slot = self.finalized_slot();
-        self.slot_states = self.slot_states.split_off(&last_slot);
-        self.parent_ready_tracker.prune(last_slot);
-        self.finality_tracker.prune(last_slot);
+        let first_unpruned_slot = self.first_unpruned_slot();
+        self.slot_states = self.slot_states.split_off(&first_unpruned_slot);
+        self.parent_ready_tracker.prune(first_unpruned_slot);
+        // NOTE: The finality tracker prunes its own state internally.
+    }
+
+    /// Returns the first slot whose state has not been pruned.
+    ///
+    /// Everything below this is fully resolved; certificates and votes for those
+    /// slots can be safely ignored.
+    fn first_unpruned_slot(&self) -> Slot {
+        self.finality_tracker.first_unpruned_slot()
     }
 
     /// Returns `true` iff the given parent is ready for the given slot.
@@ -391,6 +397,7 @@ impl PoolImpl {
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
         self.send_parent_ready_events(new_parents_ready).await;
+        self.prune();
     }
 
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
@@ -413,11 +420,14 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
+        // TODO: set bounds exactly correctly; use validator set & stake distribution
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: This needs to be `< finalize_slot` to allow for later notarization.
-        if slot < self.finalized_slot() || slot >= slot_far_in_future {
+        // NOTE: The lower bound is `first_unpruned_slot`, not `finalized_slot`, so the
+        // admission frontier matches the pruning frontier: we accept votes/certs for
+        // exactly the slots we still track. Finalized-but-unconnected slots in the gap
+        // are resolved by learning their parent edges (`add_block`), not by these certs,
+        // so accepting them here is for a single, simple frontier, not correctness.
+        if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
@@ -453,10 +463,10 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
+        // TODO: set bounds exactly correctly; use validator set & stake distribution
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        if slot < self.finalized_slot() || slot >= slot_far_in_future {
+        // NOTE: Lower-bounded by `first_unpruned_slot` for the same reason as `add_cert`.
+        if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
@@ -1159,10 +1169,14 @@ mod tests {
     async fn out_of_bounds_votes() {
         let mut ctx = setup();
 
-        // all nodes vote finalize last slot of 3rd leader windows
+        // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
-        ctx.add_notar_votes(slot, &GENESIS_BLOCK_HASH, 0..11).await;
+        for s in 1..=slot.inner() {
+            ctx.add_notar_votes(Slot::new(s), &GENESIS_BLOCK_HASH, 0..11)
+                .await;
+        }
         assert_eq!(ctx.pool.finalized_slot(), slot);
+        assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
         // dismiss old votes
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
@@ -1194,24 +1208,25 @@ mod tests {
     async fn out_of_bounds_certs() {
         let mut ctx = setup();
 
-        // insert a notar cert for last slot of 3rd leader window
+        // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
-        let votes: Vec<NotarVote> = (0..11)
-            .map(|v| {
-                NotarVote::new(
-                    slot,
-                    GENESIS_BLOCK_HASH,
-                    &ctx.sks[v as usize],
-                    ValidatorIndex::new(v),
-                )
-            })
-            .collect();
-        let ff_cert =
-            FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
-            Ok(())
-        );
+        for s in 1..=slot.inner() {
+            let cert_slot = Slot::new(s);
+            let votes: Vec<NotarVote> = (0..11)
+                .map(|v| {
+                    NotarVote::new(
+                        cert_slot,
+                        GENESIS_BLOCK_HASH,
+                        &ctx.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
+                .collect();
+            let ff_cert =
+                FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
+            assert_eq!(ctx.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
+        }
+        assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
         // dismiss old certs
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {

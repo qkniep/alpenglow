@@ -35,6 +35,15 @@ pub(super) struct FinalityTracker {
     /// This means that slot has a fast finalization *or* finalization + notarization.
     /// Also, all prior slots are finalized (directly or implicitly) *or* implicitly skipped.
     highest_finalized_slot: Slot,
+    /// The first slot whose state has not yet been pruned, i.e. the lowest slot
+    /// still tracked.
+    ///
+    /// Everything below this is a contiguous prefix of fully resolved (finalized
+    /// or implicitly skipped) slots that has been dropped. This can lag behind
+    /// [`Self::highest_finalized_slot`]: a slot may be finalized before the chain
+    /// connecting it down to here is known, in which case the slots in between
+    /// are not yet resolved and must be kept.
+    first_unpruned_slot: Slot,
 }
 
 /// Possible states a slot can be in regarding finality.
@@ -91,6 +100,7 @@ impl FinalityTracker {
                 if &block_hash == hash {
                     self.handle_implicitly_finalized(block.0, parent, &mut event);
                 }
+                self.prune();
                 event
             }
             FinalizationStatus::Notarized(_)
@@ -129,6 +139,7 @@ impl FinalityTracker {
 
         let mut event = FinalizationEvent::default();
         self.handle_finalized_block((slot, block_hash), &mut event);
+        self.prune();
         event
     }
 
@@ -163,6 +174,7 @@ impl FinalityTracker {
                 self.status
                     .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
                 self.handle_finalized_block((slot, block_hash), &mut event);
+                self.prune();
                 event
             }
         }
@@ -191,6 +203,7 @@ impl FinalityTracker {
                 self.status
                     .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
                 self.handle_finalized_block((slot, block_hash), &mut event);
+                self.prune();
                 event
             }
             FinalizationStatus::ImplicitlySkipped => panic!("consensus safety violation"),
@@ -205,14 +218,38 @@ impl FinalityTracker {
         self.highest_finalized_slot
     }
 
-    /// Removes all tracked state for slots strictly below `new_root`.
+    /// Returns the first slot whose state has not yet been pruned.
     ///
-    /// After this, only slots `>= new_root` are tracked. This should be called
-    /// when the root (finalized) slot advances, to free memory for slots that
-    /// are no longer relevant.
-    pub(super) fn prune(&mut self, new_root: Slot) {
-        self.status = self.status.split_off(&new_root);
-        self.parents.retain(|(slot, _), _| *slot >= new_root);
+    /// All slots below this are fully resolved and no longer tracked,
+    /// so certs and votes for them can be safely ignored.
+    pub(super) fn first_unpruned_slot(&self) -> Slot {
+        self.first_unpruned_slot
+    }
+
+    /// Advances [`Self::first_unpruned_slot`] across the contiguous prefix of
+    /// resolved slots and drops all state below it.
+    ///
+    /// A slot is resolved once its fate is sealed: directly or implicitly
+    /// finalized, or implicitly skipped. We can only prune such a contiguous
+    /// prefix: a slot can be finalized before the chain connecting it down to
+    /// [`Self::first_unpruned_slot`] is known, so a higher finalized slot does
+    /// not imply the slots below it are resolved yet.
+    fn prune(&mut self) {
+        let mut next = self.first_unpruned_slot.next();
+        while self.status.get(&next).is_some_and(|status| {
+            matches!(
+                status,
+                FinalizationStatus::Finalized(_)
+                    | FinalizationStatus::ImplicitlyFinalized(_)
+                    | FinalizationStatus::ImplicitlySkipped
+            )
+        }) {
+            self.first_unpruned_slot = next;
+            next = next.next();
+        }
+        let root = self.first_unpruned_slot;
+        self.status = self.status.split_off(&root);
+        self.parents.retain(|(slot, _), _| *slot >= root);
     }
 
     /// Handles the direct finalization of the given block.
@@ -320,6 +357,7 @@ impl Default for FinalityTracker {
             status,
             parents: BTreeMap::new(),
             highest_finalized_slot: Slot::genesis(),
+            first_unpruned_slot: Slot::genesis(),
         }
     }
 }
@@ -427,7 +465,7 @@ mod tests {
     fn prune() {
         let mut tracker = FinalityTracker::default();
 
-        // Notarize a chain of blocks across several slots.
+        // Notarize and connect a chain of blocks across several slots.
         let mut prev = (Slot::genesis(), GENESIS_BLOCK_HASH);
         for s in 1..=6u64 {
             let slot = Slot::new(s);
@@ -436,16 +474,55 @@ mod tests {
             tracker.add_parent((slot, hash.clone()), prev.clone());
             prev = (slot, hash);
         }
-        // Finalize slot 5, implicitly finalizing its ancestors.
+        // Finalize slot 5, implicitly finalizing its ancestors. The whole chain
+        // down to genesis is connected, so the watermark advances to slot 5.
         tracker.mark_finalized(Slot::new(5));
 
-        let new_root = Slot::new(4);
-        tracker.prune(new_root);
+        let root = Slot::new(5);
+        assert_eq!(tracker.first_unpruned_slot(), root);
+        // Only slots at or above the watermark remain, in both maps.
+        assert!(tracker.status.keys().all(|s| *s >= root));
+        assert!(tracker.parents.keys().all(|(s, _)| *s >= root));
+        assert!(tracker.status.contains_key(&root));
+        assert!(!tracker.status.contains_key(&Slot::new(4)));
+    }
 
-        // Only slots at or above the new root remain, in both maps.
-        assert!(tracker.status.keys().all(|s| *s >= new_root));
-        assert!(tracker.parents.keys().all(|(s, _)| *s >= new_root));
-        assert!(tracker.status.contains_key(&new_root));
-        assert!(!tracker.status.contains_key(&Slot::new(3)));
+    /// A slot finalized before the chain connecting it down to the watermark is
+    /// known must not cause the unresolved slots below it to be pruned.
+    #[test]
+    fn prune_keeps_unresolved_gap() {
+        let mut tracker = FinalityTracker::default();
+        let hash2: BlockHash = Hash::random_for_test().into();
+
+        // Slot 1 is finalized, but its block hash is not yet known: the chain
+        // has not joined, so it stays unresolved (`FinalPendingNotar`).
+        assert_eq!(
+            tracker.mark_finalized(Slot::new(1)),
+            FinalizationEvent::default()
+        );
+
+        // Slot 2 is directly finalized ahead of slot 1, with the connecting
+        // chain still unknown.
+        tracker.mark_notarized(Slot::new(2), hash2.clone());
+        let event = tracker.mark_finalized(Slot::new(2));
+        assert_eq!(event.finalized, Some((Slot::new(2), hash2)));
+
+        // The watermark must NOT advance past the still-unresolved slot 1, even
+        // though slot 2 is finalized. Otherwise slot 1 would be pruned and its
+        // later notarization lost.
+        assert_eq!(tracker.highest_finalized_slot(), Slot::new(2));
+        assert_eq!(tracker.first_unpruned_slot(), Slot::genesis());
+        assert!(tracker.status.contains_key(&Slot::new(1)));
+
+        // Once slot 1's notarization arrives and the chain joins, it resolves
+        // and the watermark catches up across the now-contiguous prefix.
+        let hash1: BlockHash = Hash::random_for_test().into();
+        tracker.add_parent(
+            (Slot::new(1), hash1.clone()),
+            (Slot::genesis(), GENESIS_BLOCK_HASH),
+        );
+        let event = tracker.mark_notarized(Slot::new(1), hash1.clone());
+        assert_eq!(event.finalized, Some((Slot::new(1), hash1)));
+        assert_eq!(tracker.first_unpruned_slot(), Slot::new(2));
     }
 }
