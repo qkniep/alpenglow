@@ -4,6 +4,11 @@
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
+from pathlib import Path as path
+
+PROJECT_ROOT = path(__file__).parent.parent
+# Path to the data directory
+DATA_PATH = PROJECT_ROOT / "data" 
 
 # Stake distribution to use in the underlying dataset.
 # Currently available: solana, sui, 5hubs, stock_exchanges
@@ -85,7 +90,7 @@ plt.rcParams.update({"font.size": 14, "axes.titlesize": 18, "axes.labelsize": 16
 plt.style.use("fivethirtyeight")
 
 # load data frame from CSV
-file_path = f"./data/output/simulations/latency/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv"
+file_path = DATA_PATH / "output" / "simulations" / "latency" / f"{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv"
 df = pd.read_csv(file_path)
 
 # print average finalization latencies
@@ -110,7 +115,7 @@ plt.legend()
 plt.grid(True, axis="y", linestyle="--", alpha=0.7)
 plt.tight_layout()
 plt.savefig(
-    f"./data/output/simulations/latency/latency_histogram_final_only.png", dpi=300
+    DATA_PATH / "output" / "simulations" / "latency" / "latency_histogram_final_only.png", dpi=300
 )
 
 # average of averages (all stages)
@@ -128,7 +133,7 @@ plt.xlim(0, 101)
 plt.legend()
 plt.grid(True, axis="y", linestyle="--", alpha=0.7)
 plt.tight_layout()
-plt.savefig(f"./data/output/simulations/latency/latency_histogram.png", dpi=300)
+plt.savefig(DATA_PATH / "output" / "simulations" / "latency" / "latency_histogram.png", dpi=300)
 
 # average of averages (Rotor only)
 fig = plt.figure(figsize=(12, 7))
@@ -145,11 +150,11 @@ plt.xlim(0, 101)
 plt.legend()
 plt.grid(True, axis="y", linestyle="--", alpha=0.7)
 plt.tight_layout()
-plt.savefig(f"./data/output/simulations/latency/latency_histogram_rotor.png", dpi=300)
+plt.savefig(DATA_PATH / "output" / "simulations" / "latency" / "latency_histogram_rotor.png", dpi=300)
 
 # individual city plots
 for city in CITIES:
-    file_path = f"./data/output/simulations/latency/{city}/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv"
+    file_path = DATA_PATH / "output" / "simulations" / "latency" / city / f"{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv"
     df = pd.read_csv(file_path)
 
     # print average finalization latencies
@@ -181,7 +186,7 @@ for city in CITIES:
     plt.tight_layout()
     city_filename = cityname.lower().replace(" ", "_")
     plt.savefig(
-        f"./data/output/simulations/latency/latency_histogram_{city_filename}.png",
+        DATA_PATH / "output" / "simulations" / "latency" / f"latency_histogram_{city_filename}.png",
         dpi=300,
     )
 
@@ -189,7 +194,7 @@ for city in CITIES:
 mpl.rcParams.update(mpl.rcParamsDefault)
 plt.style.use("dark_background")
 for city in CITIES:
-    file_path = f"./data/output/simulations/latency/{city}/{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv"
+    file_path = DATA_PATH / "output" / "simulations" / "latency" / city / f"{STAKE_DISTRIBUTION}-{SAMPLING}-{DATA_SHREDS}-{TOTAL_SHREDS}.csv"
     df = pd.read_csv(file_path)
     df["percentile"] = df["percentile"] - 0.5
 
@@ -211,7 +216,7 @@ for city in CITIES:
     plt.tight_layout()
     city_filename = cityname.lower().replace(" ", "_")
     plt.savefig(
-        f"./data/output/simulations/latency/fancy_latency_histogram_{city_filename}.png",
+        DATA_PATH / "output" / "simulations" / "latency" / f"fancy_latency_histogram_{city_filename}.png",
         dpi=300,
         transparent=True,
     )

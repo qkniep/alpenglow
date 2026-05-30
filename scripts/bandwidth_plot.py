@@ -4,6 +4,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pathlib import Path as path
+
+PROJECT_ROOT = path(__file__).parent.parent
+# Path to the data directory
+DATA_PATH = PROJECT_ROOT / "data" 
 
 # Stake distribution to use in the underlying dataset.
 # Currently available: solana, sui, 5hubs, stock_exchanges
@@ -16,6 +21,7 @@ TOTAL_SHREDS = 64
 # Maximum bandwidth available (in bits per second).
 # Currently available: 100 Mbps, 1 Gbps, 10 Gbps, 100 Gbps
 MAX_BANDWIDTH = 1_000_000_000  # 1 Gbps
+
 
 goodput = MAX_BANDWIDTH / 2
 goodput_mbps = goodput / 1e6
@@ -38,7 +44,7 @@ plt.rcParams.update({"font.size": 14, "axes.titlesize": 18, "axes.labelsize": 16
 plt.style.use("fivethirtyeight")
 
 # load data frame from CSV
-file_path = "./data/output/simulations/bandwidth/bandwidth_usage.csv"
+file_path = DATA_PATH / "output" / "simulations" / "bandwidth" / "bandwidth_usage.csv"
 df = pd.read_csv(file_path)
 df = df[df["stake_distribution"] == STAKE_DISTRIBUTION]
 df = df[df["total_shreds"] == TOTAL_SHREDS]
@@ -78,7 +84,7 @@ plt.yscale("log")
 plt.legend()
 plt.grid(True, axis="y", linestyle="--", alpha=0.7)
 plt.tight_layout()
-plt.savefig(f"./data/output/simulations/bandwidth/bandwidth.png", dpi=300)
+plt.savefig(DATA_PATH / "output" / "simulations" / "bandwidth" / "bandwidth.png", dpi=300)
 
 # plot bandwidth usage (compared to turbine)
 fig = plt.figure(figsize=(12, 7))
@@ -102,4 +108,4 @@ plt.yscale("log")
 plt.legend()
 plt.grid(True, axis="y", linestyle="--", alpha=0.7)
 plt.tight_layout()
-plt.savefig(f"./data/output/simulations/bandwidth/bandwidth_vs_turbine.png", dpi=300)
+plt.savefig(DATA_PATH / "output" / "simulations" / "bandwidth" / "bandwidth_vs_turbine.png", dpi=300)
