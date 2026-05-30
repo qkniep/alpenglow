@@ -7,12 +7,12 @@
 //!
 //! Keeps track of:
 //! - Direct finalization of blocks,
-//! - resulting indirect finalizations of blocks, AND
+//! - resulting indirect finalizations of blocks, and
 //! - resulting implicit skipping of slots
 //!
 //! It does this based on:
 //! - Notarization of blocks,
-//! - finalization of slots, AND
+//! - finalization of slots, and
 //! - availability of blocks and knowledge of their parents.
 //!
 //! [`PoolImpl`]: crate::consensus::pool::PoolImpl
@@ -32,8 +32,8 @@ pub(super) struct FinalityTracker {
     parents: BTreeMap<BlockId, BlockId>,
     /// The highest finalized slot so far.
     ///
-    /// This means that slot has a fast finalization OR finalization + notarization.
-    /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
+    /// This means that slot has a fast finalization *or* finalization + notarization.
+    /// Also, all prior slots are finalized (directly or implicitly) *or* implicitly skipped.
     highest_finalized_slot: Slot,
 }
 
@@ -199,8 +199,8 @@ impl FinalityTracker {
 
     /// Returns the highest finalized slot.
     ///
-    /// This means that slot has a fast finalization OR finalization + notarization.
-    /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
+    /// This means that slot has a fast finalization *or* finalization + notarization.
+    /// Also, all prior slots are finalized (directly or implicitly) *or* implicitly skipped.
     pub(super) fn highest_finalized_slot(&self) -> Slot {
         self.highest_finalized_slot
     }
@@ -221,7 +221,7 @@ impl FinalityTracker {
     ///
     /// Updates the `event` all along the way with:
     /// - The finalized block,
-    /// - any potentially implicitly finalized blocks, AND
+    /// - any potentially implicitly finalized blocks, and
     /// - any implicitly skipped slots.
     fn handle_finalized_block(&mut self, finalized: BlockId, event: &mut FinalizationEvent) {
         let (slot, _) = finalized;
@@ -238,7 +238,7 @@ impl FinalityTracker {
     /// Recurses through ancestors, potentially implicitly finalizing them as well.
     ///
     /// Updates the `event` all along the way with:
-    /// - Any potentially implicitly finalized blocks, AND
+    /// - Any potentially implicitly finalized blocks, and
     /// - any implicitly skipped slots.
     fn handle_implicitly_finalized(
         &mut self,
