@@ -153,9 +153,9 @@ impl ParentReadyTracker {
 
     /// Removes all tracked state for slots strictly below `new_root`.
     ///
-    /// After this, only slots `>= new_root` are tracked. This should be called
-    /// when the root (finalized) slot advances, to free memory for slots that
-    /// are no longer relevant.
+    /// After this, only slots `>= new_root` are retained.
+    /// This should be called when the root (finalized) slot advances,
+    /// to free memory for slots that are no longer relevant.
     pub(super) fn prune(&mut self, new_root: Slot) {
         self.0.retain(|slot, _| *slot >= new_root);
     }
@@ -422,7 +422,7 @@ mod tests {
     fn prune() {
         let mut tracker = ParentReadyTracker::default();
 
-        // Populate per-slot state across the first two windows.
+        // populate per-slot state across the first two windows
         for slot in Slot::genesis()
             .future_slots()
             .take(2 * SLOTS_PER_WINDOW as usize)
@@ -430,14 +430,14 @@ mod tests {
             tracker.mark_skipped(slot);
         }
 
-        // There is state both below and at the future root.
+        // before, there is state both before and at the future root
         let new_root = Slot::new(SLOTS_PER_WINDOW);
         assert!(tracker.0.keys().any(|s| *s < new_root));
         assert!(tracker.0.contains_key(&new_root));
 
         tracker.prune(new_root);
 
-        // Everything strictly below the new root is gone; the rest remains.
+        // state strictly below the new root is gone
         assert!(tracker.0.keys().all(|s| *s >= new_root));
         assert!(tracker.0.contains_key(&new_root));
     }
