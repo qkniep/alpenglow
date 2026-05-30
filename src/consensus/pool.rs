@@ -420,13 +420,8 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly; use validator set & stake distribution
+        // TODO: set bounds exactly correctly
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: The lower bound is `first_unpruned_slot`, not `finalized_slot`, so the
-        // admission frontier matches the pruning frontier: we accept votes/certs for
-        // exactly the slots we still track. Finalized-but-unconnected slots in the gap
-        // are resolved by learning their parent edges (`add_block`), not by these certs,
-        // so accepting them here is for a single, simple frontier, not correctness.
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
@@ -463,9 +458,8 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly; use validator set & stake distribution
+        // TODO: set bounds exactly correctly
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: Lower-bounded by `first_unpruned_slot` for the same reason as `add_cert`.
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }

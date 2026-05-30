@@ -213,27 +213,24 @@ impl FinalityTracker {
     /// Returns the highest finalized slot.
     ///
     /// This means that slot has a fast finalization *or* finalization + notarization.
-    /// Also, all prior slots are finalized (directly or implicitly) *or* implicitly skipped.
+    /// Note that some slots before this may still be undecided
+    /// (e.g. because of unresolved parent relations).
     pub(super) fn highest_finalized_slot(&self) -> Slot {
         self.highest_finalized_slot
     }
 
     /// Returns the first slot whose state has not yet been pruned.
     ///
-    /// All slots below this are fully resolved and no longer tracked,
-    /// so certs and votes for them can be safely ignored.
+    /// All slots below this are fully decided and no longer tracked,
+    /// so certificates and votes for them can be safely ignored.
     pub(super) fn first_unpruned_slot(&self) -> Slot {
         self.first_unpruned_slot
     }
 
-    /// Advances [`Self::first_unpruned_slot`] across the contiguous prefix of
-    /// resolved slots and drops all state below it.
+    /// Clears all state that is no longer needed.
     ///
-    /// A slot is resolved once its fate is sealed: directly or implicitly
-    /// finalized, or implicitly skipped. We can only prune such a contiguous
-    /// prefix: a slot can be finalized before the chain connecting it down to
-    /// [`Self::first_unpruned_slot`] is known, so a higher finalized slot does
-    /// not imply the slots below it are resolved yet.
+    /// Advances [`Self::first_unpruned_slot`] across the contiguous prefix of decided slots.
+    /// Then, drops all state before it.
     fn prune(&mut self) {
         let mut next = self.first_unpruned_slot.next();
         while self.status.get(&next).is_some_and(|status| {
