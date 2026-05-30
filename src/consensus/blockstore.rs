@@ -8,16 +8,52 @@ mod slot_block_data;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+mod reconstruction_worker;
+
 use async_trait::async_trait;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::UnboundedSender;
 
+pub use self::reconstruction_worker::ReconstructionWorker;
 pub use self::slot_block_data::AddShredError;
-use self::slot_block_data::SlotBlockData;
+use self::slot_block_data::{SlotBlockData, StoreOutcome};
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, ValidatedShred};
-use crate::types::SliceIndex;
+use crate::shredder::{
+    DeshredError, RegularShredder, ShredIndex, ShredderPool, TOTAL_SHREDS, ValidatedShred,
+};
+use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, BlockId, Slot};
+
+/// A unit of off-lock reconstruction work handed to the [`ReconstructionWorker`].
+///
+/// The shred set is cloned out from under the blockstore lock so the expensive
+/// [`crate::shredder::Shredder::deshred`] runs without holding it.
+pub struct ReconstructJob {
+    /// Which block the reconstructed slice belongs to.
+    pub(crate) target: ReconstructTarget,
+    /// The slice to reconstruct.
+    pub(crate) slice_index: SliceIndex,
+    /// A snapshot of the slice's shreds, taken under the lock.
+    pub(crate) shreds: Box<[Option<ValidatedShred>; TOTAL_SHREDS]>,
+}
+
+/// Identifies which block data a [`ReconstructJob`] targets.
+#[derive(Clone, Debug)]
+pub enum ReconstructTarget {
+    /// The block received via dissemination for the given slot.
+    Disseminated(Slot),
+    /// The block (identified by hash) being assembled via repair for the given slot.
+    Repaired(Slot, BlockHash),
+}
+
+impl ReconstructTarget {
+    pub(crate) const fn slot(&self) -> Slot {
+        match self {
+            Self::Disseminated(slot) | Self::Repaired(slot, _) => *slot,
+        }
+    }
+}
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
 #[derive(Clone, Debug)]
@@ -72,6 +108,16 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockstoreEvent>, AddShredError>;
+    async fn add_own_shred(
+        &mut self,
+        shred: ValidatedShred,
+    ) -> Result<Option<BlockstoreEvent>, AddShredError>;
+    async fn commit_reconstructed_slice(
+        &mut self,
+        target: ReconstructTarget,
+        slice_index: SliceIndex,
+        result: Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>,
+    ) -> Result<Option<BlockstoreEvent>, AddShredError>;
     #[allow(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     #[allow(clippy::needless_lifetimes)]
@@ -101,8 +147,10 @@ pub type SharedBlockstore = Arc<RwLock<dyn Blockstore + Send + Sync>>;
 pub struct BlockstoreImpl {
     /// Data structure holding the actual block data per slot.
     block_data: BTreeMap<Slot, SlotBlockData>,
-    /// Shredders used for reconstructing blocks.
+    /// Shredders used for the synchronous leader path ([`Self::add_own_shred`]).
     shredders: ShredderPool<RegularShredder>,
+    /// Queue of off-lock reconstruction jobs for the [`ReconstructionWorker`].
+    reconstruct_tx: UnboundedSender<ReconstructJob>,
 }
 
 impl BlockstoreImpl {
@@ -115,16 +163,47 @@ impl BlockstoreImpl {
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
     /// - [`BlockstoreEvent::InvalidBlock`] if leader misbehavior is detected for a block
-    pub fn new() -> Self {
+    ///
+    /// On the dissemination and repair paths, slice reconstruction is offloaded to the
+    /// [`ReconstructionWorker`] (fed via `reconstruct_tx`) so the expensive Reed–Solomon
+    /// and Merkle work does not run under the blockstore lock.
+    pub fn new(reconstruct_tx: UnboundedSender<ReconstructJob>) -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
+            reconstruct_tx,
         }
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
     pub fn prune(&mut self, slot: Slot) {
         self.block_data = self.block_data.split_off(&slot);
+    }
+
+    /// Clones the shreds for `slice_index` of `target` and enqueues a reconstruction
+    /// job for the [`ReconstructionWorker`].
+    ///
+    /// The clone is taken under the lock; the expensive `deshred` then runs off-lock.
+    fn offload_reconstruction(&self, target: ReconstructTarget, slice_index: SliceIndex) {
+        let block_data = match &target {
+            ReconstructTarget::Disseminated(slot) => {
+                self.block_data.get(slot).map(|sd| &sd.disseminated)
+            }
+            ReconstructTarget::Repaired(slot, hash) => self
+                .block_data
+                .get(slot)
+                .and_then(|sd| sd.repaired.get(hash)),
+        };
+        let Some(shreds) = block_data.and_then(|bd| bd.shreds.get(&slice_index)) else {
+            return;
+        };
+        let job = ReconstructJob {
+            shreds: Box::new(shreds.clone()),
+            target,
+            slice_index,
+        };
+        // Unbounded, non-blocking send; only errors if the worker has shut down.
+        let _ = self.reconstruct_tx.send(job);
     }
 
     /// Gives reference to stored block data for the given `block_id`.
@@ -199,32 +278,20 @@ impl BlockstoreImpl {
     }
 }
 
-impl Default for BlockstoreImpl {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[async_trait]
 impl Blockstore for BlockstoreImpl {
-    /// Stores a new shred in the blockstore.
+    /// Stores a shred received via block dissemination.
     ///
     /// This shred is stored in the default spot without a known block hash.
-    /// For shreds obtained through repair,
-    /// [`Blockstore::add_shred_from_repair`] should be used instead.
-    /// Compared to that function, this one checks for leader equivocation.
+    /// Checks for leader equivocation (unlike [`Blockstore::add_shred_from_repair`]).
     ///
-    /// Reconstructs the corresponding slice and block if possible and necessary.
-    /// If the added shred belongs to the last slice, all later shreds are deleted.
+    /// This only performs the cheap store; when a slice becomes reconstructable it is
+    /// offloaded to the [`ReconstructionWorker`], so reconstruction does not run under the
+    /// lock. Returns `Ok(Some(`[`BlockstoreEvent::FirstShred`]`))` / `Ok(None)` / a store-phase
+    /// `Err` — **never** [`BlockstoreEvent::Block`] (that is emitted later by the worker).
     ///
-    /// Returns any [`BlockstoreEvent`] the caller must forward to Votor (e.g.
-    /// [`BlockstoreEvent::FirstShred`] or [`BlockstoreEvent::Block`]), or `None`
-    /// if there is nothing to report. The send is left to the caller so that it
-    /// happens outside the blockstore lock.
-    ///
-    /// Note that an [`AddShredError::InvalidShred`] from dissemination should
-    /// be surfaced to Votor as a [`BlockstoreEvent::InvalidBlock`]; the caller
-    /// is responsible for emitting it.
+    /// Note that an [`AddShredError::InvalidShred`] from dissemination should be surfaced to
+    /// Votor as a [`BlockstoreEvent::InvalidBlock`]; the caller is responsible for emitting it.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_dissemination(
@@ -232,28 +299,21 @@ impl Blockstore for BlockstoreImpl {
         shred: ValidatedShred,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let slot = shred.payload().header.slot;
-        let mut shredder = self
-            .shredders
-            .checkout()
-            .expect("should have a shredder because of exclusive access");
-        self.slot_data_mut(slot)
-            .add_shred_from_dissemination(shred, &mut shredder)
+        match self.slot_data_mut(slot).store_from_dissemination(shred)? {
+            StoreOutcome::FirstShred => Ok(Some(BlockstoreEvent::FirstShred(slot))),
+            StoreOutcome::Stored => Ok(None),
+            StoreOutcome::SliceReady(slice_index) => {
+                self.offload_reconstruction(ReconstructTarget::Disseminated(slot), slice_index);
+                Ok(None)
+            }
+        }
     }
 
-    /// Stores a new shred from repair in the blockstore.
+    /// Stores a shred received via repair, associated with the given block `hash`.
     ///
-    /// This shred is stored in a spot associated with the given block`hash`.
-    /// For shreds obtained through block dissemination,
-    /// [`Blockstore::add_shred_from_dissemination`] should be used instead.
-    /// Compared to that function, this one does not check for leader equivocation.
-    ///
-    /// Reconstructs the corresponding slice and block if possible and necessary.
-    /// If the added shred belongs to last slice, deletes later slices and their shreds.
-    ///
-    /// Returns any [`BlockstoreEvent`] the caller must forward to Votor (e.g.
-    /// [`BlockstoreEvent::FirstShred`] or [`BlockstoreEvent::Block`]), or `None`
-    /// if there is nothing to report. The send is left to the caller so that it
-    /// happens outside the blockstore lock.
+    /// Does not check for leader equivocation across blocks. Like
+    /// [`Blockstore::add_shred_from_dissemination`], reconstruction is offloaded to the
+    /// [`ReconstructionWorker`]; this never returns [`BlockstoreEvent::Block`].
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
@@ -262,12 +322,69 @@ impl Blockstore for BlockstoreImpl {
         shred: ValidatedShred,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let slot = shred.payload().header.slot;
-        let mut shredder = self
-            .shredders
-            .checkout()
-            .expect("should have a shredder because of exclusive access");
-        self.slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, &mut shredder)
+        match self
+            .slot_data_mut(slot)
+            .store_from_repair(hash.clone(), shred)?
+        {
+            StoreOutcome::FirstShred => Ok(Some(BlockstoreEvent::FirstShred(slot))),
+            StoreOutcome::Stored => Ok(None),
+            StoreOutcome::SliceReady(slice_index) => {
+                self.offload_reconstruction(ReconstructTarget::Repaired(slot, hash), slice_index);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Stores and synchronously reconstructs a shred for the node's own produced block.
+    ///
+    /// Used by the leader, which needs its block available immediately and is the sole
+    /// writer of its own slot — so reconstruction runs inline rather than via the worker.
+    /// Returns [`BlockstoreEvent::FirstShred`] / [`BlockstoreEvent::Block`] / `None` as the
+    /// fully-synchronous path.
+    #[hotpath::measure]
+    #[fastrace::trace(short_name = true)]
+    async fn add_own_shred(
+        &mut self,
+        shred: ValidatedShred,
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+        let slot = shred.payload().header.slot;
+        match self.slot_data_mut(slot).store_from_dissemination(shred)? {
+            StoreOutcome::FirstShred => Ok(Some(BlockstoreEvent::FirstShred(slot))),
+            StoreOutcome::Stored => Ok(None),
+            StoreOutcome::SliceReady(slice_index) => {
+                let mut shredder = self
+                    .shredders
+                    .checkout()
+                    .expect("should have a shredder because of exclusive access");
+                self.slot_data_mut(slot)
+                    .reconstruct_own_slice(slice_index, &mut shredder)
+            }
+        }
+    }
+
+    /// Commits an off-lock-reconstructed slice (called by the [`ReconstructionWorker`]).
+    ///
+    /// Inserts the reconstructed slice and runs block reconstruction under the lock,
+    /// returning any [`BlockstoreEvent::Block`] for the caller to forward.
+    #[hotpath::measure]
+    async fn commit_reconstructed_slice(
+        &mut self,
+        target: ReconstructTarget,
+        slice_index: SliceIndex,
+        result: Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>,
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
+        // do not create slot state here; if the slot is gone there is nothing to commit
+        let Some(slot_data) = self.block_data.get_mut(&target.slot()) else {
+            return Ok(None);
+        };
+        match target {
+            ReconstructTarget::Disseminated(_) => {
+                slot_data.commit_disseminated_slice(slice_index, result)
+            }
+            ReconstructTarget::Repaired(_, hash) => {
+                slot_data.commit_repaired_slice(&hash, slice_index, result)
+            }
+        }
     }
 
     /// Gives the disseminated block hash for a given `slot`, if any.
@@ -350,23 +467,56 @@ impl Blockstore for BlockstoreImpl {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use tokio::sync::mpsc::{self, UnboundedReceiver};
 
     use super::*;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
+    use crate::shredder::{DATA_SHREDS, Shredder, TOTAL_SHREDS};
     use crate::test_utils::create_random_shredded_block;
     use crate::types::SliceIndex;
 
     struct TestContext {
         sk: SecretKey,
         blockstore: BlockstoreImpl,
+        reconstruct_rx: UnboundedReceiver<ReconstructJob>,
+        shredder: RegularShredder,
     }
 
     fn setup() -> TestContext {
         let sk = SecretKey::new(&mut rand::rng());
-        let blockstore = BlockstoreImpl::new();
-        TestContext { sk, blockstore }
+        let (reconstruct_tx, reconstruct_rx) = mpsc::unbounded_channel();
+        let blockstore = BlockstoreImpl::new(reconstruct_tx);
+        TestContext {
+            sk,
+            blockstore,
+            reconstruct_rx,
+            shredder: RegularShredder::default(),
+        }
+    }
+
+    impl TestContext {
+        /// Drains all pending reconstruction jobs and commits them, emulating the
+        /// [`ReconstructionWorker`] synchronously. Returns any events produced.
+        async fn reconstruct_pending(&mut self) -> Vec<BlockstoreEvent> {
+            let mut events = vec![];
+            while let Ok(job) = self.reconstruct_rx.try_recv() {
+                let ReconstructJob {
+                    target,
+                    slice_index,
+                    shreds,
+                } = job;
+                let result = self.shredder.deshred(&shreds);
+                if let Ok(Some(event)) = self
+                    .blockstore
+                    .commit_reconstructed_slice(target, slice_index, result)
+                    .await
+                {
+                    events.push(event);
+                }
+            }
+            events
+        }
     }
 
     async fn add_shred_ignore_duplicate(
@@ -405,6 +555,7 @@ mod tests {
             };
             assert_eq!(stored_shred.payload().data, shred.payload().data);
         }
+        ctx.reconstruct_pending().await;
 
         // create and check double-Merkle proof
         let proof = ctx
@@ -432,12 +583,14 @@ mod tests {
         for shred in slices[0].clone() {
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // after second slice we should have the block
         for shred in slices[1].clone() {
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         Ok(())
@@ -458,6 +611,7 @@ mod tests {
                 .add_shred_from_repair(block_hash.clone(), shred)
                 .await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(
             ctx.blockstore
                 .get_block(&(slot, block_hash.clone()))
@@ -470,6 +624,7 @@ mod tests {
                 .add_shred_from_repair(block_hash.clone(), shred)
                 .await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.get_block(&(slot, block_hash)).is_some());
 
         Ok(())
@@ -488,6 +643,7 @@ mod tests {
         for shred in slices[0].clone().into_iter().rev() {
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         Ok(())
@@ -507,6 +663,7 @@ mod tests {
         for shred in slices[0].clone().into_iter().take(DATA_SHREDS) {
             ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 1);
 
         // insert just enough shreds to reconstruct slice 1 (from end)
@@ -517,6 +674,7 @@ mod tests {
         {
             ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 2);
 
         // insert just enough shreds to reconstruct slice 2 (from middle)
@@ -528,6 +686,7 @@ mod tests {
         {
             ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert_eq!(ctx.blockstore.stored_slices_for_slot(slot), 3);
 
         // insert just enough shreds to reconstruct slice 3 (split)
@@ -539,6 +698,7 @@ mod tests {
         {
             ctx.blockstore.add_shred_from_dissemination(shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         // slices are deleted after reconstruction
@@ -560,6 +720,7 @@ mod tests {
         for shred in slices[0].clone() {
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_none());
 
         // stored all shreds for slot 0
@@ -569,6 +730,7 @@ mod tests {
         for shred in slices[1].clone() {
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred).await?;
         }
+        ctx.reconstruct_pending().await;
         assert!(ctx.blockstore.disseminated_block_hash(slot).is_some());
 
         // stored all shreds
@@ -607,6 +769,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reconstruction_offloaded_exactly_once() -> Result<()> {
+        let mut ctx = setup();
+        let slot = Slot::genesis().next();
+        let (_hash, _tree, slices) = create_random_shredded_block(slot, 1, &ctx.sk);
+
+        // the DATA_SHREDS-th shred makes the slice reconstructable -> exactly one job
+        for shred in slices[0].clone().into_iter().take(DATA_SHREDS) {
+            ctx.blockstore.add_shred_from_dissemination(shred).await?;
+        }
+        let mut jobs = 0;
+        while ctx.reconstruct_rx.try_recv().is_ok() {
+            jobs += 1;
+        }
+        assert_eq!(jobs, 1, "exactly one reconstruction job should be enqueued");
+
+        // further shreds for the same (not-yet-reconstructed) slice must not re-offload
+        for shred in slices[0].clone().into_iter().skip(DATA_SHREDS) {
+            ctx.blockstore.add_shred_from_dissemination(shred).await?;
+        }
+        assert!(
+            ctx.reconstruct_rx.try_recv().is_err(),
+            "no further jobs should be enqueued for the same slice"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn pruning() -> Result<()> {
         let mut ctx = setup();
         let block0_slot = Slot::genesis().next();
@@ -627,6 +817,8 @@ mod tests {
         for shred in shreds {
             add_shred_ignore_duplicate(blockstore, shred).await?;
         }
+        ctx.reconstruct_pending().await;
+        let blockstore = &mut ctx.blockstore;
         assert!(blockstore.disseminated_block_hash(block0_slot).is_some());
         assert!(blockstore.disseminated_block_hash(block1_slot).is_some());
         assert!(blockstore.disseminated_block_hash(block2_slot).is_some());

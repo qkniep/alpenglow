@@ -297,13 +297,9 @@ where
             .expect("shredding of valid slice should never fail");
         for s in shreds {
             self.disseminator.send(s.as_shred()).await?;
-            // PERF: move expensive add_shred() call out of block production
-            let block = self
-                .blockstore
-                .write()
-                .await
-                .add_shred_from_dissemination(s)
-                .await;
+            // The leader is the sole writer of its own slot and needs the block hash
+            // immediately, so it reconstructs synchronously rather than via the worker.
+            let block = self.blockstore.write().await.add_own_shred(s).await;
             debug_assert!(
                 !matches!(
                     block,
@@ -751,13 +747,13 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_shred()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_shred()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {
@@ -822,12 +818,12 @@ mod tests {
 
         // handle first slice
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_shred()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_shred()
             .times(1)
             .in_sequence(&mut seq)
             .return_once(move |_| {
@@ -841,13 +837,13 @@ mod tests {
 
         // handle second slice
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_shred()
             .times(TOTAL_SHREDS - 1)
             .in_sequence(&mut seq)
             .returning(move |_| Box::pin(async move { Ok(None) }));
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_shred_from_dissemination()
+            .expect_add_own_shred()
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_| {

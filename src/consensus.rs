@@ -40,7 +40,8 @@ use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::blockstore::{
-    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
+    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, ReconstructionWorker,
+    SharedBlockstore,
 };
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
@@ -161,9 +162,11 @@ where
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
         let (pool_tx, pool_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (reconstruct_tx, reconstruct_rx) = mpsc::unbounded_channel();
         let all2all = Arc::new(all2all);
 
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
+        let blockstore: SharedBlockstore =
+            Arc::new(RwLock::new(BlockstoreImpl::new(reconstruct_tx)));
 
         let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
             epoch_info.clone(),
@@ -182,7 +185,6 @@ where
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             blockstore_tx.clone(),
-            Arc::clone(&pool),
             repair_requester_network,
             epoch_info.clone(),
         );
@@ -190,6 +192,17 @@ where
         let _repair_handle = tokio::spawn(
             async move { repair.repair_loop(repair_rx).await }
                 .in_span(Span::enter_with_local_parent("repair loop")),
+        );
+
+        let reconstruction_worker = ReconstructionWorker::new(
+            blockstore.clone(),
+            pool.clone(),
+            blockstore_tx.clone(),
+            reconstruct_rx,
+        );
+        let _reconstruction_handle = tokio::spawn(
+            async move { reconstruction_worker.run().await }
+                .in_span(Span::enter_with_local_parent("reconstruction worker")),
         );
 
         let mut votor = Votor::new(
