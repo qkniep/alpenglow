@@ -29,6 +29,8 @@ use log::{debug, info};
 use tokio::sync::mpsc;
 
 use crate::crypto::Hash;
+use crate::crypto::hash::hash_all;
+use crate::crypto::merkle::{GENESIS_BLOCK_HASH, MerkleRoot};
 use crate::{BlockId, Slot, Transaction};
 
 /// Identifies a block that is currently being executed.
@@ -62,15 +64,10 @@ impl InProgressBlock {
 /// callers consume them via the matching [`mpsc::Receiver`].
 #[derive(Clone, Debug)]
 pub enum ExecutionEvent {
-    /// Execution of a block has completed successfully.
+    /// Execution of a block has completed, successfully or otherwise.
     BlockExecuted {
         block_id: BlockId,
-        result: ExecutionResult,
-    },
-    /// Execution of a block has failed.
-    BlockFailed {
-        block_id: BlockId,
-        error: ExecutionError,
+        result: Result<ExecutionResult, ExecutionError>,
     },
 }
 
@@ -79,6 +76,12 @@ pub enum ExecutionEvent {
 pub struct ExecutionResult {
     /// Number of transactions executed in this block.
     pub tx_count: usize,
+    /// Post-execution state root.
+    ///
+    /// The caller should check this, based on the execution model:
+    /// - Synchronous execution: Check against the block's claimed root.
+    /// - Asynchronous execution: Check against the root finalized by consensus.
+    pub state_hash: Hash,
 }
 
 /// Error that can occur during block execution.
@@ -123,9 +126,9 @@ pub struct SliceEvent {
 /// 2. **Streaming**: [`execute_transactions`] is called once per decoded slice
 ///    as data arrives from dissemination, without waiting for the full block.
 /// 3. **Completion**: [`end_block`] signals that all slices for a block have
-///    been received, providing the block hash. The engine should emit a
-///    [`ExecutionEvent::BlockExecuted`] or [`ExecutionEvent::BlockFailed`]
-///    event through its channel.
+///    been received, providing the block hash. The engine should emit an
+///    [`ExecutionEvent::BlockExecuted`] event through its channel, carrying the
+///    execution outcome as a `Result`.
 /// 4. **Finality**: [`finalize`] signals that a block's state is canonical and
 ///    durable, so the engine can commit it and prune all non-ancestor heads.
 ///
@@ -152,13 +155,14 @@ pub trait ExecutionEngine {
     /// [`begin_block`]: Self::begin_block
     fn execute_transactions(&mut self, id: InProgressBlock, transactions: Vec<Transaction>);
 
-    /// Notifies the engine that all slices for `slot` have been received.
+    /// Notifies the engine that all slices for `block_id` have been received.
     ///
     /// Provides the full [`BlockId`] (including the block hash), which is only
     /// known after the double-Merkle tree has been computed over all slices.
-    /// The engine should emit a [`ExecutionEvent`] through its channel to
-    /// signal the outcome of execution for this block.
-    fn end_block(&mut self, block_id: BlockId, expected_state_hash: &Hash);
+    /// The engine should emit an [`ExecutionEvent::BlockExecuted`] through its
+    /// channel to signal the outcome of execution for this block, reporting the
+    /// computed post-state root in [`ExecutionResult::state_hash`].
+    fn end_block(&mut self, block_id: BlockId);
 
     /// Notifies the engine that `block_id` has been finalized by consensus.
     ///
@@ -167,15 +171,26 @@ pub trait ExecutionEngine {
     fn finalize(&mut self, block_id: BlockId);
 }
 
-/// Placeholder execution engine that counts and logs transactions.
+/// Per-block execution state tracked by [`DummyExecution`].
+struct BlockExec {
+    /// Number of transactions executed so far for this block.
+    tx_count: usize,
+    /// Rolling state hash: seeded from the parent's computed state hash (or the
+    /// parent block hash / genesis as a fallback) and chained over each executed
+    /// transaction. This is the post-state root this node computed.
+    state_hash: Hash,
+}
+
+/// Placeholder execution engine that counts transactions and chains a state hash.
 ///
-/// Tracks the running transaction count per in-flight block and emits
-/// [`ExecutionEvent`] summaries when each block is completed via
-/// [`end_block`](ExecutionEngine::end_block). Does not perform any actual
-/// state transitions.
+/// Tracks, per in-flight block, the running transaction count and a rolling
+/// state hash (seeded from the parent's computed state hash and folded over each
+/// executed transaction). Emits an [`ExecutionEvent`] carrying both when a block
+/// is completed via [`end_block`](ExecutionEngine::end_block). Does not perform
+/// any real state transitions, and does not validate the computed root.
 pub struct DummyExecution {
-    /// Running transaction count for each in-flight block.
-    tx_counts: BTreeMap<InProgressBlock, usize>,
+    /// Per-block execution state for each in-flight block.
+    blocks: BTreeMap<InProgressBlock, BlockExec>,
     /// Channel for emitting execution events.
     event_sender: mpsc::Sender<ExecutionEvent>,
 }
@@ -187,7 +202,7 @@ impl DummyExecution {
     /// handles execution events (e.g. the main validator loop).
     pub fn new(event_sender: mpsc::Sender<ExecutionEvent>) -> Self {
         Self {
-            tx_counts: BTreeMap::new(),
+            blocks: BTreeMap::new(),
             event_sender,
         }
     }
@@ -203,7 +218,33 @@ impl ExecutionEngine for DummyExecution {
                 debug!("begin block in slot {slot} (hash {hash:?}) on parent {parent:?}");
             }
         }
-        self.tx_counts.insert(id, 0);
+        // Seed from the parent's *computed* state hash, so divergence in the
+        // parent's execution propagates into every descendant root, the way a
+        // real state root compounds upstream changes forward. Fall back to the
+        // consensus-agreed parent block hash (or genesis) when we haven't
+        // executed the parent ourselves: cold start, repair, or a parent
+        // already pruned by finalization.
+        let state_hash = parent
+            .as_ref()
+            .and_then(|p| {
+                self.blocks
+                    .get(&InProgressBlock::Known(p.clone()))
+                    .or_else(|| self.blocks.get(&InProgressBlock::Pending(p.0)))
+            })
+            .map(|exec| exec.state_hash.clone())
+            .unwrap_or_else(|| {
+                parent
+                    .map_or(GENESIS_BLOCK_HASH, |(_, block_hash)| block_hash)
+                    .as_hash()
+                    .clone()
+            });
+        self.blocks.insert(
+            id,
+            BlockExec {
+                tx_count: 0,
+                state_hash,
+            },
+        );
     }
 
     fn execute_transactions(&mut self, id: InProgressBlock, transactions: Vec<Transaction>) {
@@ -221,26 +262,35 @@ impl ExecutionEngine for DummyExecution {
                 );
             }
         }
-        *self.tx_counts.entry(id).or_default() += transactions.len();
+        if let Some(exec) = self.blocks.get_mut(&id) {
+            for tx in &transactions {
+                exec.state_hash = hash_all(&[exec.state_hash.as_ref(), tx.0.as_slice()]);
+            }
+            exec.tx_count += transactions.len();
+        }
     }
 
-    fn end_block(&mut self, block_id: BlockId, _expected_state_hash: &Hash) {
-        let total = self
-            .tx_counts
+    fn end_block(&mut self, block_id: BlockId) {
+        let result = self
+            .blocks
             .get(&InProgressBlock::Known(block_id.clone()))
-            .or_else(|| self.tx_counts.get(&InProgressBlock::Pending(block_id.0)));
-        if let Some(&total) = total {
+            .or_else(|| self.blocks.get(&InProgressBlock::Pending(block_id.0)))
+            .map(|exec| ExecutionResult {
+                tx_count: exec.tx_count,
+                state_hash: exec.state_hash.clone(),
+            });
+        if let Some(result) = result {
             self.event_sender
                 .try_send(ExecutionEvent::BlockExecuted {
                     block_id,
-                    result: ExecutionResult { tx_count: total },
+                    result: Ok(result),
                 })
                 .unwrap();
         }
     }
 
     fn finalize(&mut self, block_id: BlockId) {
-        self.tx_counts.retain(|id, _| id.slot() >= block_id.0);
+        self.blocks.retain(|id, _| id.slot() >= block_id.0);
         info!("finalized block {block_id:?}");
     }
 }
@@ -248,11 +298,20 @@ impl ExecutionEngine for DummyExecution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::hash;
-    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
+    use crate::crypto::merkle::BlockHash;
 
     fn block_id(slot: u64) -> BlockId {
         (Slot::new(slot), GENESIS_BLOCK_HASH.clone())
+    }
+
+    /// Recomputes the rolling state hash the way [`DummyExecution`] does, so
+    /// tests can assert against the root reported in an [`ExecutionResult`].
+    fn expected_state_hash(parent: &BlockHash, txs: &[Transaction]) -> Hash {
+        let mut h = parent.as_hash().clone();
+        for tx in txs {
+            h = hash_all(&[h.as_ref(), tx.0.as_slice()]);
+        }
+        h
     }
 
     #[test]
@@ -261,22 +320,27 @@ mod tests {
         let mut engine = DummyExecution::new(tx);
         let id = InProgressBlock::Pending(Slot::new(1));
 
+        let txs = vec![
+            Transaction(vec![1, 2, 3]),
+            Transaction(vec![4]),
+            Transaction(vec![5]),
+        ];
         engine.begin_block(id.clone(), None);
-        engine.execute_transactions(id.clone(), vec![Transaction(vec![1, 2, 3])]);
-        engine.execute_transactions(id.clone(), vec![Transaction(vec![4]), Transaction(vec![5])]);
-        assert_eq!(engine.tx_counts[&id], 3);
+        engine.execute_transactions(id.clone(), txs[..1].to_vec());
+        engine.execute_transactions(id.clone(), txs[1..].to_vec());
+        assert_eq!(engine.blocks[&id].tx_count, 3);
 
         let bid = block_id(1);
-        engine.end_block(bid.clone(), &hash(&[0; 32]));
+        engine.end_block(bid.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 3);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 3);
+        assert_eq!(
+            result.state_hash,
+            expected_state_hash(&GENESIS_BLOCK_HASH, &txs)
+        );
     }
 
     #[test]
@@ -296,17 +360,17 @@ mod tests {
 
         assert!(
             !engine
-                .tx_counts
+                .blocks
                 .contains_key(&InProgressBlock::Pending(Slot::new(1)))
         );
         assert!(
             engine
-                .tx_counts
+                .blocks
                 .contains_key(&InProgressBlock::Pending(Slot::new(2)))
         );
         assert!(
             engine
-                .tx_counts
+                .blocks
                 .contains_key(&InProgressBlock::Pending(Slot::new(3)))
         );
     }
@@ -321,16 +385,12 @@ mod tests {
         engine.execute_transactions(id.clone(), vec![Transaction(vec![0]); 7]);
 
         let bid = block_id(5);
-        engine.end_block(bid.clone(), &hash(&[1; 32]));
+        engine.end_block(bid.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 7);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 7);
     }
 
     #[test]
@@ -343,16 +403,12 @@ mod tests {
         engine.begin_block(id.clone(), Some(block_id(9)));
         engine.execute_transactions(id.clone(), vec![Transaction(vec![42]); 2]);
 
-        engine.end_block(bid.clone(), &hash(&[2; 32]));
+        engine.end_block(bid.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid);
-                assert_eq!(result.tx_count, 2);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 2);
     }
 
     #[test]
@@ -364,7 +420,7 @@ mod tests {
         let bid1 = block_id(1);
         engine.begin_block(id1.clone(), None);
         engine.execute_transactions(id1, vec![Transaction(vec![1])]);
-        engine.end_block(bid1.clone(), &hash(&[0; 32]));
+        engine.end_block(bid1.clone());
         rx.try_recv().unwrap(); // consume the event
 
         // Slot 2 must be startable with slot 1 as its parent even after end_block.
@@ -376,16 +432,12 @@ mod tests {
         );
 
         let bid2 = block_id(2);
-        engine.end_block(bid2.clone(), &hash(&[1; 32]));
+        engine.end_block(bid2.clone());
 
-        let event = rx.try_recv().unwrap();
-        match event {
-            ExecutionEvent::BlockExecuted { block_id, result } => {
-                assert_eq!(block_id, bid2);
-                assert_eq!(result.tx_count, 2);
-            }
-            ExecutionEvent::BlockFailed { .. } => panic!("expected BlockExecuted"),
-        }
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid2);
+        assert_eq!(result.tx_count, 2);
     }
 
     #[test]
@@ -394,8 +446,82 @@ mod tests {
         let mut engine = DummyExecution::new(tx);
 
         let bid = block_id(99);
-        engine.end_block(bid, &hash(&[3; 32]));
+        engine.end_block(bid);
 
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn reports_computed_state_hash() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        let id = InProgressBlock::Pending(Slot::new(1));
+        let txs = vec![Transaction(vec![1, 2, 3]), Transaction(vec![4])];
+        engine.begin_block(id.clone(), None);
+        engine.execute_transactions(id, txs.clone());
+
+        let bid = block_id(1);
+        engine.end_block(bid.clone());
+
+        let expected = expected_state_hash(&GENESIS_BLOCK_HASH, &txs);
+        let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
+        let result = result.expect("execution should succeed");
+        assert_eq!(block_id, bid);
+        assert_eq!(result.tx_count, 2);
+        assert_eq!(result.state_hash, expected);
+    }
+
+    #[test]
+    fn differing_transactions_diverge_state_hash() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        let report_root =
+            |engine: &mut DummyExecution, slot, tx_bytes, rx: &mut mpsc::Receiver<_>| {
+                let id = InProgressBlock::Pending(Slot::new(slot));
+                engine.begin_block(id.clone(), None);
+                engine.execute_transactions(id, vec![Transaction(tx_bytes)]);
+                engine.end_block(block_id(slot));
+                let ExecutionEvent::BlockExecuted { result, .. } = rx.try_recv().unwrap();
+                result.expect("execution should succeed").state_hash
+            };
+
+        // Same parent seed, different transactions => different computed root.
+        // This is the divergence the caller compares against a claimed root.
+        let root_a = report_root(&mut engine, 1, vec![1], &mut rx);
+        let root_b = report_root(&mut engine, 2, vec![2], &mut rx);
+        assert_ne!(root_a, root_b);
+    }
+
+    #[test]
+    fn parent_state_divergence_propagates_to_child() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        // Execute a parent (with `parent_tx`), then an identical child on top.
+        let mut child_root = move |parent_slot, parent_tx, child_slot| {
+            let parent = InProgressBlock::Pending(Slot::new(parent_slot));
+            engine.begin_block(parent.clone(), None);
+            engine.execute_transactions(parent, vec![Transaction(parent_tx)]);
+            engine.end_block(block_id(parent_slot));
+            rx.try_recv().unwrap(); // consume the parent's event
+
+            let child = InProgressBlock::Pending(Slot::new(child_slot));
+            engine.begin_block(child.clone(), Some(block_id(parent_slot)));
+            engine.execute_transactions(child, vec![Transaction(vec![7])]);
+            engine.end_block(block_id(child_slot));
+            let ExecutionEvent::BlockExecuted { result, .. } = rx.try_recv().unwrap();
+            result.expect("execution should succeed").state_hash
+        };
+
+        // The children share an identical transaction and an identical parent
+        // *block hash* (`block_id` always uses the genesis hash), but their
+        // parents executed different transactions. Seeding from the parent's
+        // computed state hash makes that upstream divergence reach the child;
+        // seeding from the parent block hash alone would collide here.
+        let child_a = child_root(1, vec![1], 2);
+        let child_b = child_root(3, vec![2], 4);
+        assert_ne!(child_a, child_b);
     }
 }

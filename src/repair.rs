@@ -132,8 +132,16 @@ where
     /// Looks up the corresponding data in `self.blockstore` and sends replies.
     pub async fn run(&self) {
         loop {
-            let request = self.network.receive().await.unwrap();
-            self.answer_request(request).await.unwrap();
+            let request = match self.network.receive().await {
+                Ok(req) => req,
+                Err(err) => {
+                    warn!("receiving repair request failed: {err}");
+                    continue;
+                }
+            };
+            if let Err(err) = self.answer_request(request).await {
+                warn!("answering repair request failed: {err}");
+            }
         }
     }
 
@@ -144,6 +152,18 @@ where
     #[hotpath::measure]
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
+
+        // drop requests from validators outside the current epoch's set,
+        // otherwise `validator()` indexing in `send_response` would panic on byzantine input
+        let epoch = self.epoch_info.epoch_info();
+        if request.sender.as_usize() >= epoch.validators().len() {
+            warn!(
+                "dropping repair request from unknown validator {:?}",
+                request.sender
+            );
+            return Ok(());
+        }
+
         let response = self
             .try_build_response(&request)
             .await
@@ -262,7 +282,10 @@ where
             };
             tokio::select! {
                 // handle repair response from network
-                res = self.network.receive() => self.handle_response(res.unwrap()).await,
+                res = self.network.receive() => match res {
+                    Ok(response) => self.handle_response(response).await,
+                    Err(err) => warn!("receiving repair response failed: {err}"),
+                },
                 // handle request for repairing new block
                 Some(block_id) = repair_receiver.recv() => {
                     self.repair_block(block_id).await;
@@ -274,7 +297,9 @@ where
                     };
                     if let Some(request) = self.outstanding_requests.remove(&hash) {
                         debug!("retrying timed-out repair request {request:?}");
-                        self.send_request(request).await.unwrap();
+                        if let Err(err) = self.send_request(request).await {
+                            warn!("sending timed-out repair request failed: {err}");
+                        }
                     }
                 }
             }
@@ -292,7 +317,9 @@ where
 
         debug!("repairing block {h} in slot {slot}");
         let req = RepairRequestType::LastSliceRoot(block_id);
-        self.send_request(req).await.unwrap();
+        if let Err(err) = self.send_request(req).await {
+            warn!("sending initial repair request failed: {err}");
+        }
     }
 
     /// Handles a repair response, storing the received data.
@@ -314,7 +341,9 @@ where
         match response {
             RepairResponse::Nack(req_type) => {
                 debug!("received NACK for repair request {req_type:?}, retrying immediately");
-                self.send_request(req_type).await.unwrap();
+                if let Err(err) = self.send_request(req_type).await {
+                    warn!("retrying NACKed repair request failed: {err}");
+                }
             }
             RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
                 // check validity of response
@@ -342,7 +371,9 @@ where
                 // TODO: already requests shreds for last slice here
                 for slice in last_slice.until() {
                     let req_type = RepairRequestType::SliceRoot(block_id.clone(), slice);
-                    self.send_request(req_type).await.unwrap();
+                    if let Err(err) = self.send_request(req_type).await {
+                        warn!("sending SliceRoot repair request failed: {err}");
+                    }
                 }
             }
             RepairResponse::SliceRoot(req_type, root, proof) => {
@@ -364,7 +395,9 @@ where
                 // HACK: workaround for when other nodes don't have the first `DATA_SHREDS` shreds
                 for shred_index in ShredIndex::all() {
                     let req = RepairRequestType::Shred(block_id.clone(), slice, shred_index);
-                    self.send_request(req).await.unwrap();
+                    if let Err(err) = self.send_request(req).await {
+                        warn!("sending Shred repair request failed: {err}");
+                    }
                 }
             }
             RepairResponse::Shred(req_type, shred) => {
@@ -462,6 +495,7 @@ mod tests {
     use super::*;
     use crate::ValidatorIndex;
     use crate::consensus::{BlockstoreImpl, EpochInfo, PoolImpl};
+    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
@@ -652,6 +686,35 @@ mod tests {
                 .get_block(&block_to_repair)
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn unknown_sender_request_dropped() {
+        let ctx = setup().await;
+        let num_validators = 2;
+        let block_id = (Slot::genesis().next(), GENESIS_BLOCK_HASH);
+
+        // send a request with an out-of-bounds `sender`
+        // the handler must drop it instead of panicking on `validator()` lookup
+        let request = RepairRequest {
+            req_type: RepairRequestType::LastSliceRoot(block_id.clone()),
+            sender: ValidatorIndex::new(num_validators),
+        };
+        let port1 = localhost_ip_sockaddr(3);
+        ctx.v0_reply_net.send(&request, port1).await.unwrap();
+
+        // no response is expected; verify by following up with a valid request
+        // and checking we get its response (proves the handler is still alive)
+        let valid_request = RepairRequest {
+            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_unchecked(0)),
+            sender: ValidatorIndex::new(0),
+        };
+        ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();
+        let msg = ctx.v0_reply_net.receive().await.unwrap();
+        assert!(matches!(
+            msg,
+            RepairResponse::Nack(RepairRequestType::SliceRoot(..))
+        ));
     }
 
     #[tokio::test]
