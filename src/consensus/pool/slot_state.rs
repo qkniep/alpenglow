@@ -562,6 +562,28 @@ impl SlotState {
             .iter()
             .any(|n| n.block_hash() == block_hash)
     }
+
+    /// Checks whether the given block hash is certified as (at least) notarized-fallback.
+    ///
+    /// Besides a notar-fallback cert, a direct notarization or fast-finalization
+    /// cert for the same block also satisfies this, since both imply
+    /// notarization-fallback. Certs delivered directly via `add_cert` (e.g. during
+    /// catch-up or standstill recovery) can populate `certificates.notar` or
+    /// `certificates.fast_finalize` without a matching notar-fallback cert, so
+    /// checking [`Self::is_notar_fallback`] alone would miss those.
+    pub(super) fn is_notarized_or_fallback(&self, block_hash: &BlockHash) -> bool {
+        let has_notar_cert = self
+            .certificates
+            .notar
+            .as_ref()
+            .is_some_and(|c| c.block_hash() == block_hash);
+        let has_fast_final_cert = self
+            .certificates
+            .fast_finalize
+            .as_ref()
+            .is_some_and(|c| c.block_hash() == block_hash);
+        has_notar_cert || has_fast_final_cert || self.is_notar_fallback(block_hash)
+    }
 }
 
 impl SlotVotes {
