@@ -206,6 +206,16 @@ impl FinalityTracker {
         self.highest_finalized_slot
     }
 
+    /// Removes all tracked state for slots strictly below `new_root`.
+    ///
+    /// After this, only slots `>= new_root` are tracked. This should be called
+    /// when the root (finalized) slot advances, to free memory for slots that
+    /// are no longer relevant.
+    pub(super) fn prune(&mut self, new_root: Slot) {
+        self.status = self.status.split_off(&new_root);
+        self.parents.retain(|(slot, _), _| *slot >= new_root);
+    }
+
     /// Handles the direct finalization of the given block.
     ///
     /// Recurses through ancestors, potentially implicitly finalizing them.
@@ -412,5 +422,31 @@ mod tests {
         // do NOT implicitly finalize parent again when adding parent again
         let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
+    }
+
+    #[test]
+    fn prune() {
+        let mut tracker = FinalityTracker::default();
+
+        // Notarize a chain of blocks across several slots.
+        let mut prev = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        for s in 1..=6u64 {
+            let slot = Slot::new(s);
+            let hash: BlockHash = Hash::random_for_test().into();
+            tracker.mark_notarized(slot, hash.clone());
+            tracker.add_parent((slot, hash.clone()), prev.clone());
+            prev = (slot, hash);
+        }
+        // Finalize slot 5, implicitly finalizing its ancestors.
+        tracker.mark_finalized(Slot::new(5));
+
+        let new_root = Slot::new(4);
+        tracker.prune(new_root);
+
+        // Only slots at or above the new root remain, in both maps.
+        assert!(tracker.status.keys().all(|s| *s >= new_root));
+        assert!(tracker.parents.keys().all(|(s, _)| *s >= new_root));
+        assert!(tracker.status.contains_key(&new_root));
+        assert!(!tracker.status.contains_key(&Slot::new(3)));
     }
 }

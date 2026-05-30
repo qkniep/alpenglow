@@ -339,6 +339,7 @@ impl PoolImpl {
         let last_slot = self.finalized_slot();
         self.slot_states = self.slot_states.split_off(&last_slot);
         self.parent_ready_tracker.prune(last_slot);
+        self.finality_tracker.prune(last_slot);
     }
 
     /// Returns `true` iff the given parent is ready for the given slot.
