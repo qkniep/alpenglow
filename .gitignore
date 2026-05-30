@@ -1,3 +1,14 @@
+.env
+.DS_Store
+.vscode/
+.claude/
+*.log
+*.tmp
+*.temp
+*.swp
+*.bak
+*.cache
+
 /target
 /data/pings-2020-07-19-2020-07-20.csv
 /data/output
