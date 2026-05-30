@@ -578,8 +578,8 @@ impl SlotVotes {
         }
     }
 
+    // NOTE: `Vec` not `impl Iterator` — cert constructors need a multi-pass slice.
     /// Returns all notarization votes for the given block hash.
-    // PERF: return iterators here (to avoid memory allocation)?
     pub(super) fn notar_votes(&self, block_hash: &BlockHash) -> Vec<NotarVote> {
         self.notar
             .iter()
@@ -592,7 +592,6 @@ impl SlotVotes {
     }
 
     /// Returns all notar-fallback votes for the given block hash.
-    // PERF: return iterators here (to avoid memory allocation)?
     pub(super) fn notar_fallback_votes(&self, block_hash: &BlockHash) -> Vec<NotarFallbackVote> {
         self.notar_fallback
             .iter()
@@ -601,19 +600,16 @@ impl SlotVotes {
     }
 
     /// Returns all skip votes for this slot.
-    // PERF: return iterators here (to avoid memory allocation)?
     pub(super) fn skip_votes(&self) -> Vec<SkipVote> {
         self.skip.iter().filter_map(Clone::clone).collect()
     }
 
     /// Returns all skip-fallback votes for this slot.
-    // PERF: return iterators here (to avoid memory allocation)?
     pub(super) fn skip_fallback_votes(&self) -> Vec<SkipFallbackVote> {
         self.skip_fallback.iter().filter_map(Clone::clone).collect()
     }
 
     /// Returns all finalization votes for this slot.
-    // PERF: return iterators here (to avoid memory allocation)?
     pub(super) fn final_votes(&self) -> Vec<FinalVote> {
         self.finalize.iter().filter_map(Clone::clone).collect()
     }
