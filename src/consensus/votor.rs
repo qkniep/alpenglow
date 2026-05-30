@@ -480,10 +480,11 @@ mod tests {
         }
     }
 
-    /// Creates a fresh [`Votor`] together with the channels and keys needed to drive it.
+    /// Creates a fresh fully wired-up [`Votor`] instance.
     ///
-    /// The returned votor is not started; callers either run its [`Votor::voting_loop`]
-    /// (see [`start_votor`]) or drive its handlers directly.
+    /// The returned votor is not running its event loop.
+    /// Callers either run its [`Votor::voting_loop`] (see [`start_votor`])
+    /// or drive its handlers manually.
     async fn build_votor() -> (Votor<A2A>, TestContext) {
         let (sks, epoch_info) = generate_validators(2);
         let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
@@ -508,7 +509,9 @@ mod tests {
         (votor, ctx)
     }
 
-    /// Builds a votor and spawns its [`Votor::voting_loop`], returning the test context.
+    /// Builds a votor and spawns its [`Votor::voting_loop`].
+    ///
+    /// Returns the votor instance and the test context.
     async fn start_votor() -> TestContext {
         let (mut votor, ctx) = build_votor().await;
         tokio::spawn(async move {
