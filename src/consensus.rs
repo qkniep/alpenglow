@@ -119,6 +119,12 @@ where
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
 
+    /// Channel for forwarding [`BlockstoreEvent`]s to Votor.
+    ///
+    /// Held here (rather than inside the [`Blockstore`]) so the send happens
+    /// after the blockstore write lock is released.
+    blockstore_event_tx: mpsc::Sender<BlockstoreEvent>,
+
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
     /// Votor task handle.
@@ -157,8 +163,7 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
         let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
             epoch_info.clone(),
@@ -176,6 +181,7 @@ where
 
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
+            blockstore_tx.clone(),
             Arc::clone(&pool),
             repair_requester_network,
             epoch_info.clone(),
@@ -206,6 +212,7 @@ where
             disseminator.clone(),
             txs_receiver,
             blockstore.clone(),
+            blockstore_tx.clone(),
             pool.clone(),
             cancel_token.clone(),
             DELTA_BLOCK,
@@ -219,6 +226,7 @@ where
             block_producer,
             all2all,
             disseminator,
+            blockstore_event_tx: blockstore_tx,
             cancel_token,
             votor_handle,
         }
@@ -348,17 +356,35 @@ where
             return Ok(());
         }
 
-        // otherwise, ingest into blockstore
+        // otherwise, ingest into blockstore (write lock released at the `;`)
         let res = self
             .blockstore
             .write()
             .await
             .add_shred_from_dissemination(validated)
             .await;
-        if let Ok(Some(block_info)) = res {
-            let mut guard = self.pool.write().await;
-            let block_id = (slot, block_info.hash);
-            guard.add_block(block_id, block_info.parent).await;
+
+        // map the ingest result to the event Votor needs to learn about, then
+        // forward it *outside* the blockstore lock. An `InvalidShred` from the
+        // leader's dissemination is surfaced as an `InvalidBlock`.
+        let event = match res {
+            Ok(event) => event,
+            Err(AddShredError::InvalidShred) => Some(BlockstoreEvent::InvalidBlock(slot)),
+            Err(_) => None,
+        };
+        if let Some(event) = event {
+            // register any reconstructed block with the pool
+            let block_to_add = if let BlockstoreEvent::Block { block_info, .. } = &event {
+                Some(((slot, block_info.hash.clone()), block_info.parent.clone()))
+            } else {
+                None
+            };
+            if self.blockstore_event_tx.send(event).await.is_err() {
+                trace!("votor channel closed, dropping blockstore event");
+            }
+            if let Some((block_id, parent)) = block_to_add {
+                self.pool.write().await.add_block(block_id, parent).await;
+            }
         }
         Ok(())
     }

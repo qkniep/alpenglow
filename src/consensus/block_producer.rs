@@ -10,14 +10,17 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use either::Either;
 use fastrace::Span;
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use static_assertions::const_assert;
 use tokio::pin;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{
+    AddShredError, BlockstoreEvent, SharedBlockstore, SharedPool, ValidatorEpochInfo,
+};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -40,6 +43,9 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
 
     /// Blockstore for storing raw block data.
     blockstore: SharedBlockstore,
+    /// Channel for forwarding [`BlockstoreEvent`]s (produced while storing our
+    /// own freshly-shredded block) to Votor, after the blockstore lock is released.
+    blockstore_event_tx: Sender<BlockstoreEvent>,
     /// Pool of votes and certificates.
     pool: SharedPool,
 
@@ -73,6 +79,7 @@ where
         disseminator: Arc<D>,
         txs_receiver: T,
         blockstore: SharedBlockstore,
+        blockstore_event_tx: Sender<BlockstoreEvent>,
         pool: SharedPool,
         cancel_token: CancellationToken,
         delta_block: Duration,
@@ -83,6 +90,7 @@ where
             secret_key,
             epoch_info,
             blockstore,
+            blockstore_event_tx,
             pool,
             disseminator,
             txs_receiver,
@@ -303,15 +311,22 @@ where
                 ),
                 "leader produced bad shreds"
             );
-            if let Ok(Some(block_info)) = block {
-                assert!(maybe_block_hash.is_none());
-                maybe_block_hash = Some(block_info.hash.clone());
-                let block_id = (slot, block_info.hash.clone());
-                self.pool
-                    .write()
-                    .await
-                    .add_block(block_id, block_info.parent)
-                    .await;
+            if let Ok(Some(event)) = block {
+                // register a reconstructed block with the pool
+                let block_to_add = if let BlockstoreEvent::Block { block_info, .. } = &event {
+                    assert!(maybe_block_hash.is_none());
+                    maybe_block_hash = Some(block_info.hash.clone());
+                    Some(((slot, block_info.hash.clone()), block_info.parent.clone()))
+                } else {
+                    None
+                };
+                // forward the event to Votor outside the blockstore lock
+                if self.blockstore_event_tx.send(event).await.is_err() {
+                    trace!("votor channel closed, dropping blockstore event");
+                }
+                if let Some((block_id, parent)) = block_to_add {
+                    self.pool.write().await.add_block(block_id, parent).await;
+                }
             }
         }
         if is_last {
@@ -682,13 +697,19 @@ mod tests {
     }
 
     /// A bunch of boilerplate to initialize and return a [`BlockProducer`].
+    ///
+    /// Also returns the Votor event receiver; keep it alive for the duration of
+    /// the test so that events emitted during block production are not dropped.
     fn setup(
         blockstore: MockBlockstore,
         pool: MockPool,
         disseminator: MockDisseminator,
         delta_block: Duration,
         delta_first_slice: Duration,
-    ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
+    ) -> (
+        BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>>,
+        tokio::sync::mpsc::Receiver<BlockstoreEvent>,
+    ) {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
@@ -697,18 +718,21 @@ mod tests {
         let disseminator = Arc::new(disseminator);
         let txs_receiver = UdpNetwork::new_with_any_port();
         let cancel_token = CancellationToken::new();
+        let (blockstore_event_tx, blockstore_event_rx) = tokio::sync::mpsc::channel(1024);
 
-        BlockProducer::new(
+        let block_producer = BlockProducer::new(
             secret_key,
             epoch_info,
             disseminator,
             txs_receiver,
             blockstore,
+            blockstore_event_tx,
             pool,
             cancel_token,
             delta_block,
             delta_first_slice,
-        )
+        );
+        (block_producer, blockstore_event_rx)
     }
 
     #[tokio::test]
@@ -738,7 +762,12 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(move |_| {
                 let bi = bi.clone();
-                Box::pin(async move { Ok(Some(bi)) })
+                Box::pin(async move {
+                    Ok(Some(BlockstoreEvent::Block {
+                        slot,
+                        block_info: bi,
+                    }))
+                })
             });
 
         let mut pool = MockPool::new();
@@ -754,7 +783,7 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(
+        let (block_producer, _event_rx) = setup(
             blockstore,
             pool,
             disseminator,
@@ -823,10 +852,13 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(move |_| {
                 let nbi = nbi.clone();
-                Box::pin(async {
+                Box::pin(async move {
                     // final shred of second slice
                     // block is constructed with the new parent
-                    Ok(Some(nbi))
+                    Ok(Some(BlockstoreEvent::Block {
+                        slot,
+                        block_info: nbi,
+                    }))
                 })
             });
 
@@ -843,7 +875,7 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(
+        let (block_producer, _event_rx) = setup(
             blockstore,
             pool,
             disseminator,

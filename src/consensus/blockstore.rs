@@ -9,9 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::debug;
 use tokio::sync::RwLock;
-use tokio::sync::mpsc::Sender;
 
 pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
@@ -68,12 +66,12 @@ pub trait Blockstore {
     async fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError>;
+    ) -> Result<Option<BlockstoreEvent>, AddShredError>;
     async fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
         shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError>;
+    ) -> Result<Option<BlockstoreEvent>, AddShredError>;
     #[allow(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     #[allow(clippy::needless_lifetimes)]
@@ -105,51 +103,28 @@ pub struct BlockstoreImpl {
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-    /// Event channel for sending notifications to Votor.
-    votor_channel: Sender<BlockstoreEvent>,
 }
 
 impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
-    /// Blockstore will send the following [`BlockstoreEvent`]s to the provided `votor_channel`:
+    /// Adding shreds may produce [`BlockstoreEvent`]s, which are returned to
+    /// the caller to be forwarded to Votor (so the potentially-blocking send
+    /// happens outside the blockstore lock):
     /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
     /// - [`BlockstoreEvent::InvalidBlock`] if leader misbehavior is detected for a block
-    pub fn new(votor_channel: Sender<BlockstoreEvent>) -> Self {
+    pub fn new() -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
-            votor_channel,
         }
     }
 
     /// Deletes everything before the given `slot` from the blockstore.
     pub fn prune(&mut self, slot: Slot) {
         self.block_data = self.block_data.split_off(&slot);
-    }
-
-    async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
-                self.votor_channel.send(event).await.unwrap();
-                None
-            }
-            BlockstoreEvent::Block { slot, block_info } => {
-                let block_info = block_info.clone();
-                debug!(
-                    "reconstructed block {} in slot {} with parent {} in slot {}",
-                    block_info.hash.short_hex(),
-                    slot,
-                    block_info.parent.1.short_hex(),
-                    block_info.parent.0,
-                );
-                self.votor_channel.send(event).await.unwrap();
-
-                Some(block_info)
-            }
-        }
     }
 
     /// Gives reference to stored block data for the given `block_id`.
@@ -224,6 +199,12 @@ impl BlockstoreImpl {
     }
 }
 
+impl Default for BlockstoreImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Blockstore for BlockstoreImpl {
     /// Stores a new shred in the blockstore.
@@ -236,32 +217,27 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns any [`BlockstoreEvent`] the caller must forward to Votor (e.g.
+    /// [`BlockstoreEvent::FirstShred`] or [`BlockstoreEvent::Block`]), or `None`
+    /// if there is nothing to report. The send is left to the caller so that it
+    /// happens outside the blockstore lock.
+    ///
+    /// Note that an [`AddShredError::InvalidShred`] from dissemination should
+    /// be surfaced to Votor as a [`BlockstoreEvent::InvalidBlock`]; the caller
+    /// is responsible for emitting it.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError> {
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let slot = shred.payload().header.slot;
         let mut shredder = self
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self
-            .slot_data_mut(slot)
+        self.slot_data_mut(slot)
             .add_shred_from_dissemination(shred, &mut shredder)
-        {
-            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
-            Ok(None) => Ok(None),
-            Err(AddShredError::InvalidShred) => {
-                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
-                    .await;
-                Err(AddShredError::InvalidShred)
-            }
-            Err(e) => Err(e),
-        }
     }
 
     /// Stores a new shred from repair in the blockstore.
@@ -274,27 +250,24 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to last slice, deletes later slices and their shreds.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns any [`BlockstoreEvent`] the caller must forward to Votor (e.g.
+    /// [`BlockstoreEvent::FirstShred`] or [`BlockstoreEvent::Block`]), or `None`
+    /// if there is nothing to report. The send is left to the caller so that it
+    /// happens outside the blockstore lock.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
         shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError> {
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         let slot = shred.payload().header.slot;
         let mut shredder = self
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self
-            .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, &mut shredder)?
-        {
-            Some(event) => Ok(self.send_blockstore_event(event).await),
-            None => Ok(None),
-        }
+        self.slot_data_mut(slot)
+            .add_shred_from_repair(hash, shred, &mut shredder)
     }
 
     /// Gives the disseminated block hash for a given `slot`, if any.
@@ -377,7 +350,6 @@ impl Blockstore for BlockstoreImpl {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use tokio::sync::mpsc;
 
     use super::*;
     use crate::crypto::merkle::DoubleMerkleTree;
@@ -389,24 +361,18 @@ mod tests {
     struct TestContext {
         sk: SecretKey,
         blockstore: BlockstoreImpl,
-        _rx: mpsc::Receiver<BlockstoreEvent>,
     }
 
     fn setup() -> TestContext {
         let sk = SecretKey::new(&mut rand::rng());
-        let (tx, _rx) = mpsc::channel(1000);
-        let blockstore = BlockstoreImpl::new(tx);
-        TestContext {
-            sk,
-            blockstore,
-            _rx,
-        }
+        let blockstore = BlockstoreImpl::new();
+        TestContext { sk, blockstore }
     }
 
     async fn add_shred_ignore_duplicate(
         blockstore: &mut BlockstoreImpl,
         shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError> {
+    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
         match blockstore.add_shred_from_dissemination(shred).await {
             Ok(output) => Ok(output),
             Err(AddShredError::Duplicate) => Ok(None),

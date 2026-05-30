@@ -15,9 +15,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, trace, warn};
+use tokio::sync::mpsc::Sender;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{BlockstoreEvent, DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -212,6 +213,9 @@ where
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
 pub struct Repair<N: Network> {
     blockstore: SharedBlockstore,
+    /// Channel for forwarding [`BlockstoreEvent`]s (produced while ingesting
+    /// repaired shreds) to Votor, after the blockstore lock is released.
+    blockstore_event_tx: Sender<BlockstoreEvent>,
     pool: SharedPool,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
@@ -231,6 +235,7 @@ where
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub fn new(
         blockstore: SharedBlockstore,
+        blockstore_event_tx: Sender<BlockstoreEvent>,
         pool: SharedPool,
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
@@ -239,6 +244,7 @@ where
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,
+            blockstore_event_tx,
             pool,
             slice_roots: BTreeMap::new(),
             outstanding_requests: BTreeMap::new(),
@@ -390,25 +396,33 @@ where
                     return;
                 };
 
-                // store shred
+                // store shred (blockstore write lock is released at the `;`)
                 let res = self
                     .blockstore
                     .write()
                     .await
                     .add_shred_from_repair(block_hash.clone(), validated)
                     .await;
-                if let Ok(Some(block_info)) = res {
-                    assert_eq!(block_info.hash, *block_hash);
-                    self.pool
-                        .write()
-                        .await
-                        .add_block((*slot, block_info.hash), block_info.parent)
-                        .await;
-                    debug!(
-                        "successfully repaired block {} in slot {}",
-                        block_hash.short_hex(),
-                        slot
-                    );
+                if let Ok(Some(event)) = res {
+                    // register any reconstructed block with the pool
+                    let block_to_add = if let BlockstoreEvent::Block { slot, block_info } = &event {
+                        assert_eq!(block_info.hash, *block_hash);
+                        debug!(
+                            "successfully repaired block {} in slot {}",
+                            block_hash.short_hex(),
+                            slot
+                        );
+                        Some(((*slot, block_info.hash.clone()), block_info.parent.clone()))
+                    } else {
+                        None
+                    };
+                    // forward the event to Votor outside the blockstore lock
+                    if self.blockstore_event_tx.send(event).await.is_err() {
+                        trace!("votor channel closed, dropping blockstore event");
+                    }
+                    if let Some((block_id, parent)) = block_to_add {
+                        self.pool.write().await.add_block(block_id, parent).await;
+                    }
                 }
             }
         }
@@ -509,8 +523,7 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
@@ -524,6 +537,7 @@ mod tests {
         // create and start Repair instance
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
+            blockstore_tx,
             pool,
             v1_repair_requester_network,
             epoch_info.clone(),

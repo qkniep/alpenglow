@@ -352,6 +352,13 @@ impl BlockData {
             _transactions: transactions,
         };
         let block_info = BlockInfo::from(&block);
+        debug!(
+            "reconstructed block {} in slot {} with parent {} in slot {}",
+            block_info.hash.short_hex(),
+            self.slot,
+            block_info.parent.1.short_hex(),
+            block_info.parent.0,
+        );
         self.completed = Some((block_hash, block));
 
         // clean up raw slices
