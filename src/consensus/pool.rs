@@ -338,6 +338,7 @@ impl PoolImpl {
     fn prune(&mut self) {
         let last_slot = self.finalized_slot();
         self.slot_states = self.slot_states.split_off(&last_slot);
+        self.parent_ready_tracker.prune(last_slot);
     }
 
     /// Returns `true` iff the given parent is ready for the given slot.
@@ -426,10 +427,8 @@ impl Pool for PoolImpl {
             return Err(AddCertError::InvalidSignature);
         }
 
-        // get `SlotCertificates`, initialize if it doesn't exist yet
-        let certs = &mut self.slot_state(slot).certificates;
-
         // check if the certificate is a duplicate
+        let certs = &mut self.slot_state(slot).certificates;
         let duplicate = match cert {
             Cert::Notar(_) => certs.notar.is_some(),
             Cert::NotarFallback(_) => certs
@@ -556,8 +555,11 @@ impl Pool for PoolImpl {
             votes.len()
         );
 
-        // NOTE: This event corresponds to the slot after the last finalized one.
-        // This way it is ignored by `Votor` iff a new slot was finalized.
+        // NOTE: This event's slot is the one after the last finalized slot.
+        // `Votor` always re-broadcasts the recovery bundle regardless of slot;
+        // it intentionally does not gate this on its own finalized slot, which
+        // can run ahead of Pool's (final cert vs. final + notar), and could
+        // otherwise drop a bundle that Pool emitted precisely because it is stuck.
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
