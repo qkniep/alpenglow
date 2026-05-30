@@ -197,9 +197,7 @@ impl PoolImpl {
                     slot
                 );
                 if matches!(cert, Cert::Notar(_)) {
-                    let finalization_event = self
-                        .finality_tracker
-                        .mark_notarized(slot, block_hash.clone());
+                    let finalization_event = self.finality_tracker.mark_notarized(block_id.clone());
                     self.handle_finalization(finalization_event).await;
                 }
 
@@ -235,7 +233,7 @@ impl PoolImpl {
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash().clone();
-                let finalization_event = self.finality_tracker.mark_fast_finalized(slot, hash);
+                let finalization_event = self.finality_tracker.mark_fast_finalized((slot, hash));
                 self.handle_finalization(finalization_event).await;
             }
             Cert::Final(_) => {
