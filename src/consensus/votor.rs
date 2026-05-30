@@ -21,7 +21,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::blockstore::{BlockInfo, BlockstoreEvent};
 use super::pool::PoolEvent;
-use super::{Cert, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
+use super::{Cert, ConsensusMessage, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
@@ -33,13 +33,19 @@ use crate::{All2All, Slot, ValidatorIndex};
 pub struct Votor<A: All2All> {
     /// Per-slot voting state, keyed by slot.
     slots: BTreeMap<Slot, SlotState>,
-    /// Highest slot known to be finalized. State for earlier slots is pruned.
-    finalized_slot: Slot,
+    /// Highest slot for which we have seen a (slow) final or fast-final cert.
+    ///
+    /// This is *not* equivalent to e.g. [`super::Pool::finalized_slot`],
+    /// because we may have seen a (slow) final cert without a matching notar.
+    /// We only use it to decide when our own vote for a slot no longer matters,
+    /// at which point the per-slot state for earlier leader windows is pruned.
+    highest_final_cert_slot: Slot,
 
     /// Own validator index.
     validator_index: ValidatorIndex,
     /// Secret key used to sign votes.
     voting_key: SecretKey,
+
     /// Channel for receiving events from Pool.
     pool_receiver: Receiver<PoolEvent>,
     /// Channel for receiving events from Blockstore.
@@ -83,7 +89,7 @@ impl<A: All2All> Votor<A> {
 
         let votor = Self {
             slots,
-            finalized_slot: Slot::genesis(),
+            highest_final_cert_slot: Slot::genesis(),
             validator_index,
             voting_key,
             pool_receiver,
@@ -135,32 +141,44 @@ impl<A: All2All> Votor<A> {
         self.slots.entry(slot).or_default()
     }
 
-    /// Drops voting state for old slots that are no longer relevant.
+    /// First slot whose state is still retained, i.e. the start of the leader
+    /// window containing [`Self::highest_final_cert_slot`].
     ///
-    /// Afterwards, [`Self::slots`] only contains entries
-    /// within or after the leader window of the finalized slot.
-    fn prune(&mut self) {
-        let last_slot = self.finalized_slot.first_slot_in_window();
-        self.slots = self.slots.split_off(&last_slot);
+    /// Everything below this has been (or will be) dropped by [`Self::prune`].
+    fn first_unpruned_slot(&self) -> Slot {
+        self.highest_final_cert_slot.first_slot_in_window()
+    }
+
+    /// Returns `true` iff this pool event is for a slot we no longer act on.
+    ///
+    /// For the most part, we should ignore events for slots that are `retired`
+    /// or older than the window with the highest finalization certificate.
+    ///
+    /// However, this comes with exceptions based on the event type:
+    /// - [`PoolEvent::Standstill`] is never ignored.
+    ///   It carries a recovery bundle spanning multiple slots.
+    ///   See also [`super::Pool::recover_from_standstill`] for more info.
+    ///   Simply gating based on [`Self::highest_final_cert_slot`] would not be correct.
+    ///   It can run ahead of Pool's finalized slot (final cert vs. final + notar).
+    ///   We could drop a bundle that Pool emitted precisely because it is stuck.
+    /// - [`PoolEvent::CertCreated`] is not ignored for retired slots,
+    ///   so we still broadcast notar/final/fast-final certs.
+    fn should_ignore_pool_event(&self, event: &PoolEvent) -> bool {
+        let slot = event.slot();
+        match event {
+            PoolEvent::Standstill { .. } => false,
+            PoolEvent::CertCreated(_) => slot < self.first_unpruned_slot(),
+            PoolEvent::ParentReady { .. }
+            | PoolEvent::SafeToNotar(_, _)
+            | PoolEvent::SafeToSkip(_) => {
+                slot < self.first_unpruned_slot() || self.is_retired(slot)
+            }
+        }
     }
 
     async fn handle_pool_event(&mut self, event: PoolEvent) {
         let slot = event.slot();
-        // Votor can already be pruned upon regular final cert,
-        // whereas Pool would only be pruned upon actual finalization,
-        // because that's when our vote for a slot  no longer matters
-        if let PoolEvent::CertCreated(cert) = &event
-            && matches!(cert.as_ref(), Cert::Final(_) | Cert::FastFinal(_))
-        {
-            self.finalized_slot = self.finalized_slot.max(cert.slot());
-            self.prune();
-        }
-        // cannot skip retired slots or finalized slot itself for certs,
-        // otherwise we would not broadcast notar/final/fast-final certs
-        if slot < self.finalized_slot
-            || !matches!(event, PoolEvent::CertCreated { .. })
-                && (slot == self.finalized_slot || self.is_retired(slot))
-        {
+        if self.should_ignore_pool_event(&event) {
             trace!("ignoring pool event for old or retired slot {slot}");
             return;
         }
@@ -194,22 +212,7 @@ impl<A: All2All> Votor<A> {
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
-            PoolEvent::CertCreated(cert) => {
-                match cert.as_ref() {
-                    Cert::Notar(_) => {
-                        self.state_mut(cert.slot()).block_notarized =
-                            Some(cert.block_hash().cloned().unwrap());
-                        self.try_final(cert.slot(), cert.block_hash().cloned().unwrap())
-                            .await;
-                    }
-                    Cert::Final(_) | Cert::FastFinal(_) => {
-                        let first_slot_in_window = cert.slot().first_slot_in_window();
-                        self.set_timeouts(first_slot_in_window);
-                    }
-                    _ => {}
-                }
-                self.all2all.broadcast(&(*cert).into()).await.unwrap();
-            }
+            PoolEvent::CertCreated(cert) => self.handle_cert_created(cert).await,
             PoolEvent::Standstill(_, certs, votes) => {
                 for cert in certs {
                     self.all2all.broadcast(&cert.into()).await.unwrap();
@@ -221,9 +224,35 @@ impl<A: All2All> Votor<A> {
         }
     }
 
+    /// Updates state based on a newly created certificate and re-broadcasts it.
+    async fn handle_cert_created(&mut self, cert: Box<Cert>) {
+        match cert.as_ref() {
+            Cert::Notar(_) => {
+                let hash = cert.block_hash().unwrap();
+                // need to mark notarized BEFORE trying finalization
+                self.state_mut(cert.slot()).block_notarized = Some(hash.clone());
+                self.try_final(cert.slot(), hash).await;
+            }
+            Cert::Final(_) | Cert::FastFinal(_) => {
+                // makes sure we eventually vote skip for these slots,
+                // even if we never issued a ParentReady for this window
+                self.set_timeouts(cert.slot().first_slot_in_window());
+
+                // Votor can already be pruned upon regular final cert,
+                // whereas Pool would only be pruned upon actual finalization,
+                // because that's when our vote for a slot no longer matters
+                self.highest_final_cert_slot = self.highest_final_cert_slot.max(cert.slot());
+                self.prune();
+            }
+            _ => {}
+        }
+        let message = ConsensusMessage::from(*cert);
+        self.all2all.broadcast(&message).await.unwrap();
+    }
+
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
         let slot = event.slot();
-        if slot <= self.finalized_slot || self.is_retired(slot) {
+        if slot <= self.highest_final_cert_slot || self.is_retired(slot) {
             trace!("ignoring blockstore event for old or retired slot {slot}");
             return;
         }
@@ -253,7 +282,7 @@ impl<A: All2All> Votor<A> {
 
     async fn handle_timeout_event(&mut self, event: VotorTimeout) {
         let slot = event.slot();
-        if slot <= self.finalized_slot || self.is_retired(slot) {
+        if slot <= self.highest_final_cert_slot || self.is_retired(slot) {
             trace!("ignoring timeout for old or retired slot {slot}");
             return;
         }
@@ -306,17 +335,15 @@ impl<A: All2All> Votor<A> {
     ///
     /// Returns `true` iff we decided to send a notarization vote for the block.
     async fn try_notar(&mut self, slot: Slot, block_info: BlockInfo) -> bool {
-        assert!(slot >= self.finalized_slot.first_slot_in_window());
-        let BlockInfo {
-            hash,
-            parent: (parent_slot, parent_hash),
-        } = block_info;
+        assert!(slot >= self.first_unpruned_slot());
+        let BlockInfo { hash, parent } = block_info;
+        let (parent_slot, parent_hash) = &parent;
         let first_slot_in_window = slot.first_slot_in_window();
         if slot == first_slot_in_window {
-            let valid_parent = self.slots.get(&slot).is_some_and(|s| {
-                s.parents_ready
-                    .contains(&(parent_slot, parent_hash.clone()))
-            });
+            let valid_parent = self
+                .slots
+                .get(&slot)
+                .is_some_and(|s| s.parents_ready.contains(&parent));
             let h = parent_hash.short_hex();
             trace!(
                 "try notar slot {slot} with parent {h} in slot {parent_slot} (valid {valid_parent})"
@@ -324,12 +351,12 @@ impl<A: All2All> Votor<A> {
             if !valid_parent {
                 return false;
             }
-        } else if parent_slot != slot.prev()
+        } else if *parent_slot != slot.prev()
             || self
                 .slots
-                .get(&parent_slot)
+                .get(parent_slot)
                 .and_then(|s| s.voted_notar.as_ref())
-                != Some(&parent_hash)
+                != Some(parent_hash)
         {
             return false;
         }
@@ -340,16 +367,16 @@ impl<A: All2All> Votor<A> {
         state.voted = true;
         state.voted_notar = Some(hash.clone());
         state.pending_block = None;
-        self.try_final(slot, hash).await;
+        self.try_final(slot, &hash).await;
         true
     }
 
     /// Sends a finalization vote for the given block if the conditions are met.
-    async fn try_final(&mut self, slot: Slot, hash: BlockHash) {
-        assert!(slot >= self.finalized_slot.first_slot_in_window());
+    async fn try_final(&mut self, slot: Slot, hash: &BlockHash) {
+        assert!(slot >= self.first_unpruned_slot());
         let state = self.slots.get(&slot);
-        let notarized = state.and_then(|s| s.block_notarized.as_ref()) == Some(&hash);
-        let voted_notar = state.and_then(|s| s.voted_notar.as_ref()) == Some(&hash);
+        let notarized = state.and_then(|s| s.block_notarized.as_ref()) == Some(hash);
+        let voted_notar = state.and_then(|s| s.voted_notar.as_ref()) == Some(hash);
         let not_bad = !state.is_some_and(|s| s.bad_window);
         if notarized && voted_notar && not_bad {
             let vote = Vote::new_final(slot, &self.voting_key, self.validator_index);
@@ -360,33 +387,42 @@ impl<A: All2All> Votor<A> {
 
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
     async fn try_skip_window(&mut self, slot: Slot) {
-        assert!(slot >= self.finalized_slot.first_slot_in_window());
+        assert!(slot >= self.first_unpruned_slot());
         trace!("try skip window of slot {slot}");
         for s in slot.slots_in_window() {
-            let state = self.state_mut(s);
-            if !state.voted {
-                state.voted = true;
-                state.bad_window = true;
-                let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
-                debug!("voted skip for slot {s}");
+            if self.has_voted(s) {
+                continue;
             }
+            let state = self.state_mut(s);
+            state.voted = true;
+            state.bad_window = true;
+            let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
+            self.all2all.broadcast(&vote.into()).await.unwrap();
+            debug!("voted skip for slot {s}");
         }
     }
 
     /// Checks if we can vote on any of the pending blocks by now.
     async fn check_pending_blocks(&mut self) {
-        let slots: Vec<_> = self
+        let slots = self
             .slots
             .iter()
             .filter(|(_, s)| s.pending_block.is_some())
             .map(|(slot, _)| *slot)
-            .collect();
+            .collect::<Vec<_>>();
         for slot in slots {
             if let Some(block_info) = self.slots.get(&slot).and_then(|s| s.pending_block.clone()) {
                 self.try_notar(slot, block_info).await;
             }
         }
+    }
+
+    /// Drops voting state for old slots that are no longer relevant.
+    ///
+    /// Afterwards, [`Self::slots`] only contains entries within or after the
+    /// leader window of [`Self::highest_final_cert_slot`].
+    fn prune(&mut self) {
+        self.slots = self.slots.split_off(&self.first_unpruned_slot());
     }
 }
 
@@ -719,7 +755,7 @@ mod tests {
         ));
         let event = PoolEvent::CertCreated(Box::new(cert));
         votor.handle_pool_event(event).await;
-        assert_eq!(votor.finalized_slot, finalized);
+        assert_eq!(votor.highest_final_cert_slot, finalized);
 
         // the whole finalized window is kept
         assert!(votor.slots.keys().all(|s| *s >= window_start));
