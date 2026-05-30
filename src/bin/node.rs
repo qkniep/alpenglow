@@ -38,12 +38,19 @@ struct ConfigFile {
 #[command(version, about, long_about = None)]
 struct Args {
     /// Generates configs for a cluster from a file with IPs (one per line).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Generates config files for a cluster. The provided file should contain one IP address per line,
+     and the generated config files will be named with the provided config name as prefix."
+    )]
     generate_config_files: Option<String>,
     /// Config file name to use.
     #[arg(long)]
     config_name: String,
 }
+
+/// Generated config file prefix
+const GENERATED_CONFIG_FILE_PREFIX: &str = "generated";
 
 #[tokio::main]
 #[hotpath::main]
@@ -51,7 +58,11 @@ async fn main() -> Result<()> {
     // parse args & load config from file
     let args = Args::parse();
     if let Some(ip_list) = args.generate_config_files {
-        create_node_configs(ip_list, args.config_name).await?;
+        create_node_configs(
+            ip_list,
+            format!("{}_{}", GENERATED_CONFIG_FILE_PREFIX, args.config_name),
+        )
+        .await?;
         return Ok(());
     }
     let mut config = File::open(&args.config_name).context("Config file is required")?;
