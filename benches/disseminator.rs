@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use alpenglow::consensus::{EpochInfo, ValidatorEpochInfo};
+use alpenglow::consensus::{EpochInfo, EpochRegistry};
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Turbine;
 use alpenglow::network::UdpNetwork;
@@ -43,14 +43,14 @@ fn turbine_tree(bencher: divan::Bencher) {
             let epoch_info = EpochInfo::new(validators);
             let turbine1 = Turbine::new(
                 net1,
-                Arc::new(ValidatorEpochInfo::new(
+                Arc::new(EpochRegistry::single(
                     ValidatorIndex::new(0),
                     epoch_info.clone(),
                 )),
             );
             let turbine2 = Turbine::new(
                 net2,
-                Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info)),
+                Arc::new(EpochRegistry::single(ValidatorIndex::new(1), epoch_info)),
             );
 
             let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);

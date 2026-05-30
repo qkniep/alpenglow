@@ -18,7 +18,7 @@ use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
 use super::Disseminator;
-use crate::consensus::ValidatorEpochInfo;
+use crate::consensus::EpochRegistry;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
 use crate::{Slot, ValidatorIndex, ValidatorInfo};
@@ -34,7 +34,7 @@ const MAX_CACHED_TREES: usize = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
 pub struct Turbine<N: Network> {
-    epoch_info: Arc<ValidatorEpochInfo>,
+    epoch_info: Arc<EpochRegistry>,
     network: N,
     fanout: usize,
     tree_cache: Cache<(Slot, usize), TurbineTree>,
@@ -57,7 +57,7 @@ where
     N: ShredNetwork,
 {
     /// Creates a new Turbine instance, configured with the default fanout.
-    pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
+    pub fn new(network: N, epoch_info: Arc<EpochRegistry>) -> Self {
         Self {
             epoch_info,
             network,
@@ -86,13 +86,13 @@ where
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn send_shred_to_root(&self, shred: &Shred) -> std::io::Result<()> {
-        let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
+        let slot = shred.payload().header.slot;
+        let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Ok(());
+        };
+        let tree = self.get_tree(slot, shred.payload().index_in_slot());
         let root = tree.get_root();
-        let addr = self
-            .epoch_info
-            .epoch_info()
-            .validator(root)
-            .disseminator_address;
+        let addr = epoch_info.validator(root).disseminator_address;
         self.network.send(shred, addr).await
     }
 
@@ -103,13 +103,15 @@ where
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> std::io::Result<()> {
-        let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
-        let addrs = tree.get_children().iter().map(|child| {
-            self.epoch_info
-                .epoch_info()
-                .validator(*child)
-                .disseminator_address
-        });
+        let slot = shred.payload().header.slot;
+        let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Ok(());
+        };
+        let tree = self.get_tree(slot, shred.payload().index_in_slot());
+        let addrs = tree
+            .get_children()
+            .iter()
+            .map(|child| epoch_info.validator(*child).disseminator_address);
         self.network.send_to_many(shred, addrs).await?;
         Ok(())
     }
@@ -120,13 +122,15 @@ where
         if let Some(tree) = self.tree_cache.get(&(slot, shred)) {
             return tree;
         }
-        let tree = TurbineTree::new(
-            self.epoch_info.epoch_info().validators(),
-            self.fanout,
-            self.epoch_info.own_id(),
-            slot,
-            shred,
-        );
+        let epoch_info = self
+            .epoch_info
+            .for_slot(slot)
+            .expect("epoch must be installed for slots we disseminate");
+        let own_id = self
+            .epoch_info
+            .own_index_for_slot(slot)
+            .expect("turbine node must be a member of the slot's epoch");
+        let tree = TurbineTree::new(epoch_info.validators(), self.fanout, own_id, slot, shred);
         self.tree_cache.insert((slot, shred), tree.clone());
         tree
     }
@@ -278,7 +282,7 @@ mod tests {
             let v = ValidatorIndex::new(i as u64);
             let network = core.join_unlimited(v).await;
             let epoch_info = EpochInfo::new(validators.to_vec());
-            let epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info));
+            let epoch_info = Arc::new(EpochRegistry::single(v, epoch_info));
             let turbine = Turbine::new(network, epoch_info);
             disseminators.push(turbine);
         }

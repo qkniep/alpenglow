@@ -33,10 +33,10 @@ pub use self::consensus::Alpenglow;
 use self::crypto::{aggsig, signature};
 pub use self::disseminator::Disseminator;
 use self::types::Slot;
-pub use self::types::{Stake, ValidatorIndex};
+pub use self::types::{Epoch, Stake, ValidatorIndex};
 pub use self::validator::Validator;
 use crate::all2all::TrivialAll2All;
-use crate::consensus::{ConsensusMessage, EpochInfo, ValidatorEpochInfo};
+use crate::consensus::{ConsensusMessage, EpochInfo, EpochRegistry};
 use crate::crypto::merkle::BlockHash;
 use crate::crypto::signature::SecretKey;
 use crate::disseminator::Rotor;
@@ -155,7 +155,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .enumerate()
         .map(|(id, network)| {
             let v = ValidatorIndex::new(id as u64);
-            let epoch_info = Arc::new(ValidatorEpochInfo::new(v, shared_epoch.clone()));
+            let epoch_info = Arc::new(EpochRegistry::single(v, shared_epoch.clone()));
             let all2all = TrivialAll2All::new(validators.clone(), network.all2all);
             let disseminator = Rotor::new(network.disseminator, epoch_info.clone());
             let repair_requester_network = network.repair_requester;

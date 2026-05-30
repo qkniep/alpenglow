@@ -24,12 +24,21 @@ use tokio::sync::{RwLock, oneshot};
 use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
 use self::slot_state::SlotState;
-use super::{Cert, ValidatorEpochInfo, Vote};
+use super::{Cert, EpochRegistry, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::BlockHash;
-use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorIndex};
+
+/// Maximum number of slots ahead of the finalized slot for which votes and
+/// certificates are accepted.
+///
+/// This is purely a spam/memory bound against absurdly-far-future messages. It
+/// is deliberately kept independent of [`crate::types::SLOTS_PER_EPOCH`] so that
+/// the epoch length can be shrunk (e.g. for tests) without narrowing the
+/// acceptance horizon. The epoch a slot belongs to is bounded separately, once
+/// epoch sets are installed (see [`PoolImpl::add_cert`]/[`PoolImpl::add_vote`]).
+const MAX_FUTURE_SLOTS: u64 = 36_000;
 
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
@@ -145,8 +154,8 @@ pub struct PoolImpl {
     /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
     s2n_waiting_parent_cert: BTreeMap<BlockId, BlockId>,
 
-    /// Information about all active validators.
-    epoch_info: Arc<ValidatorEpochInfo>,
+    /// Validator sets across epochs, resolved per slot during validation.
+    epoch_info: Arc<EpochRegistry>,
     /// Channel for sending events related to voting logic to Votor.
     votor_event_channel: Sender<PoolEvent>,
     /// Channel for sending repair requests to the repair loop.
@@ -158,7 +167,7 @@ impl PoolImpl {
     ///
     /// Any later emitted events will be sent on provided `votor_event_channel`.
     pub fn new(
-        epoch_info: Arc<ValidatorEpochInfo>,
+        epoch_info: Arc<EpochRegistry>,
         votor_event_channel: Sender<PoolEvent>,
         repair_channel: Sender<BlockId>,
     ) -> Self {
@@ -256,9 +265,16 @@ impl PoolImpl {
     ///
     /// Creates a new [`SlotState`] if none exists yet.
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
-        self.slot_states
-            .entry(slot)
-            .or_insert_with(|| SlotState::new(slot, Arc::clone(&self.epoch_info)))
+        // Bind the registry handle separately so the closure borrows only it (not
+        // all of `self`) while `slot_states` is borrowed mutably by `entry`.
+        let epoch_info = &self.epoch_info;
+        self.slot_states.entry(slot).or_insert_with(|| {
+            let info = epoch_info
+                .for_slot(slot)
+                .expect("epoch must be installed before any of its slots are processed");
+            let own_index = epoch_info.own_index_for_slot(slot);
+            SlotState::new(slot, info, own_index)
+        })
     }
 
     /// Fetches all certificates for the provided range of `slots`.
@@ -310,8 +326,11 @@ impl PoolImpl {
     /// Fetches all votes cast by myself for the provided range of `slots`.
     fn get_own_votes(&self, slots: impl RangeBounds<Slot>) -> Vec<Vote> {
         let mut votes = Vec::new();
-        let own_id = self.epoch_info.own_id();
         for (_, slot_state) in self.slot_states.range(slots) {
+            // our index can differ per epoch; skip slots where we are not a member
+            let Some(own_id) = slot_state.own_index else {
+                continue;
+            };
             if let Some(vote) = &slot_state.votes.finalize[own_id.as_usize()] {
                 votes.push(Vote::Final(vote.clone()));
             }
@@ -412,18 +431,22 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        // TODO: also bound by the highest installed epoch once epoch changes land
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + MAX_FUTURE_SLOTS);
         // NOTE: This needs to be `< finalize_slot` to allow for later notarization.
         if slot < self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
-        // verify stake threshold & signature
-        if !cert.check_threshold(self.epoch_info.epoch_info()) {
+        // resolve the validator set for this slot's epoch
+        let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Err(AddCertError::SlotOutOfBounds);
+        };
+
+        // verify stake threshold & signature (against epoch(slot)'s set)
+        if !cert.check_threshold(&epoch_info) {
             return Err(AddCertError::ThresholdNotMet);
-        } else if !cert.check_sig(self.epoch_info.epoch_info().validators()) {
+        } else if !cert.check_sig(epoch_info.validators()) {
             return Err(AddCertError::InvalidSignature);
         }
 
@@ -452,16 +475,19 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        // TODO: also bound by the highest installed epoch once epoch changes land
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + MAX_FUTURE_SLOTS);
         if slot < self.finalized_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
-        // reject votes from validators outside the current epoch's set,
+        // resolve the validator set for this slot's epoch
+        let Some(epoch) = self.epoch_info.for_slot(slot) else {
+            return Err(AddVoteError::SlotOutOfBounds);
+        };
+
+        // reject votes from validators outside that epoch's set,
         // otherwise `validator()` indexing below would panic on byzantine input
-        let epoch = self.epoch_info.epoch_info();
         if vote.signer().as_usize() >= epoch.validators().len() {
             return Err(AddVoteError::UnknownSigner);
         }
@@ -586,7 +612,6 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::ValidatorIndex;
     use crate::consensus::EpochInfo;
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::{NotarVote, SkipVote};
@@ -594,16 +619,17 @@ mod tests {
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::test_utils::generate_validators;
-    use crate::types::SLOTS_PER_WINDOW;
+    use crate::types::{SLOTS_PER_EPOCH, SLOTS_PER_WINDOW};
+    use crate::{ValidatorIndex, ValidatorInfo};
 
-    /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
-    fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<ValidatorEpochInfo> {
-        Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info))
+    fn wrap_epoch_info(epoch_info: EpochInfo) -> Arc<EpochRegistry> {
+        Arc::new(EpochRegistry::single(ValidatorIndex::new(0), epoch_info))
     }
 
     struct TestContext {
         sks: Vec<SecretKey>,
-        epoch_info: Arc<ValidatorEpochInfo>,
+        /// Genesis epoch's validator set, for building certs/votes in tests.
+        validators: Vec<ValidatorInfo>,
         pool: PoolImpl,
         votor_rx: mpsc::Receiver<PoolEvent>,
         _repair_rx: mpsc::Receiver<BlockId>,
@@ -611,13 +637,14 @@ mod tests {
 
     fn setup() -> TestContext {
         let (sks, epoch_info) = generate_validators(11);
+        let validators = epoch_info.validators().to_vec();
         let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
-        let pool = PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx);
+        let pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
         TestContext {
             sks,
-            epoch_info,
+            validators,
             pool,
             votor_rx,
             _repair_rx,
@@ -889,7 +916,7 @@ mod tests {
                 )
             })
             .collect();
-        let cert = NotarCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
+        let cert = NotarCert::try_new(&votes, &ctx.validators).unwrap();
         ctx.pool.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
@@ -1099,8 +1126,7 @@ mod tests {
                 )
             })
             .collect();
-        let notar_cert =
-            NotarCert::try_new(&notar_votes, ctx.epoch_info.epoch_info().validators()).unwrap();
+        let notar_cert = NotarCert::try_new(&notar_votes, &ctx.validators).unwrap();
         assert_eq!(
             ctx.pool.add_cert(Cert::Notar(notar_cert.clone())).await,
             Ok(())
@@ -1111,8 +1137,7 @@ mod tests {
         let skip_votes: Vec<SkipVote> = (0..11)
             .map(|v| SkipVote::new(second_slot, &ctx.sks[v as usize], ValidatorIndex::new(v)))
             .collect();
-        let skip_cert =
-            SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
+        let skip_cert = SkipCert::try_new(&skip_votes, &[], &ctx.validators).unwrap();
         assert_eq!(
             ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Ok(())
@@ -1133,7 +1158,7 @@ mod tests {
     async fn unknown_signer_votes() {
         let mut ctx = setup();
         let slot = Slot::new(0);
-        let num_validators = ctx.epoch_info.epoch_info().validators().len() as u64;
+        let num_validators = ctx.validators.len() as u64;
 
         // claim a `signer` out-of-bounds for validator set
         let vote = Vote::new_notar(
@@ -1205,8 +1230,7 @@ mod tests {
                 )
             })
             .collect();
-        let ff_cert =
-            FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
+        let ff_cert = FastFinalCert::try_new(&votes, &ctx.validators).unwrap();
         assert_eq!(
             ctx.pool.add_cert(Cert::FastFinal(ff_cert.clone())).await,
             Ok(())
@@ -1223,9 +1247,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let skip_cert =
-                SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators())
-                    .unwrap();
+            let skip_cert = SkipCert::try_new(&skip_votes, &[], &ctx.validators).unwrap();
             assert_eq!(
                 ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
                 Err(AddCertError::SlotOutOfBounds)
@@ -1237,8 +1259,7 @@ mod tests {
         let skip_votes: Vec<SkipVote> = (0..11)
             .map(|v| SkipVote::new(slot, &ctx.sks[v as usize], ValidatorIndex::new(v)))
             .collect();
-        let skip_cert =
-            SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
+        let skip_cert = SkipCert::try_new(&skip_votes, &[], &ctx.validators).unwrap();
         assert_eq!(
             ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)

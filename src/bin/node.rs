@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::{Alpenglow, ConsensusMessage, EpochInfo, ValidatorEpochInfo};
+use alpenglow::consensus::{Alpenglow, ConsensusMessage, EpochInfo, EpochRegistry};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
@@ -92,7 +92,7 @@ type Node = Alpenglow<
 
 fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
-    let epoch_info = Arc::new(ValidatorEpochInfo::new(
+    let epoch_info = Arc::new(EpochRegistry::single(
         ValidatorIndex::new(config.id),
         EpochInfo::new(config.gossip.clone()),
     ));

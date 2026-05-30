@@ -48,6 +48,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "anyhow",
+ "arc-swap",
  "assert_cmd",
  "async-trait",
  "bitvec",

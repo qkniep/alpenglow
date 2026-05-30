@@ -43,7 +43,7 @@ pub use self::blockstore::{
     AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
 };
 pub use self::cert::{Cert, CertError, NotarCert};
-pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
+pub use self::epoch_info::{EpochInfo, EpochRegistry, OwnEpochIdentity};
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
@@ -103,8 +103,8 @@ pub struct Alpenglow<A: All2All, D: Disseminator, T>
 where
     T: TransactionNetwork + 'static,
 {
-    /// Other validators' info.
-    epoch_info: Arc<ValidatorEpochInfo>,
+    /// Validator sets across epochs (and our own per-epoch identity).
+    epoch_info: Arc<EpochRegistry>,
 
     /// Blockstore for storing raw block data.
     blockstore: SharedBlockstore,
@@ -144,7 +144,7 @@ where
         disseminator: D,
         repair_requester_network: RQ,
         repair_responder_network: RP,
-        epoch_info: Arc<ValidatorEpochInfo>,
+        epoch_info: Arc<EpochRegistry>,
         txs_receiver: T,
     ) -> Self
     where
@@ -187,7 +187,7 @@ where
         );
 
         let mut votor = Votor::new(
-            epoch_info.own_id(),
+            epoch_info.clone(),
             voting_secret_key,
             pool_rx,
             blockstore_rx,
@@ -260,10 +260,14 @@ where
         Ok(())
     }
 
-    pub fn get_info(&self) -> &ValidatorInfo {
-        self.epoch_info
-            .epoch_info()
-            .validator(self.epoch_info.own_id())
+    /// Returns our own validator info in the most recently installed epoch.
+    ///
+    /// Returns `None` if we are not a member of that epoch.
+    pub fn get_info(&self) -> Option<ValidatorInfo> {
+        let epoch = self.epoch_info.highest_installed_epoch();
+        let info = self.epoch_info.for_epoch(epoch)?;
+        let index = self.epoch_info.own_index_for_slot(epoch.first_slot())?;
+        Some(info.validator(index).clone())
     }
 
     pub fn get_pool(&self) -> SharedPool {
@@ -334,7 +338,11 @@ where
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // validate shred before forwarding or inserting
         let slot = shred.payload().header.slot;
-        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
+        // resolve the validator set for this shred's epoch; drop if not installed
+        let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Ok(());
+        };
+        let leader_pk = epoch_info.leader(slot).pubkey;
         let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -344,7 +352,7 @@ where
         self.disseminator.forward(validated.as_shred()).await?;
 
         // if we are the leader, we already have the shred
-        if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
+        if Some(epoch_info.leader(slot).id) == self.epoch_info.own_index_for_slot(slot) {
             return Ok(());
         }
 

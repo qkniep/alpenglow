@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{AddShredError, EpochRegistry, SharedBlockstore, SharedPool};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -34,8 +34,8 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
     /// This is not the same as the voting secret key, which is held by [`super::Votor`].
     secret_key: signature::SecretKey,
-    /// Other validators' info.
-    epoch_info: Arc<ValidatorEpochInfo>,
+    /// Validator sets across epochs (and our own per-epoch identity).
+    epoch_info: Arc<EpochRegistry>,
 
     /// Blockstore for storing raw block data.
     blockstore: SharedBlockstore,
@@ -71,7 +71,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
-        epoch_info: Arc<ValidatorEpochInfo>,
+        epoch_info: Arc<EpochRegistry>,
         disseminator: Arc<D>,
         txs_receiver: T,
         blockstore: SharedBlockstore,
@@ -108,12 +108,19 @@ where
 
             let last_slot_in_window = first_slot_in_window.last_slot_in_window();
 
+            // resolve the validator set for this window's epoch; if it is not
+            // installed yet, back off (epoch sets are installed ahead of need)
+            let Some(epoch_info) = self.epoch_info.for_slot(first_slot_in_window) else {
+                tokio::time::sleep(self.delta_block).await;
+                continue;
+            };
+
             // don't do anything if we are not the leader
-            let leader = self.epoch_info.epoch_info().leader(first_slot_in_window);
-            if leader.id != self.epoch_info.own_id() {
+            let leader = epoch_info.leader(first_slot_in_window);
+            let own = self.epoch_info.own_index_for_slot(first_slot_in_window);
+            if Some(leader.id) != own {
                 debug!(
-                    "[val {}] not producing in window {first_slot_in_window}..{last_slot_in_window}, not leader",
-                    self.epoch_info.own_id()
+                    "[val {own:?}] not producing in window {first_slot_in_window}..{last_slot_in_window}, not leader",
                 );
                 continue;
             }
@@ -537,7 +544,7 @@ mod tests {
     use super::*;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
-    use crate::consensus::{BlockInfo, ValidatorEpochInfo};
+    use crate::consensus::{BlockInfo, EpochRegistry};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
@@ -656,7 +663,7 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
+        let epoch_info = Arc::new(EpochRegistry::single(ValidatorIndex::new(0), epoch_info));
         let blockstore: SharedBlockstore = Arc::new(RwLock::new(blockstore));
         let pool: SharedPool = Arc::new(RwLock::new(pool));
         let disseminator = Arc::new(disseminator);

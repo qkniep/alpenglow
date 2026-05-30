@@ -14,6 +14,7 @@ publish = false
 
 [dependencies]
 aes = { version = "0.9", features = ["hazmat", "zeroize"] }
+arc-swap = "1"
 async-trait = "0.1"
 anyhow = "1"
 bitvec = "1"

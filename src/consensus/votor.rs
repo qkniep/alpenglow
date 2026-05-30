@@ -21,7 +21,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::blockstore::{BlockInfo, BlockstoreEvent};
 use super::pool::PoolEvent;
-use super::{Cert, ConsensusMessage, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
+use super::{Cert, ConsensusMessage, DELTA_BLOCK, DELTA_TIMEOUT, EpochRegistry, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
@@ -41,8 +41,8 @@ pub struct Votor<A: All2All> {
     /// at which point the per-slot state for earlier leader windows is pruned.
     highest_final_cert_slot: Slot,
 
-    /// Own validator index.
-    validator_index: ValidatorIndex,
+    /// Validator sets across epochs, used to resolve our own per-slot index.
+    epoch_info: Arc<EpochRegistry>,
     /// Secret key used to sign votes.
     voting_key: SecretKey,
 
@@ -66,7 +66,7 @@ impl<A: All2All> Votor<A> {
     /// Informed by these events Votor updates its state and generates votes.
     /// Votes are signed with `voting_key` and broadcast using `all2all`.
     pub fn new(
-        validator_index: ValidatorIndex,
+        epoch_info: Arc<EpochRegistry>,
         voting_key: SecretKey,
         pool_receiver: Receiver<PoolEvent>,
         blockstore_receiver: Receiver<BlockstoreEvent>,
@@ -90,7 +90,7 @@ impl<A: All2All> Votor<A> {
         let votor = Self {
             slots,
             highest_final_cert_slot: Slot::genesis(),
-            validator_index,
+            epoch_info,
             voting_key,
             pool_receiver,
             blockstore_receiver,
@@ -127,6 +127,14 @@ impl<A: All2All> Votor<A> {
     /// Returns `true` iff we already voted notar or skip for the given slot.
     fn has_voted(&self, slot: Slot) -> bool {
         self.slots.get(&slot).is_some_and(|s| s.voted)
+    }
+
+    /// Returns our own validator index in `slot`'s epoch.
+    ///
+    /// Returns `None` if we are not a member of that epoch, in which case we
+    /// track voting state but cast no votes for that slot.
+    fn own_index(&self, slot: Slot) -> Option<ValidatorIndex> {
+        self.epoch_info.own_index_for_slot(slot)
     }
 
     /// Returns `true` iff we received at least one shred for the given slot.
@@ -198,17 +206,20 @@ impl<A: All2All> Votor<A> {
                 self.set_timeouts(slot);
             }
             PoolEvent::SafeToNotar(slot, hash) => {
-                debug!("voted notar-fallback in slot {slot}");
-                let vote =
-                    Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                if let Some(index) = self.own_index(slot) {
+                    debug!("voted notar-fallback in slot {slot}");
+                    let vote = Vote::new_notar_fallback(slot, hash, &self.voting_key, index);
+                    self.all2all.broadcast(&vote.into()).await.unwrap();
+                }
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
             PoolEvent::SafeToSkip(slot) => {
-                debug!("voted skip-fallback in slot {slot}");
-                let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_index);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                if let Some(index) = self.own_index(slot) {
+                    debug!("voted skip-fallback in slot {slot}");
+                    let vote = Vote::new_skip_fallback(slot, &self.voting_key, index);
+                    self.all2all.broadcast(&vote.into()).await.unwrap();
+                }
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
@@ -360,9 +371,11 @@ impl<A: All2All> Votor<A> {
         {
             return false;
         }
-        debug!("voted notar for slot {slot}");
-        let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_index);
-        self.all2all.broadcast(&vote.into()).await.unwrap();
+        if let Some(index) = self.own_index(slot) {
+            debug!("voted notar for slot {slot}");
+            let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, index);
+            self.all2all.broadcast(&vote.into()).await.unwrap();
+        }
         let state = self.state_mut(slot);
         state.voted = true;
         state.voted_notar = Some(hash.clone());
@@ -379,8 +392,10 @@ impl<A: All2All> Votor<A> {
         let voted_notar = state.and_then(|s| s.voted_notar.as_ref()) == Some(hash);
         let not_bad = !state.is_some_and(|s| s.bad_window);
         if notarized && voted_notar && not_bad {
-            let vote = Vote::new_final(slot, &self.voting_key, self.validator_index);
-            self.all2all.broadcast(&vote.into()).await.unwrap();
+            if let Some(index) = self.own_index(slot) {
+                let vote = Vote::new_final(slot, &self.voting_key, index);
+                self.all2all.broadcast(&vote.into()).await.unwrap();
+            }
             self.state_mut(slot).retired = true;
         }
     }
@@ -396,9 +411,11 @@ impl<A: All2All> Votor<A> {
             let state = self.state_mut(s);
             state.voted = true;
             state.bad_window = true;
-            let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
-            self.all2all.broadcast(&vote.into()).await.unwrap();
-            debug!("voted skip for slot {s}");
+            if let Some(index) = self.own_index(s) {
+                let vote = Vote::new_skip(s, &self.voting_key, index);
+                self.all2all.broadcast(&vote.into()).await.unwrap();
+                debug!("voted skip for slot {s}");
+            }
         }
     }
 
@@ -528,8 +545,12 @@ mod tests {
         let (blockstore_tx, blockstore_rx) = mpsc::channel(100);
         let other_a2a = a2a.pop().unwrap();
         let votor_a2a = a2a.pop().unwrap();
-        let votor = Votor::new(
+        let registry = Arc::new(EpochRegistry::single(
             ValidatorIndex::new(0),
+            epoch_info.clone(),
+        ));
+        let votor = Votor::new(
+            registry,
             sks[0].clone(),
             pool_rx,
             blockstore_rx,

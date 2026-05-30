@@ -17,14 +17,14 @@ use std::time::{Duration, Instant};
 use log::{debug, trace, warn};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{DELTA, EpochRegistry, SharedBlockstore, SharedPool};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, RepairRequesterNetwork, RepairResponderNetwork};
 use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
-use crate::{BlockId, ValidatorIndex};
+use crate::{BlockId, Slot, ValidatorIndex};
 
 /// Maximum time to wait for a response to a repair request.
 ///
@@ -43,6 +43,17 @@ pub enum RepairRequestType {
 }
 
 impl RepairRequestType {
+    /// Returns the slot of the block this request concerns.
+    ///
+    /// Used to resolve the validator set of the block's epoch.
+    fn slot(&self) -> Slot {
+        match self {
+            Self::LastSliceRoot(block_id)
+            | Self::SliceRoot(block_id, _)
+            | Self::Shred(block_id, _, _) => block_id.0,
+        }
+    }
+
     /// Digests the [`RepairRequestType`] into a [`crate::crypto::Hash`].
     fn hash(&self) -> Hash {
         let repair = RepairRequest {
@@ -101,7 +112,7 @@ impl RepairResponse {
 /// This is separated from [`Repair`] to handle repair requests and responses on separate sockets and tokio tasks.
 /// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
 pub struct RepairRequestHandler<N: Network> {
-    epoch_info: Arc<ValidatorEpochInfo>,
+    epoch_info: Arc<EpochRegistry>,
     blockstore: SharedBlockstore,
     network: N,
 }
@@ -114,11 +125,7 @@ where
     ///
     /// Given `network` instance will be used for receiving repair requests and sending repair responses.
     /// The blockstore will be used to handle the repair requests.
-    pub fn new(
-        epoch_info: Arc<ValidatorEpochInfo>,
-        blockstore: SharedBlockstore,
-        network: N,
-    ) -> Self {
+    pub fn new(epoch_info: Arc<EpochRegistry>, blockstore: SharedBlockstore, network: N) -> Self {
         Self {
             epoch_info,
             blockstore,
@@ -153,9 +160,13 @@ where
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
 
-        // drop requests from validators outside the current epoch's set,
-        // otherwise `validator()` indexing in `send_response` would panic on byzantine input
-        let epoch = self.epoch_info.epoch_info();
+        // resolve the validator set for the requested block's epoch, and drop
+        // requests whose sender is outside that set (otherwise `validator()`
+        // indexing below would panic on byzantine input)
+        let Some(epoch) = self.epoch_info.for_slot(request.req_type.slot()) else {
+            warn!("dropping repair request for uninstalled epoch: {request:?}");
+            return Ok(());
+        };
         if request.sender.as_usize() >= epoch.validators().len() {
             warn!(
                 "dropping repair request from unknown validator {:?}",
@@ -168,7 +179,8 @@ where
             .try_build_response(&request)
             .await
             .unwrap_or_else(|| RepairResponse::Nack(request.req_type.clone()));
-        self.send_response(response, request.sender).await
+        let to = epoch.validator(request.sender).repair_requester_address;
+        self.network.send(&response, to).await
     }
 
     /// Tries to build a positive response for the given repair request.
@@ -210,20 +222,6 @@ where
             }
         }
     }
-
-    #[hotpath::measure]
-    async fn send_response(
-        &self,
-        response: RepairResponse,
-        validator: ValidatorIndex,
-    ) -> std::io::Result<()> {
-        let to = self
-            .epoch_info
-            .epoch_info()
-            .validator(validator)
-            .repair_requester_address;
-        self.network.send(&response, to).await
-    }
 }
 
 /// Instance of double-Merkle based block repair protocol.
@@ -238,7 +236,7 @@ pub struct Repair<N: Network> {
     request_timeouts: BinaryHeap<(Instant, Hash)>,
     network: N,
     sampler: StakeWeightedSampler,
-    epoch_info: Arc<ValidatorEpochInfo>,
+    epoch_info: Arc<EpochRegistry>,
 }
 
 impl<N> Repair<N>
@@ -253,9 +251,9 @@ where
         blockstore: SharedBlockstore,
         pool: SharedPool,
         network: N,
-        epoch_info: Arc<ValidatorEpochInfo>,
+        epoch_info: Arc<EpochRegistry>,
     ) -> Self {
-        let validators = epoch_info.epoch_info().validators().to_vec();
+        let validators = epoch_info.genesis_epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,
@@ -417,7 +415,11 @@ where
                 let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
+                let Some(epoch_info) = self.epoch_info.for_slot(*slot) else {
+                    warn!("repair response (Shred) for uninstalled epoch");
+                    return;
+                };
+                let leader_pk = &epoch_info.leader(*slot).pubkey;
                 let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
@@ -450,6 +452,14 @@ where
     #[hotpath::measure]
     async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
         let hash = req_type.hash();
+        let slot = req_type.slot();
+
+        // our sender index is relative to the requested block's epoch; if we are
+        // not a member of it we cannot form a request (cold-join repair from a
+        // non-member is handled in P4)
+        let Some(sender) = self.epoch_info.own_index_for_slot(slot) else {
+            return Ok(());
+        };
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;
         self.outstanding_requests
@@ -457,14 +467,11 @@ where
         self.request_timeouts.retain(|(_, h)| h != &hash);
         self.request_timeouts.push((expiry, hash));
 
-        let request = RepairRequest {
-            sender: self.epoch_info.own_id(),
-            req_type,
-        };
+        let request = RepairRequest { sender, req_type };
         // HACK: magic number to fix high-failure scenarios
         let mut to_all = HashSet::new();
         for _ in 0..10 {
-            to_all.insert(self.pick_random_peer());
+            to_all.insert(self.pick_random_peer(slot));
             if to_all.len() == 3 {
                 break;
             }
@@ -475,10 +482,11 @@ where
         Ok(())
     }
 
-    fn pick_random_peer(&self) -> SocketAddr {
+    fn pick_random_peer(&self, slot: Slot) -> SocketAddr {
+        let own = self.epoch_info.own_index_for_slot(slot);
         let mut rng = rand::rng();
         let mut peer_info = self.sampler.sample_info(&mut rng);
-        while peer_info.id == self.epoch_info.own_id() {
+        while Some(peer_info.id) == own {
             peer_info = self.sampler.sample_info(&mut rng);
         }
         peer_info.repair_responder_address
@@ -539,7 +547,7 @@ mod tests {
         let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(3)).await;
 
         let epoch_info = EpochInfo::new(validators);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
+        let epoch_info = Arc::new(EpochRegistry::single(ValidatorIndex::new(1), epoch_info));
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);

@@ -29,17 +29,17 @@ pub struct ValidatorIndex(u64);
 
 impl ValidatorIndex {
     /// Creates a new validator index.
-    pub fn new(index: u64) -> Self {
+    pub const fn new(index: u64) -> Self {
         Self(index)
     }
 
     /// Returns the inner `u64`.
-    pub fn inner(self) -> u64 {
+    pub const fn inner(self) -> u64 {
         self.0
     }
 
     /// Returns the index as a `usize` for use as an array index.
-    pub fn as_usize(self) -> usize {
+    pub const fn as_usize(self) -> usize {
         self.0 as usize
     }
 }

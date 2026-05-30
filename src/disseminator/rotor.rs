@@ -26,7 +26,7 @@ pub use self::sampling_strategy::{
 };
 use super::Disseminator;
 use crate::ValidatorIndex;
-use crate::consensus::ValidatorEpochInfo;
+use crate::consensus::EpochRegistry;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
 
@@ -36,7 +36,7 @@ use crate::shredder::{Shred, TOTAL_SHREDS};
 pub struct Rotor<N: Network, S: QuorumSamplingStrategy> {
     network: N,
     sampler: S,
-    epoch_info: Arc<ValidatorEpochInfo>,
+    epoch_info: Arc<EpochRegistry>,
 }
 
 impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
@@ -44,8 +44,8 @@ impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
-        let validators = epoch_info.epoch_info().validators().to_vec();
+    pub fn new(network: N, epoch_info: Arc<EpochRegistry>) -> Self {
+        let validators = epoch_info.genesis_epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators).into_quorum_strategy(TOTAL_SHREDS);
         Self {
             network,
@@ -60,8 +60,8 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     ///
     /// Contact information for all validators is provided in `validators`.
     /// Provided `network` will be used to send and receive shreds.
-    pub fn new_fa1(network: N, epoch_info: Arc<ValidatorEpochInfo>) -> Self {
-        let validators = epoch_info.epoch_info().validators().to_vec();
+    pub fn new_fa1(network: N, epoch_info: Arc<EpochRegistry>) -> Self {
+        let validators = epoch_info.genesis_epoch_info().validators().to_vec();
         let sampler =
             FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
         Self {
@@ -86,7 +86,11 @@ where
     #[hotpath::measure]
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
         let relay = self.sample_relay(shred);
-        let v = self.epoch_info.epoch_info().validator(relay);
+        let slot = shred.payload().header.slot;
+        let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Ok(());
+        };
+        let v = epoch_info.validator(relay);
         self.network.send(shred, v.disseminator_address).await
     }
 
@@ -94,22 +98,20 @@ where
     /// Does nothing if we are not the dedicated relay for this shred.
     #[hotpath::measure]
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
-        let leader = self
-            .epoch_info
-            .epoch_info()
-            .leader(shred.payload().header.slot)
-            .id;
+        let slot = shred.payload().header.slot;
+        let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Ok(());
+        };
+        let leader = epoch_info.leader(slot).id;
 
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred);
-        if self.epoch_info.own_id() != relay {
+        if self.epoch_info.own_index_for_slot(slot) != Some(relay) {
             return Ok(());
         }
 
         // otherwise, broadcast
-        let to = self
-            .epoch_info
-            .epoch_info()
+        let to = epoch_info
             .validators()
             .iter()
             .filter(|v| v.id != leader && v.id != relay)
@@ -201,9 +203,9 @@ mod tests {
         let mut rotors = Vec::new();
         for i in 0..count {
             let v = ValidatorIndex::new(i);
-            let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info.clone()));
+            let registry = Arc::new(EpochRegistry::single(v, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
-            rotors.push(Rotor::new(network, validator_epoch_info));
+            rotors.push(Rotor::new(network, registry));
         }
         (sks, rotors)
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alpenglow::all2all::TrivialAll2All;
-use alpenglow::consensus::{ConsensusMessage, EpochInfo, ValidatorEpochInfo};
+use alpenglow::consensus::{ConsensusMessage, EpochInfo, EpochRegistry};
 use alpenglow::crypto::aggsig;
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::disseminator::Rotor;
@@ -143,7 +143,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     validators
         .iter()
         .map(|v| {
-            let epoch_info = Arc::new(ValidatorEpochInfo::new(v.id, shared_epoch.clone()));
+            let epoch_info = Arc::new(EpochRegistry::single(v.id, shared_epoch.clone()));
             let all2all =
                 TrivialAll2All::new(validators.clone(), all2all_networks.pop_front().unwrap());
             let disseminator = Rotor::new(

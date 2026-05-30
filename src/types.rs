@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod epoch;
 pub mod fraction;
 pub mod slice;
 pub mod slice_index;
@@ -8,6 +9,7 @@ pub mod slot;
 pub mod stake;
 pub mod validator_index;
 
+pub use self::epoch::Epoch;
 pub use self::fraction::Fraction;
 pub use self::slice::{ReconstructedSlice, Slice};
 pub(crate) use self::slice::{SliceHeader, SlicePayload};
