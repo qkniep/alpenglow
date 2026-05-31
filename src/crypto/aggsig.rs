@@ -379,6 +379,8 @@ impl AggregateSignature {
     }
 
     /// Verifies the aggregate signature against the raw byte string `msg` and `pks`.
+    ///
+    /// Prefer [`verify`](Self::verify) if possible.
     #[must_use]
     pub fn verify_bytes(&self, msg: &[u8], pks: &[PublicKey]) -> bool {
         if self.bitmask.len() != pks.len() {
