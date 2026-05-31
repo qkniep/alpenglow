@@ -11,7 +11,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, GENESIS_BLOCK_HASH};
 use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
@@ -103,6 +103,16 @@ pub fn create_random_shredded_block(
     let tree = DoubleMerkleTree::new(merkle_roots);
     let block_hash = tree.get_root();
     (block_hash, tree, shreds)
+}
+
+/// Returns the [`BlockId`] of the genesis block.
+pub const fn genesis_block_id() -> BlockId {
+    (Slot::genesis(), GENESIS_BLOCK_HASH)
+}
+
+/// Returns a [`BlockId`] for `slot` with a fresh random block hash.
+pub fn random_block_id(slot: Slot) -> BlockId {
+    (slot, Hash::random_for_test().into())
 }
 
 /// Creates a random block with the given number of slices.
