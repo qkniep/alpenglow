@@ -14,3 +14,4 @@
 /data/output
 flamegraph.svg
 tarpaulin-report.html
+generated_*.toml

@@ -78,10 +78,10 @@ will produce a config file starting with ```ag_node``` for each socket address f
 ### Run the nodes
 You may want to use multiple terminals or a script to start the nodes:
 ``` bash
-cargo run --release --bin node -- --config-name ag_node_0.toml &
-cargo run --release --bin node -- --config-name ag_node_1.toml &
-cargo run --release --bin node -- --config-name ag_node_2.toml &
-cargo run --release --bin node -- --config-name ag_node_3.toml
+./scripts/run.sh node -- --config-name ag_node_0.toml &
+./scripts/run.sh node -- --config-name ag_node_1.toml &
+./scripts/run.sh node -- --config-name ag_node_2.toml &
+./scripts/run.sh node -- --config-name ag_node_3.toml
 ```
 
 You should be able to take one node offline and bring it back up at will without cluster stopping.
