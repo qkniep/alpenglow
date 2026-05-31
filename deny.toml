@@ -1,0 +1,66 @@
+# Configuration for cargo-deny: https://embarkstudios.github.io/cargo-deny
+#
+# Run locally with `cargo deny check`. This single tool replaces cargo-audit and
+# cargo-license, covering four checks against the dependency graph:
+#   - advisories: security vulnerabilities (RustSec) plus yanked/unmaintained crates
+#   - licenses:   every dependency's license must be on the allowlist below
+#   - bans:       unwanted, banned, or duplicated crates
+#   - sources:    crates may only come from trusted registries/git sources
+
+[graph]
+# Check every feature, mirroring the `--all-features` used elsewhere in CI so
+# optionally-enabled dependencies aren't skipped.
+all-features = true
+
+[advisories]
+# Vulnerabilities and unsound advisories always fail the check; yanked and
+# unmaintained crates warn. Silence a specific finding by adding its advisory ID
+# (or `crate@version`) here, ideally with a reason.
+ignore = [
+    # { id = "RUSTSEC-0000-0000", reason = "why this is acceptable" },
+]
+
+[licenses]
+# alpenglow itself ships as Apache-2.0. The allowlist below covers the
+# permissive licenses found in the current dependency tree (review with
+# `cargo deny check licenses`). Add SPDX identifiers as the tree grows.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# Confidence required when a license is inferred from a LICENSE file (0.8 is the
+# default; raise it to be stricter about fuzzy matches).
+confidence-threshold = 0.8
+# Don't warn about allowed licenses that the dependency tree happens not to use
+# yet — the allowlist above is intentionally forward-looking.
+unused-allowed-license = "allow"
+# Per-crate exceptions, for a license you accept for one crate but not globally:
+exceptions = [
+    # { crate = "ring", allow = ["OpenSSL"] },
+]
+
+[bans]
+# Duplicate versions of a crate only warn — they're common and often outside your
+# control. Wildcard (`*`) version requirements are denied.
+multiple-versions = "warn"
+wildcards = "deny"
+# Crates that must never appear in the tree:
+deny = [
+    # { crate = "openssl", use-instead = "rustls" },
+]
+
+[sources]
+# Crates may only come from crates.io. Add entries to `allow-git` to permit
+# specific git dependencies.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

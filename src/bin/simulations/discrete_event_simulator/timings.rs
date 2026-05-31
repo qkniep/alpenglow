@@ -17,7 +17,7 @@ use std::io::{BufWriter, Write};
 use std::ops::{Add, AddAssign};
 use std::path::Path;
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 
 use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, Stage};
 
@@ -133,9 +133,9 @@ impl<E: Event> Timings<E> {
     }
 
     /// Records the latency for the given event and validator.
-    pub(crate) fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
+    pub(crate) fn record(&mut self, event: E, timing: SimTime, validator: ValidatorIndex) {
         let vec = self.event_timings.get_mut(&event).unwrap();
-        let entry = vec.get_mut(validator.as_index()).unwrap();
+        let entry = vec.get_mut(validator.as_usize()).unwrap();
         if timing < *entry {
             *entry = timing;
         }
@@ -336,7 +336,7 @@ mod tests {
         let mut timings = Timings::<LatencyEvent>::default();
         let event = LatencyEvent::BlockSent;
         timings.initialize(event, 2);
-        timings.record(event, SimTime::new(10), ValidatorId::new(0));
+        timings.record(event, SimTime::new(10), ValidatorIndex::new(0));
         assert_eq!(timings.get(event).unwrap()[0], SimTime::new(10));
         assert_eq!(timings.get(event).unwrap()[1], SimTime::NEVER);
     }

@@ -10,7 +10,7 @@ use thiserror::Error;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::crypto::merkle::{BlockHash, SliceRoot};
+use crate::crypto::merkle::SliceRoot;
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, Slot};
@@ -32,7 +32,7 @@ pub struct Slice {
     pub is_last: bool,
     /// If first slice in the block or parent changed due to optimistic handover,
     /// then indicates which block is the parent of the block this slice is part of.
-    pub parent: Option<(Slot, BlockHash)>,
+    pub parent: Option<BlockId>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
@@ -146,14 +146,14 @@ pub(crate) struct SliceHeader {
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
     /// Same as [`Slice::parent`].
-    pub(crate) parent: Option<(Slot, BlockHash)>,
+    pub(crate) parent: Option<BlockId>,
     /// Same as [`Slice::data`].
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
     /// Constructs a new [`SlicePayload`] from its component parts.
-    pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
+    pub(crate) fn new(parent: Option<BlockId>, data: Vec<u8>) -> Self {
         Self { parent, data }
     }
 
