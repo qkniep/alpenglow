@@ -705,13 +705,7 @@ mod tests {
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);
         assert!(blocks.is_empty());
-        match &events[0] {
-            PoolEvent::SafeToNotar((s, h)) => {
-                assert_eq!(*s, slot);
-                assert_eq!(*h, hash);
-            }
-            _ => unreachable!(),
-        }
+        assert_eq!(events[0], PoolEvent::SafeToNotar((slot, hash)));
     }
 
     #[test]
@@ -987,10 +981,8 @@ mod tests {
         );
         assert_eq!(certs.len(), 1);
         let cert = certs.into_iter().next().unwrap();
-        let Cert::NotarFallback(ref c) = cert else {
-            unreachable!()
-        };
-        assert_eq!(c.block_hash(), &hash);
+        matches!(cert, Cert::NotarFallback(_));
+        assert_eq!(cert.block_hash().unwrap(), &hash);
 
         // once the cert is registered, more notar-fallback stake must not duplicate it
         state.add_cert(cert);
