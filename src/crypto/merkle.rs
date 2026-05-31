@@ -374,12 +374,14 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
     /// to the given `hash` at the given `index` in the tree corresponding to the given `root`.
     #[must_use]
     fn check_hash_proof(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
-        *Self::derive_hash_root(hash, index, proof).as_hash() == *root.as_hash()
+        proof.as_ref().len() <= EMPTY_ROOTS.len()
+            && *Self::derive_hash_root(hash, index, proof).as_hash() == *root.as_hash()
     }
 
     /// Checks a Merkle path proves the given leaf's data is last in the tree.
     ///
-    /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
+    /// Returns `true` iff the Merkle proof is valid,
+    /// proving that `leaf` at `index` is the last leaf in the tree.
     #[must_use]
     pub fn check_proof_last(leaf: &Leaf, index: usize, root: &Root, proof: &Proof) -> bool {
         let hash = Self::hash_leaf(leaf);
@@ -388,7 +390,8 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
 
     /// Checks a Merkle path proves the given leaf hash is last in the tree.
     ///
-    /// Returns `true` iff the Merkle proof is valid and `index` is the last leaf in the tree.
+    /// Returns `true` iff the Merkle proof is valid,
+    /// proving that `hash` at `index` is the last leaf hash in the tree.
     #[must_use]
     fn check_hash_proof_last(hash: Hash, index: usize, root: &Root, proof: &Proof) -> bool {
         Self::derive_hash_root_last(hash, index, proof)
@@ -416,12 +419,11 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         node.into()
     }
 
-    /// Derives the root from an element claimed to be the last leaf in the tree.
+    /// Derives the root from an element claimed to be the last leaf in its tree.
     ///
-    /// Returns `None` if the proof is longer than the maximum supported tree
-    /// height ([`EMPTY_ROOTS`] has one entry per height), as such a proof cannot
-    /// correspond to any valid tree. This avoids an out-of-bounds index into
-    /// `EMPTY_ROOTS` for an attacker-controlled, over-long proof.
+    /// Returns `None` if the proof is not well-formed, namely if either:
+    /// - it is longer than the maximum supported tree height, or
+    /// - a right-sibling entry is not the canonical empty-subtree root.
     #[must_use]
     fn derive_hash_root_last(hash: Hash, index: usize, proof: &Proof) -> Option<Root> {
         if proof.as_ref().len() > EMPTY_ROOTS.len() {
@@ -431,6 +433,7 @@ impl<Leaf: MerkleLeaf, Root: MerkleRoot, Proof: MerkleProof> MerkleTree<Leaf, Ro
         let mut node = hash;
         for (height, h) in proof.as_ref().iter().enumerate() {
             node = match i % 2 {
+                0 if h != &EMPTY_ROOTS[height] => return None,
                 0 => Self::hash_pair(&node, &EMPTY_ROOTS[height]),
                 _ => Self::hash_pair(h, &node),
             };
@@ -564,16 +567,39 @@ mod tests {
 
     #[test]
     fn proof_last_overlong_is_rejected() {
-        // A proof longer than the maximum supported tree height must be rejected
-        // gracefully rather than panicking, since it can be attacker-controlled
-        // (e.g. via a `RepairResponse::LastSliceRoot`).
         let data = vec![b"hello".to_vec(); 33];
         let tree = PlainMerkleTree::new(&data);
         let root = tree.get_root();
 
+        // proof longer than maximum supported tree height
         let overlong: Vec<Hash> = vec![Hash([0; 32]); EMPTY_ROOTS.len() + 1];
         assert!(!PlainMerkleTree::check_proof_last(
             &data[32], 32, &root, &overlong
+        ));
+    }
+
+    #[test]
+    fn proof_last_non_canonical_is_rejected() {
+        let data = vec![b"hello".to_vec(); 33];
+        let tree = PlainMerkleTree::new(&data);
+        let root = tree.get_root();
+
+        // validly constructed proof is accepted
+        let proof = tree.create_proof(32);
+        assert!(PlainMerkleTree::check_proof_last(
+            &data[32], 32, &root, &proof
+        ));
+
+        // index 32 is a left child at height 0, so entry 0 is a right sibling
+        // replacing it with a non-empty-root value must be rejected
+        let mut non_canonical = proof.clone();
+        non_canonical[0] = Hash([0; 32]);
+        assert_ne!(proof[0], non_canonical[0]);
+        assert!(!PlainMerkleTree::check_proof_last(
+            &data[32],
+            32,
+            &root,
+            &non_canonical
         ));
     }
 
