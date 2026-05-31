@@ -790,16 +790,16 @@ mod tests {
         // finalize first, then a notar-fallback is slashable
         let v1 = ValidatorIndex::new(1);
         add(&mut state, Vote::new_final(slot, &sks[1], v1));
-        let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[1], v1);
+        let nf_vote_1 = Vote::new_notar_fallback(slot, hash.clone(), &sks[1], v1);
         assert_eq!(
-            state.check_slashable_offence(&nf_vote),
+            state.check_slashable_offence(&nf_vote_1),
             Some(SlashableOffence::NotarFallbackAndFinalize(v1, slot))
         );
 
         // notar-fallback first, then finalize is slashable
         let v2 = ValidatorIndex::new(2);
-        let notar_vote = Vote::new_notar(slot, hash.clone(), &sks[2], v2);
-        add(&mut state, notar_vote);
+        let nf_vote_2 = Vote::new_notar_fallback(slot, hash.clone(), &sks[2], v2);
+        add(&mut state, nf_vote_2);
         assert_eq!(
             state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
             Some(SlashableOffence::NotarFallbackAndFinalize(v2, slot))
@@ -845,13 +845,13 @@ mod tests {
         assert!(state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)));
         assert!(state.should_ignore_vote(&Vote::new_notar(slot, other_hash.clone(), &sks[1], v1)));
 
-        // skip and skip-fallback share a single slot: either suppresses both
+        // should ignore skip and skip-fallback after skip
         let v2 = ValidatorIndex::new(2);
         add(&mut state, Vote::new_skip(slot, &sks[2], v2));
         assert!(state.should_ignore_vote(&Vote::new_skip(slot, &sks[2], v2)));
         assert!(state.should_ignore_vote(&Vote::new_skip_fallback(slot, &sks[2], v2)));
 
-        // only one finalize vote per validator counts
+        // ignore duplicate finalization votes
         let v3 = ValidatorIndex::new(3);
         add(&mut state, Vote::new_final(slot, &sks[3], v3));
         assert!(state.should_ignore_vote(&Vote::new_final(slot, &sks[3], v3)));
