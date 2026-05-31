@@ -17,8 +17,8 @@ pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, ValidatedShred};
-use crate::types::SliceIndex;
+use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, TOTAL_SHREDS, ValidatedShred};
+use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, BlockId, Slot};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
@@ -74,6 +74,17 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
+    /// Ingests a slice the local node produced itself, as leader.
+    ///
+    /// Skips Reed-Solomon decoding and re-verification: the caller hands over
+    /// all [`TOTAL_SHREDS`] freshly produced shreds plus the matching
+    /// [`ReconstructedSlice`]. Returns the [`BlockInfo`] once the final slice
+    /// completes the block, mirroring [`Blockstore::add_shred_from_dissemination`].
+    async fn add_own_slice(
+        &mut self,
+        slice: ReconstructedSlice,
+        shreds: [ValidatedShred; TOTAL_SHREDS],
+    ) -> Option<BlockInfo>;
     #[allow(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     #[allow(clippy::needless_lifetimes)]
@@ -295,6 +306,29 @@ impl Blockstore for BlockstoreImpl {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
         }
+    }
+
+    /// Ingests a locally produced slice (leader fast path); see trait docs.
+    ///
+    /// No shredder is checked out and no decoding happens: the shreds and the
+    /// reconstructed slice are stored as-is. Emits the same [`BlockstoreEvent`]s
+    /// as the dissemination path and returns the [`BlockInfo`] on completion.
+    #[hotpath::measure]
+    #[fastrace::trace(short_name = true)]
+    async fn add_own_slice(
+        &mut self,
+        slice: ReconstructedSlice,
+        shreds: [ValidatedShred; TOTAL_SHREDS],
+    ) -> Option<BlockInfo> {
+        let slot = slice.slot;
+        let events = self.slot_data_mut(slot).add_own_slice(slice, shreds);
+        let mut block_info = None;
+        for event in events {
+            if let Some(info) = self.send_blockstore_event(event).await {
+                block_info = Some(info);
+            }
+        }
+        block_info
     }
 
     /// Gives the disseminated block hash for a given `slot`, if any.
