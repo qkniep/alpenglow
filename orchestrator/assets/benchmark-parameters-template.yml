@@ -1,0 +1,18 @@
+# Benchmark parameters. Pass with `benchmark --parameters <file>`; any of
+# `--nodes`, `--load`, `--duration` on the command line override these.
+
+# Number of validator nodes (must be <= number of active instances).
+nodes: 4
+
+# Base UDP port for node 0. Each node uses base_port..base_port + 5
+# (all2all, disseminator, repair-req, repair-resp, transactions).
+base_port: 8000
+
+# Target transactions per second for the load generator.
+load_tps: 1000
+
+# Bytes per transaction.
+transaction_size: 512
+
+# How long to run before tearing down, in seconds.
+duration_secs: 60

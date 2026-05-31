@@ -1,0 +1,49 @@
+# Settings template for the "vultr" provider. The orchestrator provisions the
+# machines via the Vultr v2 API, deploys, runs the benchmark, and tears down.
+#
+# Export your token first so it never lands on disk:
+#   export VULTR_API_TOKEN=...
+#
+# Then:
+#   cargo run -p orchestrator -- --settings orchestrator/assets/settings.yml deploy --instances-per-region 2
+#   cargo run -p orchestrator -- --settings orchestrator/assets/settings.yml install
+#   cargo run -p orchestrator -- --settings orchestrator/assets/settings.yml benchmark --nodes 4
+#   cargo run -p orchestrator -- --settings orchestrator/assets/settings.yml destroy
+
+testbed_id: alpenglow-vultr
+
+cloud_provider:
+  provider: vultr
+  # The token below is read from the VULTR_API_TOKEN environment variable
+  # (any VAR-style reference is expanded from the environment before parsing).
+  token: ${VULTR_API_TOKEN}
+  # Machine type. List options:
+  #   curl -H "Authorization: Bearer $VULTR_API_TOKEN" https://api.vultr.com/v2/plans
+  plan: vc2-4c-8gb
+  # OS id (1743 = Ubuntu 22.04 x64). List options:
+  #   curl -H "Authorization: Bearer $VULTR_API_TOKEN" https://api.vultr.com/v2/os
+  os_id: 1743
+  ssh_username: root
+
+# Key registered with Vultr on `deploy` and used to SSH in afterwards.
+# The public key defaults to `<private_key>.pub`.
+ssh_private_key_file: ~/.ssh/id_ed25519
+
+# Vultr region ids; the testbed spreads instances evenly across them.
+# List options:
+#   curl -H "Authorization: Bearer $VULTR_API_TOKEN" https://api.vultr.com/v2/regions
+regions:
+  - ewr   # New Jersey
+  - fra   # Frankfurt
+  - nrt   # Tokyo
+
+repository:
+  url: https://github.com/qkniep/alpenglow
+  commit: main
+
+# Optional (defaults shown):
+# working_dir: ~/alpenglow-testbed
+# results_dir: ./results
+# logs_dir: ./logs
+# base_port: 8000
+# ssh_timeout_secs: 30

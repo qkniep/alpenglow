@@ -12,6 +12,13 @@ keywords = ["alpenglow", "solana", "consensus", "distributed-systems"]
 categories = ["algorithms", "network-programming", "data-structures"]
 publish = false
 
+# The cloud benchmark orchestrator lives in its own member crate so its heavy
+# cloud/SSH dependencies never touch the consensus build. To keep it out of the
+# default `just` workflows entirely, swap `members` for `exclude`.
+[workspace]
+members = ["orchestrator"]
+resolver = "3"
+
 [dependencies]
 aes = { version = "0.9", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
