@@ -173,9 +173,13 @@ impl TryFrom<&[u8]> for SlicePayload {
 
     /// Decodes a [`SlicePayload`] from reconstructed slice bytes.
     ///
-    /// These bytes are only known to be consistent with a leader-signed Merkle
-    /// root, not to be well-formed (a malicious leader can commit arbitrary
-    /// bytes), so decoding is fallible and must never panic.
+    /// These bytes are arbitrary input from the (potentially malicious) leader.
+    /// So decoding is fallible and must never panic.
+    ///
+    /// # Errors
+    ///
+    /// - [`DeshredError::TooMuchData`] if there are more than [`MAX_DATA_PER_SLICE`] bytes.
+    /// - [`DeshredError::BadEncoding`] if the bytes are not a well-formed encoded [`SlicePayload`].
     fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
         if payload.len() > MAX_DATA_PER_SLICE {
             return Err(DeshredError::TooMuchData);
@@ -215,7 +219,8 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
+// XXX: This is only used in test and benchmarking code.
+// Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
