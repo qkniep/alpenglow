@@ -472,7 +472,7 @@ mod tests {
     use crate::consensus::{ConsensusMessage, EpochInfo};
     use crate::crypto::Hash;
     use crate::network::SimulatedNetwork;
-    use crate::test_utils::{generate_all2all_instances, generate_validators};
+    use crate::test_utils::{generate_all2all_instances, generate_validators, random_block_id};
     use crate::types::SLOTS_PER_WINDOW;
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
@@ -668,8 +668,8 @@ mod tests {
         let slot = Slot::genesis().next();
 
         // wait for skip votes
-        for slot in slot.slots_in_window() {
-            if slot.is_genesis() {
+        for s in slot.slots_in_window() {
+            if s.is_genesis() {
                 continue;
             }
             if let Ok(msg) = ctx.other_a2a.receive().await {
@@ -681,16 +681,16 @@ mod tests {
         }
 
         // vote notar-fallback after safe-to-notar
-        let hash = Hash::random_for_test();
+        let block = random_block_id(slot);
         ctx.pool_tx
-            .send(PoolEvent::SafeToNotar((slot, hash.clone().into())))
+            .send(PoolEvent::SafeToNotar(block.clone()))
             .await
             .unwrap();
         match ctx.other_a2a.receive().await.unwrap() {
             ConsensusMessage::Vote(v) => {
                 assert!(matches!(v, Vote::NotarFallback(_)));
-                assert_eq!(v.slot(), slot);
-                assert_eq!(v.block_hash(), Some(&hash.into()));
+                assert_eq!(v.slot(), block.0);
+                assert_eq!(v.block_hash(), Some(&block.1));
             }
             m => panic!("other msg: {m:?}"),
         }
