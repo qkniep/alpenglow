@@ -618,11 +618,6 @@ mod tests {
         ret
     }
 
-    /// A malicious leader can honestly Reed-Solomon encode and Merkle-sign payload
-    /// bytes that are *not* a valid [`SlicePayload`]. Every shred then passes
-    /// per-shred verification, and reconstruction rebuilds a matching Merkle root,
-    /// so the Merkle check passes. `deshred` must surface a [`DeshredError`] for the
-    /// undecodable payload rather than panic (decoding used to `.unwrap()`).
     #[test]
     fn deshred_rejects_undecodable_payload() {
         let header = SliceHeader {
@@ -630,13 +625,13 @@ mod tests {
             slice_index: SliceIndex::first(),
             is_last: true,
         };
-        // A single byte is too short to be a serialized `SlicePayload` (which needs
-        // at least a parent tag plus an 8-byte length prefix), so decoding it fails.
+        // a single byte is too short to be a serialized `SlicePayload`
+        // (which needs at least a parent tag plus an 8-byte length prefix)
         let sk = SecretKey::new(&mut rand::rng());
         let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
         let raw_shreds = coder.shred(&[0u8]).unwrap();
         let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
-
+        // decoding it fails, but never panics
         let result = RegularShredder::default().deshred(&into_array(&shreds));
         assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
