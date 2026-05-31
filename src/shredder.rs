@@ -284,6 +284,12 @@ impl Shredder for RegularShredder {
     }
 }
 
+impl Default for RegularShredder {
+    fn default() -> Self {
+        Self(ReedSolomonCoder::new(Self::CODING_OUTPUT_SHREDS))
+    }
+}
+
 /// A shredder that only produces [`TOTAL_SHREDS`] coding shreds.
 pub struct CodingOnlyShredder(ReedSolomonCoder);
 
@@ -312,6 +318,12 @@ impl Shredder for CodingOnlyShredder {
         // this shredder outputs no data shreds
         raw_shreds.data = vec![];
         finalize_deshred(raw_shreds, shreds, payload)
+    }
+}
+
+impl Default for CodingOnlyShredder {
+    fn default() -> Self {
+        Self(ReedSolomonCoder::new(Self::CODING_OUTPUT_SHREDS))
     }
 }
 
@@ -364,6 +376,12 @@ impl Shredder for PetsShredder {
         // the PETS key is the plaintext tail of the buffer
         let payload = decrypt_payload(buffer, |key, _buffer| key)?;
         finalize_deshred(raw_shreds, shreds, payload)
+    }
+}
+
+impl Default for PetsShredder {
+    fn default() -> Self {
+        Self(ReedSolomonCoder::new(Self::CODING_OUTPUT_SHREDS))
     }
 }
 
@@ -424,26 +442,11 @@ impl Shredder for AontShredder {
     }
 }
 
-/// Generates the `Default` impl shared by all shredder newtypes, each backed by
-/// a [`ReedSolomonCoder`] sized for that shredder's coding output.
-macro_rules! impl_shredder_default {
-    ($($shredder:ty),+ $(,)?) => {
-        $(
-            impl Default for $shredder {
-                fn default() -> Self {
-                    Self(ReedSolomonCoder::new(Self::CODING_OUTPUT_SHREDS))
-                }
-            }
-        )+
-    };
+impl Default for AontShredder {
+    fn default() -> Self {
+        Self(ReedSolomonCoder::new(Self::CODING_OUTPUT_SHREDS))
+    }
 }
-
-impl_shredder_default!(
-    RegularShredder,
-    CodingOnlyShredder,
-    PetsShredder,
-    AontShredder
-);
 
 /// Completes deshredding, shared by all shredder variants.
 ///
@@ -465,9 +468,10 @@ fn finalize_deshred(
     let header = slice.to_header();
 
     // turn reconstructed shreds into output shreds (with root, path, sig)
+    // we are reconstructing another leader's block, so copy its existing
+    // signature from a received shred rather than signing the root ourselves
     let leader_sig = any_shred.as_shred().merkle_root_sig;
-    let reconstructed_shreds =
-        create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
+    let reconstructed_shreds = assemble_output_shreds(header, raw_shreds, &tree, leader_sig);
 
     assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
     Ok((slice, reconstructed_shreds))
@@ -516,61 +520,24 @@ fn data_and_coding_to_output_shreds(
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
     let merkle_root_sig = sk.sign(merkle_root.as_ref());
-
-    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
-        let merkle_path = tree.create_proof(*shred_index);
-        let payload = ShredPayload {
-            header,
-            shred_index,
-            data,
-        };
-        (merkle_path, payload)
-    };
-    let num_data = raw_shreds.data.len();
-    let data = raw_shreds
-        .data
-        .into_iter()
-        .enumerate()
-        .map(|(shred_index, d)| {
-            let shred_index = ShredIndex::new(shred_index).unwrap();
-            let (merkle_path, payload) = convert(shred_index, d);
-            (merkle_path, ShredPayloadType::Data(payload))
-        });
-    let coding = raw_shreds
-        .coding
-        .into_iter()
-        .enumerate()
-        .map(|(offset, c)| {
-            let shred_index = num_data + offset;
-            let shred_index = ShredIndex::new(shred_index).unwrap();
-            let (merkle_path, payload) = convert(shred_index, c);
-            (merkle_path, ShredPayloadType::Coding(payload))
-        });
-    data.chain(coding)
-        .map(|(merkle_path, payload)| {
-            ValidatedShred::new_validated(Shred {
-                payload_type: payload,
-                merkle_root_sig,
-                merkle_path,
-            })
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
+    assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
 }
 
-/// Puts the root, path, and signature of the leader into shreds.
+/// Assembles the final output shreds (data first, then coding) from the
+/// reconstructed `raw_shreds`, the slice's Merkle `tree`, and `merkle_root_sig`.
 ///
-/// This is analogous to [`data_and_coding_to_output_shreds`], but for another leader.
-/// Instead of signing the root, copies the existing signature from another shred.
-/// Also, requires the Merkle tree to already be calculated from reconstructed shreds.
+/// Used both when producing our own block (signature freshly created over the
+/// root, see [`data_and_coding_to_output_shreds`]) and when reconstructing
+/// another leader's block (signature copied from a received shred, see
+/// [`finalize_deshred`]). In the latter case `tree` must already match the
+/// reconstructed shreds.
 ///
 /// Each returned shred contains the Merkle root, its own path and the signature.
-fn create_output_shreds_for_other_leader(
+fn assemble_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
-    tree: SliceMerkleTree,
-    leader_signature: Signature,
+    tree: &SliceMerkleTree,
+    merkle_root_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
@@ -605,7 +572,7 @@ fn create_output_shreds_for_other_leader(
         .map(|(merkle_path, payload)| {
             ValidatedShred::new_validated(Shred {
                 payload_type: payload,
-                merkle_root_sig: leader_signature,
+                merkle_root_sig,
                 merkle_path,
             })
         })
