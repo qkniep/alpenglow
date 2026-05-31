@@ -127,9 +127,9 @@ where
 
 /// Interprets a joined task result during shutdown.
 ///
-/// On shutdown the loops are aborted, so a [`JoinError`] from cancellation is
-/// the expected outcome and maps to `Ok(())`. A panic still propagates, as does
-/// any error the task itself returned.
+/// On shutdown the loops are aborted.
+/// So a [`JoinError`] from cancellation is the expected outcome and maps to `Ok(())`.
+/// A panic still propagates, as does any error the task itself returned.
 ///
 /// [`JoinError`]: tokio::task::JoinError
 fn join_for_shutdown(res: Result<Result<()>, tokio::task::JoinError>) -> Result<()> {
