@@ -830,37 +830,23 @@ mod tests {
         let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash) = random_block_id(Slot::new(1));
         let mut state = SlotState::new(slot, epoch_info);
+        let sk = &sks[1];
         let v = ValidatorIndex::new(1);
 
         // no prior votes -> nothing is slashable
-        let r_notar =
-            state.check_slashable_offence(&Vote::new_notar(slot, hash.clone(), &sks[1], v));
-        let r_skip = state.check_slashable_offence(&Vote::new_skip(slot, &sks[1], v));
-        eprintln!(
-            "DBG notar.is_some()={} skip.is_some()={}",
-            r_notar.is_some(),
-            r_skip.is_some()
-        );
-        assert!(r_notar.is_none());
-        assert!(r_skip.is_none());
-        assert!(
-            state
-                .check_slashable_offence(&Vote::new_final(slot, &sks[1], v))
-                .is_none()
-        );
+        let vote_notar = Vote::new_notar(slot, hash.clone(), sk, v);
+        let vote_skip = Vote::new_skip(slot, sk, v);
+        let vote_final = Vote::new_final(slot, sk, v);
+        assert!(state.check_slashable_offence(&vote_notar).is_none());
+        assert!(state.check_slashable_offence(&vote_skip).is_none());
+        assert!(state.check_slashable_offence(&vote_final).is_none());
 
         // notarizing then finalizing the same block is the happy path, not slashable
-        add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[1], v));
-        assert!(
-            state
-                .check_slashable_offence(&Vote::new_notar(slot, hash.clone(), &sks[1], v))
-                .is_none()
-        );
-        assert!(
-            state
-                .check_slashable_offence(&Vote::new_final(slot, &sks[1], v))
-                .is_none()
-        );
+        let notar_vote = Vote::new_notar(slot, hash.clone(), sk, v);
+        let final_vote = Vote::new_final(slot, sk, v);
+        assert!(state.check_slashable_offence(&notar_vote).is_none());
+        add(&mut state, notar_vote.clone());
+        assert!(state.check_slashable_offence(&final_vote).is_none());
     }
 
     #[test]
@@ -893,19 +879,11 @@ mod tests {
 
         // notar-fallback is tracked per (validator, hash)
         let v4 = ValidatorIndex::new(4);
-        add(
-            &mut state,
-            Vote::new_notar_fallback(slot, hash.clone(), &sks[4], v4),
-        );
-        assert!(state.should_ignore_vote(&Vote::new_notar_fallback(
-            slot,
-            hash.clone(),
-            &sks[4],
-            v4
-        )));
-        assert!(
-            !state.should_ignore_vote(&Vote::new_notar_fallback(slot, other_hash, &sks[4], v4))
-        );
+        let nf_vote_1 = Vote::new_notar_fallback(slot, hash.clone(), &sks[4], v4);
+        add(&mut state, nf_vote_1.clone());
+        assert!(state.should_ignore_vote(&nf_vote_1));
+        let nf_vote_2 = Vote::new_notar_fallback(slot, other_hash, &sks[4], v4);
+        assert!(!state.should_ignore_vote(&nf_vote_2));
     }
 
     #[test]
