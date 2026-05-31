@@ -66,12 +66,6 @@ impl ValidatedCert {
         self.cert.slot()
     }
 
-    /// Borrows the inner [`Cert`].
-    #[must_use]
-    pub const fn as_cert(&self) -> &Cert {
-        &self.cert
-    }
-
     /// Consumes `self`, returning the inner [`Cert`].
     #[must_use]
     pub fn into_cert(self) -> Cert {

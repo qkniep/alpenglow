@@ -6,7 +6,7 @@
 use thiserror::Error;
 
 use super::{EpochInfo, Vote};
-use crate::{Slot, ValidatorIndex};
+use crate::Slot;
 
 /// Different errors returned from [`ValidatedVote::try_new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -67,18 +67,6 @@ impl ValidatedVote {
         self.vote.slot()
     }
 
-    /// Returns the signer of this vote, guaranteed to be a valid validator index.
-    #[must_use]
-    pub const fn signer(&self) -> ValidatorIndex {
-        self.vote.signer()
-    }
-
-    /// Borrows the inner [`Vote`].
-    #[must_use]
-    pub const fn as_vote(&self) -> &Vote {
-        &self.vote
-    }
-
     /// Consumes `self`, returning the inner [`Vote`].
     #[must_use]
     pub fn into_vote(self) -> Vote {
@@ -89,6 +77,7 @@ impl ValidatedVote {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ValidatorIndex;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::test_utils::generate_validators;
 
@@ -98,7 +87,6 @@ mod tests {
         let signer = ValidatorIndex::new(0);
         let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sks[0], signer);
         let validated = ValidatedVote::try_new(vote.clone(), &epoch_info).unwrap();
-        assert_eq!(validated.signer(), signer);
         assert_eq!(validated.into_vote(), vote);
     }
 
