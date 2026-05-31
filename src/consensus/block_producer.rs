@@ -3,6 +3,7 @@
 
 //! Block production, leader-side of the consensus protocol.
 
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,7 +25,7 @@ use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPoo
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
-/// Produces blocks from transactions and dissminates them.
+/// Produces blocks from transactions and disseminates them.
 ///
 /// This is the leader's side of the consensus protocol.
 /// Produces blocks in accordance with the consensus protocol's timeouts.
@@ -46,10 +47,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     disseminator: Arc<D>,
     /// Network connection to receive transactions from clients.
     txs_receiver: T,
-
-    /// Pool of shredders for shredding produced slices.
-    ///
-    /// Reused across slices to avoid reallocating Reed-Solomon working memory.
+    /// Pool of shredders, reused across all slices and blocks we produce.
     shredders: ShredderPool<RegularShredder>,
 
     /// Indicates whether the node is shutting down.
@@ -118,7 +116,8 @@ where
                 continue;
             }
 
-            // wait for ParentReady or block in previous slot
+            // genesis block is already produced
+            // otherwise, wait for ParentReady or block in previous slot
             let slot_ready = wait_for_first_slot(
                 self.pool.clone(),
                 self.blockstore.clone(),
@@ -127,38 +126,23 @@ where
             .await;
 
             // produce first block
-            let start = Instant::now();
-            let mut block_id = match slot_ready {
+            let (mut parent, mut rx) = match slot_ready {
                 SlotReady::Skip => {
                     warn!(
                         "not producing in window {first_slot_in_window}..{last_slot_in_window}, saw later finalization"
                     );
                     continue;
                 }
-                SlotReady::Ready(parent) => {
-                    if first_slot_in_window.is_genesis() {
-                        // genesis block is already produced so skip it
-                        (first_slot_in_window, GENESIS_BLOCK_HASH)
-                    } else {
-                        self.produce_block_parent_ready(first_slot_in_window, parent)
-                            .await?
-                    }
-                }
-                SlotReady::ParentReadyNotSeen(parent, channel) => {
-                    self.produce_block_parent_not_ready(first_slot_in_window, parent, channel)
-                        .await?
-                }
+                SlotReady::Ready(parent) => (parent, None),
+                SlotReady::ParentReadyNotSeen(parent, rx) => (parent, Some(rx)),
             };
-            debug!(
-                "produced block {} in {} ms",
-                first_slot_in_window,
-                start.elapsed().as_millis()
-            );
 
-            // produce remaining blocks
-            for slot in first_slot_in_window.slots_in_window().skip(1) {
+            // produce remaining blocks, skip first slot if genesis
+            let skip = first_slot_in_window.is_genesis() as usize;
+            for slot in first_slot_in_window.slots_in_window().skip(skip) {
                 let start = Instant::now();
-                block_id = self.produce_block_parent_ready(slot, block_id).await?;
+                parent = self.produce_block(slot, parent, rx).await?;
+                rx = None;
                 debug!(
                     "produced block {} in {} ms",
                     slot,
@@ -170,108 +154,103 @@ where
         Ok(())
     }
 
-    /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
+    /// Produces a block for the given slot.
     ///
-    /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actually parent of the block.
+    /// If `parent_ready_rx` is `None`, it indicates the parent is ready.
+    /// In that case, the `DELTA_BLOCK` timer starts immediately.
+    /// Otherwise, block production begins optimistically.
+    /// The timer then only starts upon receipt of the `ParentReady` event.
     #[hotpath::measure]
-    pub(super) async fn produce_block_parent_not_ready(
+    async fn produce_block(
         &self,
         slot: Slot,
         parent_block_id: BlockId,
-        mut parent_ready_receiver: oneshot::Receiver<BlockId>,
+        mut parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
     ) -> Result<BlockId> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
+
+        // Optimistic production guesses the parent from the previous slot and may switch to
+        // the real one once the `ParentReady` event arrives. Otherwise the parent is known.
+        let optimistic = parent_ready_rx.is_some();
         let (parent_slot, parent_hash) = &parent_block_id;
-        assert_eq!(*parent_slot, slot.prev());
-        assert!(slot.is_start_of_window());
+        if optimistic {
+            assert_eq!(*parent_slot, slot.prev());
+            assert!(slot.is_start_of_window());
+        }
         info!(
-            "optimistically producing block in slot {} with parent {} in slot {}",
-            slot,
+            "producing block in slot {slot} with {} parent {} in slot {parent_slot}",
+            if optimistic { "optimistic" } else { "ready" },
             parent_hash.short_hex(),
-            *parent_slot,
         );
 
-        // only start the DELTA_BLOCK timer once the ParentReady event is seen
-        let mut duration_left = Duration::MAX;
+        // The DELTA_BLOCK timer starts as soon as the parent is known: immediately in the
+        // ready case, or upon receipt of the `ParentReady` event in the optimistic case.
+        // `Duration::MAX` marks "timer not started yet"; it is always clamped via `.min()`
+        // before it could reach a `sleep()`.
+        let mut duration_left = if optimistic {
+            Duration::MAX
+        } else {
+            self.delta_block
+        };
+
         for slice_index in SliceIndex::all() {
-            let parent = if slice_index.is_first() {
-                Some(parent_block_id.clone())
-            } else {
-                None
-            };
+            let is_first = slice_index.is_first();
+            let is_max = slice_index.is_max();
 
-            let time_for_slice = if slice_index.is_first() {
-                // make sure first slice is produced on time
-                // TODO: this can be made more accurate, only needed if production of first slice
-                // still takes more than delta_first_slice after we saw ParentReady, not if:
-                // 1. first slice is produced before ParentReady is seen, OR
-                // 2. first slice finishes at most delta_first_slice after ParentReady is seen
-                duration_left.min(self.delta_first_slice)
-            } else {
-                // cap timeout for each slice to `DELTA_BLOCK`
-                // makes sure optimistic block production yields before timeout would expire
-                duration_left.min(self.delta_block)
-            };
-            let produce_slice_future =
-                produce_slice_payload(&self.txs_receiver, parent, time_for_slice);
-
-            // If we have not yet received the ParentReady event, wait for it concurrently while producing the next slice.
-            let (mut payload, new_duration_left) = if parent_ready_receiver.is_terminated() {
-                produce_slice_future.await
-            } else {
-                pin!(produce_slice_future);
-                tokio::select! {
-                    res = &mut produce_slice_future => {
-                        let (payload, _new_duration_left) = res;
-                        // ParentReady event still not seen, do not start DELTA_BLOCK timer yet
-                        (payload, Duration::MAX)
-                    }
-                    res = &mut parent_ready_receiver => {
-                        // Got ParentReady event while producing slice.
-                        // It's a NOP if we have been using the same parent as before.
-
-                        let start = Instant::now();
-                        let (new_slot, new_hash) = res.unwrap();
-                        let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash == *parent_hash {
-                            debug!("parent is ready, continuing with same parent");
-                        } else {
-                            assert_ne!(new_slot, *parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                parent_hash.short_hex(),
-                                parent_slot,
-                                new_hash.short_hex(),
-                                new_slot
-                            );
-                            payload.parent = Some((new_slot, new_hash));
-                        }
-                        // ParentReady was seen, start the DELTA_BLOCK timer
-                        // account for the time it took to finish producing the slice
-                        debug!("starting blocktime timer");
-                        let duration = self.delta_block.saturating_sub(start.elapsed());
-                        (payload, duration)
-                    }
+            // Block for `ParentReady` before the final slice (if still pending) so it carries
+            // the confirmed parent and gets the full DELTA_BLOCK window.
+            let mut handover = None;
+            if is_max && let Some(rx) = parent_ready_rx.as_mut().filter(|rx| !rx.is_terminated()) {
+                // fall back to optimistic parent if sender was dropped
+                if let Ok(new_parent) = rx.await {
+                    handover = apply_parent_update(&parent_block_id, new_parent);
                 }
-            };
-
-            let is_last = slice_index.is_max() || new_duration_left.is_zero();
-            if is_last && !parent_ready_receiver.is_terminated() {
-                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                if new_hash != *parent_hash {
-                    assert_ne!(new_slot, *parent_slot);
-                    debug!(
-                        "changed parent from {} in slot {} to {} in slot {}",
-                        parent_hash.short_hex(),
-                        parent_slot,
-                        new_hash.short_hex(),
-                        new_slot
-                    );
-                    payload.parent = Some((new_slot, new_hash));
-                } else {
-                    debug!("parent is ready, continuing with same parent");
-                }
+                debug!("starting blocktime timer");
+                duration_left = self.delta_block;
             }
+
+            // The first slice always carries the (current best) parent; the final slice carries
+            // the confirmed parent if the handover changed it.
+            let parent = if is_first {
+                Some(handover.unwrap_or_else(|| parent_block_id.clone()))
+            } else {
+                handover
+            };
+
+            let time_for_slice = duration_left.min(if is_first {
+                self.delta_first_slice
+            } else {
+                self.delta_block
+            });
+
+            // Still optimistically awaiting the handover? (Only possible on non-final slices,
+            // since the `is_max` block above drains a pending receiver first.)
+            let awaiting_handover = parent_ready_rx
+                .as_ref()
+                .is_some_and(|rx| !rx.is_terminated());
+
+            let (payload, new_duration_left) = if awaiting_handover {
+                // The handover may attach a parent to this slice even when it currently has
+                // none, so reserve parent space regardless of `parent`.
+                let produce_future =
+                    produce_slice_payload(&self.txs_receiver, parent, true, time_for_slice);
+                pin!(produce_future);
+                race_slice_against_parent_ready(
+                    produce_future,
+                    &parent_block_id,
+                    parent_ready_rx.as_mut().unwrap(),
+                    self.delta_block,
+                )
+                .await
+            } else {
+                // The timer is running, so deduct the time spent on this slice from the budget.
+                let (payload, remaining) =
+                    produce_slice_payload(&self.txs_receiver, parent, false, time_for_slice).await;
+                let elapsed = time_for_slice.saturating_sub(remaining);
+                (payload, duration_left.saturating_sub(elapsed))
+            };
+
+            let is_last = is_max || new_duration_left.is_zero();
             let header = SliceHeader {
                 slot,
                 slice_index,
@@ -289,63 +268,9 @@ where
         unreachable!()
     }
 
-    /// Produces a block in the situation where we have already seen the `ParentReady` event.
-    ///
-    /// The `parent_block_id` refers to the block that is the ready parent.
-    #[hotpath::measure]
-    pub(crate) async fn produce_block_parent_ready(
-        &self,
-        slot: Slot,
-        parent_block_id: BlockId,
-    ) -> Result<BlockId> {
-        let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
-        let (parent_slot, parent_hash) = &parent_block_id;
-        info!(
-            "producing block in slot {} with ready parent {} in slot {}",
-            slot,
-            parent_hash.short_hex(),
-            parent_slot,
-        );
-
-        let mut duration_left = self.delta_block;
-        for slice_index in SliceIndex::all() {
-            let (payload, new_duration_left) = if slice_index.is_first() {
-                // make sure first slice is produced quickly enough so that other nodes do not generate the [`TimeoutCrashedLeader`] event
-                let time_for_slice = self.delta_first_slice;
-                let (payload, slice_duration_left) = produce_slice_payload(
-                    &self.txs_receiver,
-                    Some(parent_block_id.clone()),
-                    time_for_slice,
-                )
-                .await;
-                let elapsed = self.delta_first_slice - slice_duration_left;
-                let left = duration_left.saturating_sub(elapsed);
-
-                (payload, left)
-            } else {
-                produce_slice_payload(&self.txs_receiver, None, duration_left).await
-            };
-            let is_last = slice_index.is_max() || new_duration_left.is_zero();
-            let header = SliceHeader {
-                slot,
-                slice_index,
-                is_last,
-            };
-
-            if let Some(block_hash) = self.shred_and_disseminate(header, payload).await? {
-                return Ok((slot, block_hash));
-            } else {
-                assert!(!new_duration_left.is_zero());
-                duration_left = new_duration_left;
-            }
-        }
-        unreachable!()
-    }
-
     /// Shreds and disseminates the slice payload.
     ///
-    /// Returns Ok(Some(hash of the block)) if this is the last slice.
-    /// Returns Ok(None) otherwise.
+    /// Returns `Ok(Some(hash))` for the last slice of a block, `Ok(None)` otherwise.
     #[hotpath::measure]
     async fn shred_and_disseminate(
         &self,
@@ -359,7 +284,7 @@ where
         let shreds = self
             .shredders
             .checkout()
-            .expect("pool always has a shredder, block production is sequential")
+            .expect("pool always has a shredder available for sequential block production")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
@@ -398,16 +323,42 @@ where
     }
 }
 
-/// Produces a slice payload.
+/// Logs and returns the new `BlockId` iff the `ParentReady` event changed the parent.
 ///
-/// Listens to transactions on `txs_receive` for at most `duration_left`.
+/// Returns `None` when the parent is unchanged (caller should keep using the existing one).
+fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
+    let (old_slot, old_hash) = old;
+    let (new_slot, new_hash) = &new;
+    if new_hash != old_hash {
+        debug!(
+            "changed parent from {} in slot {} to {} in slot {}",
+            old_hash.short_hex(),
+            old_slot,
+            new_hash.short_hex(),
+            new_slot,
+        );
+        Some(new)
+    } else {
+        debug!("parent is ready, continuing with same parent");
+        None
+    }
+}
+
+/// Collects transactions into a slice payload, waiting up to `duration_left` for more.
+///
+/// Listens to transactions on `txs_receiver` for at most `duration_left`.
 /// Manually serializes a [`Vec<Transaction>`] to keep track of how much space is left.
 /// Stops if either the slice cannot fit any more transactions, or time runs out.
 ///
-/// Returns the slice payload and the remaining duration.
+/// When `reserve_handover_space` is set, space for a parent is reserved even if `parent`
+/// is [`None`], so that an optimistic `ParentReady` handover can later attach one without
+/// overflowing the slice. Under `FixInt` encoding every `Some(BlockId)` is the same size.
+///
+/// Returns the completed payload and the remaining time in `duration_left`.
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
+    reserve_handover_space: bool,
     duration_left: Duration,
 ) -> (SlicePayload, Duration)
 where
@@ -419,9 +370,12 @@ where
     // +8 to encode number of txs, +8 to encode tx payload length
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // reserve space for: parent info, and
-    // 8 bytes for SlicePayload::data length
-    let parent_encoded_len = wincode::serialized_size(&parent).unwrap() as usize;
+    // Reserve space for: parent info, and 8 bytes for SlicePayload::data length.
+    // Uses genesis as sentinel, assuming every `Some(BlockId)` is the same size.
+    // This invariant is pinned by the test `block_id_option_is_fixed_size`.
+    let sizing_parent: Option<BlockId> =
+        (parent.is_some() || reserve_handover_space).then(|| (Slot::genesis(), GENESIS_BLOCK_HASH));
+    let parent_encoded_len = wincode::serialized_size(&sizing_parent).unwrap() as usize;
     let buffer_space = MAX_DATA_PER_SLICE - parent_encoded_len - 8;
     let mut buffer = Vec::<u8>::with_capacity(buffer_space);
     let mut tx_count = 0u64;
@@ -450,6 +404,45 @@ where
     buffer[0..8].copy_from_slice(&tx_count.to_le_bytes());
 
     (SlicePayload::new(parent, buffer), ret)
+}
+
+/// Race slice payload production against a pending `ParentReady` channel.
+///
+/// Returns `(payload, new_duration_left)`:
+/// - If production completes first: [`Duration::MAX`] is returned (timer not yet started).
+/// - If `ParentReady` arrives during production: updates the payload's parent if it changed,
+///   starts the DELTA_BLOCK timer, and returns the remaining budget after finishing the slice.
+///
+/// The caller must produce `produce_future` with parent space reserved (see
+/// [`produce_slice_payload`]'s `reserve_handover_space`) so attaching a parent here cannot
+/// overflow the slice.
+async fn race_slice_against_parent_ready(
+    mut produce_future: Pin<&mut (dyn Future<Output = (SlicePayload, Duration)> + Send)>,
+    parent_block_id: &BlockId,
+    rx: &mut oneshot::Receiver<BlockId>,
+    delta_block: Duration,
+) -> (SlicePayload, Duration) {
+    tokio::select! {
+        res = &mut produce_future => {
+            let (payload, _) = res;
+            // ParentReady not yet seen; do not start DELTA_BLOCK timer yet
+            (payload, Duration::MAX)
+        }
+        res = rx => {
+            // got ParentReady while producing this slice (or the sender was dropped)
+            // start timer, accounting for time spent producing this slice
+            let start = Instant::now();
+            let (mut payload, _) = produce_future.await;
+            // A dropped sender resolves to `Err`; keep the optimistic parent rather than panicking.
+            if let Ok(new_parent) = res
+                && let Some(new) = apply_parent_update(parent_block_id, new_parent)
+            {
+                payload.parent = Some(new);
+            }
+            debug!("starting blocktime timer");
+            (payload, delta_block.saturating_sub(start.elapsed()))
+        }
+    }
 }
 
 /// Enum to capture the different scenarios that can be returned from [`wait_for_first_slot`].
@@ -552,7 +545,7 @@ mod tests {
 
         let parent = None;
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
+            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 8 bytes
@@ -560,7 +553,7 @@ mod tests {
 
         let parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
+            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
         assert_eq!(maybe_duration, Duration::ZERO);
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 8 bytes
@@ -586,12 +579,54 @@ mod tests {
         let parent = None;
         let parent_len = wincode::serialized_size(&parent).unwrap() as usize;
         let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), duration_left).await;
+            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
         assert!(maybe_duration > Duration::ZERO);
         assert_eq!(payload.parent, parent);
         let max_len = MAX_DATA_PER_SLICE - parent_len - 8;
         assert!(payload.data.len() <= max_len);
         assert!(payload.data.len() + MAX_TRANSACTION_SIZE + 8 > max_len);
+    }
+
+    /// An optimistic `ParentReady` handover attaches a parent to a slice that was produced
+    /// without one. With `reserve_handover_space`, even a full slice must stay within
+    /// `MAX_DATA_PER_SLICE` after the parent is attached (otherwise shredding would fail).
+    #[tokio::test]
+    async fn produce_slice_reserves_handover_space() {
+        let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let addr = localhost_ip_sockaddr(txs_receiver.port());
+        let txs_sender: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
+        let duration_left = Duration::from_secs(100);
+
+        tokio::spawn(async move {
+            for i in 0..255 {
+                let data = vec![i; MAX_TRANSACTION_SIZE];
+                txs_sender.send(&Transaction(data), addr).await.unwrap();
+            }
+        });
+
+        // produce a full slice with no parent, but reserving space for a later handover
+        let (mut payload, _) =
+            produce_slice_payload(&txs_receiver, None, true, duration_left).await;
+        assert_eq!(payload.parent, None);
+        // the slice is full: it cannot fit another transaction
+        assert!(payload.to_bytes().len() + MAX_TRANSACTION_SIZE + 8 > MAX_DATA_PER_SLICE);
+
+        // attaching the handover parent after the fact must not overflow the slice
+        payload.parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
+        assert!(payload.to_bytes().len() <= MAX_DATA_PER_SLICE);
+    }
+
+    /// `produce_slice_payload` reserves handover space sized from a sentinel `Some(genesis)`,
+    /// relying on every `Some(BlockId)` serializing to the same length. Pin that assumption so
+    /// a future encoding change (e.g. switching to VarInt) fails here, not in production.
+    #[test]
+    fn block_id_option_is_fixed_size() {
+        let sentinel: Option<BlockId> = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
+        let other: Option<BlockId> = Some((Slot::new(12_345), Hash::random_for_test().into()));
+        assert_eq!(
+            wincode::serialized_size(&sentinel).unwrap(),
+            wincode::serialized_size(&other).unwrap(),
+        );
     }
 
     #[tokio::test]
@@ -728,7 +763,7 @@ mod tests {
         );
 
         let ret = block_producer
-            .produce_block_parent_ready(slot, block_info.parent)
+            .produce_block(slot, block_info.parent, None)
             .await
             .unwrap();
         assert_eq!(slot, ret.0);
@@ -826,7 +861,7 @@ mod tests {
         });
 
         let ret = block_producer
-            .produce_block_parent_not_ready(slot, old_block_info.parent, parent_ready_rx)
+            .produce_block(slot, old_block_info.parent, Some(parent_ready_rx))
             .await
             .unwrap();
 
