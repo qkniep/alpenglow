@@ -283,6 +283,16 @@ Uses `mockall` crate for mocking traits:
 6. Private items
 7. `#[cfg(test)] mod tests` at bottom
 
+### Code Style
+
+- **Equalizing operand types**: When two sides of a comparison (`==`, `assert_eq!`,
+  etc.) differ only by a reference level, prefer lifting both to a reference with
+  `&` over lowering both to a value with `*` — e.g. `assert_eq!(&hash, block_hash)`
+  or `assert_eq!(hash, &block_hash)`, not `assert_eq!(*hash, block_hash)`. The two
+  forms compile identically (the comparison macros re-borrow), but `&` doesn't imply
+  a move/copy that isn't happening and reads the same whether or not the type is
+  `Copy`. Keep this consistent within a file.
+
 ### Common Gotchas
 
 - **64-bit assumption**: Code assumes `usize == 8 bytes`, 32-bit architectures unsupported

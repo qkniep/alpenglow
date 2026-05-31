@@ -542,7 +542,7 @@ mod tests {
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
-    use crate::test_utils::generate_validators;
+    use crate::test_utils::{generate_validators, random_block_id};
     use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
@@ -739,8 +739,8 @@ mod tests {
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let slot_hash: BlockHash = Hash::random_for_test().into();
-        let old_parent = (slot.prev(), Hash::random_for_test().into());
-        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
+        let old_parent = random_block_id(slot.prev());
+        let new_parent = random_block_id(slot.prev().prev());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,
