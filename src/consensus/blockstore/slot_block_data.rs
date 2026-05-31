@@ -3,7 +3,25 @@
 
 //! Data structure holding shreds, slices and blocks for a specific slot.
 //!
+//! Two nested containers organize a slot's data:
+//! - [`SlotBlockData`] is the per-slot entry point.
+//!   Holds at most one block from dissemination but may hold multiple from repair.
+//!   Repaired blocks are kept separately in map keyed by [`BlockHash`].
+//! - [`BlockData`] holds everything for a single block.
+//!   It holds received shreds, the slices reconstructed from them,
+//!   and the fully reconstructed block once all slices are present.
 //!
+//! Reconstruction is bottom-up:
+//! 1. enough shreds in a slice reconstruct that slice, and
+//! 2. enough slices (through the one marked last) reconstruct the block.
+//!
+//! Incoming shreds arrive already signature-verified (see [`ValidatedShred`]).
+//! They come from one either of two paths:
+//! - Dissemination shreds ([`SlotBlockData::add_shred_from_dissemination`])
+//!   feed a single [`BlockData`] and are checked for leader equivocation.
+//! - Repair shreds ([`SlotBlockData::add_shred_from_repair`])
+//!   are filed under their block hash (which is known when initiating repair),
+//!   so distinct blocks coexist without being treated as equivocation.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
