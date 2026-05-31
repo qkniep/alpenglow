@@ -85,7 +85,7 @@ fn sign_ed25519(bencher: divan::Bencher) {
             (sk, bytes)
         })
         .bench_values(|(sk, bytes): (signature::SecretKey, [u8; 128])| {
-            let _ = sk.sign(&bytes);
+            let _ = sk.sign_bytes(&bytes);
         });
 }
 
@@ -98,11 +98,11 @@ fn verify_ed25519(bencher: divan::Bencher) {
             let mut bytes = [0; 128];
             rng.fill_bytes(&mut bytes);
             let sk = signature::SecretKey::new(&mut rng);
-            (sk.sign(&bytes), bytes, sk.to_pk())
+            (sk.sign_bytes(&bytes), bytes, sk.to_pk())
         })
         .bench_values(
             |(sig, bytes, pk): (Signature, [u8; 128], signature::PublicKey)| {
-                sig.verify(&bytes, &pk)
+                sig.verify_bytes(&bytes, &pk)
             },
         );
 }
@@ -173,7 +173,7 @@ fn sign_bls(bencher: divan::Bencher) {
             (sk, bytes)
         })
         .bench_values(|(sk, bytes): (aggsig::SecretKey, [u8; 128])| {
-            let _ = sk.sign(&bytes);
+            let _ = sk.sign_bytes(&bytes);
         });
 }
 
@@ -186,11 +186,11 @@ fn verify_bls(bencher: divan::Bencher) {
             let mut bytes = [0; 128];
             rng.fill_bytes(&mut bytes);
             let sk = aggsig::SecretKey::new(&mut rng);
-            (sk.sign(&bytes), bytes, sk.to_pk())
+            (sk.sign_bytes(&bytes), bytes, sk.to_pk())
         })
         .bench_values(
             |(sig, bytes, pk): (IndividualSignature, [u8; 128], aggsig::PublicKey)| {
-                sig.verify(&bytes, &pk)
+                sig.verify_bytes(&bytes, &pk)
             },
         );
 }
