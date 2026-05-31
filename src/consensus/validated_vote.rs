@@ -48,7 +48,7 @@ impl ValidatedVote {
     pub fn try_new(vote: Vote, epoch_info: &EpochInfo) -> Result<Self, VoteVerifyError> {
         // reject votes from validators outside the current epoch's set,
         // otherwise `validator()` indexing below would panic on byzantine input
-        if vote.signer().as_usize() >= epoch_info.validators().len() {
+        if vote.signer().inner() >= epoch_info.validators().len() as u64 {
             return Err(VoteVerifyError::UnknownSigner);
         }
 
