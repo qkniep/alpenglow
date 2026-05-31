@@ -42,40 +42,6 @@ use crate::crypto::{MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
 use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
 
-/// Number of bytes in the commitment that the leader signs for each slice.
-///
-/// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `merkle_root` (32 B).
-const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
-
-/// Commitment the leader signs for each slice.
-///
-/// Binding the `SliceHeader` into the signature prevents replay attacks.
-/// A shred for slot `s`, slice `i` is never valid for slot `s'` or slice `i'`.
-/// What this commitment covers is determined by the crate-private `new` constructor.
-///
-/// This is an opaque capability, obtainable only via [`ValidatedShred::commitment`].
-/// The inner byte layout is a protocol detail, not a stable API.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
-
-impl SliceCommitment {
-    /// Creates a [`SliceCommitment`] covering a [`SliceHeader`] and a [`SliceRoot`].
-    pub(crate) fn new(header: &SliceHeader, merkle_root: &SliceRoot) -> Self {
-        let mut buf = [0u8; SLICE_COMMITMENT_LEN];
-        buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
-        buf[8..16].copy_from_slice(&(header.slice_index.inner() as u64).to_le_bytes());
-        buf[16] = u8::from(header.is_last);
-        buf[17..49].copy_from_slice(merkle_root.as_ref());
-        Self(buf)
-    }
-}
-
-impl AsRef<[u8]> for SliceCommitment {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
 /// Total number of shreds the shredder outputs for a slice.
@@ -219,6 +185,40 @@ impl ShredPayload {
     #[must_use]
     pub fn index_in_slot(&self) -> usize {
         self.header.slice_index.inner() * TOTAL_SHREDS + *self.shred_index
+    }
+}
+
+/// Number of bytes in the commitment that the leader signs for each slice.
+///
+/// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `merkle_root` (32 B).
+const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
+
+/// Commitment the leader signs for each slice.
+///
+/// Binding the `SliceHeader` into the signature prevents replay attacks.
+/// A shred for slot `s`, slice `i` is never valid for slot `s'` or slice `i'`.
+/// What this commitment covers is determined by the crate-private `new` constructor.
+///
+/// This is an opaque capability, obtainable only via [`ValidatedShred::commitment`].
+/// The inner byte layout is a protocol detail, not a stable API.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
+
+impl SliceCommitment {
+    /// Creates a [`SliceCommitment`] covering a [`SliceHeader`] and a [`SliceRoot`].
+    pub(crate) fn new(header: &SliceHeader, merkle_root: &SliceRoot) -> Self {
+        let mut buf = [0u8; SLICE_COMMITMENT_LEN];
+        buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
+        buf[8..16].copy_from_slice(&(header.slice_index.inner() as u64).to_le_bytes());
+        buf[16] = u8::from(header.is_last);
+        buf[17..49].copy_from_slice(merkle_root.as_ref());
+        Self(buf)
+    }
+}
+
+impl AsRef<[u8]> for SliceCommitment {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
