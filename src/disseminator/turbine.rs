@@ -255,8 +255,8 @@ mod tests {
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
         (sks, validators)
