@@ -472,7 +472,9 @@ mod tests {
     use crate::consensus::{ConsensusMessage, EpochInfo};
     use crate::crypto::Hash;
     use crate::network::SimulatedNetwork;
-    use crate::test_utils::{generate_all2all_instances, generate_validators, random_block_id};
+    use crate::test_utils::{
+        generate_all2all_instances, generate_validators, genesis_block_id, random_block_id,
+    };
     use crate::types::SLOTS_PER_WINDOW;
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
@@ -577,7 +579,7 @@ mod tests {
     async fn notar_and_final() {
         let ctx = start_votor().await;
         let slot = Slot::genesis().next();
-        let parent = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let parent = genesis_block_id();
 
         // vote notar after seeing block
         let vote = ctx.send_block_and_expect_notar(slot, parent).await;
@@ -640,7 +642,7 @@ mod tests {
             .unwrap();
         let block_info = BlockInfo {
             hash: hash1.into(),
-            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
+            parent: genesis_block_id(),
         };
         ctx.blockstore_tx
             .send(BlockstoreEvent::Block {
@@ -700,7 +702,7 @@ mod tests {
     async fn safe_to_skip() {
         let ctx = start_votor().await;
         let slot = Slot::genesis().next();
-        let parent = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let parent = genesis_block_id();
 
         // vote notar after seeing block
         ctx.send_block_and_expect_notar(slot, parent).await;

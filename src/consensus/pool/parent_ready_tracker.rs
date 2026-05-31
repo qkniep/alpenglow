@@ -211,8 +211,7 @@ impl ParentReadyTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
-    use crate::test_utils::random_block_id;
+    use crate::test_utils::{genesis_block_id, random_block_id};
     use crate::types::SLOTS_PER_WINDOW;
 
     #[test]
@@ -235,7 +234,7 @@ mod tests {
 
     #[test]
     fn genesis() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let mut tracker = ParentReadyTracker::default();
         for slot in genesis.0.slots_in_window() {
             let new_valid_parents = tracker.mark_skipped(slot);
@@ -249,7 +248,7 @@ mod tests {
 
     #[test]
     fn skips() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let slot = Slot::genesis().next();
         let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
@@ -267,7 +266,7 @@ mod tests {
 
     #[test]
     fn out_of_order_skips() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let slot = Slot::genesis().next();
         let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
@@ -335,13 +334,13 @@ mod tests {
         // notably this does not re-issue a ParentReady for `block`
         assert_eq!(
             tracker.mark_skipped(Slot::new(1)).to_vec(),
-            vec![(Slot::new(4), (Slot::genesis(), GENESIS_BLOCK_HASH))]
+            vec![(Slot::new(4), genesis_block_id())]
         );
     }
 
     #[test]
     fn wait_for_parent_ready() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let mut windows = Slot::windows();
         let window1 = windows.next().unwrap();
         let window2 = windows.next().unwrap();

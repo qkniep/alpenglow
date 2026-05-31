@@ -375,12 +375,7 @@ impl FinalityTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::random_block_id;
-
-    /// Returns the [`BlockId`] of the genesis block.
-    fn genesis_block_id() -> BlockId {
-        (Slot::genesis(), GENESIS_BLOCK_HASH)
-    }
+    use crate::test_utils::{genesis_block_id, random_block_id};
 
     #[test]
     fn basic() {
