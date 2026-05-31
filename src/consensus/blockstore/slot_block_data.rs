@@ -10,17 +10,13 @@ use std::collections::btree_map::Entry;
 
 use log::{debug, trace, warn};
 use thiserror::Error;
+use wincode::config::DefaultConfig;
 
 use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
-use crate::crypto::signature::PublicKey;
-use wincode::config::DefaultConfig;
-
 use crate::shredder::{
-    DeshredError, MAX_DATA_PER_SLICE, RegularShredder, Shred, ShredVerifyError, Shredder,
-    TOTAL_SHREDS, ValidatedShred,
+    DeshredError, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred,
 };
-use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
 
