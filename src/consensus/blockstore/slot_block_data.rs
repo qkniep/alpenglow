@@ -3,7 +3,25 @@
 
 //! Data structure holding shreds, slices and blocks for a specific slot.
 //!
+//! Two nested containers organize a slot's data:
+//! - [`SlotBlockData`] is the per-slot entry point.
+//!   Holds at most one block from dissemination but may hold multiple from repair.
+//!   Repaired blocks are kept separately in map keyed by [`BlockHash`].
+//! - [`BlockData`] holds everything for a single block.
+//!   It holds received shreds, the slices reconstructed from them,
+//!   and the fully reconstructed block once all slices are present.
 //!
+//! Reconstruction is bottom-up:
+//! 1. enough shreds in a slice reconstruct that slice, and
+//! 2. enough slices (through the one marked last) reconstruct the block.
+//!
+//! Incoming shreds arrive already signature-verified (see [`ValidatedShred`]).
+//! They come from one either of two paths:
+//! - Dissemination shreds ([`SlotBlockData::add_shred_from_dissemination`])
+//!   feed a single [`BlockData`] and are checked for leader equivocation.
+//! - Repair shreds ([`SlotBlockData::add_shred_from_repair`])
+//!   are filed under their block hash (which is known when initiating repair),
+//!   so distinct blocks coexist without being treated as equivocation.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -12,8 +30,10 @@ use log::{debug, trace, warn};
 use thiserror::Error;
 
 use super::{BlockInfo, BlockstoreEvent};
-use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
-use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
+use crate::shredder::{
+    DeshredError, RegularShredder, Shredder, SliceCommitment, TOTAL_SHREDS, ValidatedShred,
+};
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
 
@@ -140,8 +160,11 @@ pub(super) struct BlockData {
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
     pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
-    /// Cache of Merkle roots for which the leader signature has been verified.
-    pub(super) merkle_root_cache: BTreeMap<SliceIndex, SliceRoot>,
+    /// Cache of [`SliceCommitment`]s verified earlier.
+    ///
+    /// Lets [`ValidatedShred::try_new`] short-circuit verification for the same slice.
+    /// This is also what allows us to detect leader equivocation.
+    pub(super) commitment_cache: BTreeMap<SliceIndex, SliceCommitment>,
 }
 
 impl BlockData {
@@ -154,7 +177,7 @@ impl BlockData {
             slices: BTreeMap::new(),
             last_slice: None,
             double_merkle_tree: None,
-            merkle_root_cache: BTreeMap::new(),
+            commitment_cache: BTreeMap::new(),
         }
     }
 
@@ -166,9 +189,9 @@ impl BlockData {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
 
-        // different valid signatures for the same slice -> leader equivocation
-        if let Some(cached) = self.merkle_root_cache.get(&slice_index)
-            && cached != shred.merkle_root()
+        // different valid commitments for the same slice -> leader equivocation
+        if let Some(cached) = self.commitment_cache.get(&slice_index)
+            && cached != &shred.commitment()
         {
             return Err(AddShredError::Equivocation);
         }
@@ -184,9 +207,9 @@ impl BlockData {
         debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
 
-        // populate Merkle root cache
-        if let Entry::Vacant(entry) = self.merkle_root_cache.entry(slice_index) {
-            entry.insert(validated_shred.merkle_root().clone());
+        // populate commitment cache
+        if let Entry::Vacant(entry) = self.commitment_cache.entry(slice_index) {
+            entry.insert(validated_shred.commitment());
         }
 
         match (header.is_last, self.last_slice) {
