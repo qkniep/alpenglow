@@ -172,14 +172,14 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub(super) fn mark_notarized(&mut self, block: BlockId) -> FinalizationEvent {
-        let (slot, block_hash) = block;
-        debug_assert!(slot >= self.first_unpruned_slot);
-        if slot < self.first_unpruned_slot {
+        let (slot, block_hash) = &block;
+        debug_assert!(*slot >= self.first_unpruned_slot);
+        if *slot < self.first_unpruned_slot {
             return FinalizationEvent::default();
         }
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Notarized(block_hash.clone()));
+            .insert(*slot, FinalizationStatus::Notarized(block_hash.clone()));
         let Some(status) = old else {
             return FinalizationEvent::default();
         };
@@ -188,15 +188,15 @@ impl FinalityTracker {
             FinalizationStatus::Notarized(hash)
             | FinalizationStatus::Finalized(hash)
             | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                assert_eq!(hash, block_hash, "consensus safety violation");
+                assert_eq!(&hash, block_hash, "consensus safety violation");
                 FinalizationEvent::default()
             }
             FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
             FinalizationStatus::FinalPendingNotar => {
                 let mut event = FinalizationEvent::default();
                 self.status
-                    .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
-                self.handle_finalized_block((slot, block_hash), &mut event);
+                    .insert(*slot, FinalizationStatus::Finalized(block_hash.clone()));
+                self.handle_finalized_block(block, &mut event);
                 event
             }
         }
@@ -326,12 +326,12 @@ impl FinalityTracker {
             match &status {
                 FinalizationStatus::Finalized(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                    assert_eq!(*hash, block_hash, "consensus safety violation");
+                    assert_eq!(hash, &block_hash, "consensus safety violation");
                     self.status.insert(slot, status);
                     return;
                 }
                 FinalizationStatus::Notarized(hash) => {
-                    assert_eq!(*hash, block_hash, "consensus safety violation");
+                    assert_eq!(hash, &block_hash, "consensus safety violation");
                 }
                 FinalizationStatus::FinalPendingNotar => {}
                 FinalizationStatus::ImplicitlySkipped => {
