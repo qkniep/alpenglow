@@ -45,7 +45,7 @@ use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
 
 use crate::disseminator::turbine::DEFAULT_FANOUT;
-use crate::{Stake, ValidatorId, ValidatorInfo};
+use crate::{Stake, ValidatorIndex, ValidatorInfo};
 
 /// Sampling strategies involving rejection sampling may panic after rejecting this many samples.
 pub const MAX_TRIES_PER_SAMPLE: usize = 100_000;
@@ -63,7 +63,7 @@ pub trait SamplingStrategy {
     ///
     /// Implementations may panic if the sampler has reached an invalid state
     /// or if the sampling process failed [`MAX_TRIES_PER_SAMPLE`] times.
-    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         self.sample_info(rng).id
     }
 
@@ -99,7 +99,7 @@ pub trait QuorumSamplingStrategy {
     fn quorum_size(&self) -> usize;
 
     /// Samples a quorum of [`Self::quorum_size()`] validators.
-    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId>;
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorIndex>;
 }
 
 /// Adapter that turns any [`SamplingStrategy`] into a [`QuorumSamplingStrategy`]
@@ -120,7 +120,7 @@ impl<S: SamplingStrategy> IidQuorumSampler<S> {
 }
 
 impl<S: SamplingStrategy> SamplingStrategy for IidQuorumSampler<S> {
-    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         self.inner.sample(rng)
     }
 
@@ -134,7 +134,7 @@ impl<S: SamplingStrategy> QuorumSamplingStrategy for IidQuorumSampler<S> {
         self.k
     }
 
-    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorIndex> {
         (0..self.k).map(|_| self.inner.sample(rng)).collect()
     }
 }
@@ -144,7 +144,7 @@ impl<S: SamplingStrategy> QuorumSamplingStrategy for IidQuorumSampler<S> {
 pub struct AllSameSampler(pub ValidatorInfo);
 
 impl SamplingStrategy for AllSameSampler {
-    fn sample<R: Rng>(&self, _rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, _rng: &mut R) -> ValidatorIndex {
         self.0.id
     }
 
@@ -169,12 +169,12 @@ impl UniformSampler {
 }
 
 impl SamplingStrategy for UniformSampler {
-    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
-        ValidatorId::new(rng.random_range(0..self.validators.len()) as u64)
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
+        ValidatorIndex::new(rng.random_range(0..self.validators.len()) as u64)
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
+        let index = self.sample(rng).as_usize();
         &self.validators[index]
     }
 }
@@ -202,12 +202,12 @@ impl StakeWeightedSampler {
 }
 
 impl SamplingStrategy for StakeWeightedSampler {
-    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
-        ValidatorId::new(self.stake_index.sample(rng) as u64)
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
+        ValidatorIndex::new(self.stake_index.sample(rng) as u64)
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
+        let index = self.sample(rng).as_usize();
         &self.validators[index]
     }
 }
@@ -252,7 +252,7 @@ impl TurbineSampler {
                 }
                 let prob = prob * root.stake.inner() as f64 / stake_left.inner() as f64;
                 let root_work = (turbine_fanout as f64).min(validators_left as f64);
-                expected_work[root.id.as_index()] += prob * root_work;
+                expected_work[root.id.as_usize()] += prob * root_work;
                 let stake_left = stake_left - root.stake;
                 let validators_left = validators_left.saturating_sub(turbine_fanout);
                 for maybe_level1 in &validators {
@@ -264,11 +264,11 @@ impl TurbineSampler {
                     let prob_full =
                         prob * (1.0 - (1.0 - select_prob).powi(full_level1_slots as i32));
                     let full_level1_work = turbine_fanout as f64;
-                    expected_work[maybe_level1.id.as_index()] += prob_full * full_level1_work;
+                    expected_work[maybe_level1.id.as_usize()] += prob_full * full_level1_work;
                     let prob_partial =
                         prob * (1.0 - select_prob).powi(full_level1_slots as i32) * select_prob;
                     let partial_level1_work = (validators_left % turbine_fanout) as f64;
-                    expected_work[maybe_level1.id.as_index()] += prob_partial * partial_level1_work;
+                    expected_work[maybe_level1.id.as_usize()] += prob_partial * partial_level1_work;
                 }
             }
         }
@@ -291,7 +291,7 @@ impl SamplingStrategy for TurbineSampler {
     /// # Panics
     ///
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
-    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         let n = self.stake_weighted.validators.len();
         let root = self.stake_weighted.sample(rng);
         if rng.random::<f64>() < self.fanout as f64 / n as f64 {
@@ -308,7 +308,7 @@ impl SamplingStrategy for TurbineSampler {
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
+        let index = self.sample(rng).as_usize();
         &self.stake_weighted.validators[index]
     }
 }
@@ -363,13 +363,13 @@ impl DecayingAcceptanceSampler {
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
     ///
     /// [`reset`]: DecayingAcceptanceSampler::reset
-    pub fn sample_one<R: Rng>(&self, rng: &mut R) -> ValidatorId {
+    pub fn sample_one<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
             let mut sample_count = self.sample_count.lock().unwrap();
-            let p_reject = sample_count[sample.as_index()] as f64 / self.max_samples;
+            let p_reject = sample_count[sample.as_usize()] as f64 / self.max_samples;
             if rng.random::<f64>() >= p_reject {
-                sample_count[sample.as_index()] += 1;
+                sample_count[sample.as_usize()] += 1;
                 return sample;
             }
         }
@@ -379,12 +379,12 @@ impl DecayingAcceptanceSampler {
 }
 
 impl SamplingStrategy for DecayingAcceptanceSampler {
-    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorId {
+    fn sample<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         self.sample_one(rng)
     }
 
     fn sample_info<R: Rng>(&self, rng: &mut R) -> &ValidatorInfo {
-        let index = self.sample(rng).as_index();
+        let index = self.sample(rng).as_usize();
         &self.stake_weighted.validators[index]
     }
 }
@@ -394,7 +394,7 @@ impl QuorumSamplingStrategy for DecayingAcceptanceSampler {
         self.k
     }
 
-    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorIndex> {
         let samples = (0..self.k).map(|_| self.sample_one(rng)).collect();
         self.reset();
         samples
@@ -427,15 +427,15 @@ impl Clone for DecayingAcceptanceSampler {
 #[derive(Clone)]
 pub struct PartitionSampler {
     bins: Vec<WeightedIndex<u64>>,
-    pub bin_validators: Vec<Vec<ValidatorId>>,
+    pub bin_validators: Vec<Vec<ValidatorIndex>>,
     pub bin_stakes: Vec<Vec<Stake>>,
 }
 
 impl PartitionSampler {
-    /// Creates a new `ParitionSampler` instance.
+    /// Creates a new `PartitionSampler` instance.
     ///
     /// Partitions the given validators into `num_bins` bins of equal stake.
-    /// Paritioning is done randomly by splitting a randomly permuted list of nodes.
+    /// Partitioning is done randomly by splitting a randomly permuted list of nodes.
     pub fn new(validators: Vec<ValidatorInfo>, num_bins: usize) -> Self {
         if num_bins == 0 {
             return Self {
@@ -493,7 +493,7 @@ impl QuorumSamplingStrategy for PartitionSampler {
         self.bins.len()
     }
 
-    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorIndex> {
         let mut samples = Vec::new();
         for (bin, validators) in self.bins.iter().zip(self.bin_validators.iter()) {
             let i = bin.sample(rng);
@@ -516,7 +516,7 @@ impl QuorumSamplingStrategy for PartitionSampler {
 ///
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli1Sampler<F: QuorumSamplingStrategy> {
-    required_samples: Vec<ValidatorId>,
+    required_samples: Vec<ValidatorIndex>,
     pub fallback_sampler: F,
     k: usize,
 }
@@ -590,7 +590,7 @@ impl<F: QuorumSamplingStrategy> QuorumSamplingStrategy for FaitAccompli1Sampler<
         self.k
     }
 
-    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorIndex> {
         let mut result = Vec::with_capacity(self.k);
         result.extend_from_slice(&self.required_samples);
         if result.len() < self.k {
@@ -617,8 +617,8 @@ impl<F: QuorumSamplingStrategy + Clone> Clone for FaitAccompli1Sampler<F> {
 ///
 /// See also: <https://dl.acm.org/doi/pdf/10.1145/3576915.3623194>
 pub struct FaitAccompli2Sampler {
-    required_samples: Vec<ValidatorId>,
-    medium_nodes: Vec<(ValidatorId, f64)>,
+    required_samples: Vec<ValidatorIndex>,
+    medium_nodes: Vec<(ValidatorIndex, f64)>,
     fallback_sampler: StakeWeightedSampler,
     k: usize,
 }
@@ -646,7 +646,7 @@ impl FaitAccompli2Sampler {
             let rel_stake = validators[i].stake.inner() as f64 / total_stake.inner() as f64;
             if *fi > rel_stake {
                 let p = 1.0 - (fi - rel_stake) * k as f64;
-                medium_nodes.push((ValidatorId::new(i as u64), p));
+                medium_nodes.push((ValidatorIndex::new(i as u64), p));
             }
         }
 
@@ -705,7 +705,7 @@ impl QuorumSamplingStrategy for FaitAccompli2Sampler {
         self.k
     }
 
-    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorId> {
+    fn sample_quorum<R: Rng>(&self, rng: &mut R) -> Vec<ValidatorIndex> {
         // add required FA1 samples
         let mut result = Vec::with_capacity(self.k);
         result.extend_from_slice(&self.required_samples);
@@ -742,7 +742,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::ValidatorId;
+    use crate::ValidatorIndex;
     use crate::crypto::aggsig;
     use crate::crypto::signature::SecretKey;
     use crate::disseminator::turbine::WeightedShuffle;
@@ -756,14 +756,14 @@ mod tests {
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
         validators
@@ -775,15 +775,15 @@ mod tests {
         let sampler = AllSameSampler(validators[3].clone());
         let mut rng = rand::rng();
         for _ in 0..1000 {
-            assert_eq!(sampler.sample(&mut rng), ValidatorId::new(3));
-            assert_eq!(sampler.sample_info(&mut rng).id, ValidatorId::new(3));
+            assert_eq!(sampler.sample(&mut rng), ValidatorIndex::new(3));
+            assert_eq!(sampler.sample_info(&mut rng).id, ValidatorIndex::new(3));
         }
 
         let quorum = sampler.into_quorum_strategy(TOTAL_SHREDS);
         for _ in 0..10 {
             let sampled_vals = quorum.sample_quorum(&mut rng);
             for val in sampled_vals {
-                assert_eq!(val, ValidatorId::new(3));
+                assert_eq!(val, ValidatorIndex::new(3));
             }
         }
     }
@@ -858,12 +858,12 @@ mod tests {
         let mut validators = create_validator_info(100);
         validators[0].stake = Stake::new(1_000_000_000);
         let sampler = StakeWeightedSampler::new(validators);
-        assert_eq!(sampler.sample(&mut rand::rng()), ValidatorId::new(0));
+        assert_eq!(sampler.sample(&mut rand::rng()), ValidatorIndex::new(0));
         let quorum = sampler.into_quorum_strategy(100);
         let sampled = quorum.sample_quorum(&mut rand::rng());
         let sampled0 = sampled
             .into_iter()
-            .filter(|v| *v == ValidatorId::new(0))
+            .filter(|v| *v == ValidatorIndex::new(0))
             .count();
         assert!(sampled0 == 100);
     }
@@ -884,7 +884,7 @@ mod tests {
         let sampled = sampler.sample_quorum(&mut rand::rng());
         let sampled0 = sampled
             .into_iter()
-            .filter(|v| *v == ValidatorId::new(0))
+            .filter(|v| *v == ValidatorIndex::new(0))
             .count();
         assert!(sampled0 <= 5);
 
@@ -892,12 +892,12 @@ mod tests {
         let mut validators = create_validator_info(100);
         validators[0].stake = Stake::new(1_000_000_000);
         let sampler = DecayingAcceptanceSampler::new(validators, f64::INFINITY, 100);
-        assert_eq!(sampler.sample_one(&mut rand::rng()), ValidatorId::new(0));
+        assert_eq!(sampler.sample_one(&mut rand::rng()), ValidatorIndex::new(0));
         sampler.reset();
         let sampled = sampler.sample_quorum(&mut rand::rng());
         let sampled0 = sampled
             .into_iter()
-            .filter(|v| *v == ValidatorId::new(0))
+            .filter(|v| *v == ValidatorIndex::new(0))
             .count();
         assert_eq!(sampled0, 100);
 
@@ -908,7 +908,7 @@ mod tests {
         for _ in 0..100 {
             sampler.reset();
             let id = sampler.sample_one(&mut rand::rng());
-            assert_eq!(id, ValidatorId::new(0));
+            assert_eq!(id, ValidatorIndex::new(0));
         }
     }
 
@@ -931,11 +931,11 @@ mod tests {
         let sampled = sampler.sample_quorum(&mut rng);
         let appearances0 = sampled
             .iter()
-            .filter(|v| **v == ValidatorId::new(0))
+            .filter(|v| **v == ValidatorIndex::new(0))
             .count();
         let appearances1 = sampled
             .iter()
-            .filter(|v| **v == ValidatorId::new(1))
+            .filter(|v| **v == ValidatorIndex::new(1))
             .count();
         let work0 = ((TOTAL_SHREDS * SLICES) as u64 * validators[0].stake.inner()
             / total_stake.inner())
@@ -949,25 +949,25 @@ mod tests {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
         for _ in 0..TOTAL_SHREDS * SLICES {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
-            let mut validator_ids = weighted_shuffle
+            let mut validator_indices = weighted_shuffle
                 .shuffle(&mut rng)
-                .map(|i| ValidatorId::new(i as u64));
+                .map(|i| ValidatorIndex::new(i as u64));
 
             // leader work
-            let leader = validator_ids.next().unwrap();
-            if leader == ValidatorId::new(0) || leader == ValidatorId::new(1) {
-                turbine_work[leader.as_index()] += 1;
+            let leader = validator_indices.next().unwrap();
+            if leader == ValidatorIndex::new(0) || leader == ValidatorIndex::new(1) {
+                turbine_work[leader.as_usize()] += 1;
             }
             // root work
             assert!(validators.len() > DEFAULT_FANOUT + 2);
-            let root = validator_ids.next().unwrap();
-            if root == ValidatorId::new(0) || root == ValidatorId::new(1) {
-                turbine_work[root.as_index()] += DEFAULT_FANOUT;
+            let root = validator_indices.next().unwrap();
+            if root == ValidatorIndex::new(0) || root == ValidatorIndex::new(1) {
+                turbine_work[root.as_usize()] += DEFAULT_FANOUT;
             }
             // layer-1 work
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
             for _ in 0..DEFAULT_FANOUT {
-                let parent = validator_ids.next().unwrap().as_index();
+                let parent = validator_indices.next().unwrap().as_usize();
                 if parent == 0 || parent == 1 {
                     let work = DEFAULT_FANOUT.min(validators_left);
                     turbine_work[parent] += work;
@@ -1016,7 +1016,7 @@ mod tests {
         for (v, stake) in validators.iter().map(|v| v.stake).enumerate() {
             let appearances = relays
                 .iter()
-                .filter(|val| **val == ValidatorId::new(v as u64))
+                .filter(|val| **val == ValidatorIndex::new(v as u64))
                 .count();
             let fractional_stake = stake.inner() as f64 / total_stake.inner() as f64;
             let leader_work = ((TOTAL_SHREDS * SLICES) as f64 * fractional_stake) as u64;
@@ -1028,21 +1028,21 @@ mod tests {
         let mut turbine_workload = vec![0; validators.len()];
         for _ in 0..TOTAL_SHREDS * SLICES {
             let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
-            let mut validator_ids = weighted_shuffle
+            let mut validator_indices = weighted_shuffle
                 .shuffle(&mut rng)
-                .map(|i| ValidatorId::new(i as u64));
+                .map(|i| ValidatorIndex::new(i as u64));
 
             // leader work
-            let leader = validator_ids.next().unwrap();
-            turbine_workload[leader.as_index()] += 1;
+            let leader = validator_indices.next().unwrap();
+            turbine_workload[leader.as_usize()] += 1;
             // root work
             assert!(validators.len() > DEFAULT_FANOUT + 2);
-            let root = validator_ids.next().unwrap();
-            turbine_workload[root.as_index()] += DEFAULT_FANOUT;
+            let root = validator_indices.next().unwrap();
+            turbine_workload[root.as_usize()] += DEFAULT_FANOUT;
             // level-1 work
             let mut validators_left = validators.len() - 2 - DEFAULT_FANOUT;
             for _ in 0..DEFAULT_FANOUT {
-                let parent = validator_ids.next().unwrap().as_index();
+                let parent = validator_indices.next().unwrap().as_usize();
                 turbine_workload[parent] += DEFAULT_FANOUT.min(validators_left);
                 if validators_left < DEFAULT_FANOUT {
                     break;
@@ -1075,7 +1075,7 @@ mod tests {
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
         for id in 0..64 {
-            assert!(sampled.contains(&ValidatorId::new(id)));
+            assert!(sampled.contains(&ValidatorIndex::new(id)));
         }
     }
 
@@ -1090,7 +1090,7 @@ mod tests {
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
         for id in 0..64 {
-            assert!(sampled.contains(&ValidatorId::new(id)));
+            assert!(sampled.contains(&ValidatorIndex::new(id)));
         }
 
         // with k equal-weight nodes this deterministically selects all nodes
@@ -1103,7 +1103,7 @@ mod tests {
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
         for id in 0..64 {
-            assert!(sampled.contains(&ValidatorId::new(id)));
+            assert!(sampled.contains(&ValidatorIndex::new(id)));
         }
 
         // with many low-stake nodes this becomes the underlying fallback distribution
@@ -1133,11 +1133,11 @@ mod tests {
         assert_eq!(sampled.len(), 64);
         let sampled0 = sampled
             .iter()
-            .filter(|v| **v == ValidatorId::new(0))
+            .filter(|v| **v == ValidatorIndex::new(0))
             .count();
         let sampled1 = sampled
             .iter()
-            .filter(|v| **v == ValidatorId::new(1))
+            .filter(|v| **v == ValidatorIndex::new(1))
             .count();
         assert!(sampled0 >= 3);
         assert!(sampled1 >= 3);
@@ -1154,7 +1154,7 @@ mod tests {
         let sampled: HashSet<_> = sampled.into_iter().collect();
         assert_eq!(sampled.len(), 64);
         for id in 0..64 {
-            assert!(sampled.contains(&ValidatorId::new(id)));
+            assert!(sampled.contains(&ValidatorIndex::new(id)));
         }
     }
 
@@ -1172,7 +1172,7 @@ mod tests {
         let sampler = StakeWeightedSampler::new(validators).into_quorum_strategy(32);
         let mut rng = rand::rng();
         let id = sampler.sample(&mut rng);
-        assert!(id.as_index() < 100);
+        assert!(id.as_usize() < 100);
     }
 
     #[test]
@@ -1192,8 +1192,8 @@ mod tests {
             sampled2.insert(sampler.sample_info(&mut rng).id);
         }
         for id in 0..10 {
-            assert!(sampled1.contains(&ValidatorId::new(id)));
-            assert!(sampled2.contains(&ValidatorId::new(id)));
+            assert!(sampled1.contains(&ValidatorIndex::new(id)));
+            assert!(sampled2.contains(&ValidatorIndex::new(id)));
         }
     }
 }

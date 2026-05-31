@@ -6,7 +6,7 @@ runs:
   steps:
     - name: Cache downloaded data
       id: cache-data
-      uses: actions/cache@v5
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ./data
         key: data-v1  # Change this if the dataset version changes

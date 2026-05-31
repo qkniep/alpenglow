@@ -210,13 +210,13 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
         let num_shreds = self.rotor_sampler.quorum_size();
         let leader = self.leader_sampler.sample(rng);
         self.leader_workload += num_shreds as u64;
-        self.workload[leader.as_index()] += num_shreds as u64;
+        self.workload[leader.as_usize()] += num_shreds as u64;
         let relays = self.rotor_sampler.sample_quorum(rng);
         for relay in relays {
             if leader == relay {
-                self.workload[relay.as_index()] += self.validators.len() as u64 - 1;
+                self.workload[relay.as_usize()] += self.validators.len() as u64 - 1;
             } else {
-                self.workload[relay.as_index()] += self.validators.len() as u64 - 2;
+                self.workload[relay.as_usize()] += self.validators.len() as u64 - 2;
             }
         }
     }

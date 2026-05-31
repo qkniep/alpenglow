@@ -14,7 +14,7 @@
 //! The exact guarantees, however, also depend on the underlying [`Network`],
 //! since both implementations are generic over the [`Network`] trait.
 //! For example, [`TrivialAll2All`] over a TCP-based network might still give
-//! strong reliability guarantess.
+//! strong reliability guarantees.
 //!
 //! # Examples
 //!

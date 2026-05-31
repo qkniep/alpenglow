@@ -1,0 +1,32 @@
+# Re-checks the dependency tree against the latest RUSTSEC advisory database on
+# a schedule. New advisories are disclosed for dependencies you never touched,
+# so the push/PR `security` job in rust.yml can't catch them on its own — only
+# a time-based run will. RustSec also flags unmaintained/unsound/yanked crates
+# that GitHub's Dependabot alerts often miss, and this gate ships with the repo
+# rather than depending on a repo setting being enabled. Scoped to `advisories`;
+# licenses/bans/sources only change when dependencies do and are covered on push/PR.
+name: Security audit
+
+# Least privilege: this workflow only reads the repo.
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC. Note: scheduled runs only fire on the default branch.
+    - cron: "0 6 * * 1"
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/rust-setup
+        with:
+          tools: cargo-deny
+
+      - name: Cargo deny (advisories)
+        run: cargo deny check advisories

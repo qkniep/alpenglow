@@ -28,7 +28,32 @@ use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::{BlockId, Slot};
 
 /// Keeps track of the parent-ready condition across slots.
-pub(super) struct ParentReadyTracker(HashMap<Slot, ParentReadyState>);
+pub(super) struct ParentReadyTracker {
+    /// Per-slot parent-ready state.
+    states: HashMap<Slot, ParentReadyState>,
+    /// Lowest slot still tracked; everything below it has been pruned.
+    ///
+    /// Pruned slots are decided, so we never (re-)process them.
+    /// Their blocks have already been propagated to all reachable future windows.
+    /// This guards against re-creating dropped state,
+    /// and re-propagating a parent that a future window already holds.
+    root: Slot,
+}
+
+impl Default for ParentReadyTracker {
+    /// Creates a new empty tracker.
+    ///
+    /// Initially, only the genesis block is considered notarized-fallback.
+    fn default() -> Self {
+        let mut states = HashMap::new();
+        let genesis_parent_state = ParentReadyState::genesis();
+        states.insert(Slot::genesis(), genesis_parent_state);
+        Self {
+            states,
+            root: Slot::genesis(),
+        }
+    }
+}
 
 impl ParentReadyTracker {
     /// Marks the given block as notarized-fallback.
@@ -37,6 +62,10 @@ impl ParentReadyTracker {
     /// All of these will have the given block ID as the parent.
     pub(super) fn mark_notar_fallback(&mut self, id: &BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
         let (slot, hash) = id.clone();
+        // already decided and pruned; its block is already fully propagated
+        if slot < self.root {
+            return SmallVec::new();
+        }
         let state = self.slot_state(slot);
         if !state.mark_notar_fallback(hash) {
             return SmallVec::new();
@@ -61,6 +90,10 @@ impl ParentReadyTracker {
     ///
     /// Returns a list of any newly connected parents.
     pub(super) fn mark_skipped(&mut self, marked_slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
+        // already decided and pruned; its parents are already fully propagated
+        if marked_slot < self.root {
+            return SmallVec::new();
+        }
         let state = self.slot_state(marked_slot);
         if !state.mark_skip() {
             return SmallVec::new();
@@ -68,9 +101,14 @@ impl ParentReadyTracker {
 
         // find possible parents for future windows
         let mut potential_parents = SmallVec::<[BlockId; 1]>::new();
+        let root = self.root;
         let window_slots = marked_slot.slots_in_window();
-        // going back from `marked_slot` find any skip-connected parents
-        for slot in window_slots.filter(|s| *s <= marked_slot).rev() {
+        // going back from `marked_slot` find any skip-connected parents,
+        // never reaching into already-pruned (decided) slots
+        for slot in window_slots
+            .filter(|s| *s <= marked_slot && *s >= root)
+            .rev()
+        {
             let state = self.slot_state(slot);
             // add any notarized-fallback blocks from this slot
             if slot != marked_slot {
@@ -135,7 +173,7 @@ impl ParentReadyTracker {
     ///
     /// The list can be empty if there are no valid parents yet.
     pub(super) fn parents_ready(&self, slot: Slot) -> &[BlockId] {
-        self.0
+        self.states
             .get(&slot)
             .map_or(&[], |state| state.ready_block_ids())
     }
@@ -147,35 +185,33 @@ impl ParentReadyTracker {
         &mut self,
         slot: Slot,
     ) -> Either<BlockId, oneshot::Receiver<BlockId>> {
-        let state = self.0.entry(slot).or_default();
+        let state = self.states.entry(slot).or_default();
         state.wait_for_parent_ready()
+    }
+
+    /// Removes all tracked state for slots strictly below `new_root`.
+    ///
+    /// After this, only slots `>= new_root` are retained.
+    /// Calls for slots `< new_root` are ignored from now on (see [`Self::root`]).
+    /// This should be called when the root (finalized) slot advances,
+    /// to free memory for slots that are no longer relevant.
+    pub(super) fn prune(&mut self, new_root: Slot) {
+        self.root = new_root;
+        self.states.retain(|slot, _| *slot >= new_root);
     }
 
     /// Mutably accesses the [`ParentReadyState`] for the given `slot`.
     ///
     /// Initializes the state with [`Default`] if necessary.
     fn slot_state(&mut self, slot: Slot) -> &mut ParentReadyState {
-        self.0.entry(slot).or_default()
-    }
-}
-
-impl Default for ParentReadyTracker {
-    /// Creates a new empty tracker.
-    ///
-    /// Initially, only the genesis block is considered notarized-fallback.
-    fn default() -> Self {
-        let mut map = HashMap::new();
-        let genesis_parent_state = ParentReadyState::genesis();
-        map.insert(Slot::genesis(), genesis_parent_state);
-        Self(map)
+        self.states.entry(slot).or_default()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Hash;
-    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
+    use crate::test_utils::{genesis_block_id, random_block_id};
     use crate::types::SLOTS_PER_WINDOW;
 
     #[test]
@@ -186,7 +222,7 @@ mod tests {
             .future_slots()
             .take(2 * SLOTS_PER_WINDOW as usize)
         {
-            let block = (s, Hash::random_for_test().into());
+            let block = random_block_id(s);
             let new_valid_parents = tracker.mark_notar_fallback(&block);
             if s == s.last_slot_in_window() {
                 assert!(new_valid_parents.contains(&(s.next(), block)));
@@ -198,7 +234,7 @@ mod tests {
 
     #[test]
     fn genesis() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let mut tracker = ParentReadyTracker::default();
         for slot in genesis.0.slots_in_window() {
             let new_valid_parents = tracker.mark_skipped(slot);
@@ -212,9 +248,9 @@ mod tests {
 
     #[test]
     fn skips() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block).is_empty());
         for s in slot.slots_in_window() {
@@ -230,9 +266,9 @@ mod tests {
 
     #[test]
     fn out_of_order_skips() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert_eq!(slot.slots_in_window().count(), 4);
         assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
@@ -250,9 +286,9 @@ mod tests {
     #[test]
     fn out_of_order_notars() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
-        let block1 = (Slot::new(1), Hash::random_for_test().into());
-        let block2 = (Slot::new(2), Hash::random_for_test().into());
-        let block3 = (Slot::new(3), Hash::random_for_test().into());
+        let block1 = random_block_id(Slot::new(1));
+        let block2 = random_block_id(Slot::new(2));
+        let block3 = random_block_id(Slot::new(3));
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block2).is_empty());
         assert_eq!(
@@ -266,7 +302,7 @@ mod tests {
     fn no_double_counting_skip_chain() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
@@ -287,7 +323,7 @@ mod tests {
     fn no_double_counting_notar_and_skip() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
@@ -298,13 +334,13 @@ mod tests {
         // notably this does not re-issue a ParentReady for `block`
         assert_eq!(
             tracker.mark_skipped(Slot::new(1)).to_vec(),
-            vec![(Slot::new(4), (Slot::genesis(), GENESIS_BLOCK_HASH))]
+            vec![(Slot::new(4), genesis_block_id())]
         );
     }
 
     #[test]
     fn wait_for_parent_ready() {
-        let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let genesis = genesis_block_id();
         let mut windows = Slot::windows();
         let window1 = windows.next().unwrap();
         let window2 = windows.next().unwrap();
@@ -354,11 +390,8 @@ mod tests {
         let mut tracker = ParentReadyTracker::default();
 
         // basic case where finalized slot is first in its window
-        let block = (
-            window2.first_slot_in_window(),
-            Hash::random_for_test().into(),
-        );
-        let parent = (block.0.prev(), Hash::random_for_test().into());
+        let block = random_block_id(window2.first_slot_in_window());
+        let parent = random_block_id(block.0.prev());
         let event = FinalizationEvent {
             finalized: Some(block.clone()),
             implicitly_finalized: vec![parent.clone()],
@@ -371,14 +404,8 @@ mod tests {
         assert_eq!(parent_ready.1, parent);
 
         // case where an entire window is skipped between parent and finalized block
-        let block = (
-            window4.first_slot_in_window(),
-            Hash::random_for_test().into(),
-        );
-        let parent = (
-            window3.first_slot_in_window().prev(),
-            Hash::random_for_test().into(),
-        );
+        let block = random_block_id(window4.first_slot_in_window());
+        let parent = random_block_id(window3.first_slot_in_window().prev());
         let event = FinalizationEvent {
             finalized: Some(block.clone()),
             implicitly_finalized: vec![parent.clone()],
@@ -391,12 +418,9 @@ mod tests {
         assert_eq!(parent_ready.1, parent);
 
         // case where finalized slot is NOT first in its window
-        let block = (
-            window5.first_slot_in_window().next(),
-            Hash::random_for_test().into(),
-        );
-        let parent = (block.0.prev(), Hash::random_for_test().into());
-        let parent_parent = (parent.0.prev(), Hash::random_for_test().into());
+        let block = random_block_id(window5.first_slot_in_window().next());
+        let parent = random_block_id(block.0.prev());
+        let parent_parent = random_block_id(parent.0.prev());
         let event = FinalizationEvent {
             finalized: Some(block.clone()),
             implicitly_finalized: vec![parent.clone(), parent_parent.clone()],
@@ -407,5 +431,29 @@ mod tests {
         let parent_ready = &parents[0];
         assert_eq!(parent_ready.0, parent.0);
         assert_eq!(parent_ready.1, parent_parent);
+    }
+
+    #[test]
+    fn prune() {
+        let mut tracker = ParentReadyTracker::default();
+
+        // populate per-slot state across the first two windows
+        for slot in Slot::genesis()
+            .future_slots()
+            .take(2 * SLOTS_PER_WINDOW as usize)
+        {
+            tracker.mark_skipped(slot);
+        }
+
+        // before, there is state both before and at the future root
+        let new_root = Slot::new(SLOTS_PER_WINDOW);
+        assert!(tracker.states.keys().any(|s| *s < new_root));
+        assert!(tracker.states.contains_key(&new_root));
+
+        tracker.prune(new_root);
+
+        // state strictly below the new root is gone
+        assert!(tracker.states.keys().all(|s| *s >= new_root));
+        assert!(tracker.states.contains_key(&new_root));
     }
 }

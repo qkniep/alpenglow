@@ -5,12 +5,12 @@
 //!
 //!
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 use alpenglow::disseminator::rotor::QuorumSamplingStrategy;
 use log::info;
 use rand::prelude::*;
-use statrs::distribution::{Binomial, DiscreteCDF};
 
+use crate::binomial::binomial_at_least;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Ryse MCP protocol.
@@ -31,8 +31,8 @@ pub(crate) struct RyseParameters {
 /// Specific instance of the Ryse protocol.
 #[derive(Clone, Debug)]
 pub(crate) struct RyseInstance {
-    pub(crate) leaders: Vec<ValidatorId>,
-    pub(crate) relays: Vec<Vec<ValidatorId>>,
+    pub(crate) leaders: Vec<ValidatorIndex>,
+    pub(crate) relays: Vec<Vec<ValidatorIndex>>,
 }
 
 /// Builder for Ryse instances with a specific set of parameters.
@@ -92,7 +92,7 @@ impl RyseParameters {
     }
 
     /// Creates a new builder instance, with the provided sampling strategies.
-    pub(crate) fn optmize(&self, adv_strength: AdversaryStrength) -> Self {
+    pub(crate) fn optimize(&self, adv_strength: AdversaryStrength) -> Self {
         let mut optimal_params = *self;
         let mut optimal_attack_prob = self.any_attack_probability(adv_strength);
 
@@ -130,23 +130,20 @@ impl RyseParameters {
     pub(crate) fn break_hiding_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that the adversary controls enough relays to decrypt before proposing
         let byzantine = adv_strength.byzantine;
-        let relays_dist = Binomial::new(byzantine, self.num_relays).unwrap();
         let relays_needed =
             (self.relay_notar_threshold + self.decode_threshold).saturating_sub(self.num_relays);
-        1.0 - relays_dist.cdf(relays_needed.saturating_sub(1))
+        binomial_at_least(byzantine, self.num_relays, relays_needed)
     }
 
     /// Probability that the adversary can selectively censor leaders in a slot.
     pub(crate) fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let leaders_dist = Binomial::new(failed, self.num_leaders).unwrap();
-        let prob_all_leaders = 1.0 - leaders_dist.cdf(self.num_leaders - 1);
+        let prob_all_leaders = binomial_at_least(failed, self.num_leaders, self.num_leaders);
 
         // probability that the adversary can exclude all leaders
-        let relays_dist = Binomial::new(failed, self.num_relays).unwrap();
         let relays_needed = self.num_relays - self.relay_notar_threshold;
-        let prob_censor_relays = 1.0 - relays_dist.cdf(relays_needed - 1);
+        let prob_censor_relays = binomial_at_least(failed, self.num_relays, relays_needed);
 
         // probability that either attack works
         1.0 - (1.0 - prob_all_leaders) * (1.0 - prob_censor_relays)

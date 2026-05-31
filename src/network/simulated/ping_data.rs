@@ -3,7 +3,7 @@
 
 //! Utilities for working with a real-world ping dataset.
 //!
-//! The specfic dataset is from [WonderProxy](https://wonderproxy.com/blog/a-day-in-the-life-of-the-internet/).
+//! The specific dataset is from [WonderProxy](https://wonderproxy.com/blog/a-day-in-the-life-of-the-internet/).
 //! It contains ping measurements between 200+ servers all around the world.
 //! These ping measurements were collected over the 24 hours of 2020-07-19.
 //!
@@ -91,7 +91,7 @@ pub struct PingServer {
     #[serde(rename = "state_abbv")]
     _state_abbv: String,
     #[serde(rename = "continent")]
-    _contintent: Option<u8>,
+    _continent: Option<u8>,
     latitude: f64,
     longitude: f64,
 }
