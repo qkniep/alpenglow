@@ -36,17 +36,12 @@ use crate::{BlockId, Slot, ValidatorIndex};
 /// [`Votor`]: crate::consensus::votor::Votor
 #[derive(Clone, Debug)]
 pub enum PoolEvent {
-    /// The pool has newly marked the given block as a ready parent for `slot`.
+    /// Pool newly marked the given block as a ready `parent` for `slot`.
     ///
     /// This event is only emitted per window, `slot` is always the first slot.
-    /// The parent block is identified by `parent_slot` and `parent_hash`.
-    ParentReady {
-        slot: Slot,
-        parent_slot: Slot,
-        parent_hash: BlockHash,
-    },
+    ParentReady { slot: Slot, parent: BlockId },
     /// The given block has reached the safe-to-notar status.
-    SafeToNotar(Slot, BlockHash),
+    SafeToNotar(BlockId),
     /// The given slot has reached the safe-to-skip status.
     SafeToSkip(Slot),
     /// New certificate created in pool (should then be broadcast by Votor).
@@ -63,7 +58,7 @@ impl PoolEvent {
     pub(crate) const fn slot(&self) -> Slot {
         match self {
             Self::ParentReady { slot, .. }
-            | Self::SafeToNotar(slot, _)
+            | Self::SafeToNotar((slot, _))
             | Self::SafeToSkip(slot)
             | Self::Standstill(slot, _, _) => *slot,
             Self::CertCreated(cert) => cert.slot(),
@@ -197,9 +192,7 @@ impl PoolImpl {
                     slot
                 );
                 if matches!(cert, Cert::Notar(_)) {
-                    let finalization_event = self
-                        .finality_tracker
-                        .mark_notarized(slot, block_hash.clone());
+                    let finalization_event = self.finality_tracker.mark_notarized(block_id.clone());
                     self.handle_finalization(finalization_event).await;
                 }
 
@@ -235,7 +228,7 @@ impl PoolImpl {
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash().clone();
-                let finalization_event = self.finality_tracker.mark_fast_finalized(slot, hash);
+                let finalization_event = self.finality_tracker.mark_fast_finalized((slot, hash));
                 self.handle_finalization(finalization_event).await;
             }
             Cert::Final(_) => {
@@ -401,13 +394,9 @@ impl PoolImpl {
     }
 
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
-        for (slot, (parent_slot, parent_hash)) in parents {
+        for (slot, parent) in parents {
             debug_assert!(slot.is_start_of_window());
-            let event = PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            };
+            let event = PoolEvent::ParentReady { slot, parent };
             self.votor_event_channel.send(event).await.unwrap();
         }
     }
@@ -598,7 +587,7 @@ mod tests {
     use crate::crypto::Hash;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
-    use crate::test_utils::generate_validators;
+    use crate::test_utils::{generate_validators, random_block_id};
     use crate::types::SLOTS_PER_WINDOW;
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
@@ -1373,14 +1362,10 @@ mod tests {
 
         // fast finalize block in 2nd slot of 2nd window
         let slot1 = Slot::windows().nth(1).unwrap();
-        let slot0 = slot1.prev();
-        let slot2 = slot1.next();
-        let (hash0, hash1, hash2): (BlockHash, BlockHash, BlockHash) = (
-            Hash::random_for_test().into(),
-            Hash::random_for_test().into(),
-            Hash::random_for_test().into(),
-        );
-        ctx.add_notar_votes(slot2, &hash2, 0..11).await;
+        let block0 = random_block_id(slot1.prev());
+        let block1 = random_block_id(slot1);
+        let block2 = random_block_id(slot1.next());
+        ctx.add_notar_votes(block2.0, &block2.1, 0..11).await;
 
         // should construct 3 certs (notar-fallback + notar + fast-final)
         for _ in 0..3 {
@@ -1395,26 +1380,17 @@ mod tests {
         );
 
         // add its ancestors
-        ctx.pool
-            .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
-            .await;
-        ctx.pool
-            .add_block((slot1, hash1.clone()), (slot0, hash0.clone()))
-            .await;
+        ctx.pool.add_block(block2.clone(), block1.clone()).await;
+        ctx.pool.add_block(block1.clone(), block0.clone()).await;
 
         // should emit ParentReady as a result
         let Ok(event) = ctx.votor_rx.try_recv() else {
             panic!("expected to receive ParentReady event");
         };
         match event {
-            PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            } => {
+            PoolEvent::ParentReady { slot, parent } => {
                 assert_eq!(slot, slot1);
-                assert_eq!(parent_slot, slot0);
-                assert_eq!(parent_hash, hash0);
+                assert_eq!(parent, block0);
             }
             _ => unreachable!("unexpected event {event:?}"),
         }
