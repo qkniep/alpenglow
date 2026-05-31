@@ -36,6 +36,7 @@ use crate::{BlockId, Slot, ValidatorIndex};
 ///
 /// [`Votor`]: crate::consensus::votor::Votor
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum PoolEvent {
     /// Pool newly marked the given block as a ready `parent` for `slot`.
     ///
