@@ -88,9 +88,7 @@ mod tests {
 
     #[test]
     fn deep_tail_keeps_precision() {
-        // Exact rational values (via P(X >= m) = sum of C(n,i) p^i q^(n-i)).
-        // These are the regime the callers operate in; `1.0 - cdf` returns
-        // 0.0 or is off by ~800x here, so check tight relative tolerance.
+        // this is where `1.0 - cdf` returns 0.0 or is off by ~1000x
         rel_eq(binomial_at_least(0.2, 200, 80), 7.378_5e-11, 1e-3);
         rel_eq(binomial_at_least(0.2, 200, 96), 6.955_9e-19, 1e-3);
         rel_eq(binomial_at_least(0.15, 300, 91), 1.396_2e-11, 1e-3);
