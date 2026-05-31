@@ -340,8 +340,8 @@ impl PoolImpl {
 
     /// Returns the first slot whose state has not been pruned.
     ///
-    /// Everything below this is fully resolved; certificates and votes for those
-    /// slots can be safely ignored.
+    /// Everything before this slot is decided;
+    /// certificates and votes for those slots can be safely ignored.
     fn first_unpruned_slot(&self) -> Slot {
         self.finality_tracker.first_unpruned_slot()
     }
@@ -418,13 +418,8 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly; use validator set & stake distribution
+        // TODO: set bounds exactly correctly
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: The lower bound is `first_unpruned_slot`, not `finalized_slot`, so the
-        // admission frontier matches the pruning frontier: we accept votes/certs for
-        // exactly the slots we still track. Finalized-but-unconnected slots in the gap
-        // are resolved by learning their parent edges (`add_block`), not by these certs,
-        // so accepting them here is for a single, simple frontier, not correctness.
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
@@ -461,9 +456,8 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly; use validator set & stake distribution
+        // TODO: set bounds exactly correctly
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: Lower-bounded by `first_unpruned_slot` for the same reason as `add_cert`.
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
@@ -670,6 +664,23 @@ mod tests {
                 let vote = Vote::new_final(slot, &self.sks[v.as_usize()], v);
                 assert_eq!(self.pool.add_vote(vote).await, Ok(()));
             }
+        }
+
+        /// Fast-finalizes the given block by submitting a unanimous fast-final cert.
+        async fn fast_finalize(&mut self, slot: Slot, hash: &BlockHash) {
+            let votes: Vec<NotarVote> = (0..11)
+                .map(|v| {
+                    NotarVote::new(
+                        slot,
+                        hash.clone(),
+                        &self.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
+                .collect();
+            let ff_cert =
+                FastFinalCert::try_new(&votes, self.epoch_info.epoch_info().validators()).unwrap();
+            assert_eq!(self.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
         }
     }
 
@@ -1257,6 +1268,41 @@ mod tests {
             ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
         );
+    }
+
+    #[tokio::test]
+    async fn slow_finalize_closing_gap_no_double_parent_ready() {
+        let mut ctx = setup();
+        let next_start = Slot::windows().nth(1).unwrap();
+        let gap_slot = next_start.prev();
+        let watermark_slot = gap_slot.prev();
+
+        // fast-finalize every slot below `gap_slot`
+        for s in 1..gap_slot.inner() {
+            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
+        }
+        // this moves the watermark just below it
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
+
+        // `gap_slot` gets a final cert but no notarization yet
+        let gap_hash: BlockHash = Hash::random_for_test().into();
+        ctx.add_final_votes(gap_slot, 0..7).await;
+        assert!(ctx.pool.has_final_cert(gap_slot));
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
+
+        // fast-finalize `next_start`, introducing a gap
+        ctx.fast_finalize(next_start, &GENESIS_BLOCK_HASH).await;
+        assert_eq!(ctx.pool.finalized_slot(), next_start);
+        // cannot prune past the gap
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
+
+        // `gap_slot`'s notarization closes the gap
+        ctx.add_notar_votes(gap_slot, &gap_hash, 0..7).await;
+        // jumping the watermark across both slots
+        assert_eq!(ctx.pool.first_unpruned_slot(), next_start);
+
+        // `gap_slot` is propagated as a ready parent exactly once
+        assert_eq!(ctx.pool.parents_ready(next_start).iter().count(), 1);
     }
 
     #[tokio::test]
