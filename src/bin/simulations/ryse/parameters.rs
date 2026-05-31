@@ -10,7 +10,7 @@ use alpenglow::disseminator::rotor::QuorumSamplingStrategy;
 use log::info;
 use rand::prelude::*;
 
-use crate::binomial::binomial_cdf;
+use crate::binomial::binomial_at_least;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Ryse MCP protocol.
@@ -132,18 +132,18 @@ impl RyseParameters {
         let byzantine = adv_strength.byzantine;
         let relays_needed =
             (self.relay_notar_threshold + self.decode_threshold).saturating_sub(self.num_relays);
-        1.0 - binomial_cdf(byzantine, self.num_relays, relays_needed.saturating_sub(1))
+        binomial_at_least(byzantine, self.num_relays, relays_needed)
     }
 
     /// Probability that the adversary can selectively censor leaders in a slot.
     pub(crate) fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let prob_all_leaders = 1.0 - binomial_cdf(failed, self.num_leaders, self.num_leaders - 1);
+        let prob_all_leaders = binomial_at_least(failed, self.num_leaders, self.num_leaders);
 
         // probability that the adversary can exclude all leaders
         let relays_needed = self.num_relays - self.relay_notar_threshold;
-        let prob_censor_relays = 1.0 - binomial_cdf(failed, self.num_relays, relays_needed - 1);
+        let prob_censor_relays = binomial_at_least(failed, self.num_relays, relays_needed);
 
         // probability that either attack works
         1.0 - (1.0 - prob_all_leaders) * (1.0 - prob_censor_relays)
