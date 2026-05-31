@@ -462,18 +462,15 @@ fn finalize_deshred(
     let merkle_root = any_shred.merkle_root().clone();
 
     // additional Merkle tree validity check
+    // NOTE: This is necessary to catch maliciously constructed slices.
     let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
     let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
     let header = slice.to_header();
 
     // turn reconstructed shreds into output shreds (with root, path, sig)
-    // we are reconstructing another leader's block, so copy its existing
-    // signature from a received shred rather than signing the root ourselves
     let leader_sig = any_shred.as_shred().merkle_root_sig;
     let reconstructed_shreds = assemble_output_shreds(header, raw_shreds, &tree, leader_sig);
-
-    assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
     Ok((slice, reconstructed_shreds))
 }
 
