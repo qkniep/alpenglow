@@ -49,11 +49,15 @@ const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
 
 /// Byte string the leader signs for each shred in a slice.
 ///
-/// Binding the [`SliceHeader`] into the signature prevents cross-slot replay:
+/// Binding the `SliceHeader` into the signature prevents cross-slot replay:
 /// a shred from slot `S` cannot be re-framed as a shred from slot `S'` (even by
-/// the same leader) without invalidating the signature. [`SliceCommitment::new`]
-/// is the single source of truth for what the leader signature covers —
-/// extending the authenticated content means extending this constructor.
+/// the same leader) without invalidating the signature. The crate-private
+/// `new` constructor is the single source of truth for what the leader signature
+/// covers — extending the authenticated content means extending that constructor.
+///
+/// This is an opaque capability: obtainable only via [`ValidatedShred::commitment`]
+/// (construction is crate-private). The inner byte layout is a protocol detail, not
+/// a stable API — do not depend on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
 
@@ -569,7 +573,7 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(SliceCommitment::new(&header, &merkle_root).as_ref());
+    let merkle_root_sig = sk.sign_bytes(SliceCommitment::new(&header, &merkle_root).as_ref());
 
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);

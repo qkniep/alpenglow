@@ -40,7 +40,7 @@ impl ValidatedShred {
     ///
     /// The fast path **must** compare the full commitment — comparing only the Merkle
     /// root would let header tampering (e.g. flipping `is_last`) slip through, since the
-    /// Merkle root commits to payload data but not to the [`SliceHeader`] fields the
+    /// Merkle root commits to payload data but not to the `SliceHeader` fields the
     /// signature covers.
     ///
     /// # Errors
@@ -63,14 +63,14 @@ impl ValidatedShred {
                         merkle_root: derived_root,
                     });
                 }
-                if shred.merkle_root_sig.verify(msg.as_ref(), pk) {
+                if shred.merkle_root_sig.verify_bytes(msg.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             None => {
-                if shred.merkle_root_sig.verify(msg.as_ref(), pk) {
+                if shred.merkle_root_sig.verify_bytes(msg.as_ref(), pk) {
                     Ok(Self {
                         shred,
                         merkle_root: derived_root,
