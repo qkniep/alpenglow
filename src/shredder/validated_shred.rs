@@ -55,14 +55,20 @@ impl ValidatedShred {
                         merkle_root: derived_root,
                     });
                 }
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                if shred
+                    .merkle_root_sig
+                    .verify_bytes(derived_root.as_ref(), pk)
+                {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             None => {
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                if shred
+                    .merkle_root_sig
+                    .verify_bytes(derived_root.as_ref(), pk)
+                {
                     Ok(Self {
                         shred,
                         merkle_root: derived_root,
