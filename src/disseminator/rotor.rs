@@ -33,9 +33,9 @@ use crate::{Slot, ValidatorIndex};
 
 /// Maximum number of per-slice relay committees cached.
 ///
-/// Each committee is a `[ValidatorIndex; TOTAL_SHREDS]`, i.e. roughly 512 bytes.
-/// Caching up to 2^14 of them occupies on the order of 8 MiB of memory, which
-/// comfortably covers the slices of all recently active slots.
+/// Each committee is a `[ValidatorIndex; TOTAL_SHREDS]` (~512 B).
+/// Caching up to 2^14 of them occupies on the order of 8 MiB of memory.
+/// This comfortably covers the slices of all recently active slots.
 const MAX_CACHED_COMMITTEES: usize = 1 << 14;
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
@@ -45,10 +45,10 @@ pub struct Rotor<N: Network, S: QuorumSamplingStrategy> {
     network: N,
     sampler: S,
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Caches the full relay committee for each `(slot, slice)`.
+    /// Caches the full relay committee indexed by `(slot, slice)`.
     ///
-    /// The committee is identical for all [`TOTAL_SHREDS`] shreds of a slice,
-    /// so computing it once and caching it avoids re-seeding the RNG and
+    /// The same committee is needed for all [`TOTAL_SHREDS`] shreds of a slice.
+    /// So computing it once and caching it avoids re-seeding the RNG and
     /// re-running [`QuorumSamplingStrategy::sample_quorum`] for every shred.
     relay_cache: Cache<(Slot, usize), Arc<[ValidatorIndex]>>,
 }
@@ -154,13 +154,8 @@ where
     /// Deterministically samples the full relay committee for a given slice.
     ///
     /// Seeds an RNG from `(slot, slice)` and calls [`QuorumSamplingStrategy::sample_quorum`]
-    /// to obtain all [`TOTAL_SHREDS`] relays for that slice at once. The committee
-    /// is the same for every shred of the slice, so it is cached per `(slot, slice)`
-    /// and only computed once regardless of how many shreds are sent or forwarded.
-    ///
-    /// Computing the whole committee in one call also keeps committee samplers like
-    /// [`FaitAccompli1Sampler`] correct: their deterministic high-stake samples are
-    /// part of the joint quorum and would be lost if relays were sampled one at a time.
+    /// to obtain all [`TOTAL_SHREDS`] relays for that slice at once.
+    /// The committee is then cached for `(slot, slice)` and reused in subsequent calls.
     fn sample_relays(&self, slot: Slot, slice: usize) -> Arc<[ValidatorIndex]> {
         if let Some(relays) = self.relay_cache.get(&(slot, slice)) {
             return relays;
