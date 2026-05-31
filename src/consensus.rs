@@ -336,8 +336,7 @@ where
         let slot = shred.payload().header.slot;
         let slice_index = shred.payload().header.slice_index;
         let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        // Reuse the leader signature already verified for this slice, if any, so
-        // further shreds of the same slice skip the expensive Ed25519 verify.
+        // use cached commitment, if we have it, to skip signature verification
         let cached = self
             .blockstore
             .read()

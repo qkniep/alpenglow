@@ -80,9 +80,6 @@ pub trait Blockstore {
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
     fn get_slice_root(&self, block_id: &BlockId, slice: SliceIndex) -> Option<SliceRoot>;
-    /// Cached [`SliceCommitment`] of an already-verified shred for the disseminated
-    /// block's `slice`, if any. Lets the dissemination path skip re-verifying the
-    /// leader signature for further shreds of the same slice.
     fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment>;
     #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
@@ -349,8 +346,10 @@ impl Blockstore for BlockstoreImpl {
             .map(|s| s.merkle_root().clone())
     }
 
-    /// Cached [`SliceCommitment`] of an already-verified shred for the disseminated
-    /// block's `slice`, if any.
+    /// Cached [`SliceCommitment`] for the slice if we have one.
+    ///
+    /// Lets the dissemination path short-circuit verification for the same slice.
+    /// This is also what allows us to detect leader equivocation.
     fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment> {
         self.slot_data(slot)?
             .disseminated
