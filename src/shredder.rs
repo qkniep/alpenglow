@@ -279,7 +279,7 @@ impl Shredder for RegularShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         finalize_deshred(raw_shreds, shreds, payload)
     }
 }
@@ -314,7 +314,7 @@ impl Shredder for CodingOnlyShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         // this shredder outputs no data shreds
         raw_shreds.data = vec![];
         finalize_deshred(raw_shreds, shreds, payload)
@@ -503,7 +503,7 @@ fn decrypt_payload(
     let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
     cipher.apply_keystream(&mut buffer);
 
-    Ok(SlicePayload::from(buffer.as_slice()))
+    SlicePayload::try_from(buffer.as_slice())
 }
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
@@ -604,6 +604,8 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
+    use crate::Slot;
+    use crate::types::SliceIndex;
     use crate::types::slice::create_slice_with_invalid_txs;
 
     /// Constructs a valid layout of `Shred`s from the input.
@@ -614,6 +616,29 @@ mod tests {
             ret[*shred.payload().shred_index] = Some(shred.clone());
         }
         ret
+    }
+
+    /// A malicious leader can honestly Reed-Solomon encode and Merkle-sign payload
+    /// bytes that are *not* a valid [`SlicePayload`]. Every shred then passes
+    /// per-shred verification, and reconstruction rebuilds a matching Merkle root,
+    /// so the Merkle check passes. `deshred` must surface a [`DeshredError`] for the
+    /// undecodable payload rather than panic (decoding used to `.unwrap()`).
+    #[test]
+    fn deshred_rejects_undecodable_payload() {
+        let header = SliceHeader {
+            slot: Slot::new(0),
+            slice_index: SliceIndex::first(),
+            is_last: true,
+        };
+        // A single byte is too short to be a serialized `SlicePayload` (which needs
+        // at least a parent tag plus an 8-byte length prefix), so decoding it fails.
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let raw_shreds = coder.shred(&[0u8]).unwrap();
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+
+        let result = RegularShredder::default().deshred(&into_array(&shreds));
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
 
     #[test]

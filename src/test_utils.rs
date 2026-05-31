@@ -147,5 +147,5 @@ fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayloa
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);
-    SlicePayload::from(payload.as_slice())
+    SlicePayload::try_from(payload.as_slice()).expect("freshly serialized payload should decode")
 }

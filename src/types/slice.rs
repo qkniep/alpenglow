@@ -10,7 +10,7 @@ use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::crypto::merkle::{BlockHash, SliceRoot};
-use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
+use crate::shredder::{DeshredError, MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, Slot};
 
@@ -168,14 +168,19 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<&[u8]> for SlicePayload {
-    fn from(payload: &[u8]) -> Self {
-        assert!(
-            payload.len() <= MAX_DATA_PER_SLICE,
-            "payload.len()={} > {MAX_DATA_PER_SLICE}",
-            payload.len()
-        );
-        wincode::deserialize(payload).unwrap()
+impl TryFrom<&[u8]> for SlicePayload {
+    type Error = DeshredError;
+
+    /// Decodes a [`SlicePayload`] from reconstructed slice bytes.
+    ///
+    /// These bytes are only known to be consistent with a leader-signed Merkle
+    /// root, not to be well-formed (a malicious leader can commit arbitrary
+    /// bytes), so decoding is fallible and must never panic.
+    fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
+        if payload.len() > MAX_DATA_PER_SLICE {
+            return Err(DeshredError::TooMuchData);
+        }
+        wincode::deserialize(payload).map_err(|_| DeshredError::BadEncoding)
     }
 }
 
