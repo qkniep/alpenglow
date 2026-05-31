@@ -160,9 +160,10 @@ pub(super) struct BlockData {
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
     pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
-    /// Cache of [`SliceCommitment`]s for which the leader signature has been
-    /// verified, indexed by slice. Lets [`ValidatedShred::try_new`] short-circuit
-    /// re-verification when a new shred carries the same `(header || merkle_root)`.
+    /// Cache of [`SliceCommitment`]s verified earlier.
+    ///
+    /// Lets [`ValidatedShred::try_new`] short-circuit verification for the same slice.
+    /// This is also what allows us to detect leader equivocation.
     pub(super) commitment_cache: BTreeMap<SliceIndex, SliceCommitment>,
 }
 
