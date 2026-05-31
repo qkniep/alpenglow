@@ -36,17 +36,12 @@ use crate::{BlockId, Slot, ValidatorIndex};
 /// [`Votor`]: crate::consensus::votor::Votor
 #[derive(Clone, Debug)]
 pub enum PoolEvent {
-    /// The pool has newly marked the given block as a ready parent for `slot`.
+    /// Pool newly marked the given block as a ready `parent` for `slot`.
     ///
     /// This event is only emitted per window, `slot` is always the first slot.
-    /// The parent block is identified by `parent_slot` and `parent_hash`.
-    ParentReady {
-        slot: Slot,
-        parent_slot: Slot,
-        parent_hash: BlockHash,
-    },
+    ParentReady { slot: Slot, parent: BlockId },
     /// The given block has reached the safe-to-notar status.
-    SafeToNotar(Slot, BlockHash),
+    SafeToNotar(BlockId),
     /// The given slot has reached the safe-to-skip status.
     SafeToSkip(Slot),
     /// New certificate created in pool (should then be broadcast by Votor).
@@ -63,7 +58,7 @@ impl PoolEvent {
     pub(crate) const fn slot(&self) -> Slot {
         match self {
             Self::ParentReady { slot, .. }
-            | Self::SafeToNotar(slot, _)
+            | Self::SafeToNotar((slot, _))
             | Self::SafeToSkip(slot)
             | Self::Standstill(slot, _, _) => *slot,
             Self::CertCreated(cert) => cert.slot(),
@@ -195,9 +190,7 @@ impl PoolImpl {
                     slot
                 );
                 if matches!(cert, Cert::Notar(_)) {
-                    let finalization_event = self
-                        .finality_tracker
-                        .mark_notarized(slot, block_hash.clone());
+                    let finalization_event = self.finality_tracker.mark_notarized(block_id.clone());
                     self.handle_finalization(finalization_event).await;
                 }
 
@@ -233,15 +226,13 @@ impl PoolImpl {
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash().clone();
-                let finalization_event = self.finality_tracker.mark_fast_finalized(slot, hash);
+                let finalization_event = self.finality_tracker.mark_fast_finalized((slot, hash));
                 self.handle_finalization(finalization_event).await;
-                self.prune();
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 let finalization_event = self.finality_tracker.mark_finalized(slot);
                 self.handle_finalization(finalization_event).await;
-                self.prune();
             }
         }
 
@@ -329,13 +320,23 @@ impl PoolImpl {
         votes
     }
 
-    /// Cleans up old finalized slots from the pool.
+    /// Cleans up state for slots that the finality tracker has pruned.
     ///
-    /// After this, [`Self::slot_states`] will only contain entries for slots
-    /// >= [`Self::finalized_slot`].
+    /// After this, [`Self::slot_states`] only contains entries for slots at or
+    /// above [`Self::first_unpruned_slot`] = [`FinalityTracker::first_unpruned_slot`].
     fn prune(&mut self) {
-        let last_slot = self.finalized_slot();
-        self.slot_states = self.slot_states.split_off(&last_slot);
+        let first_unpruned_slot = self.first_unpruned_slot();
+        self.slot_states = self.slot_states.split_off(&first_unpruned_slot);
+        self.parent_ready_tracker.prune(first_unpruned_slot);
+        // NOTE: The finality tracker prunes its own state internally.
+    }
+
+    /// Returns the first slot whose state has not been pruned.
+    ///
+    /// Everything before this slot is decided;
+    /// certificates and votes for those slots can be safely ignored.
+    fn first_unpruned_slot(&self) -> Slot {
+        self.finality_tracker.first_unpruned_slot()
     }
 
     /// Returns `true` iff the given parent is ready for the given slot.
@@ -387,16 +388,13 @@ impl PoolImpl {
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
         self.send_parent_ready_events(new_parents_ready).await;
+        self.prune();
     }
 
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
-        for (slot, (parent_slot, parent_hash)) in parents {
+        for (slot, parent) in parents {
             debug_assert!(slot.is_start_of_window());
-            let event = PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            };
+            let event = PoolEvent::ParentReady { slot, parent };
             self.votor_event_channel.send(event).await.unwrap();
         }
     }
@@ -413,20 +411,16 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
+        // TODO: set bounds exactly correctly
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: This needs to be `< finalize_slot` to allow for later notarization.
-        if slot < self.finalized_slot() || slot >= slot_far_in_future {
+        if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
         let cert = cert.into_cert();
 
-        // get `SlotCertificates`, initialize if it doesn't exist yet
-        let certs = &mut self.slot_state(slot).certificates;
-
         // check if the certificate is a duplicate
+        let certs = &mut self.slot_state(slot).certificates;
         let duplicate = match cert {
             Cert::Notar(_) => certs.notar.is_some(),
             Cert::NotarFallback(_) => certs
@@ -454,10 +448,9 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
+        // TODO: set bounds exactly correctly
         let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        if slot < self.finalized_slot() || slot >= slot_far_in_future {
+        if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
@@ -548,8 +541,11 @@ impl Pool for PoolImpl {
             votes.len()
         );
 
-        // NOTE: This event corresponds to the slot after the last finalized one.
-        // This way it is ignored by `Votor` iff a new slot was finalized.
+        // NOTE: This event's slot is the one after the last finalized slot.
+        // `Votor` always re-broadcasts the recovery bundle regardless of slot;
+        // it intentionally does not gate this on its own finalized slot, which
+        // can run ahead of Pool's (final cert vs. final + notar), and could
+        // otherwise drop a bundle that Pool emitted precisely because it is stuck.
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
@@ -583,7 +579,7 @@ mod tests {
     use crate::crypto::Hash;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
-    use crate::test_utils::generate_validators;
+    use crate::test_utils::{generate_validators, random_block_id};
     use crate::types::SLOTS_PER_WINDOW;
 
     /// Wraps shared `EpochInfo` with a `ValidatorEpochInfo` for validator 0.
@@ -671,6 +667,23 @@ mod tests {
                 let vote = Vote::new_final(slot, &self.sks[v.as_usize()], v);
                 assert_eq!(self.add_vote(vote).await, Ok(()));
             }
+        }
+
+        /// Fast-finalizes the given block by submitting a unanimous fast-final cert.
+        async fn fast_finalize(&mut self, slot: Slot, hash: &BlockHash) {
+            let votes: Vec<NotarVote> = (0..11)
+                .map(|v| {
+                    NotarVote::new(
+                        slot,
+                        hash.clone(),
+                        &self.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
+                .collect();
+            let ff_cert =
+                FastFinalCert::try_new(&votes, self.epoch_info.epoch_info().validators()).unwrap();
+            assert_eq!(self.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
         }
     }
 
@@ -1126,10 +1139,14 @@ mod tests {
     async fn out_of_bounds_votes() {
         let mut ctx = setup();
 
-        // all nodes vote finalize last slot of 3rd leader windows
+        // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
-        ctx.add_notar_votes(slot, &GENESIS_BLOCK_HASH, 0..11).await;
+        for s in 1..=slot.inner() {
+            ctx.add_notar_votes(Slot::new(s), &GENESIS_BLOCK_HASH, 0..11)
+                .await;
+        }
         assert_eq!(ctx.pool.finalized_slot(), slot);
+        assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
         // dismiss old votes
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
@@ -1161,24 +1178,25 @@ mod tests {
     async fn out_of_bounds_certs() {
         let mut ctx = setup();
 
-        // insert a notar cert for last slot of 3rd leader window
+        // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
-        let votes: Vec<NotarVote> = (0..11)
-            .map(|v| {
-                NotarVote::new(
-                    slot,
-                    GENESIS_BLOCK_HASH,
-                    &ctx.sks[v as usize],
-                    ValidatorIndex::new(v),
-                )
-            })
-            .collect();
-        let ff_cert =
-            FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.add_cert(Cert::FastFinal(ff_cert.clone())).await,
-            Ok(())
-        );
+        for s in 1..=slot.inner() {
+            let cert_slot = Slot::new(s);
+            let votes: Vec<NotarVote> = (0..11)
+                .map(|v| {
+                    NotarVote::new(
+                        cert_slot,
+                        GENESIS_BLOCK_HASH,
+                        &ctx.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
+                .collect();
+            let ff_cert =
+                FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
+            assert_eq!(ctx.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
+        }
+        assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
         // dismiss old certs
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
@@ -1211,6 +1229,41 @@ mod tests {
             ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
         );
+    }
+
+    #[tokio::test]
+    async fn slow_finalize_closing_gap_no_double_parent_ready() {
+        let mut ctx = setup();
+        let next_start = Slot::windows().nth(1).unwrap();
+        let gap_slot = next_start.prev();
+        let watermark_slot = gap_slot.prev();
+
+        // fast-finalize every slot below `gap_slot`
+        for s in 1..gap_slot.inner() {
+            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
+        }
+        // this moves the watermark just below it
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
+
+        // `gap_slot` gets a final cert but no notarization yet
+        let gap_hash: BlockHash = Hash::random_for_test().into();
+        ctx.add_final_votes(gap_slot, 0..7).await;
+        assert!(ctx.pool.has_final_cert(gap_slot));
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
+
+        // fast-finalize `next_start`, introducing a gap
+        ctx.fast_finalize(next_start, &GENESIS_BLOCK_HASH).await;
+        assert_eq!(ctx.pool.finalized_slot(), next_start);
+        // cannot prune past the gap
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
+
+        // `gap_slot`'s notarization closes the gap
+        ctx.add_notar_votes(gap_slot, &gap_hash, 0..7).await;
+        // jumping the watermark across both slots
+        assert_eq!(ctx.pool.first_unpruned_slot(), next_start);
+
+        // `gap_slot` is propagated as a ready parent exactly once
+        assert_eq!(ctx.pool.parents_ready(next_start).iter().count(), 1);
     }
 
     #[tokio::test]
@@ -1279,14 +1332,10 @@ mod tests {
 
         // fast finalize block in 2nd slot of 2nd window
         let slot1 = Slot::windows().nth(1).unwrap();
-        let slot0 = slot1.prev();
-        let slot2 = slot1.next();
-        let (hash0, hash1, hash2): (BlockHash, BlockHash, BlockHash) = (
-            Hash::random_for_test().into(),
-            Hash::random_for_test().into(),
-            Hash::random_for_test().into(),
-        );
-        ctx.add_notar_votes(slot2, &hash2, 0..11).await;
+        let block0 = random_block_id(slot1.prev());
+        let block1 = random_block_id(slot1);
+        let block2 = random_block_id(slot1.next());
+        ctx.add_notar_votes(block2.0, &block2.1, 0..11).await;
 
         // should construct 3 certs (notar-fallback + notar + fast-final)
         for _ in 0..3 {
@@ -1301,26 +1350,17 @@ mod tests {
         );
 
         // add its ancestors
-        ctx.pool
-            .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
-            .await;
-        ctx.pool
-            .add_block((slot1, hash1.clone()), (slot0, hash0.clone()))
-            .await;
+        ctx.pool.add_block(block2.clone(), block1.clone()).await;
+        ctx.pool.add_block(block1.clone(), block0.clone()).await;
 
         // should emit ParentReady as a result
         let Ok(event) = ctx.votor_rx.try_recv() else {
             panic!("expected to receive ParentReady event");
         };
         match event {
-            PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            } => {
+            PoolEvent::ParentReady { slot, parent } => {
                 assert_eq!(slot, slot1);
-                assert_eq!(parent_slot, slot0);
-                assert_eq!(parent_hash, hash0);
+                assert_eq!(parent, block0);
             }
             _ => unreachable!("unexpected event {event:?}"),
         }
