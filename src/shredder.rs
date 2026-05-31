@@ -280,23 +280,7 @@ impl Shredder for RegularShredder {
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
-
-        let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root().clone();
-
-        // additional Merkle tree validity check
-        let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
-
-        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
-        let header = slice.to_header();
-
-        // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.as_shred().merkle_root_sig;
-        let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
-
-        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
-        Ok((slice, reconstructed_shreds))
+        finalize_deshred(raw_shreds, shreds, payload)
     }
 }
 
@@ -331,24 +315,9 @@ impl Shredder for CodingOnlyShredder {
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
         let payload = SlicePayload::from(payload_bytes.as_slice());
-
-        let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root().clone();
-
-        // additional Merkle tree validity check
+        // this shredder outputs no data shreds
         raw_shreds.data = vec![];
-        let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
-
-        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
-        let header = slice.to_header();
-
-        // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.as_shred().merkle_root_sig;
-        let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
-
-        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
-        Ok((slice, reconstructed_shreds))
+        finalize_deshred(raw_shreds, shreds, payload)
     }
 }
 
@@ -401,36 +370,12 @@ impl Shredder for PetsShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let (mut buffer, mut raw_shreds) = self.0.deshred(shreds)?;
-        if buffer.len() < 16 {
-            return Err(DeshredError::BadEncoding);
-        }
-
-        let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root().clone();
-
-        // additional Merkle tree validity check
+        let (buffer, mut raw_shreds) = self.0.deshred(shreds)?;
+        // delete data shred that contained the key
         raw_shreds.data.pop();
-        let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
-
-        // decrypt slice
-        let tail = buffer.split_off(buffer.len() - 16);
-        let iv = Array::from([0; 16]);
-        let key = Array::try_from(tail.as_slice()).expect("tail should have correct length");
-
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(buffer.as_slice());
-        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
-        let header = slice.to_header();
-
-        // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.as_shred().merkle_root_sig;
-        let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
-
-        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
-        Ok((slice, reconstructed_shreds))
+        // the PETS key is the plaintext tail of the buffer
+        let payload = decrypt_payload(buffer, |key, _buffer| key)?;
+        finalize_deshred(raw_shreds, shreds, payload)
     }
 }
 
@@ -484,40 +429,16 @@ impl Shredder for AontShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let (mut buffer, raw_shreds) = self.0.deshred(shreds)?;
-        if buffer.len() < 16 {
-            return Err(DeshredError::BadEncoding);
-        }
-
-        let any_shred = shreds.any_shred();
-        let merkle_root = any_shred.merkle_root().clone();
-
-        // additional Merkle tree validity check
-        let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
-
-        // decrypt slice
-        let tail = buffer.split_off(buffer.len() - 16);
-        let hash = hash(&buffer);
-
-        let iv = Array::from([0; 16]);
-        let mut key = Array::try_from(tail.as_slice()).unwrap();
-        for i in 0..16 {
-            key[i] ^= hash.as_ref()[i];
-        }
-
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(buffer.as_slice());
-        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
-        let header = slice.to_header();
-
-        // turn reconstructed shreds into output shreds (with root, path, sig)
-        let leader_sig = any_shred.as_shred().merkle_root_sig;
-        let reconstructed_shreds =
-            create_output_shreds_for_other_leader(header, raw_shreds, tree, leader_sig);
-
-        assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
-        Ok((slice, reconstructed_shreds))
+        let (buffer, raw_shreds) = self.0.deshred(shreds)?;
+        // the RAONT-RS key is the tail XORed with the hash of the payload
+        let payload = decrypt_payload(buffer, |mut key, buffer| {
+            let hash = hash(buffer);
+            for (k, h) in key.iter_mut().zip(hash.as_ref()) {
+                *k ^= h;
+            }
+            key
+        })?;
+        finalize_deshred(raw_shreds, shreds, payload)
     }
 }
 
@@ -525,6 +446,67 @@ impl Default for AontShredder {
     fn default() -> Self {
         Self(ReedSolomonCoder::new(Self::CODING_OUTPUT_SHREDS))
     }
+}
+
+/// Completes deshredding, shared by all shredder variants.
+///
+/// Given the reconstructed (and already trimmed) `raw_shreds` and the
+/// (already transformed) `payload`, this verifies the Merkle tree, builds the
+/// [`ReconstructedSlice`], and reconstructs all [`TOTAL_SHREDS`] output shreds.
+fn finalize_deshred(
+    raw_shreds: RawShreds,
+    shreds: ValidatedShreds,
+    payload: SlicePayload,
+) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
+    let any_shred = shreds.any_shred();
+    let merkle_root = any_shred.merkle_root().clone();
+
+    // additional Merkle tree validity check
+    let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
+
+    let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
+    let header = slice.to_header();
+
+    // turn reconstructed shreds into output shreds (with root, path, sig)
+    // we are reconstructing another leader's block, so copy its existing
+    // signature from a received shred rather than signing the root ourselves
+    let leader_sig = any_shred.as_shred().merkle_root_sig;
+    let reconstructed_shreds = assemble_output_shreds(header, raw_shreds, &tree, leader_sig);
+
+    assert_eq!(reconstructed_shreds.len(), TOTAL_SHREDS);
+    Ok((slice, reconstructed_shreds))
+}
+
+/// Strips the trailing 16-byte key material off `buffer`, decrypts the
+/// remaining ciphertext in place with AES-128-CTR, and returns the plaintext as
+/// a [`SlicePayload`].
+///
+/// `derive_key` turns the raw 16-byte tail (and, for AONT, the ciphertext
+/// `buffer`) into the actual decryption key.
+///
+/// # Errors
+///
+/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain the
+/// 16-byte key tail.
+fn decrypt_payload(
+    mut buffer: Vec<u8>,
+    derive_key: impl FnOnce([u8; 16], &[u8]) -> [u8; 16],
+) -> Result<SlicePayload, DeshredError> {
+    if buffer.len() < 16 {
+        return Err(DeshredError::BadEncoding);
+    }
+    let tail = buffer.split_off(buffer.len() - 16);
+    let tail: [u8; 16] = tail
+        .as_slice()
+        .try_into()
+        .expect("tail should have correct length");
+
+    let key = Array::from(derive_key(tail, &buffer));
+    let iv = Array::from([0; 16]);
+    let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
+    cipher.apply_keystream(&mut buffer);
+
+    Ok(SlicePayload::from(buffer.as_slice()))
 }
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
@@ -538,7 +520,25 @@ fn data_and_coding_to_output_shreds(
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
     let merkle_root_sig = sk.sign(merkle_root.as_ref());
+    assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
+}
 
+/// Assembles the final output shreds (data first, then coding) from the
+/// reconstructed `raw_shreds`, the slice's Merkle `tree`, and `merkle_root_sig`.
+///
+/// Used both when producing our own block (signature freshly created over the
+/// root, see [`data_and_coding_to_output_shreds`]) and when reconstructing
+/// another leader's block (signature copied from a received shred, see
+/// [`finalize_deshred`]). In the latter case `tree` must already match the
+/// reconstructed shreds.
+///
+/// Each returned shred contains the Merkle root, its own path and the signature.
+fn assemble_output_shreds(
+    header: SliceHeader,
+    raw_shreds: RawShreds,
+    tree: &SliceMerkleTree,
+    merkle_root_sig: Signature,
+) -> [ValidatedShred; TOTAL_SHREDS] {
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
@@ -573,61 +573,6 @@ fn data_and_coding_to_output_shreds(
             ValidatedShred::new_validated(Shred {
                 payload_type: payload,
                 merkle_root_sig,
-                merkle_path,
-            })
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap()
-}
-
-/// Puts the root, path, and signature of the leader into shreds.
-///
-/// This is analogous to [`data_and_coding_to_output_shreds`], but for another leader.
-/// Instead of signing the root, copies the existing signature from another shred.
-/// Also, requires the Merkle tree to already be calculated from reconstructed shreds.
-///
-/// Each returned shred contains the Merkle root, its own path and the signature.
-fn create_output_shreds_for_other_leader(
-    header: SliceHeader,
-    raw_shreds: RawShreds,
-    tree: SliceMerkleTree,
-    leader_signature: Signature,
-) -> [ValidatedShred; TOTAL_SHREDS] {
-    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
-        let merkle_path = tree.create_proof(*shred_index);
-        let payload = ShredPayload {
-            header,
-            shred_index,
-            data,
-        };
-        (merkle_path, payload)
-    };
-    let num_data = raw_shreds.data.len();
-    let data = raw_shreds
-        .data
-        .into_iter()
-        .enumerate()
-        .map(|(shred_index, d)| {
-            let shred_index = ShredIndex::new(shred_index).unwrap();
-            let (merkle_path, payload) = convert(shred_index, d);
-            (merkle_path, ShredPayloadType::Data(payload))
-        });
-    let coding = raw_shreds
-        .coding
-        .into_iter()
-        .enumerate()
-        .map(|(offset, c)| {
-            let shred_index = num_data + offset;
-            let shred_index = ShredIndex::new(shred_index).unwrap();
-            let (merkle_path, payload) = convert(shred_index, c);
-            (merkle_path, ShredPayloadType::Coding(payload))
-        });
-    data.chain(coding)
-        .map(|(merkle_path, payload)| {
-            ValidatedShred::new_validated(Shred {
-                payload_type: payload,
-                merkle_root_sig: leader_signature,
                 merkle_path,
             })
         })
