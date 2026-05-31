@@ -1,0 +1,29 @@
+[package]
+name = "orchestrator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+authors = ["Quentin Kniep <quentin@anza.xyz>"]
+description = "Cloud-testbed orchestrator for running real-world Alpenglow benchmarks."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "orchestrator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "orchestrator"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+# `default-tls` (native-tls) keeps the dependency tree on the cargo-deny license
+# allowlist; `rustls` would pull `ring`, whose license needs an explicit
+# exception. See ../deny.toml.
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["macros", "rt", "process", "time"] }
