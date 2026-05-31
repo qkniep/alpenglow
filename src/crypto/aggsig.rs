@@ -278,9 +278,7 @@ impl SecretKey {
 
     /// Signs the raw byte string `msg` using this secret key.
     ///
-    /// Prefer [`sign`](Self::sign) for protocol messages. Use this only when the
-    /// bytes to sign are not the [`Signable`] representation of some type (e.g. a
-    /// bare hash, where going through [`Signable`] would just add an allocation).
+    /// Prefer [`sign`](Self::sign) if possible.
     #[must_use]
     pub fn sign_bytes(&self, msg: &[u8]) -> IndividualSignature {
         let sig = self.0.sign(msg, DST, &[]);
@@ -296,6 +294,8 @@ impl IndividualSignature {
     }
 
     /// Verifies that this is a valid signature of the raw byte string `msg` under `pk`.
+    ///
+    ///  Prefer [`verify`](Self::verify) if possible.
     #[must_use]
     pub fn verify_bytes(&self, msg: &[u8], pk: &PublicKey) -> bool {
         // Skip the signature subgroup check (`sig_groupcheck=false`): the type

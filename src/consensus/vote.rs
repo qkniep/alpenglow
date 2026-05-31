@@ -90,15 +90,15 @@ impl NotarVote {
         &self.block_hash
     }
 
-    /// Returns the payload whose bytes this vote signs.
-    fn payload(&self) -> VotePayload {
-        VotePayload::Notar(self.slot, self.block_hash.clone())
-    }
-
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         self.sig.verify(&self.payload(), pk)
+    }
+
+    /// Returns the payload whose bytes this vote signs.
+    fn payload(&self) -> VotePayload {
+        VotePayload::Notar(self.slot, self.block_hash.clone())
     }
 }
 
@@ -156,15 +156,15 @@ impl NotarFallbackVote {
         &self.block_hash
     }
 
-    /// Returns the payload whose bytes this vote signs.
-    fn payload(&self) -> VotePayload {
-        VotePayload::NotarFallback(self.slot, self.block_hash.clone())
-    }
-
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         self.sig.verify(&self.payload(), pk)
+    }
+
+    /// Returns the payload whose bytes this vote signs.
+    fn payload(&self) -> VotePayload {
+        VotePayload::NotarFallback(self.slot, self.block_hash.clone())
     }
 }
 
@@ -204,15 +204,15 @@ impl SkipVote {
         self.slot
     }
 
-    /// Returns the payload whose bytes this vote signs.
-    fn payload(&self) -> VotePayload {
-        VotePayload::Skip(self.slot)
-    }
-
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         self.sig.verify(&self.payload(), pk)
+    }
+
+    /// Returns the payload whose bytes this vote signs.
+    fn payload(&self) -> VotePayload {
+        VotePayload::Skip(self.slot)
     }
 }
 
@@ -257,15 +257,15 @@ impl SkipFallbackVote {
         self.slot
     }
 
-    /// Returns the payload whose bytes this vote signs.
-    fn payload(&self) -> VotePayload {
-        VotePayload::SkipFallback(self.slot)
-    }
-
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         self.sig.verify(&self.payload(), pk)
+    }
+
+    /// Returns the payload whose bytes this vote signs.
+    fn payload(&self) -> VotePayload {
+        VotePayload::SkipFallback(self.slot)
     }
 }
 
@@ -309,15 +309,15 @@ impl FinalVote {
         self.slot
     }
 
-    /// Returns the payload whose bytes this vote signs.
-    fn payload(&self) -> VotePayload {
-        VotePayload::Final(self.slot)
-    }
-
     /// Checks whether this vote's signature is valid under the given public key.
     #[must_use]
     pub fn check_sig(&self, pk: &PublicKey) -> bool {
         self.sig.verify(&self.payload(), pk)
+    }
+
+    /// Returns the payload whose bytes this vote signs.
+    fn payload(&self) -> VotePayload {
+        VotePayload::Final(self.slot)
     }
 }
 

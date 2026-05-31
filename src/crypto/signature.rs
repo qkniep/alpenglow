@@ -64,9 +64,7 @@ impl SecretKey {
 
     /// Signs the raw byte string `msg` using this secret key.
     ///
-    /// Prefer [`sign`](Self::sign) for protocol messages. Use this only when the
-    /// bytes to sign are not the [`Signable`] representation of some type (e.g. a
-    /// bare hash, where going through [`Signable`] would just add an allocation).
+    /// Prefer [`sign`](Self::sign) if possible.
     #[must_use]
     pub fn sign_bytes(&self, msg: &[u8]) -> Signature {
         let sig = self.0.sign(msg);
@@ -101,6 +99,8 @@ impl Signature {
     }
 
     /// Verifies that this is a valid signature of the raw byte string `msg` under `pk`.
+    ///
+    /// Prefer [`verify`](Self::verify) if possible.
     #[must_use]
     pub fn verify_bytes(&self, msg: &[u8], pk: &PublicKey) -> bool {
         pk.0.verify(&self.0, msg).is_ok()
