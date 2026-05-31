@@ -136,24 +136,24 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub(super) fn mark_fast_finalized(&mut self, block: BlockId) -> FinalizationEvent {
-        let (slot, block_hash) = block;
-        debug_assert!(slot >= self.first_unpruned_slot);
-        if slot < self.first_unpruned_slot {
+        let (slot, block_hash) = &block;
+        debug_assert!(*slot >= self.first_unpruned_slot);
+        if *slot < self.first_unpruned_slot {
             return FinalizationEvent::default();
         }
 
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
+            .insert(*slot, FinalizationStatus::Finalized(block_hash.clone()));
         if let Some(status) = old {
             match status {
                 FinalizationStatus::Finalized(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                    assert_eq!(hash, block_hash, "consensus safety violation");
+                    assert_eq!(&hash, block_hash, "consensus safety violation");
                     return FinalizationEvent::default();
                 }
                 FinalizationStatus::Notarized(hash) => {
-                    assert_eq!(hash, block_hash, "consensus safety violation");
+                    assert_eq!(&hash, block_hash, "consensus safety violation");
                 }
                 FinalizationStatus::FinalPendingNotar => {}
                 FinalizationStatus::ImplicitlySkipped => panic!("consensus safety violation"),
@@ -161,7 +161,7 @@ impl FinalityTracker {
         }
 
         let mut event = FinalizationEvent::default();
-        self.handle_finalized_block((slot, block_hash), &mut event);
+        self.handle_finalized_block(block, &mut event);
         event
     }
 
@@ -382,6 +382,11 @@ mod tests {
         (slot, Hash::random_for_test().into())
     }
 
+    /// Returns the [`BlockId`] of the genesis block.
+    fn genesis_block_id() -> BlockId {
+        (Slot::genesis(), GENESIS_BLOCK_HASH)
+    }
+
     #[test]
     fn basic() {
         let mut tracker = FinalityTracker::default();
@@ -467,12 +472,12 @@ mod tests {
         let mut tracker = FinalityTracker::default();
 
         // notarize and connect (with parent relation) a chain of blocks
-        let mut prev = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let mut prev = genesis_block_id();
         for s in 1..=6u64 {
-            let (slot, hash) = random_block_id(Slot::new(s));
-            tracker.mark_notarized((slot, hash.clone()));
-            tracker.add_parent((slot, hash.clone()), prev.clone());
-            prev = (slot, hash);
+            let block = random_block_id(Slot::new(s));
+            tracker.mark_notarized(block.clone());
+            tracker.add_parent(block.clone(), prev.clone());
+            prev = block;
         }
 
         // finalize slot 5, implicitly finalizing its ancestors
@@ -508,10 +513,7 @@ mod tests {
         assert!(tracker.status.contains_key(&slot1));
 
         // can catch up once continuous chain is fully finalized
-        tracker.add_parent(
-            (slot1, hash1.clone()),
-            (Slot::genesis(), GENESIS_BLOCK_HASH),
-        );
+        tracker.add_parent((slot1, hash1.clone()), genesis_block_id());
         let event = tracker.mark_notarized((slot1, hash1.clone()));
         assert_eq!(event.finalized, Some((slot1, hash1)));
         assert_eq!(tracker.first_unpruned_slot(), slot2);
@@ -522,19 +524,18 @@ mod tests {
         let mut tracker = FinalityTracker::default();
 
         // build and finalize a chain up to slot 5 to advance the watermark
-        let mut prev = (Slot::genesis(), GENESIS_BLOCK_HASH);
+        let mut prev = genesis_block_id();
         for s in 1..=5u64 {
-            let slot = Slot::new(s);
-            let hash: BlockHash = Hash::random_for_test().into();
-            tracker.mark_notarized(slot, hash.clone());
-            tracker.add_parent((slot, hash.clone()), prev.clone());
-            prev = (slot, hash);
+            let block = random_block_id(Slot::new(s));
+            tracker.mark_notarized(block.clone());
+            tracker.add_parent(block.clone(), prev.clone());
+            prev = block;
         }
         tracker.mark_finalized(Slot::new(5));
         assert_eq!(tracker.first_unpruned_slot(), Slot::new(5));
 
         // a late block for an already-pruned slot is ignored, leaving no trace
-        let stale = (Slot::new(2), Hash::random_for_test().into());
+        let stale = random_block_id(Slot::new(2));
         let event = tracker.add_parent(stale.clone(), (Slot::new(1), GENESIS_BLOCK_HASH));
         assert_eq!(event, FinalizationEvent::default());
         assert!(!tracker.parents.contains_key(&stale));
@@ -543,29 +544,27 @@ mod tests {
     #[test]
     fn no_reemit_when_parent_pruned_late() {
         let mut tracker = FinalityTracker::default();
-        let hash1: BlockHash = Hash::random_for_test().into();
-        let hash2: BlockHash = Hash::random_for_test().into();
+        let (slot0, hash0) = genesis_block_id();
+        let (slot1, hash1) = random_block_id(slot0.next());
+        let (slot2, hash2) = random_block_id(slot1.next());
 
         // finalize slot 1 (with its parent chain)
-        tracker.add_parent(
-            (Slot::new(1), hash1.clone()),
-            (Slot::genesis(), GENESIS_BLOCK_HASH),
-        );
-        tracker.mark_notarized(Slot::new(1), hash1.clone());
-        let event = tracker.mark_finalized(Slot::new(1));
-        assert_eq!(event.finalized, Some((Slot::new(1), hash1.clone())));
+        tracker.add_parent((slot1, hash1.clone()), (slot0, hash0));
+        tracker.mark_notarized((slot1, hash1.clone()));
+        let event = tracker.mark_finalized(slot1);
+        assert_eq!(event.finalized, Some((slot1, hash1.clone())));
         // keeps the watermark at slot 1
-        assert_eq!(tracker.first_unpruned_slot(), Slot::new(1));
+        assert_eq!(tracker.first_unpruned_slot(), slot1);
 
         // finalize slot 2 before its parent edge is known
-        tracker.mark_notarized(Slot::new(2), hash2.clone());
-        let event = tracker.mark_finalized(Slot::new(2));
-        assert_eq!(event.finalized, Some((Slot::new(2), hash2.clone())));
+        tracker.mark_notarized((slot2, hash2.clone()));
+        let event = tracker.mark_finalized(slot2);
+        assert_eq!(event.finalized, Some((slot2, hash2.clone())));
         // this prunes slot 1
-        assert_eq!(tracker.first_unpruned_slot(), Slot::new(2));
+        assert_eq!(tracker.first_unpruned_slot(), slot2);
 
         // late parent edge must NOT re-finalize (already-pruned) slot 1
-        let event = tracker.add_parent((Slot::new(2), hash2), (Slot::new(1), hash1));
+        let event = tracker.add_parent((slot2, hash2), (slot1, hash1));
         assert_eq!(event, FinalizationEvent::default());
     }
 }
