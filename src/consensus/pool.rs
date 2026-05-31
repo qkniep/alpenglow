@@ -667,6 +667,23 @@ mod tests {
                 assert_eq!(self.pool.add_vote(vote).await, Ok(()));
             }
         }
+
+        /// Fast-finalizes the given block by submitting a unanimous fast-final cert.
+        async fn fast_finalize(&mut self, slot: Slot, hash: &BlockHash) {
+            let votes: Vec<NotarVote> = (0..11)
+                .map(|v| {
+                    NotarVote::new(
+                        slot,
+                        hash.clone(),
+                        &self.sks[v as usize],
+                        ValidatorIndex::new(v),
+                    )
+                })
+                .collect();
+            let ff_cert =
+                FastFinalCert::try_new(&votes, self.epoch_info.epoch_info().validators()).unwrap();
+            assert_eq!(self.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
+        }
     }
 
     #[tokio::test]
@@ -1252,6 +1269,55 @@ mod tests {
         assert_eq!(
             ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
+        );
+    }
+
+    /// Regression test for a double parent-ready insertion.
+    ///
+    /// Completing a slow finalization while a pruning gap exists finalizes a
+    /// slot whose state is then pruned, yet it is still marked notarized-fallback
+    /// again (here by the trailing `mark_notar_fallback` in `add_valid_cert`).
+    /// Without the prune-watermark guard in `ParentReadyTracker`, that re-marks
+    /// the pruned slot and re-propagates its block to a future window-start that
+    /// already holds it, tripping the assertion in `ParentReadyState::add_to_ready`.
+    #[tokio::test]
+    async fn slow_finalize_closing_gap_no_double_parent_ready() {
+        let mut ctx = setup();
+
+        // fast-finalize slots 1 and 2, advancing the watermark to just below slot 3
+        for s in [1, 2] {
+            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
+        }
+        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(2));
+
+        // slot 3 (last slot of the first window) gets a finalization cert but no
+        // notarization yet: it is finalized-pending-notar and cannot be pruned
+        let hash3: BlockHash = Hash::random_for_test().into();
+        ctx.add_final_votes(Slot::new(3), 0..7).await;
+        assert!(ctx.pool.has_final_cert(Slot::new(3)));
+        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(2));
+
+        // fast-finalize slot 4 (start of the second window). This opens a gap:
+        // slot 4 is finalized while slot 3 is still unresolved below it.
+        ctx.fast_finalize(Slot::new(4), &GENESIS_BLOCK_HASH).await;
+        assert_eq!(ctx.pool.finalized_slot(), Slot::new(4));
+        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(2));
+
+        // slot 3's notarization arrives, completing its slow finalization and
+        // closing the gap. The watermark jumps across slots 3 and 4.
+        ctx.add_notar_votes(Slot::new(3), &hash3, 0..7).await;
+        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(4));
+
+        // slot 3's block is propagated as a ready parent of the second window
+        // exactly once, despite being marked notarized-fallback more than once.
+        let parent = (Slot::new(3), hash3);
+        assert_eq!(
+            ctx.pool
+                .parents_ready(Slot::new(4))
+                .iter()
+                .filter(|p| **p == parent)
+                .count(),
+            1
         );
     }
 

@@ -99,7 +99,9 @@ impl ParentReadyState {
     ///
     /// # Panics
     ///
-    /// If the specific parent is already marked ready for this slot.
+    /// If the specific parent is already marked ready for this slot. The
+    /// [`super::ParentReadyTracker`] guarantees this by never re-processing a
+    /// pruned slot, so a parent is propagated to each window at most once.
     pub(super) fn add_to_ready(&mut self, id: BlockId) {
         match &mut self.is_ready {
             IsReady::NotReady(sender) => {
