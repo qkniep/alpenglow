@@ -42,26 +42,24 @@ use crate::crypto::{MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
 use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
 
-/// Number of bytes in the message that the leader signs for each slice.
+/// Number of bytes in the commitment that the leader signs for each slice.
 ///
 /// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `merkle_root` (32 B).
 const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
 
-/// Byte string the leader signs for each shred in a slice.
+/// Commitment the leader signs for each slice.
 ///
-/// Binding the `SliceHeader` into the signature prevents cross-slot replay:
-/// a shred from slot `S` cannot be re-framed as a shred from slot `S'` (even by
-/// the same leader) without invalidating the signature. The crate-private
-/// `new` constructor is the single source of truth for what the leader signature
-/// covers — extending the authenticated content means extending that constructor.
+/// Binding the `SliceHeader` into the signature prevents replay attacks.
+/// A shred for slot `s`, slice `i` is never valid for slot `s'` or slice `i'`.
+/// What this commitment covers is determined by the crate-private `new` constructor.
 ///
-/// This is an opaque capability: obtainable only via [`ValidatedShred::commitment`]
-/// (construction is crate-private). The inner byte layout is a protocol detail, not
-/// a stable API — do not depend on it.
+/// This is an opaque capability, obtainable only via [`ValidatedShred::commitment`].
+/// The inner byte layout is a protocol detail, not a stable API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
 
 impl SliceCommitment {
+    /// Creates a [`SliceCommitment`] covering a [`SliceHeader`] and a [`SliceRoot`].
     pub(crate) fn new(header: &SliceHeader, merkle_root: &SliceRoot) -> Self {
         let mut buf = [0u8; SLICE_COMMITMENT_LEN];
         buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
