@@ -125,6 +125,21 @@ where
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Interprets a joined task result during shutdown.
+///
+/// On shutdown the loops are aborted.
+/// So a [`JoinError`] from cancellation is the expected outcome and maps to `Ok(())`.
+/// A panic still propagates, as does any error the task itself returned.
+///
+/// [`JoinError`]: tokio::task::JoinError
+fn join_for_shutdown(res: Result<Result<()>, tokio::task::JoinError>) -> Result<()> {
+    match res {
+        Ok(inner) => inner,
+        Err(err) if err.is_cancelled() => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Send + Sync + 'static,
@@ -255,8 +270,8 @@ where
         prod_loop.abort();
 
         let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
-        msg_res??;
-        prod_res??;
+        join_for_shutdown(msg_res)?;
+        join_for_shutdown(prod_res)?;
         Ok(())
     }
 
