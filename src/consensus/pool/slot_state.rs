@@ -706,19 +706,19 @@ mod tests {
         let v1 = ValidatorIndex::new(1);
         add(&mut state, Vote::new_skip(slot, &sks[1], v1));
         let notar_vote = Vote::new_notar(slot, hash.clone(), &sks[1], v1);
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&notar_vote),
-            Some(SlashableOffence::SkipAndNotarize(o, s)) if o == v1 && s == slot
-        ));
+            Some(SlashableOffence::SkipAndNotarize(v1, slot))
+        );
 
         // validator 2 notarizes first, so a later skip is slashable
         let v2 = ValidatorIndex::new(2);
         add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[2], v2));
         let skip_vote = Vote::new_skip(slot, &sks[2], v2);
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&skip_vote),
-            Some(SlashableOffence::SkipAndNotarize(o, s)) if o == v2 && s == slot
-        ));
+            Some(SlashableOffence::SkipAndNotarize(v2, slot))
+        );
     }
 
     #[test]
@@ -730,20 +730,17 @@ mod tests {
         let mut state = SlotState::new(slot, epoch_info);
         let v = ValidatorIndex::new(1);
 
-        add(
-            &mut state,
-            Vote::new_notar(slot, hash_a.clone(), &sks[1], v),
-        );
+        let notar_a = Vote::new_notar(slot, hash_a, &sks[1], v);
+        add(&mut state, notar_a.clone());
 
         // notarizing a different hash for the same slot is slashable
         let notar_b = Vote::new_notar(slot, hash_b, &sks[1], v);
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&notar_b),
-            Some(SlashableOffence::NotarDifferentHash(o, s)) if o == v && s == slot
-        ));
+            Some(SlashableOffence::NotarDifferentHash(v, slot))
+        );
 
         // re-notarizing the same hash is a benign duplicate, not slashable
-        let notar_a = Vote::new_notar(slot, hash_a, &sks[1], v);
         assert!(state.check_slashable_offence(&notar_a).is_none());
     }
 
@@ -757,30 +754,30 @@ mod tests {
         // finalize first, then skip / skip-fallback are slashable
         let v1 = ValidatorIndex::new(1);
         add(&mut state, Vote::new_final(slot, &sks[1], v1));
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&Vote::new_skip(slot, &sks[1], v1)),
-            Some(SlashableOffence::SkipAndFinalize(o, s)) if o == v1 && s == slot
-        ));
-        assert!(matches!(
+            Some(SlashableOffence::SkipAndFinalize(v1, slot))
+        );
+        assert_eq!(
             state.check_slashable_offence(&Vote::new_skip_fallback(slot, &sks[1], v1)),
-            Some(SlashableOffence::SkipAndFinalize(o, s)) if o == v1 && s == slot
-        ));
+            Some(SlashableOffence::SkipAndFinalize(v1, slot))
+        );
 
         // skip first, then finalize is slashable
         let v2 = ValidatorIndex::new(2);
         add(&mut state, Vote::new_skip(slot, &sks[2], v2));
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
-            Some(SlashableOffence::SkipAndFinalize(o, s)) if o == v2 && s == slot
-        ));
+            Some(SlashableOffence::SkipAndFinalize(v2, slot))
+        );
 
         // skip-fallback first, then finalize is slashable
         let v3 = ValidatorIndex::new(3);
         add(&mut state, Vote::new_skip_fallback(slot, &sks[3], v3));
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&Vote::new_final(slot, &sks[3], v3)),
-            Some(SlashableOffence::SkipAndFinalize(o, s)) if o == v3 && s == slot
-        ));
+            Some(SlashableOffence::SkipAndFinalize(v3, slot))
+        );
     }
 
     #[test]
@@ -794,21 +791,19 @@ mod tests {
         let v1 = ValidatorIndex::new(1);
         add(&mut state, Vote::new_final(slot, &sks[1], v1));
         let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[1], v1);
-        assert!(matches!(
+        assert_eq!(
             state.check_slashable_offence(&nf_vote),
-            Some(SlashableOffence::NotarFallbackAndFinalize(o, s)) if o == v1 && s == slot
-        ));
+            Some(SlashableOffence::NotarFallbackAndFinalize(v1, slot))
+        );
 
         // notar-fallback first, then finalize is slashable
         let v2 = ValidatorIndex::new(2);
-        add(
-            &mut state,
-            Vote::new_notar_fallback(slot, hash.clone(), &sks[2], v2),
-        );
-        assert!(matches!(
+        let notar_vote = Vote::new_notar(slot, hash.clone(), &sks[2], v2);
+        add(&mut state, notar_vote);
+        assert_eq!(
             state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
-            Some(SlashableOffence::NotarFallbackAndFinalize(o, s)) if o == v2 && s == slot
-        ));
+            Some(SlashableOffence::NotarFallbackAndFinalize(v2, slot))
+        );
     }
 
     #[test]
