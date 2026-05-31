@@ -30,6 +30,7 @@ mod votor;
 use std::marker::{Send, Sync};
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -114,6 +115,10 @@ where
     blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
     pool: SharedPool,
+    /// Lock-free snapshot of the pool's highest finalized slot, used to drop
+    /// votes/certs for already-finalized slots before verifying their
+    /// signatures (see [`PoolImpl::finalized_slot_hint`]).
+    finalized_slot_hint: Arc<AtomicU64>,
 
     /// Block production (i.e. leader side) component of the consensus protocol.
     block_producer: Arc<BlockProducer<D, T>>,
@@ -164,11 +169,9 @@ where
         let blockstore: SharedBlockstore =
             Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
 
-        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
-            epoch_info.clone(),
-            pool_tx,
-            repair_tx,
-        )));
+        let pool_impl = PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx);
+        let finalized_slot_hint = pool_impl.finalized_slot_hint();
+        let pool: SharedPool = Arc::new(RwLock::new(pool_impl));
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
@@ -220,6 +223,7 @@ where
             epoch_info,
             blockstore,
             pool,
+            finalized_slot_hint,
             block_producer,
             all2all,
             disseminator,
@@ -323,9 +327,22 @@ where
         // pool lock, mirroring the `ValidatedShred` pattern on the shred path.
         // This keeps the expensive BLS work off the critical section, so that
         // `Pool::add_vote`/`add_cert` only have to merge into per-slot state.
+        //
+        // As a further cheap filter, drop messages for already-finalized slots
+        // *before* even verifying their signatures. We only check this lower
+        // bound, not the far-in-the-future one: `finalized_slot_hint` may lag
+        // the pool's true finalized slot, and a stale-low value only rejects a
+        // strict subset of what the pool would reject under the lock, so it can
+        // never drop a message the pool would have accepted. The pool still
+        // re-checks both bounds authoritatively.
         let epoch_info = self.epoch_info.epoch_info();
+        let finalized_slot = Slot::new(self.finalized_slot_hint.load(Ordering::Acquire));
         match msg {
             ConsensusMessage::Vote(v) => {
+                if v.slot() < finalized_slot {
+                    trace!("ignoring vote for finalized slot {}", v.slot());
+                    return;
+                }
                 let vote = match ValidatedVote::try_new(v, epoch_info) {
                     Ok(vote) => vote,
                     Err(err) => {
@@ -342,6 +359,10 @@ where
                 }
             }
             ConsensusMessage::Cert(c) => {
+                if c.slot() < finalized_slot {
+                    trace!("ignoring cert for finalized slot {}", c.slot());
+                    return;
+                }
                 let cert = match ValidatedCert::try_new(c, epoch_info) {
                     Ok(cert) => cert,
                     Err(err) => {

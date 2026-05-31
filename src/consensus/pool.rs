@@ -13,6 +13,7 @@ mod slot_state;
 use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use either::Either;
@@ -143,6 +144,17 @@ pub struct PoolImpl {
     /// Keeps track of safe-to-notar blocks waiting for a parent certificate.
     s2n_waiting_parent_cert: BTreeMap<BlockId, BlockId>,
 
+    /// Lock-free snapshot of [`Self::finalized_slot`], shared with the consensus
+    /// message handler so it can cheaply drop votes/certs for already-finalized
+    /// slots *before* the expensive BLS verification and taking the pool lock.
+    ///
+    /// Refreshed whenever finalization advances (see [`Self::handle_finalization`]).
+    /// It may lag the true finalized slot by at most one in-flight operation,
+    /// which is safe: a stale-low value only ever lets *extra* messages through
+    /// to the authoritative check below, it can never cause a valid one to be
+    /// dropped early.
+    finalized_slot_hint: Arc<AtomicU64>,
+
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
     /// Channel for sending events related to voting logic to Votor.
@@ -165,10 +177,34 @@ impl PoolImpl {
             parent_ready_tracker: ParentReadyTracker::default(),
             finality_tracker: FinalityTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
+            finalized_slot_hint: Arc::new(AtomicU64::new(Slot::genesis().inner())),
             epoch_info,
             votor_event_channel,
             repair_channel,
         }
+    }
+
+    /// Returns a handle to the lock-free [finalized-slot snapshot](Self::finalized_slot_hint).
+    ///
+    /// The consensus message handler uses this to pre-filter votes/certs for
+    /// already-finalized slots without taking the pool lock.
+    #[must_use]
+    pub fn finalized_slot_hint(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.finalized_slot_hint)
+    }
+
+    /// Returns whether `slot` is within the acceptable window for new votes and
+    /// certificates: not older than the highest finalized slot, and not more
+    /// than `2 * SLOTS_PER_EPOCH` ahead of it.
+    ///
+    /// The lower bound is strict (`>=`) rather than `>` so that a (fast-)final
+    /// or notarization arriving for the slot we just finalized is still counted.
+    // TODO: set bounds exactly correctly,
+    //       use correct validator set & stake distribution
+    fn slot_in_bounds(&self, slot: Slot) -> bool {
+        let finalized = self.finalized_slot();
+        let far_in_future = Slot::new(finalized.inner() + 2 * SLOTS_PER_EPOCH);
+        slot >= finalized && slot < far_in_future
     }
 
     /// Adds a new certificate to the pool. Certificate is assumed to be valid.
@@ -385,6 +421,10 @@ impl PoolImpl {
     }
 
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
+        // refresh the lock-free snapshot for the consensus pre-filter; this is
+        // the single funnel through which `finalized_slot()` can advance
+        self.finalized_slot_hint
+            .store(self.finalized_slot().inner(), Ordering::Release);
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
         self.send_parent_ready_events(new_parents_ready).await;
     }
@@ -413,11 +453,7 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        // NOTE: This needs to be `< finalize_slot` to allow for later notarization.
-        if slot < self.finalized_slot() || slot >= slot_far_in_future {
+        if !self.slot_in_bounds(slot) {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
@@ -454,10 +490,7 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly,
-        //       use correct validator set & stake distribution
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
-        if slot < self.finalized_slot() || slot >= slot_far_in_future {
+        if !self.slot_in_bounds(slot) {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
@@ -1094,10 +1127,7 @@ mod tests {
             .collect();
         let notar_cert =
             NotarCert::try_new(&notar_votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.add_cert(Cert::Notar(notar_cert.clone())).await,
-            Ok(())
-        );
+        assert_eq!(ctx.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
 
         // insert a skip cert for slot 1
         let second_slot = first_slot.next();
@@ -1106,10 +1136,7 @@ mod tests {
             .collect();
         let skip_cert =
             SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
-            Ok(())
-        );
+        assert_eq!(ctx.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
 
         // inserting same certs again should fail
         assert_eq!(
@@ -1139,10 +1166,7 @@ mod tests {
                     &ctx.sks[v as usize],
                     ValidatorIndex::new(v),
                 );
-                assert_eq!(
-                    ctx.add_vote(vote).await,
-                    Err(AddVoteError::SlotOutOfBounds)
-                );
+                assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
             }
         }
 
@@ -1150,10 +1174,7 @@ mod tests {
         let slot = Slot::new(5 * SLOTS_PER_EPOCH);
         for v in 0..11 {
             let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
-            assert_eq!(
-                ctx.add_vote(vote).await,
-                Err(AddVoteError::SlotOutOfBounds)
-            );
+            assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
         }
     }
 
@@ -1175,10 +1196,7 @@ mod tests {
             .collect();
         let ff_cert =
             FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.add_cert(Cert::FastFinal(ff_cert.clone())).await,
-            Ok(())
-        );
+        assert_eq!(ctx.add_cert(Cert::FastFinal(ff_cert.clone())).await, Ok(()));
 
         // dismiss old certs
         for slot in 0..3 * SLOTS_PER_WINDOW - 1 {
