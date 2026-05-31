@@ -537,7 +537,7 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(merkle_root.as_ref());
+    let merkle_root_sig = sk.sign_bytes(merkle_root.as_ref());
 
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
