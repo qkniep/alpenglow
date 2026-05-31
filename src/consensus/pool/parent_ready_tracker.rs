@@ -33,11 +33,26 @@ pub(super) struct ParentReadyTracker {
     states: HashMap<Slot, ParentReadyState>,
     /// Lowest slot still tracked; everything below it has been pruned.
     ///
-    /// Pruned slots are fully resolved, so we never (re-)process them: their
-    /// blocks have already been propagated to all reachable future windows.
-    /// This guards against re-creating dropped state, which would otherwise
-    /// re-propagate a parent that a future window already holds.
+    /// Pruned slots are decided, so we never (re-)process them.
+    /// Their blocks have already been propagated to all reachable future windows.
+    /// This guards against re-creating dropped state,
+    /// and re-propagating a parent that a future window already holds.
     root: Slot,
+}
+
+impl Default for ParentReadyTracker {
+    /// Creates a new empty tracker.
+    ///
+    /// Initially, only the genesis block is considered notarized-fallback.
+    fn default() -> Self {
+        let mut states = HashMap::new();
+        let genesis_parent_state = ParentReadyState::genesis();
+        states.insert(Slot::genesis(), genesis_parent_state);
+        Self {
+            states,
+            root: Slot::genesis(),
+        }
+    }
 }
 
 impl ParentReadyTracker {
@@ -47,7 +62,7 @@ impl ParentReadyTracker {
     /// All of these will have the given block ID as the parent.
     pub(super) fn mark_notar_fallback(&mut self, id: &BlockId) -> SmallVec<[(Slot, BlockId); 1]> {
         let (slot, hash) = id.clone();
-        // already resolved and pruned; its block is already fully propagated
+        // already decided and pruned; its block is already fully propagated
         if slot < self.root {
             return SmallVec::new();
         }
@@ -75,7 +90,7 @@ impl ParentReadyTracker {
     ///
     /// Returns a list of any newly connected parents.
     pub(super) fn mark_skipped(&mut self, marked_slot: Slot) -> SmallVec<[(Slot, BlockId); 1]> {
-        // already resolved and pruned; its parents are already fully propagated
+        // already decided and pruned; its parents are already fully propagated
         if marked_slot < self.root {
             return SmallVec::new();
         }
@@ -89,7 +104,7 @@ impl ParentReadyTracker {
         let root = self.root;
         let window_slots = marked_slot.slots_in_window();
         // going back from `marked_slot` find any skip-connected parents,
-        // never reaching into already-pruned (resolved) slots
+        // never reaching into already-pruned (decided) slots
         for slot in window_slots
             .filter(|s| *s <= marked_slot && *s >= root)
             .rev()
@@ -176,8 +191,8 @@ impl ParentReadyTracker {
 
     /// Removes all tracked state for slots strictly below `new_root`.
     ///
-    /// After this, only slots `>= new_root` are retained, and marks for slots
-    /// below `new_root` are ignored from now on (see [`Self::root`]).
+    /// After this, only slots `>= new_root` are retained.
+    /// Calls for slots `< new_root` are ignored from now on (see [`Self::root`]).
     /// This should be called when the root (finalized) slot advances,
     /// to free memory for slots that are no longer relevant.
     pub(super) fn prune(&mut self, new_root: Slot) {
@@ -190,21 +205,6 @@ impl ParentReadyTracker {
     /// Initializes the state with [`Default`] if necessary.
     fn slot_state(&mut self, slot: Slot) -> &mut ParentReadyState {
         self.states.entry(slot).or_default()
-    }
-}
-
-impl Default for ParentReadyTracker {
-    /// Creates a new empty tracker.
-    ///
-    /// Initially, only the genesis block is considered notarized-fallback.
-    fn default() -> Self {
-        let mut states = HashMap::new();
-        let genesis_parent_state = ParentReadyState::genesis();
-        states.insert(Slot::genesis(), genesis_parent_state);
-        Self {
-            states,
-            root: Slot::genesis(),
-        }
     }
 }
 

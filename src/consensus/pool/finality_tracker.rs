@@ -37,7 +37,7 @@ pub(super) struct FinalityTracker {
     highest_finalized_slot: Slot,
     /// The lowest slot whose state has not yet been pruned.
     ///
-    /// Everything below this is a contiguous prefix of fully resolved
+    /// Everything below this is a contiguous prefix of decided
     /// (finalized or implicitly skipped) slots that has been dropped.
     /// This can lag behind [`Self::highest_finalized_slot`]
     /// (e.g. a slot may be finalized before the parent-chain is fully resolved).
@@ -97,7 +97,7 @@ impl FinalityTracker {
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub(super) fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         assert!(block.0 > parent.0);
-        // ignore blocks for already-pruned slots (e.g. late delivery from blockstore)
+        // NOTE: This can genuinely happen if we see a finalization before the block.
         if block.0 < self.first_unpruned_slot {
             return FinalizationEvent::default();
         }
@@ -144,6 +144,7 @@ impl FinalityTracker {
         if slot < self.first_unpruned_slot {
             return FinalizationEvent::default();
         }
+
         let old = self
             .status
             .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
@@ -251,7 +252,7 @@ impl FinalityTracker {
 
     /// Returns the first slot whose state has not yet been pruned.
     ///
-    /// All slots below this are fully decided and no longer tracked,
+    /// All slots below this are decided and no longer tracked,
     /// so certificates and votes for them can be safely ignored.
     pub(super) fn first_unpruned_slot(&self) -> Slot {
         self.first_unpruned_slot
@@ -259,8 +260,8 @@ impl FinalityTracker {
 
     /// Handles the direct finalization of the given block.
     ///
-    /// Recurses through ancestors, potentially implicitly finalizing them,
-    /// then prunes the newly resolved prefix.
+    /// Recurses through ancestors, potentially implicitly finalizing them.
+    /// Prunes the newly decided prefix if necessary.
     ///
     /// Updates the `event` all along the way with:
     /// - The finalized block,
@@ -291,10 +292,8 @@ impl FinalityTracker {
         event: &mut FinalizationEvent,
     ) {
         assert!(source_slot > implicitly_finalized.0);
-
-        // the ancestor may already be resolved and pruned (e.g. a parent edge that
-        // arrives after its slot was finalized); it was emitted before pruning, so
-        // there is nothing left to do — and recursing would re-emit it
+        // parent slot may already be decided and pruned;
+        // consider a call to `add_parent` for the `first_unpruned_slot`
         if implicitly_finalized.0 < self.first_unpruned_slot {
             return;
         }
@@ -358,8 +357,8 @@ impl FinalityTracker {
 
     /// Clears all state that is no longer needed.
     ///
-    /// Advances [`Self::first_unpruned_slot`] across the contiguous prefix of decided slots.
-    /// Then, drops all state before it.
+    /// Advances [`Self::first_unpruned_slot`] to the end of the prefix of decided slots.
+    /// Then, drops all state corresponding to (decided) slots before it.
     fn prune(&mut self) {
         let mut next = self.first_unpruned_slot.next();
         while self.status.get(&next).is_some_and(|status| {
@@ -496,7 +495,6 @@ mod tests {
         // finalize slot 5, implicitly finalizing its ancestors
         let root = Slot::new(5);
         tracker.mark_finalized(root);
-
         // this moves the watermark to slot 5
         assert_eq!(tracker.first_unpruned_slot(), root);
 
@@ -512,7 +510,7 @@ mod tests {
         let mut tracker = FinalityTracker::default();
         let hash2: BlockHash = Hash::random_for_test().into();
 
-        // finality cert for slot 1 without block hash
+        // final cert for slot 1, no notar yet
         assert_eq!(
             tracker.mark_finalized(Slot::new(1)),
             FinalizationEvent::default()
@@ -522,7 +520,6 @@ mod tests {
         tracker.mark_notarized(Slot::new(2), hash2.clone());
         let event = tracker.mark_finalized(Slot::new(2));
         assert_eq!(event.finalized, Some((Slot::new(2), hash2)));
-
         // cannot prune slot 1 yet
         // we can't have emitted a `FinalizationEvent` for it yet
         assert_eq!(tracker.highest_finalized_slot(), Slot::new(2));
@@ -569,7 +566,7 @@ mod tests {
         let hash1: BlockHash = Hash::random_for_test().into();
         let hash2: BlockHash = Hash::random_for_test().into();
 
-        // finalize slot 1 (with its parent chain), keeping the watermark at slot 1
+        // finalize slot 1 (with its parent chain)
         tracker.add_parent(
             (Slot::new(1), hash1.clone()),
             (Slot::genesis(), GENESIS_BLOCK_HASH),
@@ -577,14 +574,17 @@ mod tests {
         tracker.mark_notarized(Slot::new(1), hash1.clone());
         let event = tracker.mark_finalized(Slot::new(1));
         assert_eq!(event.finalized, Some((Slot::new(1), hash1.clone())));
+        // keeps the watermark at slot 1
+        assert_eq!(tracker.first_unpruned_slot(), Slot::new(1));
 
-        // finalize slot 2 before its parent edge is known; this prunes slot 1
+        // finalize slot 2 before its parent edge is known
         tracker.mark_notarized(Slot::new(2), hash2.clone());
         let event = tracker.mark_finalized(Slot::new(2));
         assert_eq!(event.finalized, Some((Slot::new(2), hash2.clone())));
+        // this prunes slot 1
         assert_eq!(tracker.first_unpruned_slot(), Slot::new(2));
 
-        // the now-late parent edge must NOT re-finalize the already-pruned slot 1
+        // late parent edge must NOT re-finalize (already-pruned) slot 1
         let event = tracker.add_parent((Slot::new(2), hash2), (Slot::new(1), hash1));
         assert_eq!(event, FinalizationEvent::default());
     }

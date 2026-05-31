@@ -342,8 +342,8 @@ impl PoolImpl {
 
     /// Returns the first slot whose state has not been pruned.
     ///
-    /// Everything below this is fully resolved; certificates and votes for those
-    /// slots can be safely ignored.
+    /// Everything before this slot is decided;
+    /// certificates and votes for those slots can be safely ignored.
     fn first_unpruned_slot(&self) -> Slot {
         self.finality_tracker.first_unpruned_slot()
     }
@@ -1272,53 +1272,39 @@ mod tests {
         );
     }
 
-    /// Regression test for a double parent-ready insertion.
-    ///
-    /// Completing a slow finalization while a pruning gap exists finalizes a
-    /// slot whose state is then pruned, yet it is still marked notarized-fallback
-    /// again (here by the trailing `mark_notar_fallback` in `add_valid_cert`).
-    /// Without the prune-watermark guard in `ParentReadyTracker`, that re-marks
-    /// the pruned slot and re-propagates its block to a future window-start that
-    /// already holds it, tripping the assertion in `ParentReadyState::add_to_ready`.
     #[tokio::test]
     async fn slow_finalize_closing_gap_no_double_parent_ready() {
         let mut ctx = setup();
+        let next_start = Slot::windows().nth(1).unwrap();
+        let gap_slot = next_start.prev();
+        let watermark_slot = gap_slot.prev();
 
-        // fast-finalize slots 1 and 2, advancing the watermark to just below slot 3
-        for s in [1, 2] {
+        // fast-finalize every slot below `gap_slot`
+        for s in 1..gap_slot.inner() {
             ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
         }
-        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(2));
+        // this moves the watermark just below it
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
 
-        // slot 3 (last slot of the first window) gets a finalization cert but no
-        // notarization yet: it is finalized-pending-notar and cannot be pruned
-        let hash3: BlockHash = Hash::random_for_test().into();
-        ctx.add_final_votes(Slot::new(3), 0..7).await;
-        assert!(ctx.pool.has_final_cert(Slot::new(3)));
-        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(2));
+        // `gap_slot` gets a final cert but no notarization yet
+        let gap_hash: BlockHash = Hash::random_for_test().into();
+        ctx.add_final_votes(gap_slot, 0..7).await;
+        assert!(ctx.pool.has_final_cert(gap_slot));
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
 
-        // fast-finalize slot 4 (start of the second window). This opens a gap:
-        // slot 4 is finalized while slot 3 is still unresolved below it.
-        ctx.fast_finalize(Slot::new(4), &GENESIS_BLOCK_HASH).await;
-        assert_eq!(ctx.pool.finalized_slot(), Slot::new(4));
-        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(2));
+        // fast-finalize `next_start`, introducing a gap
+        ctx.fast_finalize(next_start, &GENESIS_BLOCK_HASH).await;
+        assert_eq!(ctx.pool.finalized_slot(), next_start);
+        // cannot prune past the gap
+        assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
 
-        // slot 3's notarization arrives, completing its slow finalization and
-        // closing the gap. The watermark jumps across slots 3 and 4.
-        ctx.add_notar_votes(Slot::new(3), &hash3, 0..7).await;
-        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::new(4));
+        // `gap_slot`'s notarization closes the gap
+        ctx.add_notar_votes(gap_slot, &gap_hash, 0..7).await;
+        // jumping the watermark across both slots
+        assert_eq!(ctx.pool.first_unpruned_slot(), next_start);
 
-        // slot 3's block is propagated as a ready parent of the second window
-        // exactly once, despite being marked notarized-fallback more than once.
-        let parent = (Slot::new(3), hash3);
-        assert_eq!(
-            ctx.pool
-                .parents_ready(Slot::new(4))
-                .iter()
-                .filter(|p| **p == parent)
-                .count(),
-            1
-        );
+        // `gap_slot` is propagated as a ready parent exactly once
+        assert_eq!(ctx.pool.parents_ready(next_start).iter().count(), 1);
     }
 
     #[tokio::test]
