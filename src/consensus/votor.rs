@@ -25,7 +25,7 @@ use super::{Cert, ConsensusMessage, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
-use crate::{All2All, Slot, ValidatorIndex};
+use crate::{All2All, BlockId, Slot, ValidatorIndex};
 
 /// Votor implements the decision process of which votes to cast.
 ///
@@ -169,7 +169,7 @@ impl<A: All2All> Votor<A> {
             PoolEvent::Standstill { .. } => false,
             PoolEvent::CertCreated(_) => slot < self.first_unpruned_slot(),
             PoolEvent::ParentReady { .. }
-            | PoolEvent::SafeToNotar(_, _)
+            | PoolEvent::SafeToNotar(_)
             | PoolEvent::SafeToSkip(_) => {
                 slot < self.first_unpruned_slot() || self.is_retired(slot)
             }
@@ -184,20 +184,15 @@ impl<A: All2All> Votor<A> {
         }
         trace!("votor pool event: {event:?}");
         match event {
-            PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            } => {
+            PoolEvent::ParentReady { slot, parent } => {
+                let (parent_slot, parent_hash) = &parent;
                 let h = parent_hash.short_hex();
                 trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
-                self.state_mut(slot)
-                    .parents_ready
-                    .insert((parent_slot, parent_hash));
+                self.state_mut(slot).parents_ready.insert(parent);
                 self.check_pending_blocks().await;
                 self.set_timeouts(slot);
             }
-            PoolEvent::SafeToNotar(slot, hash) => {
+            PoolEvent::SafeToNotar((slot, hash)) => {
                 debug!("voted notar-fallback in slot {slot}");
                 let vote =
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
@@ -456,7 +451,7 @@ struct SlotState {
     /// Hash of the block with a notarization certificate (not notar-fallback).
     block_notarized: Option<BlockHash>,
     /// Valid parents for this slot, as `(parent_slot, parent_hash)` pairs.
-    parents_ready: BTreeSet<(Slot, BlockHash)>,
+    parents_ready: BTreeSet<BlockId>,
     /// Whether we received at least one shred for this slot.
     received_shred: bool,
     /// Block waiting for previous slots to be notarized.
@@ -688,7 +683,7 @@ mod tests {
         // vote notar-fallback after safe-to-notar
         let hash = Hash::random_for_test();
         ctx.pool_tx
-            .send(PoolEvent::SafeToNotar(slot, hash.clone().into()))
+            .send(PoolEvent::SafeToNotar((slot, hash.clone().into())))
             .await
             .unwrap();
         match ctx.other_a2a.receive().await.unwrap() {

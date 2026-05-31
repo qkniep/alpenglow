@@ -105,6 +105,11 @@ pub fn create_random_shredded_block(
     (block_hash, tree, shreds)
 }
 
+/// Returns a [`BlockId`] for `slot` with a fresh random block hash.
+pub fn random_block_id(slot: Slot) -> BlockId {
+    (slot, Hash::random_for_test().into())
+}
+
 /// Creates a random block with the given number of slices.
 ///
 /// In most cases, you should use [`create_random_shredded_block`] instead.

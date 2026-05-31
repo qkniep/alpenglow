@@ -36,17 +36,12 @@ use crate::{BlockId, Slot, ValidatorIndex};
 /// [`Votor`]: crate::consensus::votor::Votor
 #[derive(Clone, Debug)]
 pub enum PoolEvent {
-    /// The pool has newly marked the given block as a ready parent for `slot`.
+    /// Pool newly marked the given block as a ready `parent` for `slot`.
     ///
     /// This event is only emitted per window, `slot` is always the first slot.
-    /// The parent block is identified by `parent_slot` and `parent_hash`.
-    ParentReady {
-        slot: Slot,
-        parent_slot: Slot,
-        parent_hash: BlockHash,
-    },
+    ParentReady { slot: Slot, parent: BlockId },
     /// The given block has reached the safe-to-notar status.
-    SafeToNotar(Slot, BlockHash),
+    SafeToNotar(BlockId),
     /// The given slot has reached the safe-to-skip status.
     SafeToSkip(Slot),
     /// New certificate created in pool (should then be broadcast by Votor).
@@ -63,7 +58,7 @@ impl PoolEvent {
     pub(crate) const fn slot(&self) -> Slot {
         match self {
             Self::ParentReady { slot, .. }
-            | Self::SafeToNotar(slot, _)
+            | Self::SafeToNotar((slot, _))
             | Self::SafeToSkip(slot)
             | Self::Standstill(slot, _, _) => *slot,
             Self::CertCreated(cert) => cert.slot(),
@@ -399,13 +394,9 @@ impl PoolImpl {
     }
 
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
-        for (slot, (parent_slot, parent_hash)) in parents {
+        for (slot, parent) in parents {
             debug_assert!(slot.is_start_of_window());
-            let event = PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            };
+            let event = PoolEvent::ParentReady { slot, parent };
             self.votor_event_channel.send(event).await.unwrap();
         }
     }
@@ -1405,11 +1396,8 @@ mod tests {
             panic!("expected to receive ParentReady event");
         };
         match event {
-            PoolEvent::ParentReady {
-                slot,
-                parent_slot,
-                parent_hash,
-            } => {
+            PoolEvent::ParentReady { slot, parent } => {
+                let (parent_slot, parent_hash) = parent;
                 assert_eq!(slot, slot1);
                 assert_eq!(parent_slot, slot0);
                 assert_eq!(parent_hash, hash0);

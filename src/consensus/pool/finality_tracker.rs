@@ -375,12 +375,7 @@ impl FinalityTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Hash;
-
-    /// Returns a [`BlockId`] for `slot` with a fresh random block hash.
-    fn random_block_id(slot: Slot) -> BlockId {
-        (slot, Hash::random_for_test().into())
-    }
+    use crate::test_utils::random_block_id;
 
     /// Returns the [`BlockId`] of the genesis block.
     fn genesis_block_id() -> BlockId {
@@ -536,7 +531,8 @@ mod tests {
 
         // a late block for an already-pruned slot is ignored, leaving no trace
         let stale = random_block_id(Slot::new(2));
-        let event = tracker.add_parent(stale.clone(), (Slot::new(1), GENESIS_BLOCK_HASH));
+        let block1 = random_block_id(Slot::new(1));
+        let event = tracker.add_parent(stale.clone(), block1);
         assert_eq!(event, FinalizationEvent::default());
         assert!(!tracker.parents.contains_key(&stale));
     }

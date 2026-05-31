@@ -211,8 +211,8 @@ impl ParentReadyTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Hash;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
+    use crate::test_utils::random_block_id;
     use crate::types::SLOTS_PER_WINDOW;
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
             .future_slots()
             .take(2 * SLOTS_PER_WINDOW as usize)
         {
-            let block = (s, Hash::random_for_test().into());
+            let block = random_block_id(s);
             let new_valid_parents = tracker.mark_notar_fallback(&block);
             if s == s.last_slot_in_window() {
                 assert!(new_valid_parents.contains(&(s.next(), block)));
@@ -251,7 +251,7 @@ mod tests {
     fn skips() {
         let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block).is_empty());
         for s in slot.slots_in_window() {
@@ -269,7 +269,7 @@ mod tests {
     fn out_of_order_skips() {
         let genesis = (Slot::genesis(), GENESIS_BLOCK_HASH);
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert_eq!(slot.slots_in_window().count(), 4);
         assert!(tracker.mark_skipped(Slot::new(3)).is_empty());
@@ -287,9 +287,9 @@ mod tests {
     #[test]
     fn out_of_order_notars() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
-        let block1 = (Slot::new(1), Hash::random_for_test().into());
-        let block2 = (Slot::new(2), Hash::random_for_test().into());
-        let block3 = (Slot::new(3), Hash::random_for_test().into());
+        let block1 = random_block_id(Slot::new(1));
+        let block2 = random_block_id(Slot::new(2));
+        let block3 = random_block_id(Slot::new(3));
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block2).is_empty());
         assert_eq!(
@@ -303,7 +303,7 @@ mod tests {
     fn no_double_counting_skip_chain() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
@@ -324,7 +324,7 @@ mod tests {
     fn no_double_counting_notar_and_skip() {
         assert_eq!(Slot::genesis().slots_in_window().count(), 4);
         let slot = Slot::genesis().next();
-        let block = (slot, Hash::random_for_test().into());
+        let block = random_block_id(slot);
         let mut tracker = ParentReadyTracker::default();
         assert!(tracker.mark_notar_fallback(&block).is_empty());
         assert!(tracker.mark_skipped(Slot::new(2)).is_empty());
@@ -391,11 +391,8 @@ mod tests {
         let mut tracker = ParentReadyTracker::default();
 
         // basic case where finalized slot is first in its window
-        let block = (
-            window2.first_slot_in_window(),
-            Hash::random_for_test().into(),
-        );
-        let parent = (block.0.prev(), Hash::random_for_test().into());
+        let block = random_block_id(window2.first_slot_in_window());
+        let parent = random_block_id(block.0.prev());
         let event = FinalizationEvent {
             finalized: Some(block.clone()),
             implicitly_finalized: vec![parent.clone()],
@@ -408,14 +405,8 @@ mod tests {
         assert_eq!(parent_ready.1, parent);
 
         // case where an entire window is skipped between parent and finalized block
-        let block = (
-            window4.first_slot_in_window(),
-            Hash::random_for_test().into(),
-        );
-        let parent = (
-            window3.first_slot_in_window().prev(),
-            Hash::random_for_test().into(),
-        );
+        let block = random_block_id(window4.first_slot_in_window());
+        let parent = random_block_id(window3.first_slot_in_window().prev());
         let event = FinalizationEvent {
             finalized: Some(block.clone()),
             implicitly_finalized: vec![parent.clone()],
@@ -428,12 +419,9 @@ mod tests {
         assert_eq!(parent_ready.1, parent);
 
         // case where finalized slot is NOT first in its window
-        let block = (
-            window5.first_slot_in_window().next(),
-            Hash::random_for_test().into(),
-        );
-        let parent = (block.0.prev(), Hash::random_for_test().into());
-        let parent_parent = (parent.0.prev(), Hash::random_for_test().into());
+        let block = random_block_id(window5.first_slot_in_window().next());
+        let parent = random_block_id(block.0.prev());
+        let parent_parent = random_block_id(parent.0.prev());
         let event = FinalizationEvent {
             finalized: Some(block.clone()),
             implicitly_finalized: vec![parent.clone(), parent_parent.clone()],
