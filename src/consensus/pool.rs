@@ -24,7 +24,7 @@ use tokio::sync::{RwLock, oneshot};
 use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
 use self::slot_state::SlotState;
-use super::{Cert, ValidatorEpochInfo, Vote};
+use super::{Cert, ValidatedCert, ValidatedVote, ValidatorEpochInfo, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::BlockHash;
@@ -67,14 +67,13 @@ impl PoolEvent {
 }
 
 /// Errors the Pool may return when adding a vote.
+///
+/// Signature and signer validity are checked up front by [`ValidatedVote`],
+/// so they are not represented here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddVoteError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
-    #[error("signer is not a validator in the current epoch")]
-    UnknownSigner,
-    #[error("invalid signature on the vote")]
-    InvalidSignature,
     #[error("duplicate vote")]
     Duplicate,
     #[error("vote constitutes a slashable offence")]
@@ -82,14 +81,13 @@ pub enum AddVoteError {
 }
 
 /// Errors the Pool may return when adding a certificate.
+///
+/// Signature validity and the stake threshold are checked up front by
+/// [`ValidatedCert`], so they are not represented here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddCertError {
     #[error("slot is either too old or too far in the future")]
     SlotOutOfBounds,
-    #[error("stake threshold not met")]
-    ThresholdNotMet,
-    #[error("invalid signature on the cert")]
-    InvalidSignature,
     #[error("duplicate cert")]
     Duplicate,
 }
@@ -113,8 +111,8 @@ pub enum SlashableOffence {
 #[async_trait]
 #[cfg_attr(test, mockall::automock)]
 pub trait Pool {
-    async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError>;
-    async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError>;
+    async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError>;
+    async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError>;
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
     async fn recover_from_standstill(&self);
     fn finalized_slot(&self) -> Slot;
@@ -404,9 +402,13 @@ impl PoolImpl {
 
 #[async_trait]
 impl Pool for PoolImpl {
-    /// Adds a new certificate to the pool. Checks validity of the certificate.
+    /// Adds a new certificate to the pool.
+    ///
+    /// The certificate's stake threshold and signature have already been
+    /// verified by [`ValidatedCert`], so this only checks the slot bounds and
+    /// rejects duplicates before merging into per-slot state.
     #[hotpath::measure]
-    async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
+    async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
         // TODO: set bounds exactly correctly
@@ -415,12 +417,7 @@ impl Pool for PoolImpl {
             return Err(AddCertError::SlotOutOfBounds);
         }
 
-        // verify stake threshold & signature
-        if !cert.check_threshold(self.epoch_info.epoch_info()) {
-            return Err(AddCertError::ThresholdNotMet);
-        } else if !cert.check_sig(self.epoch_info.epoch_info().validators()) {
-            return Err(AddCertError::InvalidSignature);
-        }
+        let cert = cert.into_cert();
 
         // check if the certificate is a duplicate
         let certs = &mut self.slot_state(slot).certificates;
@@ -442,9 +439,13 @@ impl Pool for PoolImpl {
         Ok(())
     }
 
-    /// Adds a new vote to the pool. Checks validity of the vote.
+    /// Adds a new vote to the pool.
+    ///
+    /// The vote's signer and signature have already been verified by
+    /// [`ValidatedVote`], so this only checks the slot bounds, screens for
+    /// slashable offences and duplicates, then merges into per-slot state.
     #[hotpath::measure]
-    async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
+    async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
         // TODO: set bounds exactly correctly
@@ -453,21 +454,12 @@ impl Pool for PoolImpl {
             return Err(AddVoteError::SlotOutOfBounds);
         }
 
-        // reject votes from validators outside the current epoch's set,
-        // otherwise `validator()` indexing below would panic on byzantine input
-        let epoch = self.epoch_info.epoch_info();
-        if vote.signer().as_usize() >= epoch.validators().len() {
-            return Err(AddVoteError::UnknownSigner);
-        }
+        let vote = vote.into_vote();
 
-        // verify signature
-        let pk = &epoch.validator(vote.signer()).voting_pubkey;
-        if !vote.check_sig(pk) {
-            return Err(AddVoteError::InvalidSignature);
-        }
-
-        // check if vote is valid and should be counted
-        let voter_stake = epoch.validator(vote.signer()).stake;
+        // `ValidatedVote` already guaranteed the signer is in the epoch's
+        // validator set (against the same shared `EpochInfo`), so this indexing
+        // cannot panic.
+        let voter_stake = self.epoch_info.epoch_info().validator(vote.signer()).stake;
         if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if self.slot_state(slot).should_ignore_vote(&vote) {
@@ -619,6 +611,26 @@ mod tests {
     }
 
     impl TestContext {
+        /// Verifies `vote` into a [`ValidatedVote`] and adds it to the pool.
+        ///
+        /// Panics if the vote fails signature verification; signature-rejection
+        /// behaviour is covered by the [`ValidatedVote`] tests instead.
+        async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
+            let vote = ValidatedVote::try_new(vote, self.epoch_info.epoch_info())
+                .expect("test vote should pass verification");
+            self.pool.add_vote(vote).await
+        }
+
+        /// Verifies `cert` into a [`ValidatedCert`] and adds it to the pool.
+        ///
+        /// Panics if the cert fails verification; verification-rejection
+        /// behaviour is covered by the [`ValidatedCert`] tests instead.
+        async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
+            let cert = ValidatedCert::try_new(cert, self.epoch_info.epoch_info())
+                .expect("test cert should pass verification");
+            self.pool.add_cert(cert).await
+        }
+
         async fn add_notar_votes(
             &mut self,
             slot: Slot,
@@ -627,7 +639,7 @@ mod tests {
         ) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_notar(slot, hash.clone(), &self.sks[v.as_usize()], v);
-                assert_eq!(self.pool.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote).await, Ok(()));
             }
         }
 
@@ -639,21 +651,21 @@ mod tests {
         ) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_notar_fallback(slot, hash.clone(), &self.sks[v.as_usize()], v);
-                assert_eq!(self.pool.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote).await, Ok(()));
             }
         }
 
         async fn add_skip_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_skip(slot, &self.sks[v.as_usize()], v);
-                assert_eq!(self.pool.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote).await, Ok(()));
             }
         }
 
         async fn add_final_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_final(slot, &self.sks[v.as_usize()], v);
-                assert_eq!(self.pool.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote).await, Ok(()));
             }
         }
 
@@ -673,23 +685,6 @@ mod tests {
                 FastFinalCert::try_new(&votes, self.epoch_info.epoch_info().validators()).unwrap();
             assert_eq!(self.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
         }
-    }
-
-    #[tokio::test]
-    async fn handle_invalid_votes() {
-        let mut ctx = setup();
-
-        let wrong_sk = SecretKey::new(&mut rand::rng());
-        let vote = Vote::new_notar(
-            Slot::new(0),
-            GENESIS_BLOCK_HASH,
-            &wrong_sk,
-            ValidatorIndex::new(0),
-        );
-        assert_eq!(
-            ctx.pool.add_vote(vote).await,
-            Err(AddVoteError::InvalidSignature)
-        );
     }
 
     #[tokio::test]
@@ -901,7 +896,7 @@ mod tests {
             })
             .collect();
         let cert = NotarCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-        ctx.pool.add_cert(Cert::Notar(cert)).await.unwrap();
+        ctx.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // branch can only be certified once we saw votes for parent
         assert!(ctx.pool.is_parent_ready(next, &(slot1, hash1)));
@@ -1082,15 +1077,15 @@ mod tests {
             &ctx.sks[0],
             ValidatorIndex::new(0),
         );
-        assert_eq!(ctx.pool.add_vote(vote1.clone()).await, Ok(()));
+        assert_eq!(ctx.add_vote(vote1.clone()).await, Ok(()));
 
         // insert a skip vote from validator 1
         let vote2 = Vote::new_skip(slot, &ctx.sks[1], ValidatorIndex::new(1));
-        assert_eq!(ctx.pool.add_vote(vote2.clone()).await, Ok(()));
+        assert_eq!(ctx.add_vote(vote2.clone()).await, Ok(()));
 
         // inserting same votes again should fail
-        assert_eq!(ctx.pool.add_vote(vote1).await, Err(AddVoteError::Duplicate));
-        assert_eq!(ctx.pool.add_vote(vote2).await, Err(AddVoteError::Duplicate));
+        assert_eq!(ctx.add_vote(vote1).await, Err(AddVoteError::Duplicate));
+        assert_eq!(ctx.add_vote(vote2).await, Err(AddVoteError::Duplicate));
     }
 
     #[tokio::test]
@@ -1113,7 +1108,7 @@ mod tests {
         let notar_cert =
             NotarCert::try_new(&notar_votes, ctx.epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
-            ctx.pool.add_cert(Cert::Notar(notar_cert.clone())).await,
+            ctx.add_cert(Cert::Notar(notar_cert.clone())).await,
             Ok(())
         );
 
@@ -1125,43 +1120,18 @@ mod tests {
         let skip_cert =
             SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
-            ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+            ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
             Ok(())
         );
 
         // inserting same certs again should fail
         assert_eq!(
-            ctx.pool.add_cert(Cert::Notar(notar_cert)).await,
+            ctx.add_cert(Cert::Notar(notar_cert)).await,
             Err(AddCertError::Duplicate)
         );
         assert_eq!(
-            ctx.pool.add_cert(Cert::Skip(skip_cert)).await,
+            ctx.add_cert(Cert::Skip(skip_cert)).await,
             Err(AddCertError::Duplicate)
-        );
-    }
-
-    #[tokio::test]
-    async fn unknown_signer_votes() {
-        let mut ctx = setup();
-        let slot = Slot::new(0);
-        let num_validators = ctx.epoch_info.epoch_info().validators().len() as u64;
-
-        // claim a `signer` out-of-bounds for validator set
-        let vote = Vote::new_notar(
-            slot,
-            GENESIS_BLOCK_HASH,
-            &ctx.sks[0],
-            ValidatorIndex::new(num_validators),
-        );
-        assert_eq!(
-            ctx.pool.add_vote(vote).await,
-            Err(AddVoteError::UnknownSigner)
-        );
-
-        let vote = Vote::new_skip(slot, &ctx.sks[0], ValidatorIndex::new(u64::MAX));
-        assert_eq!(
-            ctx.pool.add_vote(vote).await,
-            Err(AddVoteError::UnknownSigner)
         );
     }
 
@@ -1187,7 +1157,7 @@ mod tests {
                     ValidatorIndex::new(v),
                 );
                 assert_eq!(
-                    ctx.pool.add_vote(vote).await,
+                    ctx.add_vote(vote).await,
                     Err(AddVoteError::SlotOutOfBounds)
                 );
             }
@@ -1198,7 +1168,7 @@ mod tests {
         for v in 0..11 {
             let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
             assert_eq!(
-                ctx.pool.add_vote(vote).await,
+                ctx.add_vote(vote).await,
                 Err(AddVoteError::SlotOutOfBounds)
             );
         }
@@ -1243,7 +1213,7 @@ mod tests {
                 SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators())
                     .unwrap();
             assert_eq!(
-                ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+                ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
                 Err(AddCertError::SlotOutOfBounds)
             );
         }
@@ -1256,7 +1226,7 @@ mod tests {
         let skip_cert =
             SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
         assert_eq!(
-            ctx.pool.add_cert(Cert::Skip(skip_cert.clone())).await,
+            ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
             Err(AddCertError::SlotOutOfBounds)
         );
     }
