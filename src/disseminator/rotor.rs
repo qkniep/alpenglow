@@ -168,6 +168,7 @@ where
         ]
         .concat();
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
+        // PERF: Could avoid an allocation here if we had `SamplingStrategy::sample_quorum_into`.
         let relays: Arc<[ValidatorIndex]> = self.sampler.sample_quorum(&mut rng).into();
         self.relay_cache.insert((slot, slice), relays.clone());
         relays
