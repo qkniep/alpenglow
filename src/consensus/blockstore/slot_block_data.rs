@@ -10,10 +10,13 @@ use std::collections::btree_map::Entry;
 
 use log::{debug, trace, warn};
 use thiserror::Error;
+use wincode::config::DefaultConfig;
 
 use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
-use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
+use crate::shredder::{
+    DeshredError, MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred,
+};
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
 
@@ -334,7 +337,10 @@ impl BlockData {
                 parent = new_parent;
             }
 
-            let mut txs = match wincode::deserialize(&slice.data) {
+            // cap preallocation to the slice size limit (wincode has a 4 MiB default)
+            let config =
+                DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
+            let mut txs = match wincode::config::deserialize_exact(&slice.data, config) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("decoding slice {ind} failed with {err:?}");
