@@ -40,7 +40,7 @@ use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
-use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
+use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload, SlicePayloadError};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -101,6 +101,15 @@ impl From<ReedSolomonShredError> for DeshredError {
     fn from(err: ReedSolomonShredError) -> Self {
         match err {
             ReedSolomonShredError::TooMuchData => Self::TooMuchData,
+        }
+    }
+}
+
+impl From<SlicePayloadError> for DeshredError {
+    fn from(err: SlicePayloadError) -> Self {
+        match err {
+            SlicePayloadError::TooLarge { .. } => Self::TooMuchData,
+            SlicePayloadError::BadEncoding => Self::BadEncoding,
         }
     }
 }
@@ -279,7 +288,7 @@ impl Shredder for RegularShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root().clone();
@@ -330,7 +339,7 @@ impl Shredder for CodingOnlyShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root().clone();
@@ -420,7 +429,7 @@ impl Shredder for PetsShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(buffer.as_slice());
+        let payload = SlicePayload::try_from(buffer.as_slice())?;
         let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
@@ -507,7 +516,7 @@ impl Shredder for AontShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(buffer.as_slice());
+        let payload = SlicePayload::try_from(buffer.as_slice())?;
         let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
