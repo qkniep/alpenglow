@@ -33,7 +33,7 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
 }
 
 #[divan::bench(types = [RegularShredder, CodingOnlyShredder, PetsShredder, AontShredder])]
-fn deshred<S: Shredder>(bencher: divan::Bencher) {
+fn deshred_into<S: Shredder>(bencher: divan::Bencher) {
     let size = S::MAX_DATA_SIZE;
 
     bencher
@@ -52,8 +52,8 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
             (shredder, shreds)
         })
         .bench_values(
-            |(mut shredder, shreds): (S, [Option<ValidatedShred>; TOTAL_SHREDS])| {
-                let _ = shredder.deshred(&shreds).unwrap();
+            |(mut shredder, mut shreds): (S, [Option<ValidatedShred>; TOTAL_SHREDS])| {
+                let _ = shredder.deshred_into(&mut shreds).unwrap();
             },
         );
 }

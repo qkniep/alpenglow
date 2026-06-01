@@ -72,15 +72,6 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
-
-    /// Extracts the [`SliceHeader`] from a [`Slice`].
-    pub(crate) fn to_header(&self) -> SliceHeader {
-        SliceHeader {
-            slot: self.slot,
-            slice_index: self.slice_index,
-            is_last: self.is_last,
-        }
-    }
 }
 
 /// A slice recovered after deshredding.
