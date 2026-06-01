@@ -684,6 +684,21 @@ mod tests {
     }
 
     #[test]
+    fn deshred_rejects_undecodable_payload() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        // a single byte is too short to be a serialized `SlicePayload`
+        // (which needs at least a parent tag plus an 8-byte length prefix)
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let raw_shreds = coder.shred(&[0u8]).unwrap();
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+        // decoding it fails, but never panics
+        let result = RegularShredder::default().deshred(&into_array(&shreds));
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
+    }
+
+    #[test]
     fn regular_shredding() -> Result<()> {
         let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rand::rng());
