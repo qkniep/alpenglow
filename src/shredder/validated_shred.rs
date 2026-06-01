@@ -82,7 +82,7 @@ impl ValidatedShred {
 
     /// Creates a new [`ValidatedShred`] when the inner [`Shred`] does not need to be verified.
     ///
-    /// Used only by the parent module to create a validated shred when it is guaranteed that the inner shred comes from verified sources and does not need to be verified.
+    /// Used only by the parent module to wrap shreds that are already known to be valid.
     /// The caller must pass the slice's Merkle root, which avoids re-deriving it from the shred's proof.
     pub(super) fn new_validated(shred: Shred, merkle_root: SliceRoot) -> Self {
         debug_assert_eq!(shred.merkle_root(), merkle_root);
