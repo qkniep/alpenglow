@@ -63,8 +63,15 @@ pub struct Block {
     hash: BlockHash,
     parent: Slot,
     parent_hash: BlockHash,
-    // TODO: unused
-    _transactions: Vec<Transaction>,
+    transactions: Vec<Transaction>,
+}
+
+impl Block {
+    /// Returns the transactions contained in this block, in order.
+    #[must_use]
+    pub fn transactions(&self) -> &[Transaction] {
+        &self.transactions
+    }
 }
 
 /// Dummy transaction containing payload bytes.

@@ -23,11 +23,14 @@
 //! [`end_block`]: ExecutionEngine::end_block
 //! [`finalize`]: ExecutionEngine::finalize
 
+pub mod staking;
+
 use std::collections::BTreeMap;
 
 use log::{debug, info};
 use tokio::sync::mpsc;
 
+pub use self::staking::{StakeEntry, StakeRegistry, StakeTx};
 use crate::crypto::Hash;
 use crate::crypto::hash::hash_all;
 use crate::crypto::merkle::{GENESIS_BLOCK_HASH, MerkleRoot};
@@ -169,6 +172,16 @@ pub trait ExecutionEngine {
     /// The engine may durably commit the execution state for `block_id` and
     /// prune any execution heads that are not ancestors of `block_id`.
     fn finalize(&mut self, block_id: BlockId);
+
+    /// Returns the staking registry as of `block_id` (the registry state after
+    /// executing through that block), if this engine models stake.
+    ///
+    /// The epoch manager queries this at epoch boundaries to derive the next
+    /// epoch's validator set. Engines that do not model stake return `None`.
+    fn stake_snapshot(&self, block_id: &BlockId) -> Option<StakeRegistry> {
+        let _ = block_id;
+        None
+    }
 }
 
 /// Per-block execution state tracked by [`DummyExecution`].
@@ -179,6 +192,9 @@ struct BlockExec {
     /// parent block hash / genesis as a fallback) and chained over each executed
     /// transaction. This is the post-state root this node computed.
     state_hash: Hash,
+    /// Staking registry along this fork, seeded from the parent's registry and
+    /// updated by every staking transaction executed in this block.
+    registry: StakeRegistry,
 }
 
 /// Placeholder execution engine that counts transactions and chains a state hash.
@@ -188,23 +204,53 @@ struct BlockExec {
 /// executed transaction). Emits an [`ExecutionEvent`] carrying both when a block
 /// is completed via [`end_block`](ExecutionEngine::end_block). Does not perform
 /// any real state transitions, and does not validate the computed root.
+///
+/// It additionally maintains a [`StakeRegistry`] per fork (the only "real" state
+/// it tracks), updated by [`StakeTx`] transactions, so that
+/// [`stake_snapshot`](ExecutionEngine::stake_snapshot) can drive epoch validator-
+/// set changes.
 pub struct DummyExecution {
     /// Per-block execution state for each in-flight block.
     blocks: BTreeMap<InProgressBlock, BlockExec>,
+    /// Committed staking registry as of the most recently finalized block.
+    ///
+    /// Seeds new blocks whose parent is not in flight (cold start / pruned
+    /// parent / genesis) so the registry chains continuously across finalization.
+    finalized_registry: StakeRegistry,
     /// Channel for emitting execution events.
     event_sender: mpsc::Sender<ExecutionEvent>,
 }
 
 impl DummyExecution {
-    /// Creates a new `DummyExecution` that emits events on the given channel.
+    /// Creates a new `DummyExecution` with an empty genesis staking registry.
     ///
     /// The matching [`mpsc::Receiver`] should be consumed by whichever task
     /// handles execution events (e.g. the main validator loop).
     pub fn new(event_sender: mpsc::Sender<ExecutionEvent>) -> Self {
+        Self::with_genesis_registry(event_sender, StakeRegistry::default())
+    }
+
+    /// Creates a new `DummyExecution` seeded with a genesis staking registry.
+    ///
+    /// Seeding with [`StakeRegistry::from_genesis`] makes the registry reproduce
+    /// the genesis validator set when no staking transactions have been applied.
+    pub fn with_genesis_registry(
+        event_sender: mpsc::Sender<ExecutionEvent>,
+        finalized_registry: StakeRegistry,
+    ) -> Self {
         Self {
             blocks: BTreeMap::new(),
+            finalized_registry,
             event_sender,
         }
+    }
+
+    /// Returns the registry recorded for `block_id`, if it is in flight.
+    fn block_registry(&self, block_id: &BlockId) -> Option<&StakeRegistry> {
+        self.blocks
+            .get(&InProgressBlock::Known(block_id.clone()))
+            .or_else(|| self.blocks.get(&InProgressBlock::Pending(block_id.0)))
+            .map(|exec| &exec.registry)
     }
 }
 
@@ -224,25 +270,32 @@ impl ExecutionEngine for DummyExecution {
         // consensus-agreed parent block hash (or genesis) when we haven't
         // executed the parent ourselves: cold start, repair, or a parent
         // already pruned by finalization.
-        let state_hash = parent
-            .as_ref()
-            .and_then(|p| {
-                self.blocks
-                    .get(&InProgressBlock::Known(p.clone()))
-                    .or_else(|| self.blocks.get(&InProgressBlock::Pending(p.0)))
-            })
+        let parent_exec = parent.as_ref().and_then(|p| {
+            self.blocks
+                .get(&InProgressBlock::Known(p.clone()))
+                .or_else(|| self.blocks.get(&InProgressBlock::Pending(p.0)))
+        });
+        let state_hash = parent_exec
             .map(|exec| exec.state_hash.clone())
             .unwrap_or_else(|| {
                 parent
-                    .map_or(GENESIS_BLOCK_HASH, |(_, block_hash)| block_hash)
+                    .as_ref()
+                    .map_or(GENESIS_BLOCK_HASH, |(_, block_hash)| block_hash.clone())
                     .as_hash()
                     .clone()
             });
+        // Chain the staking registry from the parent fork; fall back to the
+        // finalized registry when the parent is not in flight (cold start,
+        // repair, or a parent already pruned by finalization).
+        let registry = parent_exec
+            .map(|exec| exec.registry.clone())
+            .unwrap_or_else(|| self.finalized_registry.clone());
         self.blocks.insert(
             id,
             BlockExec {
                 tx_count: 0,
                 state_hash,
+                registry,
             },
         );
     }
@@ -265,6 +318,10 @@ impl ExecutionEngine for DummyExecution {
         if let Some(exec) = self.blocks.get_mut(&id) {
             for tx in &transactions {
                 exec.state_hash = hash_all(&[exec.state_hash.as_ref(), tx.0.as_slice()]);
+                // apply any staking transaction; ordinary payloads are ignored
+                if let Some(stake_tx) = StakeTx::decode(&tx.0) {
+                    exec.registry.apply(&stake_tx);
+                }
             }
             exec.tx_count += transactions.len();
         }
@@ -290,8 +347,22 @@ impl ExecutionEngine for DummyExecution {
     }
 
     fn finalize(&mut self, block_id: BlockId) {
+        // commit the finalized fork's registry as the new baseline
+        if let Some(registry) = self.block_registry(&block_id) {
+            self.finalized_registry = registry.clone();
+        }
         self.blocks.retain(|id, _| id.slot() >= block_id.0);
         info!("finalized block {block_id:?}");
+    }
+
+    fn stake_snapshot(&self, block_id: &BlockId) -> Option<StakeRegistry> {
+        // the registry after executing through `block_id`: its in-flight overlay
+        // if still tracked, otherwise the committed (finalized) registry
+        Some(
+            self.block_registry(block_id)
+                .cloned()
+                .unwrap_or_else(|| self.finalized_registry.clone()),
+        )
     }
 }
 
@@ -312,6 +383,69 @@ mod tests {
             h = hash_all(&[h.as_ref(), tx.0.as_slice()]);
         }
         h
+    }
+
+    #[test]
+    fn dummy_tracks_stake_and_ignores_ordinary_txs() {
+        use crate::ValidatorInfo;
+        use crate::test_utils::generate_validators;
+
+        let (_, epoch) = generate_validators(3);
+        let vs = epoch.validators().to_vec();
+        let register = |v: &ValidatorInfo| StakeTx::Register {
+            pubkey: v.pubkey,
+            voting_pubkey: v.voting_pubkey,
+            stake: v.stake,
+            all2all_address: v.all2all_address,
+            disseminator_address: v.disseminator_address,
+            repair_requester_address: v.repair_requester_address,
+            repair_responder_address: v.repair_responder_address,
+        };
+
+        let (tx, _rx) = mpsc::channel(16);
+        let mut engine = DummyExecution::new(tx);
+
+        // register validators 0 and 2, with an ordinary (non-staking) tx mixed in
+        let id1 = InProgressBlock::Pending(Slot::new(1));
+        engine.begin_block(id1.clone(), None);
+        engine.execute_transactions(
+            id1,
+            vec![
+                Transaction(register(&vs[0]).encode()),
+                Transaction(vec![1, 2, 3]), // ordinary tx: ignored by the registry
+                Transaction(register(&vs[2]).encode()),
+            ],
+        );
+        let snap = engine.stake_snapshot(&block_id(1)).unwrap();
+        assert_eq!(snap.len(), 2, "ordinary tx must not affect the registry");
+        assert!(snap.get(&vs[0].pubkey).is_some());
+        assert!(snap.get(&vs[1].pubkey).is_none());
+
+        // finalize block 1 so its registry becomes the committed baseline
+        engine.end_block(block_id(1));
+        engine.finalize(block_id(1));
+
+        // a child block chains from the finalized registry: add validator 1,
+        // then deregister validator 0
+        let id2 = InProgressBlock::Pending(Slot::new(2));
+        engine.begin_block(id2.clone(), Some(block_id(1)));
+        engine.execute_transactions(
+            id2,
+            vec![
+                Transaction(register(&vs[1]).encode()),
+                Transaction(
+                    StakeTx::Deregister {
+                        pubkey: vs[0].pubkey,
+                    }
+                    .encode(),
+                ),
+            ],
+        );
+        let snap2 = engine.stake_snapshot(&block_id(2)).unwrap();
+        assert_eq!(snap2.len(), 2);
+        assert!(snap2.get(&vs[0].pubkey).is_none());
+        assert!(snap2.get(&vs[1].pubkey).is_some());
+        assert!(snap2.get(&vs[2].pubkey).is_some());
     }
 
     #[test]
