@@ -160,6 +160,9 @@ pub struct PoolImpl {
     votor_event_channel: Sender<PoolEvent>,
     /// Channel for sending repair requests to the repair loop.
     repair_channel: Sender<BlockId>,
+    /// Channel notifying the epoch manager of newly-finalized blocks (in slot
+    /// order), so it can apply their staking transactions and install new epochs.
+    finalized_channel: Sender<BlockId>,
 }
 
 impl PoolImpl {
@@ -170,6 +173,7 @@ impl PoolImpl {
         epoch_info: Arc<EpochRegistry>,
         votor_event_channel: Sender<PoolEvent>,
         repair_channel: Sender<BlockId>,
+        finalized_channel: Sender<BlockId>,
     ) -> Self {
         Self {
             slot_states: BTreeMap::new(),
@@ -179,6 +183,7 @@ impl PoolImpl {
             epoch_info,
             votor_event_channel,
             repair_channel,
+            finalized_channel,
         }
     }
 
@@ -407,6 +412,16 @@ impl PoolImpl {
     }
 
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
+        // notify the epoch manager of every newly-finalized block, in slot order,
+        // so it can apply staking transactions deterministically. Best-effort:
+        // the receiver may be absent (e.g. in unit tests).
+        let mut newly_finalized: Vec<BlockId> = event.implicitly_finalized.clone();
+        newly_finalized.extend(event.finalized.clone());
+        newly_finalized.sort_by_key(|(slot, _)| *slot);
+        for block_id in newly_finalized {
+            let _ = self.finalized_channel.send(block_id).await;
+        }
+
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
         self.send_parent_ready_events(new_parents_ready).await;
     }
@@ -633,6 +648,7 @@ mod tests {
         pool: PoolImpl,
         votor_rx: mpsc::Receiver<PoolEvent>,
         _repair_rx: mpsc::Receiver<BlockId>,
+        _finalized_rx: mpsc::Receiver<BlockId>,
     }
 
     fn setup() -> TestContext {
@@ -641,13 +657,15 @@ mod tests {
         let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
-        let pool = PoolImpl::new(epoch_info, votor_tx, repair_tx);
+        let (finalized_tx, _finalized_rx) = mpsc::channel(1024);
+        let pool = PoolImpl::new(epoch_info, votor_tx, repair_tx, finalized_tx);
         TestContext {
             sks,
             validators,
             pool,
             votor_rx,
             _repair_rx,
+            _finalized_rx,
         }
     }
 

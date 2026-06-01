@@ -21,6 +21,7 @@ mod block_producer;
 mod blockstore;
 mod cert;
 mod epoch_info;
+mod epoch_manager;
 mod pool;
 mod vote;
 mod votor;
@@ -44,11 +45,13 @@ pub use self::blockstore::{
 };
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, EpochRegistry, OwnEpochIdentity};
+pub use self::epoch_manager::EpochManager;
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
+use crate::execution::StakeRegistry;
 use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::{Shred, ValidatedShred};
@@ -155,6 +158,7 @@ where
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
         let (pool_tx, pool_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
+        let (finalized_tx, finalized_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
         let blockstore: SharedBlockstore =
@@ -164,7 +168,18 @@ where
             epoch_info.clone(),
             pool_tx,
             repair_tx,
+            finalized_tx,
         )));
+
+        // drive epoch changes: replay finalized staking transactions and install
+        // the validator set for each upcoming epoch ahead of when it is needed
+        let genesis_registry = StakeRegistry::from_genesis(&epoch_info.genesis_epoch_info());
+        let epoch_manager =
+            EpochManager::new(epoch_info.clone(), blockstore.clone(), genesis_registry);
+        let _epoch_manager_handle = tokio::spawn(
+            async move { epoch_manager.run(finalized_rx).await }
+                .in_span(Span::enter_with_local_parent("epoch manager")),
+        );
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),

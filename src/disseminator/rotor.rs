@@ -14,7 +14,8 @@
 
 pub mod sampling_strategy;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rand::prelude::*;
@@ -25,31 +26,43 @@ pub use self::sampling_strategy::{
     StakeWeightedSampler,
 };
 use super::Disseminator;
-use crate::ValidatorIndex;
 use crate::consensus::EpochRegistry;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::{Epoch, Slot, ValidatorIndex, ValidatorInfo};
+
+/// Factory building a sampling strategy from a given epoch's validator set.
+type SamplerFactory<S> = Box<dyn Fn(Vec<ValidatorInfo>) -> S + Send + Sync>;
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
 ///
 /// Uses a [`QuorumSamplingStrategy`] to select all relays for a slice at once.
+///
+/// Relay sampling is *epoch-relative*: the sampling strategy is built per epoch
+/// from that epoch's validator set (lazily, then cached), so relays for a shred
+/// are always drawn from the set of the shred's epoch — correct even as
+/// validators join and leave and the set size changes.
 pub struct Rotor<N: Network, S: QuorumSamplingStrategy> {
     network: N,
-    sampler: S,
+    /// Builds a sampler for an epoch from its validator set.
+    make_sampler: SamplerFactory<S>,
+    /// Per-epoch sampler cache, built lazily on the first shred of each epoch.
+    samplers: Mutex<BTreeMap<Epoch, S>>,
     epoch_info: Arc<EpochRegistry>,
 }
 
 impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
     /// Creates a new Rotor instance with the default sampling strategy.
     ///
-    /// Contact information for all validators is provided in `validators`.
-    /// Provided `network` will be used to send and receive shreds.
+    /// Provided `network` will be used to send and receive shreds. Samplers are
+    /// built per epoch from `epoch_info`'s validator sets.
     pub fn new(network: N, epoch_info: Arc<EpochRegistry>) -> Self {
-        let validators = epoch_info.genesis_epoch_info().validators().to_vec();
-        let sampler = StakeWeightedSampler::new(validators).into_quorum_strategy(TOTAL_SHREDS);
         Self {
             network,
-            sampler,
+            make_sampler: Box::new(|validators| {
+                StakeWeightedSampler::new(validators).into_quorum_strategy(TOTAL_SHREDS)
+            }),
+            samplers: Mutex::new(BTreeMap::new()),
             epoch_info,
         }
     }
@@ -58,36 +71,32 @@ impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
 impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
     /// Creates a new Rotor instance with the FA1 sampling strategy.
     ///
-    /// Contact information for all validators is provided in `validators`.
-    /// Provided `network` will be used to send and receive shreds.
+    /// Provided `network` will be used to send and receive shreds. Samplers are
+    /// built per epoch from `epoch_info`'s validator sets.
     pub fn new_fa1(network: N, epoch_info: Arc<EpochRegistry>) -> Self {
-        let validators = epoch_info.genesis_epoch_info().validators().to_vec();
-        let sampler =
-            FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64);
         Self {
             network,
-            sampler,
+            make_sampler: Box::new(|validators| {
+                FaitAccompli1Sampler::new_with_partition_fallback(validators, TOTAL_SHREDS as u64)
+            }),
+            samplers: Mutex::new(BTreeMap::new()),
             epoch_info,
         }
     }
 }
 
-impl<N, S: QuorumSamplingStrategy> Rotor<N, S>
+impl<N, S: QuorumSamplingStrategy + Clone> Rotor<N, S>
 where
     N: ShredNetwork,
 {
-    /// Turns this instance into a new instance with a different sampling strategy.
-    #[must_use]
-    pub fn with_sampler(self, sampler: S) -> Self {
-        Self { sampler, ..self }
-    }
-
     /// Sends the shred to the correct relay.
     #[hotpath::measure]
     async fn send_as_leader(&self, shred: &Shred) -> std::io::Result<()> {
-        let relay = self.sample_relay(shred);
         let slot = shred.payload().header.slot;
         let Some(epoch_info) = self.epoch_info.for_slot(slot) else {
+            return Ok(());
+        };
+        let Some(relay) = self.sample_relay(shred) else {
             return Ok(());
         };
         let v = epoch_info.validator(relay);
@@ -105,7 +114,9 @@ where
         let leader = epoch_info.leader(slot).id;
 
         // do nothing if we are not the relay
-        let relay = self.sample_relay(shred);
+        let Some(relay) = self.sample_relay(shred) else {
+            return Ok(());
+        };
         if self.epoch_info.own_index_for_slot(slot) != Some(relay) {
             return Ok(());
         }
@@ -123,12 +134,14 @@ where
     /// Deterministically samples the relay for a given shred.
     ///
     /// Seeds an RNG per slice and calls [`QuorumSamplingStrategy::sample_quorum`]
-    /// to get all relays for that slice, then picks the one at the shred's position.
-    fn sample_relay(&self, shred: &Shred) -> ValidatorIndex {
+    /// on the shred's epoch's sampler, then picks the relay at the shred's
+    /// position. Returns `None` if the shred's epoch is not installed.
+    fn sample_relay(&self, shred: &Shred) -> Option<ValidatorIndex> {
         let slot = shred.payload().header.slot;
         let slice = shred.payload().header.slice_index.inner();
-        let shred = shred.payload().shred_index.inner();
+        let shred_index = shred.payload().shred_index.inner();
 
+        let sampler = self.sampler_for(slot)?;
         let seed = [
             slot.inner().to_be_bytes(),
             slice.to_be_bytes(),
@@ -137,13 +150,27 @@ where
         ]
         .concat();
         let mut rng = StdRng::from_seed(seed.try_into().unwrap());
-        let relays = self.sampler.sample_quorum(&mut rng);
-        relays[shred]
+        let relays = sampler.sample_quorum(&mut rng);
+        Some(relays[shred_index])
+    }
+
+    /// Returns the sampling strategy for `slot`'s epoch, building and caching it
+    /// on first use. Returns `None` if that epoch's set is not installed.
+    fn sampler_for(&self, slot: Slot) -> Option<S> {
+        let epoch = slot.epoch();
+        let mut cache = self.samplers.lock().unwrap();
+        if let Some(sampler) = cache.get(&epoch) {
+            return Some(sampler.clone());
+        }
+        let validators = self.epoch_info.for_slot(slot)?.validators().to_vec();
+        let sampler = (self.make_sampler)(validators);
+        cache.insert(epoch, sampler.clone());
+        Some(sampler)
     }
 }
 
 #[async_trait]
-impl<N, S: QuorumSamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
+impl<N, S: QuorumSamplingStrategy + Clone + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
     N: ShredNetwork,
 {

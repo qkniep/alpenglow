@@ -557,10 +557,12 @@ mod tests {
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
+        let (finalized_tx, _finalized_rx) = tokio::sync::mpsc::channel(100);
         let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
             epoch_info.clone(),
             pool_tx,
             repair_tx.clone(),
+            finalized_tx,
         )));
 
         // create and start Repair instance
