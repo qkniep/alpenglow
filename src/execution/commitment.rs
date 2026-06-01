@@ -18,7 +18,7 @@
 //! problem over the 1024 lanes of 16 bits each.
 //!
 //! For use as a compact wire-format commitment, the full 2048-byte lattice
-//! hash is compressed to a 32-byte [`Hash`](struct@Hash) via [`LtHash::digest`].
+//! hash is compressed to a 32-byte [`StateCommitment`] via [`LtHash::digest`].
 //!
 //! # Examples
 //!
@@ -47,6 +47,9 @@
 use std::fmt;
 use std::ops::{AddAssign, SubAssign};
 
+use derive_more::{From, Into};
+use wincode::{SchemaRead, SchemaWrite};
+
 use crate::crypto::Hash;
 use crate::crypto::hash::{hash, hash_all};
 use crate::execution::state::Address;
@@ -56,6 +59,20 @@ const NUM_LANES: usize = 1024;
 
 /// Number of lanes filled by a single 32-byte SHA-256 output.
 const LANES_PER_BLOCK: usize = 16;
+
+/// Compact wire-format commitment to the contents of an execution state.
+///
+/// This is the value that crosses from the execution engine into consensus,
+/// e.g. to be embedded in blocks or compared across validators. It is a
+/// distinct type from other 32-byte hashes (block hashes, Merkle roots) so
+/// the different kinds of commitments cannot be mixed up.
+///
+/// Produced by compressing a full [`LtHash`] via [`LtHash::digest`].
+#[repr(transparent)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Into, SchemaRead, SchemaWrite,
+)]
+pub struct StateCommitment(Hash);
 
 /// Homomorphic hash committing to the contents of an execution state.
 ///
@@ -103,17 +120,17 @@ impl LtHash {
         }
     }
 
-    /// Returns the 32-byte digest of this commitment.
+    /// Returns the compact [`StateCommitment`] digest of this commitment.
     ///
-    /// This is the compact value to embed in blocks or compare across
+    /// This is the wire-format value to embed in blocks or compare across
     /// validators; it compresses the full lattice hash with SHA-256.
     #[must_use]
-    pub fn digest(&self) -> Hash {
+    pub fn digest(&self) -> StateCommitment {
         let mut bytes = [0; NUM_LANES * 2];
         for (chunk, lane) in bytes.chunks_exact_mut(2).zip(&self.lanes) {
             chunk.copy_from_slice(&lane.to_le_bytes());
         }
-        hash(&bytes)
+        StateCommitment(hash(&bytes))
     }
 
     /// Computes the lattice hash of a single state entry.
