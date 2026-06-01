@@ -40,7 +40,7 @@ use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{MerkleTree, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
-use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
+use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload, SlicePayloadError};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -101,6 +101,15 @@ impl From<ReedSolomonShredError> for DeshredError {
     fn from(err: ReedSolomonShredError) -> Self {
         match err {
             ReedSolomonShredError::TooMuchData => Self::TooMuchData,
+        }
+    }
+}
+
+impl From<SlicePayloadError> for DeshredError {
+    fn from(err: SlicePayloadError) -> Self {
+        match err {
+            SlicePayloadError::TooLarge { .. } => Self::TooMuchData,
+            SlicePayloadError::BadEncoding => Self::BadEncoding,
         }
     }
 }
@@ -279,7 +288,7 @@ impl Shredder for RegularShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root().clone();
@@ -330,7 +339,7 @@ impl Shredder for CodingOnlyShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
 
         let any_shred = shreds.any_shred();
         let merkle_root = any_shred.merkle_root().clone();
@@ -420,7 +429,7 @@ impl Shredder for PetsShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(buffer.as_slice());
+        let payload = SlicePayload::try_from(buffer.as_slice())?;
         let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
@@ -507,7 +516,7 @@ impl Shredder for AontShredder {
 
         let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
         cipher.apply_keystream(&mut buffer);
-        let payload = SlicePayload::from(buffer.as_slice());
+        let payload = SlicePayload::try_from(buffer.as_slice())?;
         let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
         let header = slice.to_header();
 
@@ -537,7 +546,7 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(merkle_root.as_ref());
+    let merkle_root_sig = sk.sign_bytes(merkle_root.as_ref());
 
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
@@ -672,6 +681,21 @@ mod tests {
             ret[*shred.payload().shred_index] = Some(shred.clone());
         }
         ret
+    }
+
+    #[test]
+    fn deshred_rejects_undecodable_payload() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        // a single byte is too short to be a serialized `SlicePayload`
+        // (which needs at least a parent tag plus an 8-byte length prefix)
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let raw_shreds = coder.shred(&[0u8]).unwrap();
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+        // decoding it fails, but never panics
+        let result = RegularShredder::default().deshred(&into_array(&shreds));
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
 
     #[test]

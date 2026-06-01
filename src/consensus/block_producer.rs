@@ -20,7 +20,7 @@ use crate::consensus::{AddShredError, SharedBlockstore, SharedPool, ValidatorEpo
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
@@ -46,6 +46,11 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     disseminator: Arc<D>,
     /// Network connection to receive transactions from clients.
     txs_receiver: T,
+
+    /// Pool of shredders for shredding produced slices.
+    ///
+    /// Reused across slices to avoid reallocating Reed-Solomon working memory.
+    shredders: ShredderPool<RegularShredder>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -83,6 +88,8 @@ where
             pool,
             disseminator,
             txs_receiver,
+            // block production is sequential, so a single shredder is enough
+            shredders: ShredderPool::with_size(1),
             cancel_token,
             delta_block,
             delta_first_slice,
@@ -349,8 +356,10 @@ where
         let is_last = header.is_last;
         let slice = Slice::from_parts(header, payload);
         let mut maybe_block_hash = None;
-        // PERF: new shredder every time!
-        let shreds = RegularShredder::default()
+        let shreds = self
+            .shredders
+            .checkout()
+            .expect("pool always has a shredder, block production is sequential")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
         for s in shreds {
@@ -533,7 +542,7 @@ mod tests {
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
-    use crate::test_utils::generate_validators;
+    use crate::test_utils::{generate_validators, random_block_id};
     use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
@@ -730,8 +739,8 @@ mod tests {
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let slot_hash: BlockHash = Hash::random_for_test().into();
-        let old_parent = (slot.prev(), Hash::random_for_test().into());
-        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
+        let old_parent = random_block_id(slot.prev());
+        let new_parent = random_block_id(slot.prev().prev());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,

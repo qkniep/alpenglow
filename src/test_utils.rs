@@ -11,7 +11,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, GENESIS_BLOCK_HASH};
 use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
@@ -54,8 +54,8 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
             voting_pubkey: voting_sks[i as usize].to_pk(),
             all2all_address: localhost_ip_sockaddr(0),
             disseminator_address: localhost_ip_sockaddr(0),
-            repair_request_address: localhost_ip_sockaddr(0),
-            repair_response_address: localhost_ip_sockaddr(0),
+            repair_requester_address: localhost_ip_sockaddr(0),
+            repair_responder_address: localhost_ip_sockaddr(0),
         });
     }
     let epoch_info = EpochInfo::new(validators);
@@ -105,6 +105,16 @@ pub fn create_random_shredded_block(
     (block_hash, tree, shreds)
 }
 
+/// Returns the [`BlockId`] of the genesis block.
+pub const fn genesis_block_id() -> BlockId {
+    (Slot::genesis(), GENESIS_BLOCK_HASH)
+}
+
+/// Returns a [`BlockId`] for `slot` with a fresh random block hash.
+pub fn random_block_id(slot: Slot) -> BlockId {
+    (slot, Hash::random_for_test().into())
+}
+
 /// Creates a random block with the given number of slices.
 ///
 /// In most cases, you should use [`create_random_shredded_block`] instead.
@@ -147,5 +157,5 @@ fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayloa
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);
-    SlicePayload::from(payload.as_slice())
+    SlicePayload::try_from(payload.as_slice()).expect("payload should deserialize")
 }

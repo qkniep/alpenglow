@@ -10,7 +10,7 @@ pub mod validator_index;
 
 pub use self::fraction::Fraction;
 pub use self::slice::{ReconstructedSlice, Slice};
-pub(crate) use self::slice::{SliceHeader, SlicePayload};
+pub(crate) use self::slice::{SliceHeader, SlicePayload, SlicePayloadError};
 pub use self::slice_index::SliceIndex;
 pub use self::slot::{SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Slot};
 pub use self::stake::Stake;
