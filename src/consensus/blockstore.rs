@@ -74,15 +74,12 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    #[allow(clippy::needless_lifetimes)]
+    #[expect(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
     -> Option<&'a SliceRoot>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
         block_id: &BlockId,
@@ -133,7 +130,10 @@ impl BlockstoreImpl {
     async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
         match &event {
             BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
-                self.votor_channel.send(event).await.unwrap();
+                self.votor_channel
+                    .send(event)
+                    .await
+                    .expect("votor should not drop the event receiver");
                 None
             }
             BlockstoreEvent::Block { slot, block_info } => {
@@ -145,7 +145,10 @@ impl BlockstoreImpl {
                     block_info.parent.1.short_hex(),
                     block_info.parent.0,
                 );
-                self.votor_channel.send(event).await.unwrap();
+                self.votor_channel
+                    .send(event)
+                    .await
+                    .expect("votor should not drop the event receiver");
 
                 Some(block_info)
             }

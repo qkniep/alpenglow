@@ -34,7 +34,7 @@ pub struct TcpNetwork<S, R> {
     _msg_types: PhantomData<(S, R)>,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 enum TcpMessage<S, R> {
     Sender(S),
     Receiver(R),
@@ -49,7 +49,8 @@ impl<S, R> TcpNetwork<S, R> {
     #[must_use]
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
-        let listener = futures::executor::block_on(TcpListener::bind(addr)).unwrap();
+        let listener = futures::executor::block_on(TcpListener::bind(addr))
+            .expect("binding TCP listener should succeed; is the port already in use?");
         let (_tx, _rx) = mpsc::channel::<TcpMessage<S, R>>(1024);
         Self {
             listener,
@@ -71,7 +72,10 @@ impl<S, R> TcpNetwork<S, R> {
     ///
     /// This port is used by all streams and to listen for incoming connections.
     pub fn port(&self) -> u16 {
-        self.listener.local_addr().unwrap().port()
+        self.listener
+            .local_addr()
+            .expect("bound socket should have a local address")
+            .port()
     }
 
     async fn send_serialized(&self, bytes: &[u8], _addr: SocketAddr) -> std::io::Result<()> {
@@ -97,7 +101,8 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = &wincode::serialize(msg).unwrap();
+        let bytes =
+            &wincode::serialize(msg).expect("serializing an outgoing message should not fail");
         let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
@@ -106,7 +111,8 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = wincode::serialize(msg).unwrap();
+        let bytes =
+            wincode::serialize(msg).expect("serializing an outgoing message should not fail");
         self.send_serialized(&bytes, addr).await
     }
 

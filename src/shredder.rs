@@ -509,7 +509,8 @@ impl Shredder for AontShredder {
         let hash = hash(&buffer);
 
         let iv = Array::from([0; 16]);
-        let mut key = Array::try_from(tail.as_slice()).unwrap();
+        let mut key = Array::try_from(tail.as_slice())
+            .expect("tail should be exactly 16 bytes, it was just split off");
         for i in 0..16 {
             key[i] ^= hash.as_ref()[i];
         }
@@ -563,7 +564,8 @@ fn data_and_coding_to_output_shreds(
         .into_iter()
         .enumerate()
         .map(|(shred_index, d)| {
-            let shred_index = ShredIndex::new(shred_index).unwrap();
+            let shred_index =
+                ShredIndex::new(shred_index).expect("shred index should be within bounds");
             let (merkle_path, payload) = convert(shred_index, d);
             (merkle_path, ShredPayloadType::Data(payload))
         });
@@ -573,7 +575,8 @@ fn data_and_coding_to_output_shreds(
         .enumerate()
         .map(|(offset, c)| {
             let shred_index = num_data + offset;
-            let shred_index = ShredIndex::new(shred_index).unwrap();
+            let shred_index =
+                ShredIndex::new(shred_index).expect("shred index should be within bounds");
             let (merkle_path, payload) = convert(shred_index, c);
             (merkle_path, ShredPayloadType::Coding(payload))
         });
@@ -590,7 +593,7 @@ fn data_and_coding_to_output_shreds(
         })
         .collect::<Vec<_>>()
         .try_into()
-        .unwrap()
+        .expect("should produce exactly TOTAL_SHREDS shreds")
 }
 
 /// Puts the root, path, and signature of the leader into shreds.
@@ -622,7 +625,8 @@ fn create_output_shreds_for_other_leader(
         .into_iter()
         .enumerate()
         .map(|(shred_index, d)| {
-            let shred_index = ShredIndex::new(shred_index).unwrap();
+            let shred_index =
+                ShredIndex::new(shred_index).expect("shred index should be within bounds");
             let (merkle_path, payload) = convert(shred_index, d);
             (merkle_path, ShredPayloadType::Data(payload))
         });
@@ -632,7 +636,8 @@ fn create_output_shreds_for_other_leader(
         .enumerate()
         .map(|(offset, c)| {
             let shred_index = num_data + offset;
-            let shred_index = ShredIndex::new(shred_index).unwrap();
+            let shred_index =
+                ShredIndex::new(shred_index).expect("shred index should be within bounds");
             let (merkle_path, payload) = convert(shred_index, c);
             (merkle_path, ShredPayloadType::Coding(payload))
         });
@@ -649,7 +654,7 @@ fn create_output_shreds_for_other_leader(
         })
         .collect::<Vec<_>>()
         .try_into()
-        .unwrap()
+        .expect("should produce exactly TOTAL_SHREDS shreds")
 }
 
 /// Builds the Merkle tree for a slice and verifies it matches the expected root.

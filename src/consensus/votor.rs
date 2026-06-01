@@ -196,24 +196,36 @@ impl<A: All2All> Votor<A> {
                 debug!("voted notar-fallback in slot {slot}");
                 let vote =
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.all2all
+                    .broadcast(&vote.into())
+                    .await
+                    .expect("all2all broadcast should not fail");
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
             PoolEvent::SafeToSkip(slot) => {
                 debug!("voted skip-fallback in slot {slot}");
                 let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_index);
-                self.all2all.broadcast(&vote.into()).await.unwrap();
+                self.all2all
+                    .broadcast(&vote.into())
+                    .await
+                    .expect("all2all broadcast should not fail");
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
             PoolEvent::CertCreated(cert) => self.handle_cert_created(cert).await,
             PoolEvent::Standstill(_, certs, votes) => {
                 for cert in certs {
-                    self.all2all.broadcast(&cert.into()).await.unwrap();
+                    self.all2all
+                        .broadcast(&cert.into())
+                        .await
+                        .expect("all2all broadcast should not fail");
                 }
                 for vote in votes {
-                    self.all2all.broadcast(&vote.into()).await.unwrap();
+                    self.all2all
+                        .broadcast(&vote.into())
+                        .await
+                        .expect("all2all broadcast should not fail");
                 }
             }
         }
@@ -223,7 +235,9 @@ impl<A: All2All> Votor<A> {
     async fn handle_cert_created(&mut self, cert: Box<Cert>) {
         match cert.as_ref() {
             Cert::Notar(_) => {
-                let hash = cert.block_hash().unwrap();
+                let hash = cert
+                    .block_hash()
+                    .expect("notar cert always references a block");
                 // need to mark notarized BEFORE trying finalization
                 self.state_mut(cert.slot()).block_notarized = Some(hash.clone());
                 self.try_final(cert.slot(), hash).await;
@@ -242,7 +256,10 @@ impl<A: All2All> Votor<A> {
             _ => {}
         }
         let message = ConsensusMessage::from(*cert);
-        self.all2all.broadcast(&message).await.unwrap();
+        self.all2all
+            .broadcast(&message)
+            .await
+            .expect("all2all broadcast should not fail");
     }
 
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
@@ -317,7 +334,7 @@ impl<A: All2All> Votor<A> {
             let _ = sender.send(VotorTimeout::TimeoutCrashedLeader(slot)).await;
             for s in slot.slots_in_window() {
                 if s.is_start_of_window() {
-                    tokio::time::sleep(DELTA_BLOCK - DELTA_FIRST_SLICE).await;
+                    tokio::time::sleep(DELTA_BLOCK.saturating_sub(DELTA_FIRST_SLICE)).await;
                 } else {
                     tokio::time::sleep(DELTA_BLOCK).await;
                 }
@@ -357,7 +374,10 @@ impl<A: All2All> Votor<A> {
         }
         debug!("voted notar for slot {slot}");
         let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_index);
-        self.all2all.broadcast(&vote.into()).await.unwrap();
+        self.all2all
+            .broadcast(&vote.into())
+            .await
+            .expect("all2all broadcast should not fail");
         let state = self.state_mut(slot);
         state.voted = true;
         state.voted_notar = Some(hash.clone());
@@ -375,7 +395,10 @@ impl<A: All2All> Votor<A> {
         let not_bad = !state.is_some_and(|s| s.bad_window);
         if notarized && voted_notar && not_bad {
             let vote = Vote::new_final(slot, &self.voting_key, self.validator_index);
-            self.all2all.broadcast(&vote.into()).await.unwrap();
+            self.all2all
+                .broadcast(&vote.into())
+                .await
+                .expect("all2all broadcast should not fail");
             self.state_mut(slot).retired = true;
         }
     }
@@ -392,7 +415,10 @@ impl<A: All2All> Votor<A> {
             state.voted = true;
             state.bad_window = true;
             let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
-            self.all2all.broadcast(&vote.into()).await.unwrap();
+            self.all2all
+                .broadcast(&vote.into())
+                .await
+                .expect("all2all broadcast should not fail");
             debug!("voted skip for slot {s}");
         }
     }

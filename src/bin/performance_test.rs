@@ -120,8 +120,13 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let all2all_address = localhost_ip_sockaddr((id).try_into().unwrap());
-        let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
+        let all2all_address =
+            localhost_ip_sockaddr((id).try_into().expect("validator id should fit in u16"));
+        let disseminator_address = localhost_ip_sockaddr(
+            (id + count)
+                .try_into()
+                .expect("validator id should fit in u16"),
+        );
         let repair_requester_address =
             localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
         let repair_responder_address =
@@ -144,15 +149,27 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         .iter()
         .map(|v| {
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v.id, shared_epoch.clone()));
-            let all2all =
-                TrivialAll2All::new(validators.clone(), all2all_networks.pop_front().unwrap());
+            let all2all = TrivialAll2All::new(
+                validators.clone(),
+                all2all_networks
+                    .pop_front()
+                    .expect("one network was prepared per validator"),
+            );
             let disseminator = Rotor::new(
-                disseminator_networks.pop_front().unwrap(),
+                disseminator_networks
+                    .pop_front()
+                    .expect("one network was prepared per validator"),
                 epoch_info.clone(),
             );
-            let repair_requester_network = repair_requester_networks.pop_front().unwrap();
-            let repair_responder_network = repair_responder_networks.pop_front().unwrap();
-            let txs_receiver = tx_receivers.pop_front().unwrap();
+            let repair_requester_network = repair_requester_networks
+                .pop_front()
+                .expect("one network was prepared per validator");
+            let repair_responder_network = repair_responder_networks
+                .pop_front()
+                .expect("one network was prepared per validator");
+            let txs_receiver = tx_receivers
+                .pop_front()
+                .expect("one network was prepared per validator");
             Alpenglow::new(
                 sks[v.id.as_usize()].clone(),
                 voting_sks[v.id.as_usize()].clone(),

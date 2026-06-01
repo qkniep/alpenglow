@@ -263,8 +263,10 @@ impl BlockData {
             Entry::Vacant(entry) => entry,
         };
 
-        // assuming caller has inserted at least one valid shred so unwrap() should be safe
-        let slice_shreds = self.shreds.get_mut(&index).unwrap();
+        let slice_shreds = self
+            .shreds
+            .get_mut(&index)
+            .expect("caller must insert at least one shred before reconstructing");
         let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
             Ok(output) => output,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
@@ -314,9 +316,14 @@ impl BlockData {
         self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
-        let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
-        // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let mut parent = first_slice.parent.clone().unwrap();
+        let first_slice = self
+            .slices
+            .get(&SliceIndex::first())
+            .expect("all slices are present, including the first");
+        let mut parent = first_slice
+            .parent
+            .clone()
+            .expect("first slice contains a parent, validated in `try_reconstruct_slice`");
         let mut parent_switched = false;
 
         let mut transactions = vec![];

@@ -40,7 +40,8 @@ impl<S, R> UdpNetwork<S, R> {
     #[must_use]
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-        let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
+        let socket = futures::executor::block_on(UdpSocket::bind(addr))
+            .expect("binding UDP socket should succeed; is the port already in use?");
         Self {
             socket,
             _msg_types: PhantomData,
@@ -56,7 +57,10 @@ impl<S, R> UdpNetwork<S, R> {
 
     /// Returns the UDP port number the network is bound to.
     pub fn port(&self) -> u16 {
-        self.socket.local_addr().unwrap().port()
+        self.socket
+            .local_addr()
+            .expect("bound socket should have a local address")
+            .port()
     }
 
     async fn send_serialized(&self, bytes: &[u8], addr: SocketAddr) -> std::io::Result<()> {
@@ -81,7 +85,8 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = &wincode::serialize(msg).unwrap();
+        let bytes =
+            &wincode::serialize(msg).expect("serializing an outgoing message should not fail");
         let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
@@ -90,7 +95,8 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = &wincode::serialize(msg).unwrap();
+        let bytes =
+            &wincode::serialize(msg).expect("serializing an outgoing message should not fail");
         self.send_serialized(bytes, addr).await
     }
 

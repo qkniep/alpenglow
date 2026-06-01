@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![expect(clippy::unwrap_used, reason = "benchmarks panic on setup failure")]
+
 use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, NotarVote, Vote};
 use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::crypto::merkle::GENESIS_BLOCK_HASH;

@@ -48,7 +48,7 @@ impl<S: Shredder> ShredderPool<S> {
     pub fn checkout(&self) -> Option<ShredderGuard<S>> {
         self.shredders
             .lock()
-            .unwrap()
+            .expect("shredder pool mutex should not be poisoned")
             .pop()
             .map(|shredder| ShredderGuard {
                 pool: Arc::clone(&self.shredders),
@@ -90,7 +90,10 @@ impl<S: Shredder> DerefMut for ShredderGuard<S> {
 impl<S: Shredder> Drop for ShredderGuard<S> {
     fn drop(&mut self) {
         let shredder = self.shredder.take().expect("should exist until dropping");
-        self.pool.lock().unwrap().push(shredder);
+        self.pool
+            .lock()
+            .expect("shredder pool mutex should not be poisoned")
+            .push(shredder);
     }
 }
 
