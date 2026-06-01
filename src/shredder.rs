@@ -586,36 +586,39 @@ mod tests {
         ret
     }
 
-    #[test]
-    fn regular_shredding() -> Result<()> {
-        let mut shredder = RegularShredder::default();
+    /// Runs the shred/deshred roundtrip test suite for the given shredder.
+    ///
+    /// Shreds a maximum-size slice, then checks that it can be restored from
+    /// any sufficient subset of shreds and not from an insufficient one.
+    fn shredding_roundtrip<S: Shredder>() -> Result<()> {
+        let mut shredder = S::default();
         let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let slice = create_slice_with_invalid_txs(S::MAX_DATA_SIZE);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let all = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&all)?;
+        let input = into_array(&shreds);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
-        // restore only from data shreds
-        let coding = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&coding)?;
+        // restore from just enough shreds (the first DATA_SHREDS)
+        let input = into_array(&shreds[..DATA_SHREDS]);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
-        // restore using as many coding shreds as possible
-        let data = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
-        let (slice_restored, _) = shredder.deshred(&data)?;
+        // restore from just enough shreds (the last DATA_SHREDS)
+        let input = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let nc_shreds = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&nc_shreds)?;
+        let input = into_array(&nc_shreds);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
-        // restore from half coding / half data shreds
+        // restore from just enough shreds (DATA_SHREDS from the middle)
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
         let input = into_array(&shreds[start..end]);
@@ -638,145 +641,25 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
+    }
+
+    #[test]
+    fn regular_shredding() -> Result<()> {
+        shredding_roundtrip::<RegularShredder>()
     }
 
     #[test]
     fn coding_only_shredding() -> Result<()> {
-        let mut shredder = CodingOnlyShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
-        assert_eq!(shreds.len(), TOTAL_SHREDS);
-
-        // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from just enough shreds
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from non-consecutive shreds
-        let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        Ok(())
+        shredding_roundtrip::<CodingOnlyShredder>()
     }
 
     #[test]
     fn aont_shredding() -> Result<()> {
-        let mut shredder = AontShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
-        assert_eq!(shreds.len(), TOTAL_SHREDS);
-
-        // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from just enough shreds
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from non-consecutive shreds
-        let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from half coding / half data shreds
-        let start = DATA_SHREDS / 2;
-        let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let input = into_array(&shreds[start..end]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        Ok(())
+        shredding_roundtrip::<AontShredder>()
     }
 
     #[test]
     fn pets_shredding() -> Result<()> {
-        let mut shredder = PetsShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
-        assert_eq!(shreds.len(), TOTAL_SHREDS);
-
-        // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from just enough shreds
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from non-consecutive shreds
-        let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from half coding / half data shreds
-        let start = DATA_SHREDS / 2;
-        let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let input = into_array(&shreds[start..end]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        Ok(())
+        shredding_roundtrip::<PetsShredder>()
     }
 }

@@ -19,7 +19,9 @@ pub(crate) const KEY_BYTES: usize = 16;
 ///
 /// The cipher is a stream cipher, so this performs both encryption and decryption.
 ///
-/// Uses a fixed all-zero IV, so a key must never be used for more than one buffer.
+/// # Security
+///
+/// Uses a fixed all-zero IV, so a key must *never* be used for more than one buffer.
 pub(crate) fn apply_keystream(key: [u8; KEY_BYTES], buffer: &mut [u8]) {
     let iv = Array::from([0; 16]);
     let mut cipher = Ctr64LE::<Aes128>::new(&Array::from(key), &iv);
