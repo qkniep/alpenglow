@@ -13,14 +13,14 @@ use ctr::Ctr64LE;
 use rand::prelude::*;
 
 /// Number of bytes in a symmetric encryption key.
-pub const KEY_BYTES: usize = 16;
+pub(crate) const KEY_BYTES: usize = 16;
 
 /// Applies the cipher's keystream to `buffer` in place.
 ///
 /// The cipher is a stream cipher, so this performs both encryption and decryption.
 ///
 /// Uses a fixed all-zero IV, so a key must never be used for more than one buffer.
-pub fn apply_keystream(key: [u8; KEY_BYTES], buffer: &mut [u8]) {
+pub(crate) fn apply_keystream(key: [u8; KEY_BYTES], buffer: &mut [u8]) {
     let iv = Array::from([0; 16]);
     let mut cipher = Ctr64LE::<Aes128>::new(&Array::from(key), &iv);
     cipher.apply_keystream(buffer);
@@ -30,7 +30,7 @@ pub fn apply_keystream(key: [u8; KEY_BYTES], buffer: &mut [u8]) {
 ///
 /// Returns the key, without it the contents of `buffer` cannot be recovered.
 #[must_use]
-pub fn encrypt_with_random_key(buffer: &mut [u8]) -> [u8; KEY_BYTES] {
+pub(crate) fn encrypt_with_random_key(buffer: &mut [u8]) -> [u8; KEY_BYTES] {
     let mut key = [0; KEY_BYTES];
     rand::rng().fill_bytes(&mut key);
     apply_keystream(key, buffer);
