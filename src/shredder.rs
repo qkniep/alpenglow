@@ -585,7 +585,7 @@ fn data_and_coding_to_output_shreds(
                     merkle_root_sig,
                     merkle_path,
                 },
-                merkle_root,
+                merkle_root.clone(),
             )
         })
         .collect::<Vec<_>>()
@@ -644,7 +644,7 @@ fn create_output_shreds_for_other_leader(
                     merkle_root_sig: leader_signature,
                     merkle_path,
                 },
-                merkle_root,
+                merkle_root.clone(),
             )
         })
         .collect::<Vec<_>>()
