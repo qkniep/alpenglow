@@ -579,11 +579,14 @@ fn data_and_coding_to_output_shreds(
         });
     data.chain(coding)
         .map(|(merkle_path, payload)| {
-            ValidatedShred::new_validated(Shred {
-                payload_type: payload,
-                merkle_root_sig,
-                merkle_path,
-            })
+            ValidatedShred::new_validated(
+                Shred {
+                    payload_type: payload,
+                    merkle_root_sig,
+                    merkle_path,
+                },
+                merkle_root.clone(),
+            )
         })
         .collect::<Vec<_>>()
         .try_into()
@@ -603,6 +606,7 @@ fn create_output_shreds_for_other_leader(
     tree: SliceMerkleTree,
     leader_signature: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
+    let merkle_root = tree.get_root();
     let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
         let merkle_path = tree.create_proof(*shred_index);
         let payload = ShredPayload {
@@ -634,11 +638,14 @@ fn create_output_shreds_for_other_leader(
         });
     data.chain(coding)
         .map(|(merkle_path, payload)| {
-            ValidatedShred::new_validated(Shred {
-                payload_type: payload,
-                merkle_root_sig: leader_signature,
-                merkle_path,
-            })
+            ValidatedShred::new_validated(
+                Shred {
+                    payload_type: payload,
+                    merkle_root_sig: leader_signature,
+                    merkle_path,
+                },
+                merkle_root.clone(),
+            )
         })
         .collect::<Vec<_>>()
         .try_into()
