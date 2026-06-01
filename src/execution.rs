@@ -18,16 +18,27 @@
 //!
 //! The engine communicates results asynchronously through an [`ExecutionEvent`] channel.
 //!
+//! Building blocks for a real execution engine's state handling live in submodules:
+//! - [`state`] provides [`State`], a copy-on-write account state that makes
+//!   maintaining one state per unfinalized block in the block tree cheap.
+//! - [`commitment`] provides [`LtHash`], an incrementally updatable
+//!   commitment to the contents of a [`State`].
+//!
 //! [`begin_block`]: ExecutionEngine::begin_block
 //! [`execute_transactions`]: ExecutionEngine::execute_transactions
 //! [`end_block`]: ExecutionEngine::end_block
 //! [`finalize`]: ExecutionEngine::finalize
+
+pub mod commitment;
+pub mod state;
 
 use std::collections::BTreeMap;
 
 use log::{debug, info};
 use tokio::sync::mpsc;
 
+pub use self::commitment::LtHash;
+pub use self::state::{Address, State};
 use crate::crypto::Hash;
 use crate::crypto::hash::hash_all;
 use crate::crypto::merkle::{GENESIS_BLOCK_HASH, MerkleRoot};
