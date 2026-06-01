@@ -185,7 +185,10 @@ impl PoolImpl {
         // handle resulting state updates
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
-                let block_hash = cert.block_hash().cloned().unwrap();
+                let block_hash = cert
+                    .block_hash()
+                    .cloned()
+                    .expect("notar(-fallback) cert always references a block");
                 let block_id = (slot, block_hash.clone());
                 info!(
                     "notarized(-fallback) block {} in slot {}",
@@ -206,10 +209,16 @@ impl PoolImpl {
                 {
                     match output {
                         Either::Left(event) => {
-                            self.votor_event_channel.send(event).await.unwrap();
+                            self.votor_event_channel
+                                .send(event)
+                                .await
+                                .expect("votor should not drop the event receiver");
                         }
                         Either::Right((slot, hash)) => {
-                            self.repair_channel.send((slot, hash)).await.unwrap();
+                            self.repair_channel
+                                .send((slot, hash))
+                                .await
+                                .expect("repair loop should not drop the receiver");
                         }
                     }
                 }
@@ -219,7 +228,10 @@ impl PoolImpl {
                 self.send_parent_ready_events(new_parents_ready).await;
 
                 // repair this block, if necessary
-                self.repair_channel.send((slot, block_hash)).await.unwrap();
+                self.repair_channel
+                    .send((slot, block_hash))
+                    .await
+                    .expect("repair loop should not drop the receiver");
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
@@ -241,7 +253,10 @@ impl PoolImpl {
 
         // send to votor for broadcasting
         let event = PoolEvent::CertCreated(Box::new(cert));
-        self.votor_event_channel.send(event).await.unwrap();
+        self.votor_event_channel
+            .send(event)
+            .await
+            .expect("votor should not drop the event receiver");
     }
 
     /// Mutably accesses the [`SlotState`] for the given `slot`.
@@ -398,7 +413,10 @@ impl PoolImpl {
         for (slot, parent) in parents {
             debug_assert!(slot.is_start_of_window());
             let event = PoolEvent::ParentReady { slot, parent };
-            self.votor_event_channel.send(event).await.unwrap();
+            self.votor_event_channel
+                .send(event)
+                .await
+                .expect("votor should not drop the event receiver");
         }
     }
 }
@@ -427,10 +445,12 @@ impl Pool for PoolImpl {
         let certs = &mut self.slot_state(slot).certificates;
         let duplicate = match cert {
             Cert::Notar(_) => certs.notar.is_some(),
-            Cert::NotarFallback(_) => certs
-                .notar_fallback
-                .iter()
-                .any(|nf| nf.block_hash() == cert.block_hash().unwrap()),
+            Cert::NotarFallback(_) => certs.notar_fallback.iter().any(|nf| {
+                let hash = cert
+                    .block_hash()
+                    .expect("notar-fallback cert always references a block");
+                nf.block_hash() == hash
+            }),
             Cert::Skip(_) => certs.skip.is_some(),
             Cert::FastFinal(_) => certs.fast_finalize.is_some(),
             Cert::Final(_) => certs.finalize.is_some(),
@@ -485,10 +505,16 @@ impl Pool for PoolImpl {
             self.add_valid_cert(cert).await;
         }
         for event in votor_events {
-            self.votor_event_channel.send(event).await.unwrap();
+            self.votor_event_channel
+                .send(event)
+                .await
+                .expect("votor should not drop the event receiver");
         }
         for (slot, block_hash) in blocks_to_repair {
-            self.repair_channel.send((slot, block_hash)).await.unwrap();
+            self.repair_channel
+                .send((slot, block_hash))
+                .await
+                .expect("repair loop should not drop the receiver");
         }
         Ok(())
     }
@@ -520,10 +546,16 @@ impl Pool for PoolImpl {
         {
             match output {
                 Either::Left(event) => {
-                    self.votor_event_channel.send(event).await.unwrap();
+                    self.votor_event_channel
+                        .send(event)
+                        .await
+                        .expect("votor should not drop the event receiver");
                 }
                 Either::Right((slot, hash)) => {
-                    self.repair_channel.send((slot, hash)).await.unwrap();
+                    self.repair_channel
+                        .send((slot, hash))
+                        .await
+                        .expect("repair loop should not drop the receiver");
                 }
             }
             return;
@@ -558,7 +590,10 @@ impl Pool for PoolImpl {
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
-        self.votor_event_channel.send(event).await.unwrap();
+        self.votor_event_channel
+            .send(event)
+            .await
+            .expect("votor should not drop the event receiver");
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.

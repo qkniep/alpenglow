@@ -78,7 +78,11 @@ impl Slot {
 
     /// Returns the previous slot before `self`.
     pub const fn prev(&self) -> Self {
-        Self(self.0.checked_sub(1).unwrap())
+        Self(
+            self.0
+                .checked_sub(1)
+                .expect("prev() should not be called on the genesis slot"),
+        )
     }
 
     /// Returns `true` iff this slot is part of the genesis window.

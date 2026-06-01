@@ -108,7 +108,9 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
-        let mut csv_file = csv_file.lock().unwrap();
+        let mut csv_file = csv_file
+            .lock()
+            .expect("CSV file mutex should not be poisoned");
         csv_file
             .write_record(&[
                 stake_distribution.to_string(),
@@ -117,8 +119,8 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
                 self.workload_test.num_shreds().to_string(),
                 (min_supported_bandwidth / 2.0).to_string(),
             ])
-            .unwrap();
-        csv_file.flush().unwrap();
+            .expect("failed to write CSV record");
+        csv_file.flush().expect("failed to flush CSV file");
     }
 
     /// Evaluates the bandwidth usage.
@@ -133,7 +135,10 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
             bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i);
         }
 
-        bandwidth_usage.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        bandwidth_usage.sort_unstable_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .expect("bandwidth values should not be NaN")
+        });
         let mut binned_bandwidth_usage = vec![(0.0, 0, 0); 99];
         for (i, (bandwidth, _)) in bandwidth_usage.into_iter().enumerate() {
             let bin = i / 13;
@@ -149,7 +154,9 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
-        let mut csv_file = csv_file.lock().unwrap();
+        let mut csv_file = csv_file
+            .lock()
+            .expect("CSV file mutex should not be poisoned");
         for (bandwidth, validator, _) in binned_bandwidth_usage {
             csv_file
                 .write_record(&[
@@ -161,9 +168,9 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
                     32_270_000.0.to_string(),
                     bandwidth.to_string(),
                 ])
-                .unwrap();
+                .expect("failed to write CSV record");
         }
-        csv_file.flush().unwrap();
+        csv_file.flush().expect("failed to flush CSV file");
     }
 
     /// Resets the internal state.

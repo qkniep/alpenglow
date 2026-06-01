@@ -36,7 +36,11 @@ impl<'a> ValidatedShreds<'a> {
         assert_eq!(data_shreds + coding_shreds, TOTAL_SHREDS);
 
         // check all shred sizes match
-        let any_shred = shreds.iter().flatten().next().unwrap();
+        let any_shred = shreds
+            .iter()
+            .flatten()
+            .next()
+            .expect("input should contain at least one shred");
         let shred_size = any_shred.payload().data.len();
         for s in shreds.iter().flatten() {
             if s.payload().data.len() != shred_size {
@@ -68,8 +72,11 @@ impl<'a> ValidatedShreds<'a> {
 
     /// Returns a reference to any shred in this set.
     pub(super) fn any_shred(self) -> &'a ValidatedShred {
-        // constructor ensures at least one shred
-        self.shreds.iter().flatten().next().unwrap()
+        self.shreds
+            .iter()
+            .flatten()
+            .next()
+            .expect("constructor ensures at least one shred")
     }
 
     /// Returns `(index, payload)` pairs for all present data shreds.
@@ -123,7 +130,7 @@ mod tests {
         assert!(ValidatedShreds::try_new(&shreds, 1, TOTAL_SHREDS - 1).is_none());
 
         // there are coding shreds in data shred positions in the array
-        let shreds = shredder.shred(slice.clone(), &sk).unwrap().map(Some);
+        let shreds = shredder.shred(slice, &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, TOTAL_SHREDS - 1, 1).is_none());
 
         // mixing shreds of different sizes

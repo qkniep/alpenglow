@@ -88,6 +88,19 @@ unreachable_pub = "warn"
 
 [lints.clippy]
 cast_possible_truncation = "allow"
+# panic hygiene
+unwrap_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes = "warn"
+ignore_without_reason = "warn"
+# async / perf
+large_futures = "warn"
+redundant_clone = "warn"
+significant_drop_tightening = "warn"
+or_fun_call = "warn"
+unchecked_time_subtraction = "warn"
 
 [profile.release]
 debug = true

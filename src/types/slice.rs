@@ -159,13 +159,13 @@ impl SlicePayload {
 
     /// Serializes the payload into bytes.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        wincode::serialize(self).unwrap()
+        wincode::serialize(self).expect("serializing a slice payload should not fail")
     }
 }
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        wincode::serialize(&payload).unwrap()
+        wincode::serialize(&payload).expect("serializing a slice payload should not fail")
     }
 }
 
@@ -210,14 +210,14 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let parent_bytes =
-        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
+    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent)
+        .expect("computing the serialized size of the payload header should not fail");
     // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
     let data_len_bytes = 8;
 
     let size = desired_size
         .checked_sub(parent_bytes + data_len_bytes)
-        .unwrap();
+        .expect("desired size should be large enough to hold the payload header");
     let mut data = vec![0; size];
     let mut rng = rand::rng();
     rng.fill_bytes(&mut data);

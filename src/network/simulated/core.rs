@@ -75,9 +75,17 @@ impl SimulatedNetworkCore {
                 if let Some(msg) = guard.peek()
                     && msg.deliver_at <= Instant::now()
                 {
-                    let msg = guard.pop().unwrap();
-                    let n_guard = n.read().await;
-                    let channel = n_guard.get(&msg.to).unwrap();
+                    let msg = guard.pop().expect(
+                        "queue should be non-empty, it was just peeked under the same lock",
+                    );
+                    // release the queue lock before sending, senders need it
+                    drop(guard);
+                    let channel = n
+                        .read()
+                        .await
+                        .get(&msg.to)
+                        .expect("destination validator should have a registered channel")
+                        .clone();
                     if let Err(_e) = channel.send(msg).await {
                         #[cfg(test)]
                         println!("sending failed. Ignoring");
@@ -241,6 +249,7 @@ impl SimulatedNetworkCore {
         let now = Instant::now();
         let guard = self.latencies.read().await;
         let mut latency = *guard.get(&(from, to)).unwrap_or(&self.default_latency);
+        drop(guard);
         if self.per_packet_jitter_ms > 0.0 {
             let jitter = rand::rng().random_range(0.0..self.per_packet_jitter_ms);
             latency += Duration::from_secs_f64(jitter / 1000.0);
@@ -280,7 +289,7 @@ mod tests {
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn symmetric() {
         // set up network with two nodes
         let msg = Ping::default();
@@ -322,7 +331,7 @@ mod tests {
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn asymmetric() {
         // set up network with two nodes
         let msg = Ping::default();

@@ -79,12 +79,15 @@ impl<'de> Visitor<'de> for ShredIndexVisitor {
     where
         E: serde::de::Error,
     {
-        ShredIndex::new(v as usize).ok_or(de::Error::custom(
-            "input {v} is not in the range [0:{TOTAL_SHREDS})",
-        ))
+        ShredIndex::new(v as usize).ok_or_else(|| {
+            de::Error::custom(format!("input {v} is not in the range [0:{TOTAL_SHREDS})"))
+        })
     }
 }
 
+// SAFETY: `TYPE_META` is left as the default `Dynamic`. `read` initializes `dst`
+// when it returns `Ok(())`; in the `Err` case the already initialized `ShredIndex`
+// is `Copy` and thus cannot leak.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for ShredIndex {
     type Dst = Self;
 
