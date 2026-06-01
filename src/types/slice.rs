@@ -186,18 +186,14 @@ impl TryFrom<&[u8]> for SlicePayload {
     /// Deserializes a [`SlicePayload`] from bytes received over the network.
     ///
     /// Unlike a plain [`wincode::deserialize`], this:
-    /// - caps preallocation at [`MAX_DATA_PER_SLICE`] (rather than wincode's
-    ///   4 MiB default), so a malicious leader cannot use an inflated length
-    ///   prefix to amplify allocation,
-    /// - requires the bytes to be fully consumed (no trailing bytes), so the
-    ///   encoding is canonical, and
+    /// - caps preallocation at [`MAX_DATA_PER_SLICE`] (wincode has a 4 MiB default),
+    /// - requires the bytes to be fully consumed (no trailing bytes), and
     /// - returns an error instead of panicking on malformed input.
     fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
         if payload.len() > MAX_DATA_PER_SLICE {
             return Err(SlicePayloadError::TooLarge { len: payload.len() });
         }
-        let config =
-            DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
+        let config = DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
         wincode::config::deserialize_exact(payload, config)
             .map_err(|_| SlicePayloadError::BadEncoding)
     }
@@ -208,7 +204,7 @@ impl TryFrom<&[u8]> for SlicePayload {
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.
+// TODO: This is only used in test and benchmarking code.
 // Ensure it is only compiled when we are testing or benchmarking.
 pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
@@ -234,7 +230,8 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
+// TODO: This is only used in test and benchmarking code.
+// Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
@@ -258,9 +255,8 @@ mod tests {
 
     #[test]
     fn trailing_bytes_are_rejected() {
-        // A valid payload followed by extra bytes must not decode (canonical
-        // encoding), even though the leading bytes are a valid `SlicePayload`.
         let mut bytes = SlicePayload::new(None, vec![1, 2, 3, 4]).to_bytes();
+        // extra trailing byte
         bytes.push(0xAA);
         assert_eq!(
             SlicePayload::try_from(bytes.as_slice()),
@@ -270,7 +266,7 @@ mod tests {
 
     #[test]
     fn malformed_payload_returns_error() {
-        // Garbage bytes must return an error rather than panicking.
+        // garbage bytes must return an error rather than panicking
         assert_eq!(
             SlicePayload::try_from([0xFFu8; 4].as_slice()),
             Err(SlicePayloadError::BadEncoding)
@@ -290,10 +286,7 @@ mod tests {
 
     #[test]
     fn inflated_length_prefix_is_rejected_without_panic() {
-        // `data` is the last field, so a serialized empty-data payload ends with
-        // its 8-byte fixint length field. Overwrite it with a huge declared
-        // length: deserialization must error (capped preallocation / short read)
-        // instead of panicking or eagerly allocating gigabytes.
+        // overwriting the fixint length field must error
         let mut bytes = SlicePayload::new(None, vec![]).to_bytes();
         let len = bytes.len();
         bytes[len - 8..].copy_from_slice(&u64::MAX.to_le_bytes());

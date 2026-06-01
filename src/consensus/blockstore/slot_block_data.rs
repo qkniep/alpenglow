@@ -337,10 +337,7 @@ impl BlockData {
                 parent = new_parent;
             }
 
-            // Cap preallocation at the slice size limit (rather than wincode's
-            // 4 MiB default) so a malicious leader cannot use an inflated length
-            // prefix to amplify allocation while decoding transactions. Require
-            // the bytes to be fully consumed so the encoding is canonical.
+            // cap preallocation to the slice size limit (wincode has a 4 MiB default)
             let config =
                 DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
             let mut txs = match wincode::config::deserialize_exact(&slice.data, config) {
