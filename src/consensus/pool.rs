@@ -585,7 +585,6 @@ mod tests {
     use super::*;
     use crate::ValidatorIndex;
     use crate::consensus::EpochInfo;
-
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::{NotarVote, SkipVote};
     use crate::crypto::Hash;
