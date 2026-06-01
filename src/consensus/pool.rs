@@ -34,9 +34,7 @@ use crate::{BlockId, Slot, ValidatorIndex};
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
 /// [`Votor`]: crate::consensus::votor::Votor
-// `CertCreated` is larger than the other variants, but `PoolEvent` is a
-// short-lived in-process channel message; boxing the cert just to balance
-// variant sizes would only add an allocation on the certificate path.
+// PERF: Short-lived channel message; boxing the cert isn't worth the allocation.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum PoolEvent {
@@ -591,13 +589,6 @@ mod tests {
     use crate::ValidatorIndex;
     use crate::consensus::EpochInfo;
 
-    #[test]
-    fn ztmp_size_probe() {
-        eprintln!("SIZE PoolEvent = {}", std::mem::size_of::<PoolEvent>());
-        eprintln!("SIZE Cert = {}", std::mem::size_of::<Cert>());
-        eprintln!("SIZE Vote = {}", std::mem::size_of::<Vote>());
-        eprintln!("SIZE Vec<Cert> = {}", std::mem::size_of::<Vec<Cert>>());
-    }
     use crate::consensus::cert::{FastFinalCert, NotarCert, SkipCert};
     use crate::consensus::vote::{NotarVote, SkipVote};
     use crate::crypto::Hash;
