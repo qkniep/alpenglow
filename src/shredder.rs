@@ -23,10 +23,6 @@ mod shred_index;
 mod validated_shred;
 mod validated_shreds;
 
-use aes::Aes128;
-use aes::cipher::{Array, KeyIvInit, StreamCipher};
-use ctr::Ctr64LE;
-use rand::prelude::*;
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -38,7 +34,7 @@ pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
 use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
-use crate::crypto::{MerkleTree, hash};
+use crate::crypto::{MerkleTree, cipher, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
 use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
 
@@ -112,7 +108,8 @@ pub enum ShredPayloadType {
 }
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
-/// Shreds are crafted to fit into an MTU size packet.
+///
+/// Shreds are crafted to always fit into an MTU-size packet.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     payload_type: ShredPayloadType,
@@ -205,8 +202,11 @@ pub trait Shredder: Default {
     /// When [`Shredder::shred`] is called, how many coding shreds will be produced.
     const CODING_OUTPUT_SHREDS: usize;
 
-    /// Splits the given slice into [`TOTAL_SHREDS`] shreds, which depending on
-    /// the specific implementation can be any combination of data and coding.
+    /// Splits the given slice into [`TOTAL_SHREDS`] shreds.
+    ///
+    /// Produces [`Self::DATA_OUTPUT_SHREDS`] data shreds and
+    /// [`Self::CODING_OUTPUT_SHREDS`] coding shreds (both depend on the implementer).
+    /// All data shreds appear before all coding shreds in the output.
     ///
     /// # Errors
     ///
@@ -336,8 +336,8 @@ impl Default for CodingOnlyShredder {
 pub struct PetsShredder(ReedSolomonCoder);
 
 impl Shredder for PetsShredder {
-    // needs 16 bytes for symmetric encryption key
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    // needs space for the symmetric encryption key
+    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - cipher::KEY_BYTES;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
 
@@ -350,15 +350,9 @@ impl Shredder for PetsShredder {
         let mut payload: Vec<u8> = payload.into();
         assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
-        let mut rng = rand::rng();
-        let mut key = Array::from([0; 16]);
-        rng.fill_bytes(&mut key);
-        let iv = Array::from([0; 16]);
-
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut payload);
-
+        let key = cipher::encrypt_with_random_key(&mut payload);
         payload.extend_from_slice(&key);
+
         let mut raw_shreds = self.0.shred(&payload)?;
         // delete data shred containing key
         raw_shreds.data.pop();
@@ -394,8 +388,8 @@ impl Default for PetsShredder {
 pub struct AontShredder(ReedSolomonCoder);
 
 impl Shredder for AontShredder {
-    // needs 16 bytes for symmetric encryption key
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    // needs space for the symmetric encryption key
+    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - cipher::KEY_BYTES;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
@@ -408,18 +402,10 @@ impl Shredder for AontShredder {
         let mut payload: Vec<u8> = payload.into();
         assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
-        let mut rng = rand::rng();
-        let mut key = Array::from([0; 16]);
-        rng.fill_bytes(&mut key);
-        let iv = Array::from([0; 16]);
-
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut payload);
-
+        let key = cipher::encrypt_with_random_key(&mut payload);
+        // append the key XORed with the hash of the ciphertext
         let hash = hash(&payload);
-        for i in 0..16 {
-            payload.push(hash.as_ref()[i] ^ key[i]);
-        }
+        payload.extend(key.iter().zip(hash.as_ref()).map(|(k, h)| k ^ h));
 
         let raw_shreds = self.0.shred(&payload)?;
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
@@ -474,34 +460,31 @@ fn finalize_deshred(
     Ok((slice, reconstructed_shreds))
 }
 
-/// Strips the trailing 16-byte key material off `buffer`, decrypts the
-/// remaining ciphertext in place with AES-128-CTR, and returns the plaintext as
-/// a [`SlicePayload`].
+/// Strips the trailing key material off `buffer`, decrypts the remaining
+/// ciphertext in place, and returns the plaintext as a [`SlicePayload`].
 ///
-/// `derive_key` turns the raw 16-byte tail (and, for AONT, the ciphertext
-/// `buffer`) into the actual decryption key.
+/// `derive_key` turns the raw [`cipher::KEY_BYTES`]-byte tail (and, for AONT,
+/// the ciphertext `buffer`) into the actual decryption key.
 ///
 /// # Errors
 ///
 /// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain the
-/// 16-byte key tail.
+/// key tail.
 fn decrypt_payload(
     mut buffer: Vec<u8>,
-    derive_key: impl FnOnce([u8; 16], &[u8]) -> [u8; 16],
+    derive_key: impl FnOnce([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
 ) -> Result<SlicePayload, DeshredError> {
-    if buffer.len() < 16 {
+    if buffer.len() < cipher::KEY_BYTES {
         return Err(DeshredError::BadEncoding);
     }
-    let tail = buffer.split_off(buffer.len() - 16);
-    let tail: [u8; 16] = tail
+    let tail = buffer.split_off(buffer.len() - cipher::KEY_BYTES);
+    let tail: [u8; cipher::KEY_BYTES] = tail
         .as_slice()
         .try_into()
         .expect("tail should have correct length");
 
-    let key = Array::from(derive_key(tail, &buffer));
-    let iv = Array::from([0; 16]);
-    let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-    cipher.apply_keystream(&mut buffer);
+    let key = derive_key(tail, &buffer);
+    cipher::apply_keystream(key, &mut buffer);
 
     Ok(SlicePayload::from(buffer.as_slice()))
 }
@@ -529,53 +512,40 @@ fn data_and_coding_to_output_shreds(
 /// [`finalize_deshred`]). In the latter case `tree` must already match the
 /// reconstructed shreds.
 ///
-/// Each returned shred contains the Merkle root, its own path and the signature.
+/// Each returned shred contains its own path and the signature.
 fn assemble_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
     tree: &SliceMerkleTree,
     merkle_root_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
-    let convert = |shred_index: ShredIndex, data: Vec<u8>| -> (SliceProof, ShredPayload) {
-        let merkle_path = tree.create_proof(*shred_index);
-        let payload = ShredPayload {
-            header,
-            shred_index,
-            data,
-        };
-        (merkle_path, payload)
-    };
     let num_data = raw_shreds.data.len();
-    let data = raw_shreds
+    raw_shreds
         .data
         .into_iter()
+        .chain(raw_shreds.coding)
         .enumerate()
-        .map(|(shred_index, d)| {
-            let shred_index = ShredIndex::new(shred_index).unwrap();
-            let (merkle_path, payload) = convert(shred_index, d);
-            (merkle_path, ShredPayloadType::Data(payload))
-        });
-    let coding = raw_shreds
-        .coding
-        .into_iter()
-        .enumerate()
-        .map(|(offset, c)| {
-            let shred_index = num_data + offset;
-            let shred_index = ShredIndex::new(shred_index).unwrap();
-            let (merkle_path, payload) = convert(shred_index, c);
-            (merkle_path, ShredPayloadType::Coding(payload))
-        });
-    data.chain(coding)
-        .map(|(merkle_path, payload)| {
+        .map(|(index, data)| {
+            let shred_index = ShredIndex::new(index).expect("raw shreds never exceed TOTAL_SHREDS");
+            let payload = ShredPayload {
+                header,
+                shred_index,
+                data,
+            };
+            let payload_type = if index < num_data {
+                ShredPayloadType::Data(payload)
+            } else {
+                ShredPayloadType::Coding(payload)
+            };
             ValidatedShred::new_validated(Shred {
-                payload_type: payload,
+                payload_type,
                 merkle_root_sig,
-                merkle_path,
+                merkle_path: tree.create_proof(index),
             })
         })
         .collect::<Vec<_>>()
         .try_into()
-        .unwrap()
+        .expect("raw shreds always total exactly TOTAL_SHREDS")
 }
 
 /// Builds the Merkle tree for a slice and verifies it matches the expected root.
@@ -594,7 +564,7 @@ fn check_merkle_tree(
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
 fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
-    // zero-allocation chaining of slices
+    // zero-allocation chaining of slice iterators
     let leaves = raw_shreds.data.iter().chain(&raw_shreds.coding);
     MerkleTree::new(leaves)
 }

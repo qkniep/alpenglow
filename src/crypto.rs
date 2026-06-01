@@ -7,6 +7,7 @@
 //! These are mostly wrappers around existing libraries.
 
 pub mod aggsig;
+pub mod cipher;
 pub mod hash;
 pub mod merkle;
 pub mod signature;
