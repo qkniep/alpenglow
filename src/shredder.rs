@@ -23,10 +23,6 @@ mod shred_index;
 mod validated_shred;
 mod validated_shreds;
 
-use aes::Aes128;
-use aes::cipher::{Array, KeyIvInit, StreamCipher};
-use ctr::Ctr64LE;
-use rand::prelude::*;
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -38,9 +34,9 @@ pub use self::shred_index::ShredIndex;
 pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
 use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
-use crate::crypto::{MerkleTree, hash};
+use crate::crypto::{MerkleTree, cipher, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
-use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
+use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload, SlicePayloadError};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -75,16 +71,16 @@ impl From<ReedSolomonShredError> for ShredError {
 /// Errors that may occur during deshredding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum DeshredError {
-    #[error("could not deshred malformed input")]
-    BadEncoding,
-    #[error("too much data to fit into slice")]
-    TooMuchData,
-    #[error("not enough shreds to deshred")]
-    NotEnoughShreds,
-    #[error("shreds are part of invalid Merkle tree")]
-    InvalidMerkleTree,
     #[error("shreds array contains invalid sequence")]
     InvalidLayout,
+    #[error("not enough shreds to deshred")]
+    NotEnoughShreds,
+    #[error("too much data to fit into slice")]
+    TooMuchData,
+    #[error("could not deshred malformed input")]
+    BadEncoding,
+    #[error("shreds are part of invalid Merkle tree")]
+    InvalidMerkleTree,
 }
 
 impl From<ReedSolomonDeshredError> for DeshredError {
@@ -105,6 +101,15 @@ impl From<ReedSolomonShredError> for DeshredError {
     }
 }
 
+impl From<SlicePayloadError> for DeshredError {
+    fn from(err: SlicePayloadError) -> Self {
+        match err {
+            SlicePayloadError::TooLarge { .. } => Self::TooMuchData,
+            SlicePayloadError::BadEncoding => Self::BadEncoding,
+        }
+    }
+}
+
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum ShredPayloadType {
     Data(ShredPayload),
@@ -112,7 +117,8 @@ pub enum ShredPayloadType {
 }
 
 /// A shred is the smallest unit of data that is used when disseminating blocks.
-/// Shreds are crafted to fit into an MTU size packet.
+///
+/// Shreds are crafted to always fit into an MTU-size packet.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     payload_type: ShredPayloadType,
@@ -205,8 +211,11 @@ pub trait Shredder: Default {
     /// When [`Shredder::shred`] is called, how many coding shreds will be produced.
     const CODING_OUTPUT_SHREDS: usize;
 
-    /// Splits the given slice into [`TOTAL_SHREDS`] shreds, which depending on
-    /// the specific implementation can be any combination of data and coding.
+    /// Splits the given slice into [`TOTAL_SHREDS`] shreds.
+    ///
+    /// Produces [`Self::DATA_OUTPUT_SHREDS`] data shreds and
+    /// [`Self::CODING_OUTPUT_SHREDS`] coding shreds (both depend on the implementer).
+    /// All data shreds appear before all coding shreds in the output.
     ///
     /// # Errors
     ///
@@ -274,7 +283,7 @@ pub trait Shredder: Default {
         // NOTE: This is necessary to catch maliciously constructed slices.
         let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
 
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
 
         // reconstruct missing output shreds (with root, path, sig) in place
@@ -296,7 +305,9 @@ pub trait Shredder: Default {
     ) -> Result<(Vec<u8>, RawShreds), DeshredError>;
 }
 
-/// A shredder that augments the [`DATA_SHREDS`] data shreds with
+/// A plain Reed-Solomon shredder.
+///
+/// It augments the the [`DATA_SHREDS`] data shreds with
 /// `TOTAL_SHREDS - DATA_SHREDS` coding shreds and outputs both.
 pub struct RegularShredder(ReedSolomonCoder);
 
@@ -374,8 +385,8 @@ impl Default for CodingOnlyShredder {
 pub struct PetsShredder(ReedSolomonCoder);
 
 impl Shredder for PetsShredder {
-    // needs 16 bytes for symmetric encryption key
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    // needs space for the symmetric encryption key
+    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - cipher::KEY_BYTES;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
 
@@ -388,15 +399,9 @@ impl Shredder for PetsShredder {
         let mut payload: Vec<u8> = payload.into();
         assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
-        let mut rng = rand::rng();
-        let mut key = Array::from([0; 16]);
-        rng.fill_bytes(&mut key);
-        let iv = Array::from([0; 16]);
-
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut payload);
-
+        let key = cipher::encrypt_with_random_key(&mut payload);
         payload.extend_from_slice(&key);
+
         let mut raw_shreds = self.0.shred(&payload)?;
         // delete data shred containing key
         raw_shreds.data.pop();
@@ -432,8 +437,8 @@ impl Default for PetsShredder {
 pub struct AontShredder(ReedSolomonCoder);
 
 impl Shredder for AontShredder {
-    // needs 16 bytes for symmetric encryption key
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - 16;
+    // needs space for the symmetric encryption key
+    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - cipher::KEY_BYTES;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
@@ -446,18 +451,10 @@ impl Shredder for AontShredder {
         let mut payload: Vec<u8> = payload.into();
         assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
-        let mut rng = rand::rng();
-        let mut key = Array::from([0; 16]);
-        rng.fill_bytes(&mut key);
-        let iv = Array::from([0; 16]);
-
-        let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-        cipher.apply_keystream(&mut payload);
-
+        let key = cipher::encrypt_with_random_key(&mut payload);
+        // append the key XORed with the hash of the ciphertext
         let hash = hash(&payload);
-        for i in 0..16 {
-            payload.push(hash.as_ref()[i] ^ key[i]);
-        }
+        payload.extend(key.iter().zip(hash.as_ref()).map(|(k, h)| k ^ h));
 
         let raw_shreds = self.0.shred(&payload)?;
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
@@ -486,34 +483,30 @@ impl Default for AontShredder {
     }
 }
 
-/// Strips the trailing 16-byte key material off `buffer`, decrypts the
-/// remaining ciphertext in place with AES-128-CTR, and returns the plaintext
-/// bytes.
+/// Decrypts a payload with an embedded key (at the end).
 ///
-/// `derive_key` turns the raw 16-byte tail (and, for AONT, the ciphertext
-/// `buffer`) into the actual decryption key.
+/// Strips the trailing key material off `buffer`, decrypts the remaining
+/// ciphertext in place, and returns the plaintext bytes.
+/// `derive_key` needs to turn the raw [`cipher::KEY_BYTES`]-byte tail
+/// and the remaining ciphertext `buffer` into the actual decryption key.
 ///
 /// # Errors
 ///
-/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain the
-/// 16-byte key tail.
+/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain a key.
 fn decrypt_payload(
     mut buffer: Vec<u8>,
-    derive_key: impl FnOnce([u8; 16], &[u8]) -> [u8; 16],
+    derive_key: impl FnOnce([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
 ) -> Result<Vec<u8>, DeshredError> {
-    if buffer.len() < 16 {
-        return Err(DeshredError::BadEncoding);
-    }
-    let tail = buffer.split_off(buffer.len() - 16);
-    let tail: [u8; 16] = tail
-        .as_slice()
-        .try_into()
-        .expect("tail should have correct length");
+    // split the key tail off the buffer, the remainder is the ciphertext
+    let ciphertext_len = buffer
+        .len()
+        .checked_sub(cipher::KEY_BYTES)
+        .ok_or(DeshredError::BadEncoding)?;
+    let tail = buffer.split_off(ciphertext_len);
+    let tail = tail.try_into().expect("tail is exactly KEY_BYTES long");
 
-    let key = Array::from(derive_key(tail, &buffer));
-    let iv = Array::from([0; 16]);
-    let mut cipher = Ctr64LE::<Aes128>::new(&key, &iv);
-    cipher.apply_keystream(&mut buffer);
+    let key = derive_key(tail, &buffer);
+    cipher::apply_keystream(key, &mut buffer);
 
     Ok(buffer)
 }
@@ -528,14 +521,17 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(merkle_root.as_ref());
+    let merkle_root_sig = sk.sign_bytes(merkle_root.as_ref());
     assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
 }
 
-/// Assembles the final output shreds (data first, then coding) from the
-/// reconstructed `raw_shreds`, the slice's Merkle `tree`, and `merkle_root_sig`.
+/// Assembles the reconstructed `raw_shreds` into the final output shreds.
 ///
-/// Each returned shred contains the Merkle root, its own path and the signature.
+/// Puts the `raw_shreds` together with the `header`, `merkle_root_sig`,
+/// and a Merkle proof generated from the given `tree`.
+/// Used both when producing our own block and when reconstructing another leader's block.
+///
+/// The output contains all data shreds before all coding shreds.
 fn assemble_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
@@ -567,6 +563,7 @@ fn fill_missing_shreds(
     tree: &SliceMerkleTree,
     merkle_root_sig: Signature,
 ) {
+    let merkle_root = tree.get_root();
     let num_data = raw_shreds.data.len();
     assert_eq!(num_data + raw_shreds.coding.len(), TOTAL_SHREDS);
     let raw = raw_shreds.data.into_iter().chain(raw_shreds.coding);
@@ -574,8 +571,7 @@ fn fill_missing_shreds(
         if shred.is_some() {
             continue;
         }
-        let shred_index = ShredIndex::new(index).unwrap();
-        let merkle_path = tree.create_proof(*shred_index);
+        let shred_index = ShredIndex::new(index).expect("raw shreds never exceed TOTAL_SHREDS");
         let payload = ShredPayload {
             header,
             shred_index,
@@ -586,11 +582,14 @@ fn fill_missing_shreds(
         } else {
             ShredPayloadType::Coding(payload)
         };
-        *shred = Some(ValidatedShred::new_validated(Shred {
-            payload_type,
-            merkle_root_sig,
-            merkle_path,
-        }));
+        *shred = Some(ValidatedShred::new_validated(
+            Shred {
+                payload_type,
+                merkle_root_sig,
+                merkle_path: tree.create_proof(index),
+            },
+            merkle_root.clone(),
+        ));
     }
 }
 
@@ -610,7 +609,7 @@ fn check_merkle_tree(
 
 /// Builds the Merkle tree for a slice, where the leaves are the given shreds.
 fn build_merkle_tree(raw_shreds: &RawShreds) -> SliceMerkleTree {
-    // zero-allocation chaining of slices
+    // zero-allocation chaining of slice iterators
     let leaves = raw_shreds.data.iter().chain(&raw_shreds.coding);
     MerkleTree::new(leaves)
 }
@@ -632,36 +631,39 @@ mod tests {
         ret
     }
 
-    #[test]
-    fn regular_shredding() -> Result<()> {
-        let mut shredder = RegularShredder::default();
+    /// Runs the shred/deshred roundtrip test suite for the given shredder.
+    ///
+    /// Shreds a maximum-size slice, then checks that it can be restored from
+    /// any sufficient subset of shreds and not from an insufficient one.
+    fn shredding_roundtrip<S: Shredder>() -> Result<()> {
+        let mut shredder = S::default();
         let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let slice = create_slice_with_invalid_txs(S::MAX_DATA_SIZE);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let all = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&all)?;
+        let input = into_array(&shreds);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
-        // restore only from data shreds
-        let coding = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&coding)?;
+        // restore from just enough shreds (the first DATA_SHREDS)
+        let input = into_array(&shreds[..DATA_SHREDS]);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
-        // restore using as many coding shreds as possible
-        let data = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
-        let (slice_restored, _) = shredder.deshred(&data)?;
+        // restore from just enough shreds (the last DATA_SHREDS)
+        let input = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let nc_shreds = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&nc_shreds)?;
+        let input = into_array(&nc_shreds);
+        let (slice_restored, _) = shredder.deshred(&input)?;
         assert_eq!(*slice_restored, slice);
 
-        // restore from half coding / half data shreds
+        // restore from just enough shreds (DATA_SHREDS from the middle)
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
         let input = into_array(&shreds[start..end]);
@@ -684,6 +686,21 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
+    }
+
+    #[test]
+    fn deshred_rejects_undecodable_payload() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        // a single byte is too short to be a serialized `SlicePayload`
+        // (which needs at least a parent tag plus an 8-byte length prefix)
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let raw_shreds = coder.shred(&[0u8]).unwrap();
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+        // decoding it fails, but never panics
+        let result = RegularShredder::default().deshred(&into_array(&shreds));
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
 
     #[test]
@@ -716,142 +733,22 @@ mod tests {
     }
 
     #[test]
+    fn regular_shredding() -> Result<()> {
+        shredding_roundtrip::<RegularShredder>()
+    }
+
+    #[test]
     fn coding_only_shredding() -> Result<()> {
-        let mut shredder = CodingOnlyShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
-        assert_eq!(shreds.len(), TOTAL_SHREDS);
-
-        // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from just enough shreds
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from non-consecutive shreds
-        let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        Ok(())
+        shredding_roundtrip::<CodingOnlyShredder>()
     }
 
     #[test]
     fn aont_shredding() -> Result<()> {
-        let mut shredder = AontShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
-        assert_eq!(shreds.len(), TOTAL_SHREDS);
-
-        // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from just enough shreds
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from non-consecutive shreds
-        let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from half coding / half data shreds
-        let start = DATA_SHREDS / 2;
-        let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let input = into_array(&shreds[start..end]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        Ok(())
+        shredding_roundtrip::<AontShredder>()
     }
 
     #[test]
     fn pets_shredding() -> Result<()> {
-        let mut shredder = PetsShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
-        assert_eq!(shreds.len(), TOTAL_SHREDS);
-
-        // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from just enough shreds
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from non-consecutive shreds
-        let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from half coding / half data shreds
-        let start = DATA_SHREDS / 2;
-        let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let input = into_array(&shreds[start..end]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
-        assert_eq!(*slice_restored, slice);
-
-        // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
-
-        Ok(())
+        shredding_roundtrip::<PetsShredder>()
     }
 }

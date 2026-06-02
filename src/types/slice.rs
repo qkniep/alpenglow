@@ -6,10 +6,11 @@
 use std::ops::Deref;
 
 use rand::prelude::*;
+use thiserror::Error;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::crypto::merkle::{BlockHash, SliceRoot};
+use crate::crypto::merkle::SliceRoot;
 use crate::shredder::{MAX_DATA_PER_SLICE, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, Slot};
@@ -31,7 +32,7 @@ pub struct Slice {
     pub is_last: bool,
     /// If first slice in the block or parent changed due to optimistic handover,
     /// then indicates which block is the parent of the block this slice is part of.
-    pub parent: Option<(Slot, BlockHash)>,
+    pub parent: Option<BlockId>,
     /// Payload bytes.
     pub data: Vec<u8>,
 }
@@ -136,14 +137,14 @@ pub(crate) struct SliceHeader {
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct SlicePayload {
     /// Same as [`Slice::parent`].
-    pub(crate) parent: Option<(Slot, BlockHash)>,
+    pub(crate) parent: Option<BlockId>,
     /// Same as [`Slice::data`].
     pub(crate) data: Vec<u8>,
 }
 
 impl SlicePayload {
     /// Constructs a new [`SlicePayload`] from its component parts.
-    pub(crate) fn new(parent: Option<(Slot, BlockHash)>, data: Vec<u8>) -> Self {
+    pub(crate) fn new(parent: Option<BlockId>, data: Vec<u8>) -> Self {
         Self { parent, data }
     }
 
@@ -159,14 +160,33 @@ impl From<SlicePayload> for Vec<u8> {
     }
 }
 
-impl From<&[u8]> for SlicePayload {
-    fn from(payload: &[u8]) -> Self {
-        assert!(
-            payload.len() <= MAX_DATA_PER_SLICE,
-            "payload.len()={} > {MAX_DATA_PER_SLICE}",
-            payload.len()
-        );
-        wincode::deserialize(payload).unwrap()
+/// Errors that may occur while deserializing a [`SlicePayload`] from bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub(crate) enum SlicePayloadError {
+    /// The serialized payload is larger than a slice is allowed to hold.
+    #[error("payload of {len} bytes exceeds the {MAX_DATA_PER_SLICE} byte slice limit")]
+    TooLarge { len: usize },
+    /// The bytes did not decode into a valid [`SlicePayload`].
+    #[error("malformed slice payload")]
+    BadEncoding,
+}
+
+impl TryFrom<&[u8]> for SlicePayload {
+    type Error = SlicePayloadError;
+
+    /// Deserializes a [`SlicePayload`] from bytes received over the network.
+    ///
+    /// Unlike a plain [`wincode::deserialize`], this:
+    /// - caps preallocation at [`MAX_DATA_PER_SLICE`] (wincode has a 4 MiB default),
+    /// - requires the bytes to be fully consumed (no trailing bytes), and
+    /// - returns an error instead of panicking on malformed input.
+    fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
+        if payload.len() > MAX_DATA_PER_SLICE {
+            return Err(SlicePayloadError::TooLarge { len: payload.len() });
+        }
+        let config = DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
+        wincode::config::deserialize_exact(payload, config)
+            .map_err(|_| SlicePayloadError::BadEncoding)
     }
 }
 
@@ -175,7 +195,7 @@ impl From<&[u8]> for SlicePayload {
 /// The payload does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.
+// TODO: This is only used in test and benchmarking code.
 // Ensure it is only compiled when we are testing or benchmarking.
 pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
@@ -201,7 +221,8 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 /// The slice does not contain valid transactions.
 /// This function should only be used for testing and benchmarking.
 //
-// XXX: This is only used in test and benchmarking code.  Ensure it is only compiled when we are testing or benchmarking.
+// TODO: This is only used in test and benchmarking code.
+// Ensure it is only compiled when we are testing or benchmarking.
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
@@ -210,4 +231,60 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
         is_last: true,
     };
     Slice::from_parts(header, payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payload_roundtrip() {
+        let payload = SlicePayload::new(None, vec![1, 2, 3, 4]);
+        let bytes = payload.to_bytes();
+        assert_eq!(SlicePayload::try_from(bytes.as_slice()).unwrap(), payload);
+    }
+
+    #[test]
+    fn trailing_bytes_are_rejected() {
+        let mut bytes = SlicePayload::new(None, vec![1, 2, 3, 4]).to_bytes();
+        // extra trailing byte
+        bytes.push(0xAA);
+        assert_eq!(
+            SlicePayload::try_from(bytes.as_slice()),
+            Err(SlicePayloadError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn malformed_payload_returns_error() {
+        // garbage bytes must return an error rather than panicking
+        assert_eq!(
+            SlicePayload::try_from([0xFFu8; 4].as_slice()),
+            Err(SlicePayloadError::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn oversized_payload_returns_error() {
+        let bytes = vec![0u8; MAX_DATA_PER_SLICE + 1];
+        assert_eq!(
+            SlicePayload::try_from(bytes.as_slice()),
+            Err(SlicePayloadError::TooLarge {
+                len: MAX_DATA_PER_SLICE + 1
+            })
+        );
+    }
+
+    #[test]
+    fn inflated_length_prefix_is_rejected_without_panic() {
+        // overwriting the fixint length field must error
+        let mut bytes = SlicePayload::new(None, vec![]).to_bytes();
+        let len = bytes.len();
+        bytes[len - 8..].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(bytes.len() <= MAX_DATA_PER_SLICE);
+        assert_eq!(
+            SlicePayload::try_from(bytes.as_slice()),
+            Err(SlicePayloadError::BadEncoding)
+        );
+    }
 }

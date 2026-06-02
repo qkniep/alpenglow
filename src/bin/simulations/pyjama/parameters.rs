@@ -10,7 +10,7 @@ use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use log::info;
 use rand::prelude::*;
 
-use crate::binomial::binomial_cdf;
+use crate::binomial::binomial_at_least;
 use crate::discrete_event_simulator::Builder;
 
 /// Parameters for the Pyjama MCP protocol.
@@ -179,7 +179,7 @@ impl PyjamaParameters {
         // probability that the adversary controls enough relays to decrypt
         let byzantine = adv_strength.byzantine;
         let relays_needed = self.can_decode_threshold;
-        1.0 - binomial_cdf(byzantine, self.num_relays, relays_needed - 1)
+        binomial_at_least(byzantine, self.num_relays, relays_needed)
     }
 
     /// Probability that the adversary can selectively censor proposers in a slot.
@@ -188,13 +188,12 @@ impl PyjamaParameters {
     pub(crate) fn selective_censorship_probability(&self, adv_strength: AdversaryStrength) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let prob_all_proposers =
-            1.0 - binomial_cdf(failed, self.num_proposers, self.num_proposers - 1);
+        let prob_all_proposers = binomial_at_least(failed, self.num_proposers, self.num_proposers);
 
         // probability that the adversary can exclude all proposers
         let byzantine = adv_strength.byzantine;
         let relays_needed = self.attestations_threshold - self.should_decode_threshold;
-        let prob_censor_relays = 1.0 - binomial_cdf(byzantine, self.num_relays, relays_needed - 1);
+        let prob_censor_relays = binomial_at_least(byzantine, self.num_relays, relays_needed);
 
         // probability that either attack works
         1.0 - (1.0 - prob_all_proposers) * (1.0 - prob_censor_relays)
@@ -207,8 +206,7 @@ impl PyjamaParameters {
     ) -> f64 {
         // probability that only the adversary proposes
         let failed = adv_strength.crashed + adv_strength.byzantine;
-        let prob_no_proposals =
-            1.0 - binomial_cdf(failed, self.num_proposers, self.num_proposers - 1);
+        let prob_no_proposals = binomial_at_least(failed, self.num_proposers, self.num_proposers);
 
         // probability that the adversary can prevent the leader from producing a non-empty block
         let relays_to_hold_protocol = self.should_decode_threshold - self.can_decode_threshold;
@@ -217,7 +215,7 @@ impl PyjamaParameters {
         let relays_needed = relays_to_hold_protocol
             .min(relays_to_censor_proposers)
             .min(relays_to_censor_leader);
-        let prob_censor_relays = 1.0 - binomial_cdf(failed, self.num_relays, relays_needed - 1);
+        let prob_censor_relays = binomial_at_least(failed, self.num_relays, relays_needed);
 
         // probability that either attack works
         1.0 - (1.0 - prob_no_proposals) * (1.0 - prob_censor_relays)
@@ -234,7 +232,7 @@ impl PyjamaParameters {
         // probability that the adversary can withhold enough shreds
         let byzantine = adv_strength.byzantine;
         let relays_needed = self.should_decode_threshold - self.can_decode_threshold;
-        1.0 - binomial_cdf(byzantine, self.num_relays, relays_needed - 1)
+        binomial_at_least(byzantine, self.num_relays, relays_needed)
     }
 
     /// Calculates and prints attack success probabilities.
