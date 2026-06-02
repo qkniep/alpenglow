@@ -36,7 +36,7 @@ use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{MerkleTree, cipher, hash};
 use crate::shredder::validated_shreds::ValidatedShreds;
-use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload};
+use crate::types::{ReconstructedSlice, Slice, SliceHeader, SlicePayload, SlicePayloadError};
 
 /// Number of data shreds the payload of a slice is split into.
 pub const DATA_SHREDS: usize = 32;
@@ -97,6 +97,15 @@ impl From<ReedSolomonShredError> for DeshredError {
     fn from(err: ReedSolomonShredError) -> Self {
         match err {
             ReedSolomonShredError::TooMuchData => Self::TooMuchData,
+        }
+    }
+}
+
+impl From<SlicePayloadError> for DeshredError {
+    fn from(err: SlicePayloadError) -> Self {
+        match err {
+            SlicePayloadError::TooLarge { .. } => Self::TooMuchData,
+            SlicePayloadError::BadEncoding => Self::BadEncoding,
         }
     }
 }
@@ -281,7 +290,7 @@ impl Shredder for RegularShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         finalize_deshred(raw_shreds, shreds, payload)
     }
 }
@@ -316,7 +325,7 @@ impl Shredder for CodingOnlyShredder {
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
         let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
-        let payload = SlicePayload::from(payload_bytes.as_slice());
+        let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         // this shredder outputs no data shreds
         raw_shreds.data = vec![];
         finalize_deshred(raw_shreds, shreds, payload)
@@ -472,16 +481,24 @@ fn finalize_deshred(
 ///
 /// # Errors
 ///
-/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain a key.
+/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain a key
+/// or the decrypted plaintext is not a valid [`SlicePayload`].
 fn decrypt_payload(
     mut buffer: Vec<u8>,
     derive_key: impl FnOnce([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
 ) -> Result<SlicePayload, DeshredError> {
-    let (ciphertext, &tail) = buffer.split_last_chunk().ok_or(DeshredError::BadEncoding)?;
-    let key = derive_key(tail, ciphertext);
+    // split the key tail off the buffer, the remainder is the ciphertext
+    let ciphertext_len = buffer
+        .len()
+        .checked_sub(cipher::KEY_BYTES)
+        .ok_or(DeshredError::BadEncoding)?;
+    let tail = buffer.split_off(ciphertext_len);
+    let tail = tail.try_into().expect("tail is exactly KEY_BYTES long");
+
+    let key = derive_key(tail, &buffer);
     cipher::apply_keystream(key, &mut buffer);
 
-    Ok(SlicePayload::from(buffer.as_slice()))
+    Ok(SlicePayload::try_from(buffer.as_slice())?)
 }
 
 /// Generates the Merkle tree, signs the root, and outputs shreds.
@@ -494,7 +511,7 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign(merkle_root.as_ref());
+    let merkle_root_sig = sk.sign_bytes(merkle_root.as_ref());
     assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
 }
 
@@ -511,6 +528,7 @@ fn assemble_output_shreds(
     tree: &SliceMerkleTree,
     merkle_root_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
+    let merkle_root = tree.get_root();
     let num_data = raw_shreds.data.len();
     raw_shreds
         .data
@@ -529,11 +547,14 @@ fn assemble_output_shreds(
             } else {
                 ShredPayloadType::Coding(payload)
             };
-            ValidatedShred::new_validated(Shred {
-                payload_type,
-                merkle_root_sig,
-                merkle_path: tree.create_proof(index),
-            })
+            ValidatedShred::new_validated(
+                Shred {
+                    payload_type,
+                    merkle_root_sig,
+                    merkle_path: tree.create_proof(index),
+                },
+                merkle_root.clone(),
+            )
         })
         .collect::<Vec<_>>()
         .try_into()
@@ -633,6 +654,21 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
+    }
+
+    #[test]
+    fn deshred_rejects_undecodable_payload() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        // a single byte is too short to be a serialized `SlicePayload`
+        // (which needs at least a parent tag plus an 8-byte length prefix)
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let raw_shreds = coder.shred(&[0u8]).unwrap();
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+        // decoding it fails, but never panics
+        let result = RegularShredder::default().deshred(&into_array(&shreds));
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
 
     #[test]
