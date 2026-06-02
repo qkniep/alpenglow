@@ -133,13 +133,13 @@ mod tests {
 
     use super::*;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+    use crate::shredder::{RegularShredder, Shredder};
     use crate::types::slice::create_slice_with_invalid_txs;
 
     fn create_random_shred() -> (Shred, SecretKey) {
         let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        let slice = create_slice_with_invalid_txs(RegularShredder::MAX_DATA_SIZE);
         let shreds = shredder.shred(slice, &sk).unwrap();
         let shred = shreds[shreds.len() - 1].clone().into_shred();
         (shred, sk)
