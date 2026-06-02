@@ -627,21 +627,27 @@ mod tests {
         Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info))
     }
 
+    /// Adds `vote` to `state`, looking up the voter's stake from the epoch info.
+    fn add(state: &mut SlotState, vote: Vote) -> SlotStateOutputs {
+        let stake = state.epoch_info.epoch_info().validator(vote.signer()).stake;
+        state.add_vote(vote, stake)
+    }
+
     #[test]
     fn add_cert() {
         let (sks, epoch_info) = generate_validators(11);
         let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash) = random_block_id(Slot::new(1));
-        let mut slot_state = SlotState::new(slot, epoch_info.clone());
+        let mut state = SlotState::new(slot, epoch_info.clone());
         let votes: Vec<NotarVote> = sks
             .iter()
             .enumerate()
             .map(|(i, sk)| NotarVote::new(slot, hash.clone(), sk, ValidatorIndex::new(i as u64)))
             .collect();
         let cert = NotarCert::try_new(&votes, epoch_info.epoch_info().validators()).unwrap();
-        assert!(slot_state.certificates.notar.is_none());
-        slot_state.add_cert(Cert::Notar(cert));
-        assert!(slot_state.certificates.notar.is_some());
+        assert!(state.certificates.notar.is_none());
+        state.add_cert(Cert::Notar(cert));
+        assert!(state.certificates.notar.is_some());
     }
 
     #[test]
@@ -649,19 +655,14 @@ mod tests {
         let (sks, epoch_info) = generate_validators(11);
         let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash) = random_block_id(Slot::new(1));
-        let mut slot_state = SlotState::new(slot, epoch_info.clone());
+        let mut state = SlotState::new(slot, epoch_info);
         for (i, sk) in sks.iter().enumerate() {
-            let vote = Vote::new_notar(slot, hash.clone(), sk, ValidatorIndex::new(i as u64));
-            let voter_stake = epoch_info
-                .epoch_info()
-                .validator(ValidatorIndex::new(i as u64))
-                .stake;
-            assert!(slot_state.votes.notar[i].is_none());
-            slot_state.add_vote(vote.clone(), voter_stake);
-            let notar_vote = &slot_state.votes.notar[i];
-            assert!(notar_vote.is_some());
+            let notar_vote = Vote::new_notar(slot, hash.clone(), sk, ValidatorIndex::new(i as u64));
+            assert!(state.votes.notar[i].is_none());
+            add(&mut state, notar_vote);
+            assert!(state.votes.notar[i].is_some());
             assert_eq!(
-                slot_state.voted_stakes.notar.get(&hash),
+                state.voted_stakes.notar.get(&hash),
                 Some(&Stake::new(i as u64 + 1))
             );
         }
@@ -672,39 +673,267 @@ mod tests {
         let (sks, epoch_info) = generate_validators(3);
         let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash) = random_block_id(Slot::new(1));
-        let mut slot_state = SlotState::new(slot, epoch_info.clone());
+        let mut state = SlotState::new(slot, epoch_info);
 
         // mark parent as notarized(-fallback)
-        slot_state.notify_parent_known(hash.clone());
-        slot_state.notify_parent_certified(hash.clone());
+        state.notify_parent_known(hash.clone());
+        state.notify_parent_certified(hash.clone());
 
         // 33% notar alone has no effect
-        let vote = Vote::new_notar(slot, hash.clone(), &sks[1], ValidatorIndex::new(1));
-        let voter_stake = epoch_info
-            .epoch_info()
-            .validator(ValidatorIndex::new(1))
-            .stake;
-        let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
+        let notar_vote = Vote::new_notar(slot, hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let (certs, events, blocks) = add(&mut state, notar_vote);
         assert!(certs.is_empty());
         assert!(events.is_empty());
         assert!(blocks.is_empty());
 
         // additional 33% skip should lead to safe-to-notar
-        let vote = Vote::new_skip(slot, &sks[0], ValidatorIndex::new(0));
-        let voter_stake = epoch_info
-            .epoch_info()
-            .validator(ValidatorIndex::new(0))
-            .stake;
-        let (certs, events, blocks) = slot_state.add_vote(vote.clone(), voter_stake);
+        let skip_vote = Vote::new_skip(slot, &sks[0], ValidatorIndex::new(0));
+        let (certs, events, blocks) = add(&mut state, skip_vote);
         assert!(certs.is_empty());
         assert_eq!(events.len(), 1);
         assert!(blocks.is_empty());
-        match &events[0] {
-            PoolEvent::SafeToNotar((s, h)) => {
-                assert_eq!(*s, slot);
-                assert_eq!(*h, hash);
-            }
-            _ => unreachable!(),
+        assert_eq!(events[0], PoolEvent::SafeToNotar((slot, hash)));
+    }
+
+    #[test]
+    fn slashable_skip_and_notarize() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash) = random_block_id(Slot::new(1));
+        let mut state = SlotState::new(slot, epoch_info);
+
+        // validator 1 skips first, so a later notarization is slashable
+        let v1 = ValidatorIndex::new(1);
+        add(&mut state, Vote::new_skip(slot, &sks[1], v1));
+        let notar_vote = Vote::new_notar(slot, hash.clone(), &sks[1], v1);
+        assert_eq!(
+            state.check_slashable_offence(&notar_vote),
+            Some(SlashableOffence::SkipAndNotarize(v1, slot))
+        );
+
+        // validator 2 notarizes first, so a later skip is slashable
+        let v2 = ValidatorIndex::new(2);
+        add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[2], v2));
+        let skip_vote = Vote::new_skip(slot, &sks[2], v2);
+        assert_eq!(
+            state.check_slashable_offence(&skip_vote),
+            Some(SlashableOffence::SkipAndNotarize(v2, slot))
+        );
+    }
+
+    #[test]
+    fn slashable_notar_different_hash() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash_a) = random_block_id(Slot::new(1));
+        let hash_b = random_block_id(Slot::new(1)).1;
+        let mut state = SlotState::new(slot, epoch_info);
+        let v = ValidatorIndex::new(1);
+
+        let notar_a = Vote::new_notar(slot, hash_a, &sks[1], v);
+        add(&mut state, notar_a.clone());
+
+        // notarizing a different hash for the same slot is slashable
+        let notar_b = Vote::new_notar(slot, hash_b, &sks[1], v);
+        assert_eq!(
+            state.check_slashable_offence(&notar_b),
+            Some(SlashableOffence::NotarDifferentHash(v, slot))
+        );
+
+        // re-notarizing the same hash is a benign duplicate, not slashable
+        assert!(state.check_slashable_offence(&notar_a).is_none());
+    }
+
+    #[test]
+    fn slashable_skip_and_finalize() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, _) = random_block_id(Slot::new(1));
+        let mut state = SlotState::new(slot, epoch_info);
+
+        // finalize first, then skip / skip-fallback are slashable
+        let v1 = ValidatorIndex::new(1);
+        add(&mut state, Vote::new_final(slot, &sks[1], v1));
+        assert_eq!(
+            state.check_slashable_offence(&Vote::new_skip(slot, &sks[1], v1)),
+            Some(SlashableOffence::SkipAndFinalize(v1, slot))
+        );
+        assert_eq!(
+            state.check_slashable_offence(&Vote::new_skip_fallback(slot, &sks[1], v1)),
+            Some(SlashableOffence::SkipAndFinalize(v1, slot))
+        );
+
+        // skip first, then finalize is slashable
+        let v2 = ValidatorIndex::new(2);
+        add(&mut state, Vote::new_skip(slot, &sks[2], v2));
+        assert_eq!(
+            state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
+            Some(SlashableOffence::SkipAndFinalize(v2, slot))
+        );
+
+        // skip-fallback first, then finalize is slashable
+        let v3 = ValidatorIndex::new(3);
+        add(&mut state, Vote::new_skip_fallback(slot, &sks[3], v3));
+        assert_eq!(
+            state.check_slashable_offence(&Vote::new_final(slot, &sks[3], v3)),
+            Some(SlashableOffence::SkipAndFinalize(v3, slot))
+        );
+    }
+
+    #[test]
+    fn slashable_notar_fallback_and_finalize() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash) = random_block_id(Slot::new(1));
+        let mut state = SlotState::new(slot, epoch_info);
+
+        // finalize first, then a notar-fallback is slashable
+        let v1 = ValidatorIndex::new(1);
+        add(&mut state, Vote::new_final(slot, &sks[1], v1));
+        let nf_vote_1 = Vote::new_notar_fallback(slot, hash.clone(), &sks[1], v1);
+        assert_eq!(
+            state.check_slashable_offence(&nf_vote_1),
+            Some(SlashableOffence::NotarFallbackAndFinalize(v1, slot))
+        );
+
+        // notar-fallback first, then finalize is slashable
+        let v2 = ValidatorIndex::new(2);
+        let nf_vote_2 = Vote::new_notar_fallback(slot, hash.clone(), &sks[2], v2);
+        add(&mut state, nf_vote_2);
+        assert_eq!(
+            state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
+            Some(SlashableOffence::NotarFallbackAndFinalize(v2, slot))
+        );
+    }
+
+    #[test]
+    fn slashable_offence_none() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash) = random_block_id(Slot::new(1));
+        let mut state = SlotState::new(slot, epoch_info);
+        let sk = &sks[1];
+        let v = ValidatorIndex::new(1);
+
+        // no prior votes -> nothing is slashable
+        let notar_vote = Vote::new_notar(slot, hash.clone(), sk, v);
+        let skip_vote = Vote::new_skip(slot, sk, v);
+        let final_vote = Vote::new_final(slot, sk, v);
+        assert!(state.check_slashable_offence(&notar_vote).is_none());
+        assert!(state.check_slashable_offence(&skip_vote).is_none());
+        assert!(state.check_slashable_offence(&final_vote).is_none());
+
+        // notarizing then finalizing the same block is the happy path, not slashable
+        add(&mut state, notar_vote.clone());
+        assert!(state.check_slashable_offence(&final_vote).is_none());
+    }
+
+    #[test]
+    fn should_ignore_duplicate_votes() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash) = random_block_id(Slot::new(1));
+        let other_hash = random_block_id(Slot::new(1)).1;
+        let mut state = SlotState::new(slot, epoch_info);
+
+        // fresh validator: nothing to ignore
+        let v1 = ValidatorIndex::new(1);
+        assert!(!state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)));
+
+        // only one notar vote per validator counts, regardless of the hash
+        add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[1], v1));
+        assert!(state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)));
+        assert!(state.should_ignore_vote(&Vote::new_notar(slot, other_hash.clone(), &sks[1], v1)));
+
+        // should ignore skip and skip-fallback after skip
+        let v2 = ValidatorIndex::new(2);
+        add(&mut state, Vote::new_skip(slot, &sks[2], v2));
+        assert!(state.should_ignore_vote(&Vote::new_skip(slot, &sks[2], v2)));
+        assert!(state.should_ignore_vote(&Vote::new_skip_fallback(slot, &sks[2], v2)));
+
+        // ignore duplicate finalization votes
+        let v3 = ValidatorIndex::new(3);
+        add(&mut state, Vote::new_final(slot, &sks[3], v3));
+        assert!(state.should_ignore_vote(&Vote::new_final(slot, &sks[3], v3)));
+
+        // notar-fallback is tracked per (validator, hash)
+        let v4 = ValidatorIndex::new(4);
+        let nf_vote_1 = Vote::new_notar_fallback(slot, hash.clone(), &sks[4], v4);
+        add(&mut state, nf_vote_1.clone());
+        assert!(state.should_ignore_vote(&nf_vote_1));
+        let nf_vote_2 = Vote::new_notar_fallback(slot, other_hash, &sks[4], v4);
+        assert!(!state.should_ignore_vote(&nf_vote_2));
+    }
+
+    #[test]
+    fn count_finalize_creates_cert_at_quorum() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, _) = random_block_id(Slot::new(1));
+        let mut state = SlotState::new(slot, epoch_info);
+
+        // 3/6 final votes, below 60% quorum, no cert yet
+        for (i, sk) in sks.iter().enumerate().skip(1).take(3) {
+            let final_vote = Vote::new_final(slot, sk, ValidatorIndex::new(i as u64));
+            let (certs, events, blocks) = add(&mut state, final_vote);
+            assert!(certs.is_empty());
+            assert!(events.is_empty());
+            assert!(blocks.is_empty());
         }
+        assert_eq!(state.voted_stakes.finalize, Stake::new(3));
+
+        // 4/6 final votes, quorum reached, produce final cert
+        let final_vote = Vote::new_final(slot, &sks[4], ValidatorIndex::new(4));
+        let (certs, _, _) = add(&mut state, final_vote);
+        assert_eq!(certs.len(), 1);
+        let cert = certs.into_iter().next().unwrap();
+        assert!(matches!(cert, Cert::Final(_)));
+
+        // more final votes do not emit new cert
+        state.add_cert(cert);
+        let final_vote = Vote::new_final(slot, &sks[5], ValidatorIndex::new(5));
+        let (certs, _, _) = add(&mut state, final_vote);
+        assert!(certs.is_empty());
+    }
+
+    #[test]
+    fn count_notar_fallback_creates_cert_at_quorum() {
+        let (sks, epoch_info) = generate_validators(6);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash) = random_block_id(Slot::new(1));
+        let mut state = SlotState::new(slot, epoch_info);
+
+        // two notar votes for the block, not enough for any cert
+        for (i, sk) in sks.iter().enumerate().skip(1).take(2) {
+            let v = ValidatorIndex::new(i as u64);
+            let notar_vote = Vote::new_notar(slot, hash.clone(), sk, v);
+            let (certs, _, _) = add(&mut state, notar_vote);
+            assert!(certs.is_empty());
+        }
+
+        // one notar-fallback vote: notar(2) + nf(1) = 3 < quorum(4), still no cert
+        let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[3], ValidatorIndex::new(3));
+        let (certs, events, blocks) = add(&mut state, nf_vote);
+        assert!(certs.is_empty());
+        assert!(events.is_empty());
+        assert!(blocks.is_empty());
+        assert_eq!(
+            state.voted_stakes.notar_fallback.get(&hash),
+            Some(&Stake::new(1))
+        );
+
+        // second notar-fallback vote: notar(2) + nf(2) = 4 = quorum -> notar-fallback cert
+        let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[4], ValidatorIndex::new(4));
+        let (certs, _, _) = add(&mut state, nf_vote);
+        assert_eq!(certs.len(), 1);
+        let cert = certs.into_iter().next().unwrap();
+        assert!(matches!(cert, Cert::NotarFallback(_)));
+        assert_eq!(cert.block_hash().unwrap(), &hash);
+
+        // more notar-fallback votes do not emit new cert
+        state.add_cert(cert);
+        let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[5], ValidatorIndex::new(5));
+        let (certs, _, _) = add(&mut state, nf_vote);
+        assert!(certs.is_empty());
     }
 }
