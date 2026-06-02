@@ -71,16 +71,16 @@ impl From<ReedSolomonShredError> for ShredError {
 /// Errors that may occur during deshredding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum DeshredError {
-    #[error("could not deshred malformed input")]
-    BadEncoding,
-    #[error("too much data to fit into slice")]
-    TooMuchData,
-    #[error("not enough shreds to deshred")]
-    NotEnoughShreds,
-    #[error("shreds are part of invalid Merkle tree")]
-    InvalidMerkleTree,
     #[error("shreds array contains invalid sequence")]
     InvalidLayout,
+    #[error("not enough shreds to deshred")]
+    NotEnoughShreds,
+    #[error("too much data to fit into slice")]
+    TooMuchData,
+    #[error("could not deshred malformed input")]
+    BadEncoding,
+    #[error("shreds are part of invalid Merkle tree")]
+    InvalidMerkleTree,
 }
 
 impl From<ReedSolomonDeshredError> for DeshredError {
@@ -248,14 +248,16 @@ pub trait Shredder: Default {
 
     /// The core deshreding implementation that the actual shredders provide.
     ///
-    /// NOTE: this is not part of the public API, normally, [`Shredder::deshred()`] should be used.
+    /// NOTE: this is not part of the public API, use [`Shredder::deshred()`] instead.
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError>;
 }
 
-/// A shredder that augments the [`DATA_SHREDS`] data shreds with
+/// A plain Reed-Solomon shredder.
+///
+/// It augments the the [`DATA_SHREDS`] data shreds with
 /// `TOTAL_SHREDS - DATA_SHREDS` coding shreds and outputs both.
 pub struct RegularShredder(ReedSolomonCoder);
 
@@ -434,7 +436,7 @@ impl Default for AontShredder {
     }
 }
 
-/// Completes deshredding, shared by all shredder variants.
+/// Completes deshredding; shared by all shredder variants.
 ///
 /// Given the reconstructed (and already trimmed) `raw_shreds` and the
 /// (already transformed) `payload`, this verifies the Merkle tree, builds the
@@ -460,30 +462,23 @@ fn finalize_deshred(
     Ok((slice, reconstructed_shreds))
 }
 
-/// Strips the trailing key material off `buffer`, decrypts the remaining
-/// ciphertext in place, and returns the plaintext as a [`SlicePayload`].
+/// Decrypts a payload with an embedded key (at the end).
 ///
-/// `derive_key` turns the raw [`cipher::KEY_BYTES`]-byte tail (and, for AONT,
-/// the ciphertext `buffer`) into the actual decryption key.
+/// Strips the trailing key material off `buffer`.
+/// Then, `derive_key` needs to turn the raw [`cipher::KEY_BYTES`]-byte tail
+/// and the remaining ciphertext `buffer` into the actual decryption key.
+///
+/// Returns the plaintext deserialized as a [`SlicePayload`].
 ///
 /// # Errors
 ///
-/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain the
-/// key tail.
+/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain a key.
 fn decrypt_payload(
     mut buffer: Vec<u8>,
     derive_key: impl FnOnce([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
 ) -> Result<SlicePayload, DeshredError> {
-    if buffer.len() < cipher::KEY_BYTES {
-        return Err(DeshredError::BadEncoding);
-    }
-    let tail = buffer.split_off(buffer.len() - cipher::KEY_BYTES);
-    let tail: [u8; cipher::KEY_BYTES] = tail
-        .as_slice()
-        .try_into()
-        .expect("tail should have correct length");
-
-    let key = derive_key(tail, &buffer);
+    let (ciphertext, &tail) = buffer.split_last_chunk().ok_or(DeshredError::BadEncoding)?;
+    let key = derive_key(tail, ciphertext);
     cipher::apply_keystream(key, &mut buffer);
 
     Ok(SlicePayload::from(buffer.as_slice()))
@@ -503,16 +498,13 @@ fn data_and_coding_to_output_shreds(
     assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
 }
 
-/// Assembles the final output shreds (data first, then coding) from the
-/// reconstructed `raw_shreds`, the slice's Merkle `tree`, and `merkle_root_sig`.
+/// Assembles the reconstructed `raw_shreds` into the final output shreds.
 ///
-/// Used both when producing our own block (signature freshly created over the
-/// root, see [`data_and_coding_to_output_shreds`]) and when reconstructing
-/// another leader's block (signature copied from a received shred, see
-/// [`finalize_deshred`]). In the latter case `tree` must already match the
-/// reconstructed shreds.
+/// Puts the `raw_shreds` together with the `header`, `merkle_root_sig`,
+/// and a Merkle proof generated from the given `tree`.
+/// Used both when producing our own block and when reconstructing another leader's block.
 ///
-/// Each returned shred contains its own path and the signature.
+/// The output contains all data shreds before all coding shreds.
 fn assemble_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
