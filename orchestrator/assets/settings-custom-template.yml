@@ -1,0 +1,37 @@
+# Settings template for the "custom" provider: machines you provisioned
+# yourself (bare metal, an existing fleet, or cloud instances you created by
+# hand). The orchestrator only deploys and runs — it never creates or destroys
+# these machines.
+#
+# Copy to `settings.yml`, fill in the IPs, then:
+#   cargo run -p orchestrator -- --settings orchestrator/assets/settings.yml install
+#   cargo run -p orchestrator -- --settings orchestrator/assets/settings.yml benchmark --nodes 4
+
+testbed_id: alpenglow-custom
+
+cloud_provider:
+  provider: custom
+  ssh_username: root
+  instances:
+    - { region: local, ip: 203.0.113.10 }
+    - { region: local, ip: 203.0.113.11 }
+    - { region: local, ip: 203.0.113.12 }
+    - { region: local, ip: 203.0.113.13 }
+
+# SSH key already authorized on the machines above.
+ssh_private_key_file: ~/.ssh/id_ed25519
+
+# Must list every region label used under `instances`.
+regions:
+  - local
+
+repository:
+  url: https://github.com/qkniep/alpenglow
+  commit: main
+
+# Optional (defaults shown):
+# working_dir: ~/alpenglow-testbed
+# results_dir: ./results
+# logs_dir: ./logs
+# base_port: 8000
+# ssh_timeout_secs: 30
