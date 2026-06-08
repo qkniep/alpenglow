@@ -716,6 +716,7 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn deshred_rejects_tampered_coding_shreds() {
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let (header, payload) = slice.deconstruct();
@@ -729,16 +730,16 @@ mod tests {
 
         // reconstructing from the data shreds re-derives the correct coding
         // shreds, exposing the mismatch with the signed Merkle root
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let result = RegularShredder::default().deshred(&input);
+        let mut input = into_array(&shreds[..DATA_SHREDS]);
+        let result = RegularShredder::default().deshred(&mut input);
         assert_eq!(result.err(), Some(DeshredError::InvalidMerkleTree));
     }
 
     #[test]
     fn deshred_rejects_empty_input() {
         // an all-`None` array must error cleanly instead of panicking
-        let empty = [const { None }; TOTAL_SHREDS];
-        let result = RegularShredder::default().deshred(&empty);
+        let mut empty = [const { None }; TOTAL_SHREDS];
+        let result = RegularShredder::default().deshred(&mut empty);
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
     }
 
@@ -750,8 +751,8 @@ mod tests {
 
         // `CodingOnlyShredder` outputs only coding shreds, but `RegularShredder`
         // expects data shreds in the first `DATA_SHREDS` positions
-        let input = into_array(&shreds);
-        let result = RegularShredder::default().deshred(&input);
+        let mut input = into_array(&shreds);
+        let result = RegularShredder::default().deshred(&mut input);
         assert_eq!(result.err(), Some(DeshredError::InvalidLayout));
     }
 
@@ -770,8 +771,8 @@ mod tests {
         };
         let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
 
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let result = RegularShredder::default().deshred(&input);
+        let mut input = into_array(&shreds[..DATA_SHREDS]);
+        let result = RegularShredder::default().deshred(&mut input);
         assert_eq!(result.err(), Some(DeshredError::TooMuchData));
     }
 
@@ -817,7 +818,7 @@ mod tests {
         raw_shreds.data.truncate(S::DATA_OUTPUT_SHREDS);
         let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
 
-        let result = S::default().deshred(&into_array(&shreds));
+        let result = S::default().deshred(&mut into_array(&shreds));
         assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
 
