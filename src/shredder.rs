@@ -229,27 +229,6 @@ pub trait Shredder: Default {
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError>;
 
-    /// Puts the given shreds back together into a complete slice.
-    ///
-    /// Additionally, outputs all [`TOTAL_SHREDS`] reconstructed shreds.
-    /// This includes all (potentially data and coding) shreds sent originally.
-    ///
-    /// This is a convenience wrapper around [`Shredder::deshred_into`] that
-    /// leaves the input untouched, at the cost of cloning the present shreds.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Shredder::deshred_into`].
-    fn deshred(
-        &mut self,
-        shreds: &[Option<ValidatedShred>; TOTAL_SHREDS],
-    ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut shreds = shreds.clone();
-        let slice = self.deshred_into(&mut shreds)?;
-        let shreds = shreds.map(|s| s.expect("deshred_into reconstructs all missing shreds"));
-        Ok((slice, shreds))
-    }
-
     /// Puts the given shreds back together into a complete slice, in place.
     ///
     /// Reconstructs all missing shreds, storing them in the corresponding
@@ -258,13 +237,15 @@ pub trait Shredder: Default {
     ///
     /// # Errors
     ///
+    /// On any error, `shreds` is left exactly as it was passed in.
+    ///
     /// - Implementations may return an error if the input is invalid or if the
     ///   deshredding process fails for any implementation-specific reason.
     /// - Should always return [`DeshredError::TooMuchData`] if the reconstructed
     ///   slice is too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
     /// - Returns [`DeshredError::InvalidMerkleTree`] if the reconstructed shreds
     ///   do not form a Merkle tree matching the root of the received shreds.
-    fn deshred_into(
+    fn deshred(
         &mut self,
         shreds: &mut [Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<ReconstructedSlice, DeshredError> {
@@ -298,7 +279,7 @@ pub trait Shredder: Default {
     /// with all [`TOTAL_SHREDS`] reconstructed raw shreds.
     ///
     /// NOTE: this is not part of the public API, normally, [`Shredder::deshred()`]
-    /// or [`Shredder::deshred_into()`] should be used.
+    /// should be used.
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
@@ -552,7 +533,7 @@ fn assemble_output_shreds(
 /// Used both when producing our own block (signature freshly created over the
 /// root, see [`data_and_coding_to_output_shreds`]) and when reconstructing
 /// another leader's block (signature copied from a received shred, see
-/// [`Shredder::deshred_into`]). In the latter case `tree` must already match
+/// [`Shredder::deshred`]). In the latter case `tree` must already match
 /// the reconstructed shreds.
 ///
 /// Each new shred contains the Merkle root, its own path and the signature.
@@ -643,46 +624,46 @@ mod tests {
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
-        let input = into_array(&shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
+        let mut input = into_array(&shreds);
+        let slice_restored = shredder.deshred(&mut input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from just enough shreds (the first DATA_SHREDS)
-        let input = into_array(&shreds[..DATA_SHREDS]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
+        let mut input = into_array(&shreds[..DATA_SHREDS]);
+        let slice_restored = shredder.deshred(&mut input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from just enough shreds (the last DATA_SHREDS)
-        let input = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
+        let mut input = into_array(&shreds[TOTAL_SHREDS - DATA_SHREDS..]);
+        let slice_restored = shredder.deshred(&mut input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from non-consecutive shreds
         let nc_shreds = [&shreds[..1], &shreds[DATA_SHREDS + 1..]].concat();
-        let input = into_array(&nc_shreds);
-        let (slice_restored, _) = shredder.deshred(&input)?;
+        let mut input = into_array(&nc_shreds);
+        let slice_restored = shredder.deshred(&mut input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from just enough shreds (DATA_SHREDS from the middle)
         let start = DATA_SHREDS / 2;
         let end = DATA_SHREDS / 2 + DATA_SHREDS;
-        let input = into_array(&shreds[start..end]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
+        let mut input = into_array(&shreds[start..end]);
+        let slice_restored = shredder.deshred(&mut input)?;
         assert_eq!(*slice_restored, slice);
 
         // restore from all but one shred
-        let input = into_array(&shreds[1..]);
-        let (slice_restored, _) = shredder.deshred(&input)?;
+        let mut input = into_array(&shreds[1..]);
+        let slice_restored = shredder.deshred(&mut input)?;
         assert_eq!(*slice_restored, slice);
 
         // cannot restore from one shred
-        let input = into_array(&shreds[..1]);
-        let result = shredder.deshred(&input);
+        let mut input = into_array(&shreds[..1]);
+        let result = shredder.deshred(&mut input);
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         // cannot restore from too few shreds
-        let input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred(&input);
+        let mut input = into_array(&shreds[..DATA_SHREDS - 1]);
+        let result = shredder.deshred(&mut input);
         assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
 
         Ok(())
@@ -699,21 +680,22 @@ mod tests {
         let raw_shreds = coder.shred(&[0u8]).unwrap();
         let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
         // decoding it fails, but never panics
-        let result = RegularShredder::default().deshred(&into_array(&shreds));
+        let result = RegularShredder::default().deshred(&mut into_array(&shreds));
         assert_eq!(result.err(), Some(DeshredError::BadEncoding));
     }
 
     #[test]
-    fn deshred_into_fills_missing_shreds() -> Result<()> {
+    fn deshred_fills_missing_shreds() -> Result<()> {
         let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rand::rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let shreds = shredder.shred(slice.clone(), &sk)?;
 
         // restore in place from only the data shreds
+        // (the slice payload and `NotEnoughShreds` cases are covered by
+        // `shredding_roundtrip`; here we only assert the in-place behavior)
         let mut input = into_array(&shreds[..DATA_SHREDS]);
-        let restored = shredder.deshred_into(&mut input)?;
-        assert_eq!(*restored, slice);
+        shredder.deshred(&mut input)?;
 
         // all missing shreds should have been reconstructed in place
         for (reconstructed, original) in input.iter().zip(&shreds) {
@@ -723,10 +705,9 @@ mod tests {
             assert_eq!(reconstructed.merkle_root(), original.merkle_root());
         }
 
-        // too few shreds should leave the input untouched
+        // an error should leave the input untouched
         let mut input = into_array(&shreds[..DATA_SHREDS - 1]);
-        let result = shredder.deshred_into(&mut input);
-        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
+        assert!(shredder.deshred(&mut input).is_err());
         assert_eq!(input.iter().flatten().count(), DATA_SHREDS - 1);
 
         Ok(())

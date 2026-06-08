@@ -266,7 +266,7 @@ impl BlockData {
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
         // missing shreds are reconstructed in place into `slice_shreds`
-        let reconstructed_slice = match shredder.deshred_into(slice_shreds) {
+        let reconstructed_slice = match shredder.deshred(slice_shreds) {
             Ok(slice) => slice,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
             rest => {
