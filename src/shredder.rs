@@ -249,6 +249,11 @@ pub trait Shredder: Default {
         &mut self,
         shreds: &mut [Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<ReconstructedSlice, DeshredError> {
+        // an empty set is too few shreds, not an invalid layout; catch it here
+        // so it doesn't surface as the `InvalidLayout` that `try_new` returns
+        if shreds.iter().all(Option::is_none) {
+            return Err(DeshredError::NotEnoughShreds);
+        }
         let validated =
             ValidatedShreds::try_new(shreds, Self::DATA_OUTPUT_SHREDS, Self::CODING_OUTPUT_SHREDS)
                 .ok_or(DeshredError::InvalidLayout)?;
@@ -378,7 +383,6 @@ impl Shredder for PetsShredder {
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
         let mut payload: Vec<u8> = payload.into();
-        assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
         let key = cipher::encrypt_with_random_key(&mut payload);
         payload.extend_from_slice(&key);
@@ -430,7 +434,6 @@ impl Shredder for AontShredder {
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
         let mut payload: Vec<u8> = payload.into();
-        assert!(payload.len() <= Self::MAX_DATA_SIZE);
 
         let key = cipher::encrypt_with_random_key(&mut payload);
         // append the key XORed with the hash of the ciphertext
@@ -711,6 +714,117 @@ mod tests {
         assert_eq!(input.iter().flatten().count(), DATA_SHREDS - 1);
 
         Ok(())
+    }
+
+    fn deshred_rejects_tampered_coding_shreds() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, payload) = slice.deconstruct();
+        let sk = SecretKey::new(&mut rand::rng());
+
+        // a malicious leader signs a Merkle tree over tampered coding shreds
+        let mut coder = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        let mut raw_shreds = coder.shred(&payload.to_bytes()).unwrap();
+        raw_shreds.coding[0][0] ^= 0xFF;
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+
+        // reconstructing from the data shreds re-derives the correct coding
+        // shreds, exposing the mismatch with the signed Merkle root
+        let input = into_array(&shreds[..DATA_SHREDS]);
+        let result = RegularShredder::default().deshred(&input);
+        assert_eq!(result.err(), Some(DeshredError::InvalidMerkleTree));
+    }
+
+    #[test]
+    fn deshred_rejects_empty_input() {
+        // an all-`None` array must error cleanly instead of panicking
+        let empty = [const { None }; TOTAL_SHREDS];
+        let result = RegularShredder::default().deshred(&empty);
+        assert_eq!(result.err(), Some(DeshredError::NotEnoughShreds));
+    }
+
+    #[test]
+    fn deshred_rejects_wrong_shred_type_layout() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let shreds = CodingOnlyShredder::default().shred(slice, &sk).unwrap();
+
+        // `CodingOnlyShredder` outputs only coding shreds, but `RegularShredder`
+        // expects data shreds in the first `DATA_SHREDS` positions
+        let input = into_array(&shreds);
+        let result = RegularShredder::default().deshred(&input);
+        assert_eq!(result.err(), Some(DeshredError::InvalidLayout));
+    }
+
+    #[test]
+    fn deshred_rejects_oversized_shreds() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        let sk = SecretKey::new(&mut rand::rng());
+
+        // a malicious leader signs shreds larger than `MAX_DATA_PER_SHRED`
+        // (even size, so the Reed-Solomon decoder accepts it)
+        let oversized = MAX_DATA_PER_SHRED + 2;
+        let raw_shreds = RawShreds {
+            data: vec![vec![0_u8; oversized]; DATA_SHREDS],
+            coding: vec![vec![0_u8; oversized]; TOTAL_SHREDS - DATA_SHREDS],
+        };
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+
+        let input = into_array(&shreds[..DATA_SHREDS]);
+        let result = RegularShredder::default().deshred(&input);
+        assert_eq!(result.err(), Some(DeshredError::TooMuchData));
+    }
+
+    /// Asserts that shredding a slice one byte too large errors (never panics).
+    ///
+    /// The AONT/PETS shredders reserve space for the encryption key, so their
+    /// limit is below [`MAX_DATA_PER_SLICE`]; using `S::MAX_DATA_SIZE` exercises
+    /// each shredder right at its own boundary.
+    fn shred_rejects_oversized<S: Shredder>() {
+        let sk = SecretKey::new(&mut rand::rng());
+        // one byte more than fits into this shredder's slice
+        let slice = create_slice_with_invalid_txs(S::MAX_DATA_SIZE + 1);
+        let result = S::default().shred(slice, &sk);
+        assert_eq!(result.err(), Some(ShredError::TooMuchData));
+    }
+
+    #[test]
+    fn shred_rejects_oversized_slice() {
+        shred_rejects_oversized::<RegularShredder>();
+        shred_rejects_oversized::<CodingOnlyShredder>();
+        shred_rejects_oversized::<AontShredder>();
+        shred_rejects_oversized::<PetsShredder>();
+    }
+
+    /// Asserts that deshredding errors (never panics) when the reconstructed
+    /// payload is too short to contain the trailing encryption key.
+    ///
+    /// Only meaningful for the key-bearing shredders ([`AontShredder`],
+    /// [`PetsShredder`]). The shred layout is derived from the shredder's own
+    /// constants: `S::CODING_OUTPUT_SHREDS` coding shreds, and the data shreds
+    /// truncated to `S::DATA_OUTPUT_SHREDS` (PETS drops the one carrying the key).
+    fn deshred_rejects_short_payload<S: Shredder>() {
+        let (header, _payload) = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE).deconstruct();
+        let sk = SecretKey::new(&mut rand::rng());
+
+        // a malicious leader crafts shreds whose reconstructed payload is too
+        // short to contain the encryption key expected at the end
+        let short_payload = vec![0xAA_u8; cipher::KEY_BYTES - 1];
+
+        let mut coder = ReedSolomonCoder::new(S::CODING_OUTPUT_SHREDS);
+        let mut raw_shreds = coder.shred(&short_payload).unwrap();
+        // keep only the data shreds this shredder outputs (PETS drops the key shred)
+        raw_shreds.data.truncate(S::DATA_OUTPUT_SHREDS);
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+
+        let result = S::default().deshred(&into_array(&shreds));
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
+    }
+
+    #[test]
+    fn deshred_rejects_payload_too_short_for_key() {
+        deshred_rejects_short_payload::<AontShredder>();
+        deshred_rejects_short_payload::<PetsShredder>();
     }
 
     #[test]
