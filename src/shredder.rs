@@ -490,6 +490,10 @@ const KEY_BLOCK_BYTES: usize = cipher::KEY_BYTES + LEN_BYTES;
 /// All [`DATA_SHREDS`] shreds carry ciphertext except for the trailing key block.
 const AONT_MAX_DATA_SIZE: usize = DATA_SHREDS * MAX_DATA_PER_SHRED - KEY_BLOCK_BYTES;
 
+// `aont_shred_bytes` rounds shred sizes up to the next even number; this only
+// stays within `MAX_DATA_PER_SHRED` at max payload if that limit itself is even
+const _: () = assert!(MAX_DATA_PER_SHRED.is_multiple_of(2));
+
 /// Minimum shred size for the all-or-nothing layout.
 ///
 /// The trailing key block must fit entirely within the last shred, and shred
@@ -831,6 +835,25 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::TooMuchData));
     }
 
+    #[test]
+    fn deshred_rejects_all_zero_shreds() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        let sk = SecretKey::new(&mut rand::rng());
+
+        // a malicious leader signs all-zero shreds
+        // -> reconstructed payload contains no 0x80 padding marker
+        let raw_shreds = RawShreds {
+            data: vec![vec![0_u8; MAX_DATA_PER_SHRED]; DATA_SHREDS],
+            coding: vec![vec![0_u8; MAX_DATA_PER_SHRED]; TOTAL_SHREDS - DATA_SHREDS],
+        };
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+
+        let input = into_array(&shreds[..DATA_SHREDS]);
+        let result = RegularShredder::default().deshred(&input);
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
+    }
+
     /// Asserts that shredding a slice one byte too large errors (never panics).
     ///
     /// The AONT/PETS shredders reserve space for the encryption key, so their
@@ -944,13 +967,13 @@ mod tests {
         for s in &data[..DATA_SHREDS - 1] {
             buffer.extend_from_slice(&s.payload().data);
         }
-        if buffer.len() >= c_len + cipher::KEY_BYTES {
-            let tail = buffer[c_len..c_len + cipher::KEY_BYTES].try_into().unwrap();
-            let key = derive_key(tail, &buffer[..c_len]);
-            let mut guess = buffer[..c_len].to_vec();
-            cipher::apply_keystream(key, &mut guess);
-            assert_ne!(guess, plaintext, "key leaked: plaintext recoverable");
-        }
+        // the attack must be expressible, otherwise the test is vacuous
+        assert!(buffer.len() >= c_len + cipher::KEY_BYTES);
+        let tail = buffer[c_len..c_len + cipher::KEY_BYTES].try_into().unwrap();
+        let key = derive_key(tail, &buffer[..c_len]);
+        let mut guess = buffer[..c_len].to_vec();
+        cipher::apply_keystream(key, &mut guess);
+        assert_ne!(guess, plaintext, "key leaked: plaintext recoverable");
     }
 
     #[test]

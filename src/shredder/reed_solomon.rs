@@ -153,7 +153,8 @@ impl ReedSolomonCoder {
 
         // remove padding from payload
         let padding_bytes = payload.iter().rev().take_while(|b| **b == 0).count() + 1;
-        if payload[payload.len() - padding_bytes] != 0x80 {
+        // an all-zero payload has no 0x80 marker at all
+        if padding_bytes > payload.len() || payload[payload.len() - padding_bytes] != 0x80 {
             return Err(ReedSolomonDeshredError::InvalidPadding);
         }
         payload.truncate(payload.len().saturating_sub(padding_bytes));
