@@ -31,6 +31,9 @@ use crate::{BlockId, ValidatorIndex};
 /// After a request times out we retry it from another node.
 const REPAIR_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
 
+/// Number of peers a single repair request is fanned out to in parallel.
+const REPAIR_FANOUT: usize = 3;
+
 /// Different types of [`RepairRequest`] messages.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum RepairRequestType {
@@ -63,13 +66,26 @@ pub struct RepairRequest {
     req_type: RepairRequestType,
 }
 
-/// Response messages for the repair sub-protocol.
+/// Response message for the repair sub-protocol.
+///
+/// Carries the [`RepairResponsePayload`] together with the identity of the
+/// responding validator, so the requester can correlate the response back to
+/// the specific peer it fanned the request out to.
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+pub struct RepairResponse {
+    /// The validator that produced this response.
+    responder: ValidatorIndex,
+    /// The actual response data.
+    payload: RepairResponsePayload,
+}
+
+/// Payload of a [`RepairResponse`].
 ///
 /// Each response type corresponds to a specific request message type.
 /// Each response contains the request message that it is a response to.
 /// If well-formed, it thus contains the corresponding variant of [`RepairRequest`].
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub enum RepairResponse {
+pub enum RepairResponsePayload {
     /// Response with the last slice's Merkle root hash, plus corresponding proof.
     LastSliceRoot(RepairRequestType, SliceIndex, SliceRoot, DoubleMerkleProof),
     /// Response with the Merkle root hash of a specific slice, plus corresponding proof.
@@ -83,7 +99,7 @@ pub enum RepairResponse {
     Nack(RepairRequestType),
 }
 
-impl RepairResponse {
+impl RepairResponsePayload {
     /// Returns a reference to the [`RepairRequestType`] that this response corresponds to.
     #[must_use]
     const fn request_type(&self) -> &RepairRequestType {
@@ -164,24 +180,24 @@ where
             return Ok(());
         }
 
-        let response = self
+        let payload = self
             .try_build_response(&request)
             .await
-            .unwrap_or_else(|| RepairResponse::Nack(request.req_type.clone()));
-        self.send_response(response, request.sender).await
+            .unwrap_or_else(|| RepairResponsePayload::Nack(request.req_type.clone()));
+        self.send_response(payload, request.sender).await
     }
 
-    /// Tries to build a positive response for the given repair request.
+    /// Tries to build a positive response payload for the given repair request.
     ///
     /// Returns `None` if the requested data is not available in the blockstore.
-    async fn try_build_response(&self, request: &RepairRequest) -> Option<RepairResponse> {
+    async fn try_build_response(&self, request: &RepairRequest) -> Option<RepairResponsePayload> {
         match &request.req_type {
             RepairRequestType::LastSliceRoot(block_id) => {
                 let blockstore = self.blockstore.read().await;
                 let last_slice = blockstore.get_last_slice_index(block_id)?;
                 let root = blockstore.get_slice_root(block_id, last_slice)?;
                 let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
-                Some(RepairResponse::LastSliceRoot(
+                Some(RepairResponsePayload::LastSliceRoot(
                     request.req_type.clone(),
                     last_slice,
                     root.clone(),
@@ -192,7 +208,7 @@ where
                 let blockstore = self.blockstore.read().await;
                 let root = blockstore.get_slice_root(block_id, *slice)?;
                 let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
-                Some(RepairResponse::SliceRoot(
+                Some(RepairResponsePayload::SliceRoot(
                     request.req_type.clone(),
                     root.clone(),
                     proof,
@@ -203,7 +219,7 @@ where
                 let shred = blockstore
                     .get_shred(block_id, *slice, *shred_index)
                     .cloned()?;
-                Some(RepairResponse::Shred(
+                Some(RepairResponsePayload::Shred(
                     request.req_type.clone(),
                     shred.into_shred(),
                 ))
@@ -214,7 +230,7 @@ where
     #[hotpath::measure]
     async fn send_response(
         &self,
-        response: RepairResponse,
+        payload: RepairResponsePayload,
         validator: ValidatorIndex,
     ) -> std::io::Result<()> {
         let to = self
@@ -222,6 +238,10 @@ where
             .epoch_info()
             .validator(validator)
             .repair_requester_address;
+        let response = RepairResponse {
+            responder: self.epoch_info.own_id(),
+            payload,
+        };
         self.network.send(&response, to).await
     }
 }
@@ -234,11 +254,26 @@ pub struct Repair<N: Network> {
     blockstore: SharedBlockstore,
     pool: SharedPool,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
-    outstanding_requests: BTreeMap<Hash, RepairRequestType>,
+    outstanding_requests: BTreeMap<Hash, OutstandingRequest>,
     request_timeouts: BinaryHeap<(Instant, Hash)>,
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
+}
+
+/// Bookkeeping for a repair request that has been sent but not yet fulfilled.
+#[derive(Debug)]
+struct OutstandingRequest {
+    /// The request that was sent, kept so it can be retried.
+    req_type: RepairRequestType,
+    /// Validators this request was fanned out to that have not yet responded.
+    ///
+    /// A NACK retires the responding peer from this set; the request is only
+    /// retried once the set is empty (every peer bailed) or it times out. This
+    /// collapses the up-to-[`REPAIR_FANOUT`] concurrent NACKs for a single
+    /// request into one retry, instead of each NACK spawning a fresh fan-out
+    /// (which would amplify request volume geometrically).
+    pending: HashSet<ValidatorIndex>,
 }
 
 impl<N> Repair<N>
@@ -295,9 +330,12 @@ where
                     let Some((_, hash)) = self.request_timeouts.pop() else {
                         continue;
                     };
-                    if let Some(request) = self.outstanding_requests.remove(&hash) {
-                        debug!("retrying timed-out repair request {request:?}");
-                        if let Err(err) = self.send_request(request).await {
+                    // `send_request` re-arms the entry and pushes a fresh timeout,
+                    // so just look it up rather than removing it here.
+                    if let Some(req) = self.outstanding_requests.get(&hash) {
+                        let req_type = req.req_type.clone();
+                        debug!("retrying timed-out repair request {req_type:?}");
+                        if let Err(err) = self.send_request(req_type).await {
                             warn!("sending timed-out repair request failed: {err}");
                         }
                     }
@@ -330,22 +368,45 @@ where
     #[hotpath::measure]
     async fn handle_response(&mut self, response: RepairResponse) {
         trace!("handling repair response: {response:?}");
-        let request_hash = response.request_type().hash();
+        let RepairResponse { responder, payload } = response;
+        let request_hash = payload.request_type().hash();
 
-        // check whether we are (still) waiting on response to this request
-        let Some(_) = self.outstanding_requests.remove(&request_hash) else {
-            warn!("received repair response for unknown request {response:?}");
+        // check whether we are (still) waiting on a response to this request
+        if !self.outstanding_requests.contains_key(&request_hash) {
+            warn!("received repair response for unknown request {payload:?}");
             return;
-        };
+        }
 
-        match response {
-            RepairResponse::Nack(req_type) => {
-                debug!("received NACK for repair request {req_type:?}, retrying immediately");
-                if let Err(err) = self.send_request(req_type).await {
-                    warn!("retrying NACKed repair request failed: {err}");
-                }
+        // A NACK only retires the responding peer from the request's pending
+        // set. We retry just once the whole fan-out has bailed (so the
+        // up-to-`REPAIR_FANOUT` concurrent NACKs for one request collapse into a
+        // single retry); any positive response completes the request outright.
+        if let RepairResponsePayload::Nack(req_type) = &payload {
+            let req = self
+                .outstanding_requests
+                .get_mut(&request_hash)
+                .expect("presence checked above");
+            // NOTE: `responder` is unauthenticated, so a malicious peer can at
+            // worst retire a different pending peer early. That only ever makes
+            // us retry sooner, never less — it cannot stall the repair.
+            req.pending.remove(&responder);
+            if !req.pending.is_empty() {
+                return;
             }
-            RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) => {
+            let req_type = req_type.clone();
+            debug!("all peers NACKed repair request {req_type:?}, retrying");
+            if let Err(err) = self.send_request(req_type).await {
+                warn!("retrying NACKed repair request failed: {err}");
+            }
+            return;
+        }
+
+        // positive response: this request is complete, drop its bookkeeping
+        self.clear_request(&request_hash);
+
+        match payload {
+            RepairResponsePayload::Nack(_) => unreachable!("handled above"),
+            RepairResponsePayload::LastSliceRoot(req_type, last_slice, root, proof) => {
                 // check validity of response
                 let RepairRequestType::LastSliceRoot(block_id) = &req_type else {
                     warn!("repair response (LastSliceRoot) to mismatching request {req_type:?}");
@@ -376,7 +437,7 @@ where
                     }
                 }
             }
-            RepairResponse::SliceRoot(req_type, root, proof) => {
+            RepairResponsePayload::SliceRoot(req_type, root, proof) => {
                 // check validity of response
                 let RepairRequestType::SliceRoot(ref block_id, slice) = req_type else {
                     warn!("repair response (SliceRoot) to mismatching request {req_type:?}");
@@ -400,7 +461,7 @@ where
                     }
                 }
             }
-            RepairResponse::Shred(req_type, shred) => {
+            RepairResponsePayload::Shred(req_type, shred) => {
                 // check validity of response
                 let RepairRequestType::Shred(ref block_id, slice, index) = req_type else {
                     warn!("repair response (Shred) to mismatching request {req_type:?}");
@@ -447,13 +508,29 @@ where
         }
     }
 
+    /// Removes all bookkeeping for the repair request identified by `hash`.
+    fn clear_request(&mut self, hash: &Hash) {
+        self.outstanding_requests.remove(hash);
+        self.request_timeouts.retain(|(_, h)| h != hash);
+    }
+
+    /// Samples a fresh set of peers and fans `req_type` out to all of them.
+    ///
+    /// (Re)arms the outstanding-request and timeout bookkeeping for the request,
+    /// overwriting any previous entry, so a retry replaces the prior fan-out.
     #[hotpath::measure]
     async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
         let hash = req_type.hash();
+        let peers = self.pick_random_peers();
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;
-        self.outstanding_requests
-            .insert(hash.clone(), req_type.clone());
+        self.outstanding_requests.insert(
+            hash.clone(),
+            OutstandingRequest {
+                req_type: req_type.clone(),
+                pending: peers.clone(),
+            },
+        );
         self.request_timeouts.retain(|(_, h)| h != &hash);
         self.request_timeouts.push((expiry, hash));
 
@@ -461,27 +538,39 @@ where
             sender: self.epoch_info.own_id(),
             req_type,
         };
-        // HACK: magic number to fix high-failure scenarios
-        let mut to_all = HashSet::new();
-        for _ in 0..10 {
-            to_all.insert(self.pick_random_peer());
-            if to_all.len() == 3 {
-                break;
-            }
-        }
+        let addrs: Vec<SocketAddr> = {
+            let epoch = self.epoch_info.epoch_info();
+            peers
+                .iter()
+                .map(|id| epoch.validator(*id).repair_responder_address)
+                .collect()
+        };
         self.network
-            .send_to_many(&request, to_all.into_iter())
+            .send_to_many(&request, addrs.into_iter())
             .await?;
         Ok(())
     }
 
-    fn pick_random_peer(&self) -> SocketAddr {
+    /// Samples up to [`REPAIR_FANOUT`] distinct peers to fan a request out to.
+    fn pick_random_peers(&self) -> HashSet<ValidatorIndex> {
+        let mut peers = HashSet::new();
+        // HACK: magic number to fix high-failure scenarios
+        for _ in 0..10 {
+            peers.insert(self.pick_random_peer());
+            if peers.len() == REPAIR_FANOUT {
+                break;
+            }
+        }
+        peers
+    }
+
+    fn pick_random_peer(&self) -> ValidatorIndex {
         let mut rng = rand::rng();
         let mut peer_info = self.sampler.sample_info(&mut rng);
         while peer_info.id == self.epoch_info.own_id() {
             peer_info = self.sampler.sample_info(&mut rng);
         }
-        peer_info.repair_responder_address
+        peer_info.id
     }
 }
 
@@ -618,12 +707,15 @@ mod tests {
         assert_eq!(msg.req_type, req_type);
 
         // answer LastSliceRoot request
-        let response = RepairResponse::LastSliceRoot(
-            req_type,
-            SliceIndex::new_unchecked(num_slices - 1),
-            shreds.last().unwrap()[0].merkle_root().clone(),
-            merkle_tree.create_proof(num_slices - 1),
-        );
+        let response = RepairResponse {
+            responder: ValidatorIndex::new(0),
+            payload: RepairResponsePayload::LastSliceRoot(
+                req_type,
+                SliceIndex::new_unchecked(num_slices - 1),
+                shreds.last().unwrap()[0].merkle_root().clone(),
+                merkle_tree.create_proof(num_slices - 1),
+            ),
+        };
         // responses go to v1's repair requester socket (joined at index 2)
         let port1 = localhost_ip_sockaddr(2);
         ctx.v0_request_net.send(&response, port1).await.unwrap();
@@ -648,7 +740,10 @@ mod tests {
             let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
             let root = shreds[slice.inner()][0].merkle_root().clone();
             let proof = merkle_tree.create_proof(slice.inner());
-            let response = RepairResponse::SliceRoot(req_type, root, proof);
+            let response = RepairResponse {
+                responder: ValidatorIndex::new(0),
+                payload: RepairResponsePayload::SliceRoot(req_type, root, proof),
+            };
             ctx.v0_request_net.send(&response, port1).await.unwrap();
 
             // expect Shred requests for this slice next
@@ -672,7 +767,10 @@ mod tests {
                 assert!(shreds_requested.contains(&shred_index));
                 let req_type =
                     RepairRequestType::Shred(block_to_repair.clone(), slice, shred_index);
-                let response = RepairResponse::Shred(req_type, shred.into_shred());
+                let response = RepairResponse {
+                    responder: ValidatorIndex::new(0),
+                    payload: RepairResponsePayload::Shred(req_type, shred.into_shred()),
+                };
                 ctx.v0_request_net.send(&response, port1).await.unwrap();
             }
         }
@@ -685,6 +783,128 @@ mod tests {
                 .await
                 .get_block(&block_to_repair)
                 .is_some()
+        );
+    }
+
+    /// A single repair request is fanned out to multiple peers. If each peer's
+    /// NACK triggered its own retry, the up-to-[`REPAIR_FANOUT`] NACKs for one
+    /// request would each spawn a fresh fan-out, amplifying request volume
+    /// geometrically. This drives the requester directly and asserts that NACKs
+    /// from a whole fan-out collapse into exactly one retry round.
+    #[tokio::test]
+    async fn nack_collapses_into_single_retry() {
+        // four validators so the requester (own = 1) can fan a request out to
+        // more than one peer (the eligible-peer set is {0, 2, 3}).
+        let (_, epoch_info) = generate_validators(4);
+        let mut validators = epoch_info.validators().to_vec();
+
+        // route every peer's repair-responder address to one shared endpoint, so
+        // the test observes the complete fan-out (and every retry) on one socket.
+        const SHARED: u16 = 100;
+        const REQUESTER: u16 = 101;
+        for v in &mut validators {
+            v.repair_responder_address = localhost_ip_sockaddr(SHARED);
+        }
+
+        let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
+        let peers_net: SimulatedNetwork<RepairResponse, RepairRequest> = core
+            .join_unlimited(ValidatorIndex::new(SHARED.into()))
+            .await;
+        let requester_net: SimulatedNetwork<RepairRequest, RepairResponse> = core
+            .join_unlimited(ValidatorIndex::new(REQUESTER.into()))
+            .await;
+
+        let epoch_info = EpochInfo::new(validators);
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
+
+        // blockstore/pool are unused by NACK handling, but needed to construct
+        // `Repair`; keep the receivers alive for the duration of the test.
+        let (blockstore_tx, _blockstore_rx) = tokio::sync::mpsc::channel(100);
+        let blockstore: SharedBlockstore =
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let (pool_tx, _pool_rx) = tokio::sync::mpsc::channel(100);
+        let (repair_tx, _repair_rx) = tokio::sync::mpsc::channel(100);
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
+            epoch_info.clone(),
+            pool_tx,
+            repair_tx,
+        )));
+
+        // drive `Repair` directly (no `repair_loop`), so the only requests sent
+        // are the ones triggered by our explicit calls -- no timeout retries.
+        let mut repair = Repair::new(blockstore, pool, requester_net, epoch_info);
+
+        let block_id = (Slot::genesis().next(), GENESIS_BLOCK_HASH);
+        let req_type = RepairRequestType::LastSliceRoot(block_id);
+        let hash = req_type.hash();
+
+        // initial fan-out
+        repair.send_request(req_type.clone()).await.unwrap();
+        let pending: Vec<ValidatorIndex> = repair
+            .outstanding_requests
+            .get(&hash)
+            .expect("request outstanding after send")
+            .pending
+            .iter()
+            .copied()
+            .collect();
+        let fanout = pending.len();
+        assert!(fanout >= 1);
+        for _ in 0..fanout {
+            assert_eq!(peers_net.receive().await.unwrap().req_type, req_type);
+        }
+
+        // NACKs from all but the last peer must NOT trigger a retry: the request
+        // is still pending on the remaining peer(s).
+        for &responder in &pending[..fanout - 1] {
+            repair
+                .handle_response(RepairResponse {
+                    responder,
+                    payload: RepairResponsePayload::Nack(req_type.clone()),
+                })
+                .await;
+            assert!(
+                !repair
+                    .outstanding_requests
+                    .get(&hash)
+                    .expect("still outstanding")
+                    .pending
+                    .is_empty(),
+                "retried before the whole fan-out had NACKed",
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), peers_net.receive())
+                .await
+                .is_err(),
+            "a partial set of NACKs triggered a premature retry",
+        );
+
+        // the final NACK drains the pending set and triggers exactly one retry.
+        repair
+            .handle_response(RepairResponse {
+                responder: pending[fanout - 1],
+                payload: RepairResponsePayload::Nack(req_type.clone()),
+            })
+            .await;
+        let retry_fanout = repair
+            .outstanding_requests
+            .get(&hash)
+            .expect("request re-armed after retry")
+            .pending
+            .len();
+
+        // exactly one fresh fan-out went out -- not one per NACK.
+        let mut retried = 0;
+        while tokio::time::timeout(Duration::from_millis(50), peers_net.receive())
+            .await
+            .is_ok()
+        {
+            retried += 1;
+        }
+        assert_eq!(
+            retried, retry_fanout,
+            "NACKs amplified into more than a single retry round",
         );
     }
 
@@ -712,8 +932,8 @@ mod tests {
         ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();
         let msg = ctx.v0_reply_net.receive().await.unwrap();
         assert!(matches!(
-            msg,
-            RepairResponse::Nack(RepairRequestType::SliceRoot(..))
+            msg.payload,
+            RepairResponsePayload::Nack(RepairRequestType::SliceRoot(..))
         ));
     }
 
@@ -757,7 +977,8 @@ mod tests {
 
         // verify response
         let msg = ctx.v0_reply_net.receive().await.unwrap();
-        let RepairResponse::LastSliceRoot(req_type, last_slice, root, proof) = msg else {
+        let RepairResponsePayload::LastSliceRoot(req_type, last_slice, root, proof) = msg.payload
+        else {
             panic!("not LastSliceRoot response");
         };
         assert_eq!(req_type, request.req_type);
@@ -781,7 +1002,7 @@ mod tests {
 
             // verify response
             let msg = ctx.v0_reply_net.receive().await.unwrap();
-            let RepairResponse::SliceRoot(req_type, root, proof) = msg else {
+            let RepairResponsePayload::SliceRoot(req_type, root, proof) = msg.payload else {
                 panic!("not SliceRoot response");
             };
             assert_eq!(req_type, request.req_type);
@@ -804,7 +1025,7 @@ mod tests {
 
                 // verify response
                 let msg = ctx.v0_reply_net.receive().await.unwrap();
-                let RepairResponse::Shred(req_type, shred) = msg else {
+                let RepairResponsePayload::Shred(req_type, shred) = msg.payload else {
                     panic!("not Shred response");
                 };
                 assert_eq!(req_type, request.req_type);
