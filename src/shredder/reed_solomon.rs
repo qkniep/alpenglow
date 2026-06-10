@@ -140,6 +140,42 @@ impl ReedSolomonCoder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(Vec<u8>, RawShreds), ReedSolomonDeshredError> {
+        let raw_shreds = self.reconstruct_data(shreds)?;
+
+        // concatenate the data shreds back into the padded payload
+        let mut payload = Vec::with_capacity(MAX_DATA_PER_SLICE_AFTER_PADDING);
+        for shred in &raw_shreds.data {
+            if payload.len() + shred.len() > MAX_DATA_PER_SLICE_AFTER_PADDING {
+                return Err(ReedSolomonDeshredError::TooMuchData);
+            }
+            payload.extend_from_slice(shred);
+        }
+
+        // remove padding from payload
+        let padding_bytes = payload.iter().rev().take_while(|b| **b == 0).count() + 1;
+        // an all-zero payload has no 0x80 marker at all
+        if padding_bytes > payload.len() || payload[payload.len() - padding_bytes] != 0x80 {
+            return Err(ReedSolomonDeshredError::InvalidPadding);
+        }
+        payload.truncate(payload.len().saturating_sub(padding_bytes));
+
+        Ok((payload, raw_shreds))
+    }
+
+    /// Reconstructs all [`DATA_SHREDS`] data shreds (and re-encodes coding).
+    ///
+    /// Unlike [`Self::deshred`], this does not concatenate or unpad the payload;
+    /// it only recovers the raw shreds. This lets shredders that impose their own
+    /// payload layout (e.g. all-or-nothing transforms) parse the shreds directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReedSolomonDeshredError::NotEnoughShreds`] if fewer than
+    /// [`DATA_SHREDS`] elements of `shreds` are present.
+    pub(super) fn reconstruct_data(
+        &mut self,
+        shreds: ValidatedShreds,
+    ) -> Result<RawShreds, ReedSolomonDeshredError> {
         if shreds.shred_count() < DATA_SHREDS {
             return Err(ReedSolomonDeshredError::NotEnoughShreds);
         }
@@ -151,13 +187,12 @@ impl ReedSolomonCoder {
             .expect("size of validated shred should be supported");
 
         let data_refs = shreds.data_shred_payloads();
-        let coding = shreds.coding_shred_payloads();
         for &(i, d) in &data_refs {
             self.decoder
                 .add_original_shard(i, d)
                 .expect("validated shred should have correct index and size");
         }
-        for (i, c) in coding {
+        for (i, c) in shreds.coding_shred_payloads() {
             self.decoder
                 .add_recovery_shard(i, c)
                 .expect("validated shred should have correct index and size");
@@ -169,9 +204,7 @@ impl ReedSolomonCoder {
         for (i, d) in data_refs {
             received[i] = Some(d);
         }
-
         let mut raw_data_shreds = Vec::with_capacity(DATA_SHREDS);
-        let mut restored_payload = Vec::with_capacity(MAX_DATA_PER_SLICE_AFTER_PADDING);
         for (i, existing) in received.iter().enumerate() {
             let shred_data = match existing {
                 Some(d) => d,
@@ -179,32 +212,15 @@ impl ReedSolomonCoder {
                     .restored_original(i)
                     .expect("all non-existing data shreds are restored"),
             };
-            if restored_payload.len() + shred_data.len() > MAX_DATA_PER_SLICE_AFTER_PADDING {
-                return Err(ReedSolomonDeshredError::TooMuchData);
-            }
-            restored_payload.extend_from_slice(shred_data);
             raw_data_shreds.push(shred_data.to_vec());
         }
-
-        // remove padding from payload
-        let padding_bytes = restored_payload
-            .iter()
-            .rev()
-            .take_while(|b| **b == 0)
-            .count()
-            + 1;
-        if restored_payload[restored_payload.len() - padding_bytes] != 0x80 {
-            return Err(ReedSolomonDeshredError::InvalidPadding);
-        }
-        restored_payload.truncate(restored_payload.len().saturating_sub(padding_bytes));
         drop(restored);
 
-        let raw_shreds = self.encode_coding_from_data(&raw_data_shreds);
-        Ok((restored_payload, raw_shreds))
+        Ok(self.encode_coding_from_data(&raw_data_shreds))
     }
 
     /// Produces coding shreds from pre-split data shreds.
-    fn encode_coding_from_data(&mut self, data_shreds: &[Vec<u8>]) -> RawShreds {
+    pub(super) fn encode_coding_from_data(&mut self, data_shreds: &[Vec<u8>]) -> RawShreds {
         assert_eq!(data_shreds.len(), DATA_SHREDS);
         let shred_bytes = data_shreds[0].len();
         self.encoder
