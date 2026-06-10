@@ -34,6 +34,8 @@ use crate::{BlockId, Slot, ValidatorIndex};
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
 /// [`Votor`]: crate::consensus::votor::Votor
+// PERF: Short-lived channel message; boxing the cert isn't worth the allocation.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum PoolEvent {
@@ -46,7 +48,7 @@ pub enum PoolEvent {
     /// The given slot has reached the safe-to-skip status.
     SafeToSkip(Slot),
     /// New certificate created in pool (should then be broadcast by Votor).
-    CertCreated(Box<Cert>),
+    CertCreated(Cert),
     /// Standstill timeout has fired.
     ///
     /// The provided slot indicates the highest finalized slot as seen by Pool.
@@ -240,7 +242,7 @@ impl PoolImpl {
         }
 
         // send to votor for broadcasting
-        let event = PoolEvent::CertCreated(Box::new(cert));
+        let event = PoolEvent::CertCreated(cert);
         self.votor_event_channel.send(event).await.unwrap();
     }
 

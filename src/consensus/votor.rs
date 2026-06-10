@@ -220,8 +220,8 @@ impl<A: All2All> Votor<A> {
     }
 
     /// Updates state based on a newly created certificate and re-broadcasts it.
-    async fn handle_cert_created(&mut self, cert: Box<Cert>) {
-        match cert.as_ref() {
+    async fn handle_cert_created(&mut self, cert: Cert) {
+        match &cert {
             Cert::Notar(_) => {
                 let hash = cert.block_hash().unwrap();
                 // need to mark notarized BEFORE trying finalization
@@ -239,9 +239,9 @@ impl<A: All2All> Votor<A> {
                 self.highest_final_cert_slot = self.highest_final_cert_slot.max(cert.slot());
                 self.prune();
             }
-            _ => {}
+            Cert::Skip(_) | Cert::NotarFallback(_) => {}
         }
-        let message = ConsensusMessage::from(*cert);
+        let message = ConsensusMessage::from(cert);
         self.all2all.broadcast(&message).await.unwrap();
     }
 
@@ -593,7 +593,7 @@ mod tests {
             ctx.epoch_info.validators(),
         ));
         ctx.pool_tx
-            .send(PoolEvent::CertCreated(Box::new(cert)))
+            .send(PoolEvent::CertCreated(cert))
             .await
             .unwrap();
         match ctx.other_a2a.receive().await.unwrap() {
@@ -750,7 +750,7 @@ mod tests {
             &[final_vote],
             ctx.epoch_info.validators(),
         ));
-        let event = PoolEvent::CertCreated(Box::new(cert));
+        let event = PoolEvent::CertCreated(cert);
         votor.handle_pool_event(event).await;
         assert_eq!(votor.highest_final_cert_slot, finalized);
 
