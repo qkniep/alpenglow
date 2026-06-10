@@ -349,8 +349,20 @@ where
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // validate shred before forwarding or inserting
         let slot = shred.payload().header.slot;
+        let slice_index = shred.payload().header.slice_index;
         let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
+        // Look up the cached Merkle root for this slice (if any) and pass it as a hint
+        // only when it matches the new shred's derived root. The cache-hit fast path in
+        // `ValidatedShred::try_new` then skips the (expensive) BLS signature verification.
+        // On mismatch we pass `None` so the blockstore's own equivocation check fires.
+        let cached_root = self
+            .blockstore
+            .read()
+            .await
+            .get_disseminated_slice_root(slot, slice_index)
+            .cloned();
+        let cache_hint = cached_root.filter(|r| r == &shred.merkle_root());
+        let validated = match ValidatedShred::try_new(shred, cache_hint.as_ref(), &leader_pk) {
             Ok(v) => v,
             Err(_) => return Ok(()),
         };

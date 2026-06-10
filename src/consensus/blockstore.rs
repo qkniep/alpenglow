@@ -83,6 +83,12 @@ pub trait Blockstore {
     fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
     -> Option<&'a SliceRoot>;
     #[allow(clippy::needless_lifetimes)]
+    fn get_disseminated_slice_root<'a>(
+        &'a self,
+        slot: Slot,
+        slice: SliceIndex,
+    ) -> Option<&'a SliceRoot>;
+    #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
         block_id: &BlockId,
@@ -344,6 +350,24 @@ impl Blockstore for BlockstoreImpl {
     ) -> Option<&'a SliceRoot> {
         let block_data = self.get_block_data(block_id)?;
         block_data.merkle_root_cache.get(&slice_index)
+    }
+
+    /// Gives the cached Merkle root for the given `slice_index` of the disseminated block in `slot`.
+    ///
+    /// Unlike [`Self::get_slice_root`], this does not need a block hash, so it can be
+    /// queried before the block is reconstructed. Used as a cache hint to skip a BLS
+    /// signature verification on follow-up shreds of the same slice.
+    ///
+    /// Returns `None` if no shred has been stored yet for that slice in the dissemination spot.
+    fn get_disseminated_slice_root(
+        &self,
+        slot: Slot,
+        slice_index: SliceIndex,
+    ) -> Option<&SliceRoot> {
+        self.slot_data(slot)?
+            .disseminated
+            .merkle_root_cache
+            .get(&slice_index)
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
