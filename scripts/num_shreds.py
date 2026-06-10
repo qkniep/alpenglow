@@ -4,6 +4,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pathlib import Path as path
+
+PROJECT_ROOT = path(__file__).parent.parent
+# Path to the data directory
+DATA_PATH = PROJECT_ROOT / "data" 
 
 LATENCY_DATA_EXPANSION_PLOTS = False
 LATENCY_TOTAL_SHREDS_PLOTS = False
@@ -50,7 +55,7 @@ if LATENCY_DATA_EXPANSION_PLOTS:
     dfs = []
     for sampling in SAMPLING_STRATS:
         for data_shreds, total_shreds in EXPANSION_RATIO:
-            file_path = f"./data/output/simulations/latency/{STAKE_DISTRIBUTION}-{sampling}-{data_shreds}-{total_shreds}.csv"
+            file_path = DATA_PATH / "output" / "simulations" / "latency" / f"{STAKE_DISTRIBUTION}-{sampling}-{data_shreds}-{total_shreds}.csv"
             dfs.append(pd.read_csv(file_path))
             dfs[-1]["sampling_strat"] = sampling
             dfs[-1]["data_shreds"] = data_shreds
@@ -78,7 +83,7 @@ if LATENCY_DATA_EXPANSION_PLOTS:
     plt.axhline(y=avg_direct, color="r", linestyle="--")
     plt.grid(True, axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"./data/output/simulations/latency/data_expansion_median.png", dpi=300)
+    plt.savefig(DATA_PATH / "output" / "simulations" / "latency" / "data_expansion_median.png", dpi=300)
 
     # plot average finalization time for different expansion ratios (only for FA1)
     df_max = df[df["percentile"] == 100]
@@ -100,7 +105,7 @@ if LATENCY_DATA_EXPANSION_PLOTS:
     plt.axhline(y=avg_direct, color="r", linestyle="--")
     plt.grid(True, axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"./data/output/simulations/latency/data_expansion_max.png", dpi=300)
+    plt.savefig(DATA_PATH / "output" / "simulations" / "latency" / "data_expansion_max.png", dpi=300)
 
     df = df.groupby(["sampling_strat", "data_shreds", "total_shreds"])[
         ["direct", "rotor", "final"]
@@ -131,7 +136,7 @@ if LATENCY_DATA_EXPANSION_PLOTS:
         plt.grid(True, axis="y", linestyle="--", alpha=0.7)
         plt.tight_layout()
         plt.savefig(
-            f"./data/output/simulations/latency/data_expansion_{metric}_multi.png",
+            DATA_PATH / "output" / "simulations" / "latency" / f"data_expansion_{metric}_multi.png",
             dpi=300,
         )
 
@@ -156,14 +161,14 @@ if LATENCY_DATA_EXPANSION_PLOTS:
     plt.axhline(y=avg_direct, color="r", linestyle="--")
     plt.grid(True, axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"./data/output/simulations/latency/data_expansion.png", dpi=300)
+    plt.savefig(DATA_PATH / "output" / "simulations" / "latency" / "data_expansion.png", dpi=300)
 
 if LATENCY_TOTAL_SHREDS_PLOTS:
     # load data frames for different sampling strategies and expansion ratios from CSV
     dfs = []
     for sampling in SAMPLING_STRATS:
         for data_shreds, total_shreds in TOTAL_SHREDS:
-            file_path = f"./data/output/simulations/latency/{STAKE_DISTRIBUTION}-{sampling}-{data_shreds}-{total_shreds}.csv"
+            file_path = DATA_PATH / "output" / "simulations" / "latency" / f"{STAKE_DISTRIBUTION}-{sampling}-{data_shreds}-{total_shreds}.csv"
             dfs.append(pd.read_csv(file_path))
             dfs[-1]["sampling_strat"] = sampling
             dfs[-1]["data_shreds"] = data_shreds
@@ -199,14 +204,14 @@ if LATENCY_TOTAL_SHREDS_PLOTS:
         plt.grid(True, axis="y", linestyle="--", alpha=0.7)
         plt.tight_layout()
         plt.savefig(
-            f"./data/output/simulations/latency/total_shreds_{metric}.png", dpi=300
+            DATA_PATH / "output" / "simulations" / "latency" / f"total_shreds_{metric}.png", dpi=300
         )
 
 EXPANSION_RATIO = [(32, 64), (32, 80), (32, 96)]
 
 if SAFETY_DATA_EXPANSION_PLOTS:
     # load safety test data from CSV
-    file_path = "./data/output/simulations/safety/safety_data_expansion_2.csv"
+    file_path = DATA_PATH / "output" / "simulations" / "safety" / "safety_data_expansion_2.csv"
     df = pd.read_csv(file_path)
     df = df[df["stake_distribution"] == STAKE_DISTRIBUTION]
     df = df[df["sampling_strat"] != "uniform"]
@@ -238,7 +243,7 @@ if SAFETY_DATA_EXPANSION_PLOTS:
     # plt.legend()
     # plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     # plt.tight_layout()
-    # plt.savefig(f'./data/output/simulations/safety/data_expansion_crash_v_byz.png', dpi=300)
+    # plt.savefig(DATA_PATH / "output" / "simulations" / "safety" / "data_expansion_crash_v_byz.png", dpi=300)
 
     # plot crash safety for different data expansion ratios (with 32 data shreds)
     fig = plt.figure(figsize=(6, 6))
@@ -268,7 +273,7 @@ if SAFETY_DATA_EXPANSION_PLOTS:
     plt.legend(loc="lower left")
     plt.grid(True, axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"./data/output/simulations/safety/data_expansion_crash.png", dpi=300)
+    plt.savefig(DATA_PATH / "output" / "simulations" / "safety" / "data_expansion_crash.png", dpi=300)
 
     # # plot Byzantine attack safety for different data expansion ratios (with 32 data shreds)
     # fig = plt.figure(figsize=(12, 7))
@@ -294,11 +299,11 @@ if SAFETY_DATA_EXPANSION_PLOTS:
     # plt.legend()
     # plt.grid(True, axis='y', linestyle='--', alpha=0.7)
     # plt.tight_layout()
-    # plt.savefig(f'./data/output/simulations/safety/data_expansion_byz.png', dpi=300)
+    # plt.savefig(DATA_PATH / "output" / "simulations" / "safety" / "data_expansion_byz.png", dpi=300)
 
 if SAFETY_TOTAL_SHREDS_PLOTS:
     # load safety test data from CSV
-    file_path = "./data/output/simulations/safety/safety_total_shreds_2.csv"
+    file_path = DATA_PATH / "output" / "simulations" / "safety" / "safety_total_shreds_2.csv"
     df = pd.read_csv(file_path)
     df = df[df["stake_distribution"] == STAKE_DISTRIBUTION]
     df = df[df["sampling_strat"] != "uniform"]
@@ -334,11 +339,11 @@ if SAFETY_TOTAL_SHREDS_PLOTS:
     plt.legend(loc="lower left")
     plt.grid(True, axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"./data/output/simulations/safety/total_shreds.png", dpi=300)
+    plt.savefig(DATA_PATH / "output" / "simulations" / "safety" / "total_shreds.png", dpi=300)
 
 if SAFETY_ADVERSARY_PLOTS:
     # load safety test data from CSV
-    file_path = "./data/output/simulations/safety/safety_adversary.csv"
+    file_path = DATA_PATH / "output" / "simulations" / "safety" / "safety_adversary.csv"
     df = pd.read_csv(file_path)
     df = df[df["stake_distribution"] == STAKE_DISTRIBUTION]
 
@@ -369,4 +374,4 @@ if SAFETY_ADVERSARY_PLOTS:
     plt.legend(loc="lower left")
     plt.grid(True, axis="y", linestyle="--", alpha=0.7)
     plt.tight_layout()
-    plt.savefig(f"./data/output/simulations/safety/adversary.png", dpi=300)
+    plt.savefig(DATA_PATH / "output" / "simulations" / "safety" / "adversary.png", dpi=300)
