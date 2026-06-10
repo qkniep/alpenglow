@@ -270,6 +270,7 @@ impl<A: All2All> Votor<A> {
                     self.check_pending_blocks().await;
                 } else {
                     self.state_mut(slot).pending_block = Some(block_info);
+                    self.pending_block_slots.insert(slot);
                 }
             }
         }
