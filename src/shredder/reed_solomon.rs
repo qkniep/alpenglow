@@ -33,7 +33,7 @@ pub(super) enum ReedSolomonDeshredError {
 }
 
 /// The data and coding shreds returned from [`ReedSolomonCoder::shred`] on success.
-pub(super) struct RawShreds {
+pub struct RawShreds {
     /// A list of data shreds.
     pub(super) data: Vec<Vec<u8>>,
     /// A list of coding shreds.
