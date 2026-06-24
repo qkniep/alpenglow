@@ -209,13 +209,8 @@ where
             all2all.clone(),
         );
         let votor_handle = tokio::spawn(
-            async move {
-                votor
-                    .voting_loop()
-                    .await
-                    .expect("voting loop should not fail")
-            }
-            .in_span(Span::enter_with_local_parent("voting loop")),
+            async move { votor.voting_loop().await }
+                .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
         let disseminator = Arc::new(disseminator);

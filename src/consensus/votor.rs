@@ -15,7 +15,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use anyhow::Result;
 use log::{debug, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -106,7 +105,7 @@ impl<A: All2All> Votor<A> {
     ///
     /// Checks consensus conditions and broadcasts new votes.
     #[fastrace::trace]
-    pub async fn voting_loop(&mut self) -> Result<()> {
+    pub async fn voting_loop(&mut self) {
         loop {
             tokio::select! {
                 Some(event) = self.pool_receiver.recv() => self.handle_pool_event(event).await,
@@ -115,8 +114,6 @@ impl<A: All2All> Votor<A> {
                 else => break,
             }
         }
-
-        Ok(())
     }
 
     /// Returns `true` iff the given slot has been retired.
@@ -196,36 +193,32 @@ impl<A: All2All> Votor<A> {
                 debug!("voted notar-fallback in slot {slot}");
                 let vote =
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
-                self.all2all
-                    .broadcast(&vote.into())
-                    .await
-                    .expect("all2all broadcast should not fail");
+                self.all2all.broadcast(&vote.into()).await.expect(
+                    "vote/cert broadcast is liveness-critical; a network failure here is fatal",
+                );
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
             PoolEvent::SafeToSkip(slot) => {
                 debug!("voted skip-fallback in slot {slot}");
                 let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_index);
-                self.all2all
-                    .broadcast(&vote.into())
-                    .await
-                    .expect("all2all broadcast should not fail");
+                self.all2all.broadcast(&vote.into()).await.expect(
+                    "vote/cert broadcast is liveness-critical; a network failure here is fatal",
+                );
                 self.try_skip_window(slot).await;
                 self.state_mut(slot).bad_window = true;
             }
             PoolEvent::CertCreated(cert) => self.handle_cert_created(cert).await,
             PoolEvent::Standstill(_, certs, votes) => {
                 for cert in certs {
-                    self.all2all
-                        .broadcast(&cert.into())
-                        .await
-                        .expect("all2all broadcast should not fail");
+                    self.all2all.broadcast(&cert.into()).await.expect(
+                        "vote/cert broadcast is liveness-critical; a network failure here is fatal",
+                    );
                 }
                 for vote in votes {
-                    self.all2all
-                        .broadcast(&vote.into())
-                        .await
-                        .expect("all2all broadcast should not fail");
+                    self.all2all.broadcast(&vote.into()).await.expect(
+                        "vote/cert broadcast is liveness-critical; a network failure here is fatal",
+                    );
                 }
             }
         }
@@ -259,7 +252,7 @@ impl<A: All2All> Votor<A> {
         self.all2all
             .broadcast(&message)
             .await
-            .expect("all2all broadcast should not fail");
+            .expect("vote/cert broadcast is liveness-critical; a network failure here is fatal");
     }
 
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
@@ -377,7 +370,7 @@ impl<A: All2All> Votor<A> {
         self.all2all
             .broadcast(&vote.into())
             .await
-            .expect("all2all broadcast should not fail");
+            .expect("vote/cert broadcast is liveness-critical; a network failure here is fatal");
         let state = self.state_mut(slot);
         state.voted = true;
         state.voted_notar = Some(hash.clone());
@@ -395,10 +388,9 @@ impl<A: All2All> Votor<A> {
         let not_bad = !state.is_some_and(|s| s.bad_window);
         if notarized && voted_notar && not_bad {
             let vote = Vote::new_final(slot, &self.voting_key, self.validator_index);
-            self.all2all
-                .broadcast(&vote.into())
-                .await
-                .expect("all2all broadcast should not fail");
+            self.all2all.broadcast(&vote.into()).await.expect(
+                "vote/cert broadcast is liveness-critical; a network failure here is fatal",
+            );
             self.state_mut(slot).retired = true;
         }
     }
@@ -415,10 +407,9 @@ impl<A: All2All> Votor<A> {
             state.voted = true;
             state.bad_window = true;
             let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
-            self.all2all
-                .broadcast(&vote.into())
-                .await
-                .expect("all2all broadcast should not fail");
+            self.all2all.broadcast(&vote.into()).await.expect(
+                "vote/cert broadcast is liveness-critical; a network failure here is fatal",
+            );
             debug!("voted skip for slot {s}");
         }
     }
@@ -574,7 +565,7 @@ mod tests {
     async fn start_votor() -> TestContext {
         let (mut votor, ctx) = build_votor().await;
         tokio::spawn(async move {
-            votor.voting_loop().await.unwrap();
+            votor.voting_loop().await;
         });
         ctx
     }
