@@ -208,18 +208,8 @@ impl PoolImpl {
                         .notify_parent_certified(child_hash)
                 {
                     match output {
-                        Either::Left(event) => {
-                            self.votor_event_channel
-                                .send(event)
-                                .await
-                                .expect("votor should not drop the event receiver");
-                        }
-                        Either::Right((slot, hash)) => {
-                            self.repair_channel
-                                .send((slot, hash))
-                                .await
-                                .expect("repair loop should not drop the receiver");
-                        }
+                        Either::Left(event) => self.send_votor_event(event).await,
+                        Either::Right((slot, hash)) => self.send_repair((slot, hash)).await,
                     }
                 }
 
@@ -228,10 +218,7 @@ impl PoolImpl {
                 self.send_parent_ready_events(new_parents_ready).await;
 
                 // repair this block, if necessary
-                self.repair_channel
-                    .send((slot, block_hash))
-                    .await
-                    .expect("repair loop should not drop the receiver");
+                self.send_repair((slot, block_hash)).await;
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
@@ -253,10 +240,7 @@ impl PoolImpl {
 
         // send to votor for broadcasting
         let event = PoolEvent::CertCreated(Box::new(cert));
-        self.votor_event_channel
-            .send(event)
-            .await
-            .expect("votor should not drop the event receiver");
+        self.send_votor_event(event).await;
     }
 
     /// Mutably accesses the [`SlotState`] for the given `slot`.
@@ -412,12 +396,25 @@ impl PoolImpl {
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
         for (slot, parent) in parents {
             debug_assert!(slot.is_start_of_window());
-            let event = PoolEvent::ParentReady { slot, parent };
-            self.votor_event_channel
-                .send(event)
-                .await
-                .expect("votor should not drop the event receiver");
+            self.send_votor_event(PoolEvent::ParentReady { slot, parent })
+                .await;
         }
+    }
+
+    /// Sends an event to Votor, panicking if Votor dropped the receiver.
+    async fn send_votor_event(&self, event: PoolEvent) {
+        self.votor_event_channel
+            .send(event)
+            .await
+            .expect("votor should not drop the event receiver");
+    }
+
+    /// Requests repair of the given block, panicking if the repair loop dropped the receiver.
+    async fn send_repair(&self, block: BlockId) {
+        self.repair_channel
+            .send(block)
+            .await
+            .expect("repair loop should not drop the receiver");
     }
 }
 
@@ -443,14 +440,12 @@ impl Pool for PoolImpl {
 
         // check if the certificate is a duplicate
         let certs = &mut self.slot_state(slot).certificates;
-        let duplicate = match cert {
+        let duplicate = match &cert {
             Cert::Notar(_) => certs.notar.is_some(),
-            Cert::NotarFallback(_) => certs.notar_fallback.iter().any(|nf| {
-                let hash = cert
-                    .block_hash()
-                    .expect("notar-fallback cert always references a block");
-                nf.block_hash() == hash
-            }),
+            Cert::NotarFallback(nf_cert) => certs
+                .notar_fallback
+                .iter()
+                .any(|nf| nf.block_hash() == nf_cert.block_hash()),
             Cert::Skip(_) => certs.skip.is_some(),
             Cert::FastFinal(_) => certs.fast_finalize.is_some(),
             Cert::Final(_) => certs.finalize.is_some(),
@@ -505,16 +500,10 @@ impl Pool for PoolImpl {
             self.add_valid_cert(cert).await;
         }
         for event in votor_events {
-            self.votor_event_channel
-                .send(event)
-                .await
-                .expect("votor should not drop the event receiver");
+            self.send_votor_event(event).await;
         }
         for (slot, block_hash) in blocks_to_repair {
-            self.repair_channel
-                .send((slot, block_hash))
-                .await
-                .expect("repair loop should not drop the receiver");
+            self.send_repair((slot, block_hash)).await;
         }
         Ok(())
     }
@@ -545,18 +534,8 @@ impl Pool for PoolImpl {
                 .notify_parent_certified(block_hash.clone())
         {
             match output {
-                Either::Left(event) => {
-                    self.votor_event_channel
-                        .send(event)
-                        .await
-                        .expect("votor should not drop the event receiver");
-                }
-                Either::Right((slot, hash)) => {
-                    self.repair_channel
-                        .send((slot, hash))
-                        .await
-                        .expect("repair loop should not drop the receiver");
-                }
+                Either::Left(event) => self.send_votor_event(event).await,
+                Either::Right((slot, hash)) => self.send_repair((slot, hash)).await,
             }
             return;
         }
@@ -590,10 +569,7 @@ impl Pool for PoolImpl {
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // send to votor for broadcasting
-        self.votor_event_channel
-            .send(event)
-            .await
-            .expect("votor should not drop the event receiver");
+        self.send_votor_event(event).await;
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.
