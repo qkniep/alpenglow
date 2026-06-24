@@ -165,7 +165,7 @@ impl SlicePayload {
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        crate::serialize(&payload)
+        payload.to_bytes()
     }
 }
 
