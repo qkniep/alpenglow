@@ -18,16 +18,27 @@
 //!
 //! The engine communicates results asynchronously through an [`ExecutionEvent`] channel.
 //!
+//! Building blocks for a real execution engine's state handling live in submodules:
+//! - [`state`] provides [`State`], a copy-on-write account state that makes
+//!   maintaining one state per unfinalized block in the block tree cheap.
+//! - [`commitment`] provides [`LtHash`], an incrementally updatable
+//!   commitment to the contents of a [`State`].
+//!
 //! [`begin_block`]: ExecutionEngine::begin_block
 //! [`execute_transactions`]: ExecutionEngine::execute_transactions
 //! [`end_block`]: ExecutionEngine::end_block
 //! [`finalize`]: ExecutionEngine::finalize
+
+pub mod commitment;
+pub mod state;
 
 use std::collections::BTreeMap;
 
 use log::{debug, info};
 use tokio::sync::mpsc;
 
+pub use self::commitment::{LtHash, StateCommitment};
+pub use self::state::{Address, State};
 use crate::crypto::Hash;
 use crate::crypto::hash::hash_all;
 use crate::crypto::merkle::{GENESIS_BLOCK_HASH, MerkleRoot};
@@ -76,12 +87,12 @@ pub enum ExecutionEvent {
 pub struct ExecutionResult {
     /// Number of transactions executed in this block.
     pub tx_count: usize,
-    /// Post-execution state root.
+    /// Commitment to the post-execution state.
     ///
     /// The caller should check this, based on the execution model:
-    /// - Synchronous execution: Check against the block's claimed root.
-    /// - Asynchronous execution: Check against the root finalized by consensus.
-    pub state_hash: Hash,
+    /// - Synchronous execution: Check against the block's claimed commitment.
+    /// - Asynchronous execution: Check against the commitment finalized by consensus.
+    pub state_commitment: StateCommitment,
 }
 
 /// Error that can occur during block execution.
@@ -161,7 +172,7 @@ pub trait ExecutionEngine {
     /// known after the double-Merkle tree has been computed over all slices.
     /// The engine should emit an [`ExecutionEvent::BlockExecuted`] through its
     /// channel to signal the outcome of execution for this block, reporting the
-    /// computed post-state root in [`ExecutionResult::state_hash`].
+    /// computed post-state commitment in [`ExecutionResult::state_commitment`].
     fn end_block(&mut self, block_id: BlockId);
 
     /// Notifies the engine that `block_id` has been finalized by consensus.
@@ -277,7 +288,7 @@ impl ExecutionEngine for DummyExecution {
             .or_else(|| self.blocks.get(&InProgressBlock::Pending(block_id.0)))
             .map(|exec| ExecutionResult {
                 tx_count: exec.tx_count,
-                state_hash: exec.state_hash.clone(),
+                state_commitment: exec.state_hash.clone().into(),
             });
         if let Some(result) = result {
             self.event_sender
@@ -305,13 +316,13 @@ mod tests {
     }
 
     /// Recomputes the rolling state hash the way [`DummyExecution`] does, so
-    /// tests can assert against the root reported in an [`ExecutionResult`].
-    fn expected_state_hash(parent: &BlockHash, txs: &[Transaction]) -> Hash {
+    /// tests can assert against the commitment reported in an [`ExecutionResult`].
+    fn expected_state_commitment(parent: &BlockHash, txs: &[Transaction]) -> StateCommitment {
         let mut h = parent.as_hash().clone();
         for tx in txs {
             h = hash_all(&[h.as_ref(), tx.0.as_slice()]);
         }
-        h
+        h.into()
     }
 
     #[test]
@@ -338,8 +349,8 @@ mod tests {
         assert_eq!(block_id, bid);
         assert_eq!(result.tx_count, 3);
         assert_eq!(
-            result.state_hash,
-            expected_state_hash(&GENESIS_BLOCK_HASH, &txs)
+            result.state_commitment,
+            expected_state_commitment(&GENESIS_BLOCK_HASH, &txs)
         );
     }
 
@@ -449,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_computed_state_hash() {
+    fn reports_computed_state_commitment() {
         let (tx, mut rx) = mpsc::channel(16);
         let mut engine = DummyExecution::new(tx);
 
@@ -461,16 +472,16 @@ mod tests {
         let bid = block_id(1);
         engine.end_block(bid.clone());
 
-        let expected = expected_state_hash(&GENESIS_BLOCK_HASH, &txs);
+        let expected = expected_state_commitment(&GENESIS_BLOCK_HASH, &txs);
         let ExecutionEvent::BlockExecuted { block_id, result } = rx.try_recv().unwrap();
         let result = result.expect("execution should succeed");
         assert_eq!(block_id, bid);
         assert_eq!(result.tx_count, 2);
-        assert_eq!(result.state_hash, expected);
+        assert_eq!(result.state_commitment, expected);
     }
 
     #[test]
-    fn differing_transactions_diverge_state_hash() {
+    fn differing_transactions_diverge_state_commitment() {
         let (tx, mut rx) = mpsc::channel(16);
         let mut engine = DummyExecution::new(tx);
 
@@ -481,7 +492,7 @@ mod tests {
                 engine.execute_transactions(id, vec![Transaction(tx_bytes)]);
                 engine.end_block(block_id(slot));
                 let ExecutionEvent::BlockExecuted { result, .. } = rx.try_recv().unwrap();
-                result.expect("execution should succeed").state_hash
+                result.expect("execution should succeed").state_commitment
             };
 
         // Same parent seed, different transactions => different computed root.
@@ -509,7 +520,7 @@ mod tests {
             engine.execute_transactions(child, vec![Transaction(vec![7])]);
             engine.end_block(block_id(child_slot));
             let ExecutionEvent::BlockExecuted { result, .. } = rx.try_recv().unwrap();
-            result.expect("execution should succeed").state_hash
+            result.expect("execution should succeed").state_commitment
         };
 
         // The children share an identical transaction and an identical parent
