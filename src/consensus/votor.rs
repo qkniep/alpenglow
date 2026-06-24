@@ -331,10 +331,6 @@ impl<A: All2All> Votor<A> {
     /// Returns `true` iff we decided to send a notarization vote for the block.
     async fn try_notar(&mut self, slot: Slot, block_info: BlockInfo) -> bool {
         assert!(slot >= self.first_unpruned_slot());
-        // Never notarize a slot we already voted on (notar or skip).
-        // A block stashed in `pending_block` (parent not yet ready) can reach
-        // here via `check_pending_blocks` after we already voted skip on the
-        // window timeout; voting notar now would be a slashable equivocation.
         if self.has_voted(slot) {
             return false;
         }
@@ -671,15 +667,6 @@ mod tests {
         }
     }
 
-    /// Regression test for skip-and-notarize self-equivocation.
-    ///
-    /// A block reconstructed before its parent is ready is stashed as
-    /// `pending_block`. If the window then times out we vote skip, but the
-    /// pending block lingers. A late `ParentReady` re-checks pending blocks and
-    /// must *not* notarize the slot we already skipped, which would be a
-    /// slashable [`SlashableOffence::SkipAndNotarize`].
-    ///
-    /// [`SlashableOffence::SkipAndNotarize`]: super::pool::SlashableOffence::SkipAndNotarize
     #[tokio::test]
     async fn pending_block_not_notarized_after_skip() {
         let (mut votor, ctx) = build_votor().await;
@@ -689,30 +676,22 @@ mod tests {
         assert!(slot.is_start_of_window());
         let parent = (slot.prev(), Hash::random_for_test().into());
 
-        // block reconstructs before its parent is ready: stashed as pending,
-        // no vote yet (parent not in `parents_ready`)
+        // block reconstructs before its parent is ready:
+        // stashed as pending, no vote yet (parent not in `parents_ready`)
         let block_info = BlockInfo {
             hash: Hash::random_for_test().into(),
             parent: parent.clone(),
         };
-        votor
-            .handle_blockstore_event(BlockstoreEvent::Block { slot, block_info })
-            .await;
+        let block_event = BlockstoreEvent::Block { slot, block_info };
+        votor.handle_blockstore_event(block_event).await;
 
         // window times out: we vote skip for every slot in the window
-        votor
-            .handle_timeout_event(VotorTimeout::Timeout(slot))
-            .await;
+        let timeout_event = VotorTimeout::Timeout(slot);
+        votor.handle_timeout_event(timeout_event).await;
 
-        // parent becomes ready late: re-checks pending blocks, but must not
-        // notarize `slot`, which we already voted skip for
-        votor
-            .handle_pool_event(PoolEvent::ParentReady {
-                slot,
-                parent_slot: parent.0,
-                parent_hash: parent.1.clone(),
-            })
-            .await;
+        // parent becomes ready late: re-checks pending blocks
+        let parent_ready_event = PoolEvent::ParentReady { slot, parent };
+        votor.handle_pool_event(parent_ready_event).await;
 
         // collect every vote broadcast for `slot` (network latency is 100ms)
         let mut votes_for_slot = Vec::new();
@@ -726,6 +705,7 @@ mod tests {
             }
         }
 
+        // must not notarize `slot`, which we already voted skip for
         assert!(
             votes_for_slot.iter().any(|v| matches!(v, Vote::Skip(_))),
             "expected a skip vote for slot {slot}",
