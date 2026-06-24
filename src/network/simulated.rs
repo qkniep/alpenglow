@@ -84,8 +84,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes =
-            wincode::serialize(msg).expect("serializing an outgoing message should not fail");
+        let bytes = crate::serialize(msg);
         let tasks = addrs.map(|addr| {
             let bytes = bytes.clone();
             async move { self.send_serialized(bytes, addr).await }
@@ -97,8 +96,7 @@ where
     }
 
     async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes =
-            wincode::serialize(msg).expect("serializing an outgoing message should not fail");
+        let bytes = crate::serialize(msg);
         self.send_serialized(bytes, addr).await
     }
 

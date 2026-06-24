@@ -159,13 +159,13 @@ impl SlicePayload {
 
     /// Serializes the payload into bytes.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        wincode::serialize(self).expect("serializing a slice payload should not fail")
+        crate::serialize(self)
     }
 }
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        wincode::serialize(&payload).expect("serializing a slice payload should not fail")
+        crate::serialize(&payload)
     }
 }
 

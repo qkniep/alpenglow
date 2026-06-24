@@ -12,10 +12,10 @@ mod timings;
 use std::cmp::Reverse;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{RwLock, RwLockReadGuard};
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorIndex, ValidatorInfo};
+use parking_lot::{RwLock, RwLockReadGuard};
 use rand::prelude::*;
 use rayon::prelude::*;
 
@@ -175,18 +175,13 @@ impl<P: Protocol> SimulationEngine<P> {
         }
 
         // commit timings to stats
-        let mut stats_map = self
-            .stats
-            .write()
-            .expect("stats lock should not be poisoned");
+        let mut stats_map = self.stats.write();
         stats_map.record_latencies(timings, &self.environment);
     }
 
     /// References the timing stats.
     pub(crate) fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
-        self.stats
-            .read()
-            .expect("stats lock should not be poisoned")
+        self.stats.read()
     }
 }
 

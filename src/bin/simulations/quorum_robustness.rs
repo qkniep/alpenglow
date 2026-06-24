@@ -14,12 +14,12 @@
 
 use std::cmp::Reverse;
 use std::fs::File;
-use std::sync::RwLock;
 
 use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, QuorumSamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
 use anyhow::Result;
 use log::debug;
+use parking_lot::RwLock;
 use rand::prelude::*;
 use rayon::prelude::*;
 use static_assertions::const_assert_eq;
@@ -186,10 +186,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
-                *self
-                    .tests
-                    .write()
-                    .expect("tests lock should not be poisoned") += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -231,10 +228,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
-                *self
-                    .tests
-                    .write()
-                    .expect("tests lock should not be poisoned") += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -274,10 +268,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
-                *self
-                    .tests
-                    .write()
-                    .expect("tests lock should not be poisoned") += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -342,7 +333,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &corrupted, &[]);
-                *self.tests.write().expect("tests lock should not be poisoned") += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -377,13 +368,10 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 .collect::<Vec<_>>();
             for (attack_index, attack) in self.attacks.iter().enumerate() {
                 if attack.evaluate(&corrupted) {
-                    self.failures
-                        .write()
-                        .expect("failures lock should not be poisoned")[attack_index] += 1;
+                    self.failures.write()[attack_index] += 1;
                     if *self
                         .failures
                         .read()
-                        .expect("failures lock should not be poisoned")
                         .iter()
                         .min()
                         .expect("there should be at least one attack")
@@ -398,27 +386,15 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 
     fn attack_probabilities(&self) -> Vec<f64> {
-        let tests = *self
-            .tests
-            .read()
-            .expect("tests lock should not be poisoned");
-        let failures = self
-            .failures
-            .read()
-            .expect("failures lock should not be poisoned");
+        let tests = *self.tests.read();
+        let failures = self.failures.read();
         failures.iter().map(|f| *f as f64 / tests as f64).collect()
     }
 
     fn is_better_attack_known(&self, known_attack_probs: &[f64]) -> bool {
         const MARGIN: f64 = 3.0;
-        let tests = *self
-            .tests
-            .read()
-            .expect("tests lock should not be poisoned");
-        let failures = self
-            .failures
-            .read()
-            .expect("failures lock should not be poisoned");
+        let tests = *self.tests.read();
+        let failures = self.failures.read();
         known_attack_probs
             .iter()
             .enumerate()
@@ -426,14 +402,8 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 
     fn reset(&self) {
-        *self
-            .tests
-            .write()
-            .expect("tests lock should not be poisoned") = 0;
-        *self
-            .failures
-            .write()
-            .expect("failures lock should not be poisoned") = vec![0; self.attacks.len()];
+        *self.tests.write() = 0;
+        *self.failures.write() = vec![0; self.attacks.len()];
     }
 }
 

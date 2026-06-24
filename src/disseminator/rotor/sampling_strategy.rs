@@ -39,8 +39,7 @@
 //!
 //! [`sample_quorum`]: QuorumSamplingStrategy::sample_quorum
 
-use std::sync::Mutex;
-
+use parking_lot::Mutex;
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
 
@@ -350,10 +349,7 @@ impl DecayingAcceptanceSampler {
     /// Resets the internal state of this stateful sampler.
     /// After resetting it is just as it was when it was first created.
     pub fn reset(&self) {
-        let mut sample_count = self
-            .sample_count
-            .lock()
-            .expect("sample count mutex should not be poisoned");
+        let mut sample_count = self.sample_count.lock();
         *sample_count = vec![0; self.stake_weighted.validators.len()];
     }
 
@@ -373,10 +369,7 @@ impl DecayingAcceptanceSampler {
     pub fn sample_one<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
-            let mut sample_count = self
-                .sample_count
-                .lock()
-                .expect("sample count mutex should not be poisoned");
+            let mut sample_count = self.sample_count.lock();
             let p_reject = sample_count[sample.as_usize()] as f64 / self.max_samples;
             if rng.random::<f64>() >= p_reject {
                 sample_count[sample.as_usize()] += 1;
@@ -416,12 +409,7 @@ impl Clone for DecayingAcceptanceSampler {
         Self {
             stake_weighted: self.stake_weighted.clone(),
             max_samples: self.max_samples,
-            sample_count: Mutex::new(
-                self.sample_count
-                    .lock()
-                    .expect("sample count mutex should not be poisoned")
-                    .clone(),
-            ),
+            sample_count: Mutex::new(self.sample_count.lock().clone()),
             k: self.k,
         }
     }

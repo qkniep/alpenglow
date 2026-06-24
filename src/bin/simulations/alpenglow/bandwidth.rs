@@ -16,11 +16,12 @@
 //!   - The maximum goodput that can be achieved for a given bandwidth distribution.
 
 use std::fs::File;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
+use parking_lot::Mutex;
 use rand::prelude::*;
 
 /// Instance of a bandwidth requirements test.
@@ -108,9 +109,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
-        let mut csv_file = csv_file
-            .lock()
-            .expect("CSV file mutex should not be poisoned");
+        let mut csv_file = csv_file.lock();
         csv_file
             .write_record(&[
                 stake_distribution.to_string(),
@@ -154,9 +153,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
-        let mut csv_file = csv_file
-            .lock()
-            .expect("CSV file mutex should not be poisoned");
+        let mut csv_file = csv_file.lock();
         for (bandwidth, validator, _) in binned_bandwidth_usage {
             csv_file
                 .write_record(&[

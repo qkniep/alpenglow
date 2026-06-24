@@ -101,8 +101,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes =
-            &wincode::serialize(msg).expect("serializing an outgoing message should not fail");
+        let bytes = &crate::serialize(msg);
         let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
@@ -111,8 +110,7 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes =
-            wincode::serialize(msg).expect("serializing an outgoing message should not fail");
+        let bytes = crate::serialize(msg);
         self.send_serialized(&bytes, addr).await
     }
 

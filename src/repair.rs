@@ -49,8 +49,7 @@ impl RepairRequestType {
             req_type: self.clone(),
             sender: ValidatorIndex::new(0),
         };
-        let msg_bytes =
-            wincode::serialize(&repair).expect("serializing a RepairRequest should not fail");
+        let msg_bytes = crate::serialize(&repair);
         hash(&msg_bytes)
     }
 }
