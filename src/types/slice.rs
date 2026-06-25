@@ -203,8 +203,8 @@ impl TryFrom<&[u8]> for SlicePayload {
 /// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
-/// This function should only be used for testing and benchmarking, hence it is
-/// only compiled under `cfg(test)` or the `test-utils` feature.
+/// This function should only be used for testing and benchmarking,
+/// hence it is only compiled under `cfg(test)` or the `test-utils` feature.
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
@@ -228,8 +228,8 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 /// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
-/// This function should only be used for testing and benchmarking, hence it is
-/// only compiled under `cfg(test)` or the `test-utils` feature.
+/// This function should only be used for testing and benchmarking,
+/// hence it is only compiled under `cfg(test)` or the `test-utils` feature.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
