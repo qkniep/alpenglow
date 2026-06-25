@@ -3,12 +3,13 @@
 
 //! Tiny sorted-vector map and set backed by inline [`SmallVec`] storage.
 //!
-//! These provide the handful of `BTreeMap`/`BTreeSet`-like operations the
-//! [`pool`](super) needs for its per-slot, per-block-hash bookkeeping. A slot
-//! almost always tracks a single block, so keeping that entry inline avoids a
-//! per-entry heap allocation in the common case. Entries are kept sorted so
-//! lookups stay `O(log n)` even when an equivocating leader inflates the entry
-//! count for a slot (at which point the storage spills to the heap).
+//! These provide the handful of `BTreeMap`/`BTreeSet`-like operations
+//! the [`pool`](super) needs for its per-slot, per-block-hash bookkeeping.
+//! A slot almost always tracks a single block,
+//! so keeping that entry inline avoids a per-entry heap allocation in the common case.
+//! Entries are kept sorted so lookups stay `O(log n)`
+//! even when an equivocating leader inflates the entry count for a slot
+//! (at which point the storage spills to the heap).
 
 use smallvec::SmallVec;
 
@@ -41,8 +42,8 @@ impl<K: Ord, V> SortedVecMap<K, V> {
         }
     }
 
-    /// Returns a mutable reference to the value for `key`, first inserting the
-    /// result of `default` if the key is absent.
+    /// Returns a mutable reference to the value for `key`,
+    /// first inserting the result of `default` if the key is absent.
     ///
     /// Does a single lookup and clones `key` only when inserting.
     pub(super) fn get_or_insert_with(&mut self, key: &K, default: impl FnOnce() -> V) -> &mut V
