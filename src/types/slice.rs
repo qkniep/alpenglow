@@ -5,6 +5,7 @@
 
 use std::ops::Deref;
 
+#[cfg(any(test, feature = "test-utils"))]
 use rand::prelude::*;
 use thiserror::Error;
 use wincode::config::DefaultConfig;
@@ -202,10 +203,9 @@ impl TryFrom<&[u8]> for SlicePayload {
 /// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
-/// This function should only be used for testing and benchmarking.
-//
-// TODO: This is only used in test and benchmarking code.
-// Ensure it is only compiled when we are testing or benchmarking.
+/// This function should only be used for testing and benchmarking, hence it is
+/// only compiled under `cfg(test)` or the `test-utils` feature.
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
     desired_size: usize,
@@ -228,10 +228,9 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 /// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
-/// This function should only be used for testing and benchmarking.
-//
-// TODO: This is only used in test and benchmarking code.
-// Ensure it is only compiled when we are testing or benchmarking.
+/// This function should only be used for testing and benchmarking, hence it is
+/// only compiled under `cfg(test)` or the `test-utils` feature.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
