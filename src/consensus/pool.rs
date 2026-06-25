@@ -9,6 +9,7 @@
 mod finality_tracker;
 mod parent_ready_tracker;
 mod slot_state;
+mod sorted_vec;
 
 use std::collections::BTreeMap;
 use std::ops::RangeBounds;
