@@ -1,15 +1,14 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use alpenglow::ValidatorIndex;
 use alpenglow::consensus::{Cert, ConsensusMessage, NotarCert, NotarVote, Vote};
-use alpenglow::crypto::aggsig::SecretKey;
 use alpenglow::crypto::merkle::GENESIS_BLOCK_HASH;
 use alpenglow::crypto::{aggsig, signature};
-use alpenglow::network::localhost_ip_sockaddr;
 use alpenglow::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shred, Shredder};
+use alpenglow::test_utils::generate_validators;
 use alpenglow::types::Slot;
 use alpenglow::types::slice::create_slice_with_invalid_txs;
-use alpenglow::{Stake, ValidatorIndex, ValidatorInfo};
 use divan::counter::{BytesCount, ItemsCount};
 
 fn main() {
@@ -46,7 +45,7 @@ fn deserialize_vote(bencher: divan::Bencher) {
 }
 
 fn generate_cert() -> Cert {
-    let (sks, val_info) = generate_validators(100);
+    let (sks, epoch_info) = generate_validators(100);
 
     let hash = GENESIS_BLOCK_HASH;
     let votes = sks
@@ -61,7 +60,7 @@ fn generate_cert() -> Cert {
             )
         })
         .collect::<Vec<_>>();
-    let notar_cert = NotarCert::try_new(&votes, &val_info).unwrap();
+    let notar_cert = NotarCert::try_new(&votes, epoch_info.validators()).unwrap();
     Cert::Notar(notar_cert)
 }
 
@@ -156,26 +155,4 @@ fn deserialize_slice(bencher: divan::Bencher) {
                 let _shred: Shred = wincode::deserialize(&bytes).unwrap();
             }
         });
-}
-
-pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, Vec<ValidatorInfo>) {
-    let mut rng = rand::rng();
-    let mut sks = Vec::new();
-    let mut voting_sks = Vec::new();
-    let mut validators = Vec::new();
-    for i in 0..num_validators {
-        sks.push(signature::SecretKey::new(&mut rng));
-        voting_sks.push(SecretKey::new(&mut rng));
-        validators.push(ValidatorInfo {
-            id: ValidatorIndex::new(i),
-            stake: Stake::new(1),
-            pubkey: sks[i as usize].to_pk(),
-            voting_pubkey: voting_sks[i as usize].to_pk(),
-            all2all_address: localhost_ip_sockaddr(0),
-            disseminator_address: localhost_ip_sockaddr(0),
-            repair_requester_address: localhost_ip_sockaddr(0),
-            repair_responder_address: localhost_ip_sockaddr(0),
-        });
-    }
-    (voting_sks, validators)
 }
