@@ -18,7 +18,7 @@ pub struct Hash(pub(super) [u8; 32]);
 
 impl Hash {
     /// Creates a random hash for testing.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn random_for_test() -> Self {
         use rand::Rng;
 
