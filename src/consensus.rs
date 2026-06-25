@@ -44,6 +44,8 @@ pub use self::blockstore::{
 };
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
+#[cfg(feature = "test-utils")]
+pub use self::pool::bench_replay_votes;
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;

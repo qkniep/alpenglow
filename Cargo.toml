@@ -50,6 +50,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 toml = { version = "1", optional = true }
+vec-collections = "0.4.3"
 wincode = { version = "0.5", features = ["derive"] }
 
 [dev-dependencies]
@@ -119,6 +120,11 @@ required-features = ["test-utils"]
 
 [[bench]]
 name = "shredder"
+harness = false
+required-features = ["test-utils"]
+
+[[bench]]
+name = "pool"
 harness = false
 required-features = ["test-utils"]
 

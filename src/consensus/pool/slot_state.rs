@@ -8,12 +8,12 @@
 //! - [`SlotVotedStake`] for all running stake totals in a single slot.
 //! - [`SlotCertificates`] for all certificates in a single slot.
 
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use either::Either;
 use smallvec::SmallVec;
+use vec_collections::{AbstractVecMap, AbstractVecSet, VecMap, VecSet};
 
 use super::{PoolEvent, SlashableOffence};
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
@@ -33,12 +33,15 @@ pub(super) struct SlotState {
     /// Certificates for this slot, contains all certificate types and validators.
     pub(super) certificates: SlotCertificates,
     /// Indicates blocks for which we already know their parents.
-    parents: BTreeMap<BlockHash, ParentStatus>,
+    ///
+    /// A slot almost always tracks a single block, so an inline sorted vec
+    /// avoids per-entry heap allocation versus a `BTreeMap`.
+    parents: VecMap<[(BlockHash, ParentStatus); 1]>,
     /// Hashes of blocks that have reached the necessary votes for safe-to-notar
     /// and are only waiting for our only vote to arrive.
-    pending_safe_to_notar: BTreeSet<BlockHash>,
+    pending_safe_to_notar: VecSet<[BlockHash; 1]>,
     /// Hashes of blocks for which safe-to-notar has already been reached.
-    sent_safe_to_notar: BTreeSet<BlockHash>,
+    sent_safe_to_notar: VecSet<[BlockHash; 1]>,
     /// Indicates if safe-to-skip has already been sent for this slot.
     sent_safe_to_skip: bool,
 
@@ -65,9 +68,9 @@ pub(super) struct SlotVotes {
 #[derive(Default)]
 pub(super) struct SlotVotedStake {
     /// Amount of stake for each block has for which we have a notarization vote.
-    pub(super) notar: BTreeMap<BlockHash, Stake>,
+    pub(super) notar: VecMap<[(BlockHash, Stake); 1]>,
     /// Amount of stake for each block hash for which we have a notar-fallback vote.
-    pub(super) notar_fallback: BTreeMap<BlockHash, Stake>,
+    pub(super) notar_fallback: VecMap<[(BlockHash, Stake); 1]>,
     /// Amount of stake for which we have a skip vote.
     pub(super) skip: Stake,
     /// Amount of stake for which we have a skip-fallback vote.
@@ -123,9 +126,9 @@ impl SlotState {
             votes: SlotVotes::new(epoch_info.epoch_info().validators().len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
-            parents: BTreeMap::new(),
-            pending_safe_to_notar: BTreeSet::new(),
-            sent_safe_to_notar: BTreeSet::new(),
+            parents: VecMap::empty(),
+            pending_safe_to_notar: VecSet::empty(),
+            sent_safe_to_notar: VecSet::empty(),
             sent_safe_to_skip: false,
 
             slot,
@@ -208,7 +211,9 @@ impl SlotState {
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
     pub(super) fn notify_parent_known(&mut self, hash: BlockHash) {
-        self.parents.entry(hash).or_insert(ParentStatus::Known);
+        if self.parents.get(&hash).is_none() {
+            self.parents.insert(hash, ParentStatus::Known);
+        }
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.
@@ -253,14 +258,17 @@ impl SlotState {
         let mut blocks_to_repair = SmallVec::new();
 
         // increment stake
-        let notar_stake = self
-            .voted_stakes
-            .notar
-            .entry(block_hash.clone())
-            .or_default();
-        *notar_stake += stake;
+        let notar_stake = match self.voted_stakes.notar.get_mut(block_hash) {
+            Some(existing) => {
+                *existing += stake;
+                *existing
+            }
+            None => {
+                self.voted_stakes.notar.insert(block_hash.clone(), stake);
+                stake
+            }
+        };
         self.voted_stakes.notar_or_skip += stake;
-        let notar_stake = *notar_stake;
         self.voted_stakes.top_notar = notar_stake.max(self.voted_stakes.top_notar);
 
         // check quorums
@@ -333,10 +341,18 @@ impl SlotState {
         stake: Stake,
     ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
-        let nf_stakes = &mut self.voted_stakes.notar_fallback;
-        let nf_stake = nf_stakes.entry(block_hash.clone()).or_default();
-        *nf_stake += stake;
-        let nf_stake = *nf_stake;
+        let nf_stake = match self.voted_stakes.notar_fallback.get_mut(block_hash) {
+            Some(existing) => {
+                *existing += stake;
+                *existing
+            }
+            None => {
+                self.voted_stakes
+                    .notar_fallback
+                    .insert(block_hash.clone(), stake);
+                stake
+            }
+        };
         let notar_stake = *self
             .voted_stakes
             .notar
@@ -519,10 +535,10 @@ impl SlotState {
         }
 
         // check parent condition
-        match self.parents.entry(block_hash.clone()) {
-            Entry::Vacant(_) => return SafeToNotarStatus::MissingBlock,
-            Entry::Occupied(entry) => {
-                if entry.get() != &ParentStatus::Certified {
+        match self.parents.get(&block_hash) {
+            None => return SafeToNotarStatus::MissingBlock,
+            Some(status) => {
+                if status != &ParentStatus::Certified {
                     return SafeToNotarStatus::AwaitingVotes;
                 }
             }
