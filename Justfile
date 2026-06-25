@@ -118,12 +118,13 @@ fuzz:
     done
 
 # Compile-check benchmarks. CI never runs benches.
+# `test-utils` unlocks the `slice`/`SlotState` helpers that most benches need.
 bench-build: _lockfile
-    cargo bench --no-run --locked
+    cargo bench --no-run --locked --features test-utils
 
 # Run benchmarks (divan). For local profiling only.
 bench:
-    cargo bench
+    cargo bench --features test-utils
 
 # Generate an HTML coverage report and open it.
 coverage:
