@@ -72,9 +72,8 @@ hotpath-alloc = ["hotpath/hotpath-alloc"]
 # stake_distribution}`) and the `simulations` binary. Pulls in `csv` /
 # `serde_json` for parsing `data/*.{csv,json}` and `rayon` for parallel sims.
 simulations = ["dep:rayon", "dep:csv", "dep:serde_json"]
-# Exposes `test_utils` and internal benchmarking hooks (e.g. the `consensus`
-# `SlotState` replay kernel) to out-of-crate test/bench targets. Off by default;
-# enabled implicitly by `cargo test` and explicitly for benches that need it.
+# Exposes `test_utils` and other test-only methods to out-of-crate test/bench targets.
+# Off by default; enabled implicitly by `cargo test` and explicitly for some benches.
 test-utils = []
 # Enables `fastrace` span collection and OpenTelemetry (OTLP) export.
 # Off by default: Without it, `fastrace` instrumentation compiles to no-ops and

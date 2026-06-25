@@ -118,7 +118,7 @@ fuzz:
     done
 
 # Compile-check benchmarks. CI never runs benches.
-# `test-utils` unlocks the slice/`SlotState` helpers that most benches need.
+# `test-utils` unlocks the `slice`/`SlotState` helpers that most benches need.
 bench-build: _lockfile
     cargo bench --no-run --locked --features test-utils
 
