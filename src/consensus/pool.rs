@@ -129,11 +129,12 @@ pub type SharedPool = Arc<RwLock<dyn Pool + Send + Sync>>;
 
 /// Benchmark hook: replays `votes` into a fresh [`SlotState`] for `slot`.
 ///
-/// Exposed only under the `test-utils` feature so out-of-crate benches can
-/// exercise the per-slot vote-counting hot path ([`SlotState::add_vote`])
-/// directly, without the consensus loop or signature verification that would
-/// otherwise dominate. Every hash in `parents_certified` is marked known and
-/// certified up front so the safe-to-notar logic actually runs.
+/// Exposed only under the `test-utils` feature
+/// so out-of-crate benches can exercise the per-slot vote-counting hot path
+/// ([`SlotState::add_vote`]) directly,
+/// without the consensus loop or signature verification that would otherwise dominate.
+/// Every hash in `parents_certified` is marked known and certified up front
+/// so the safe-to-notar logic actually runs.
 ///
 /// Returns the total number of certs, votor events, and repair hints produced,
 /// purely so the benchmark can [`std::hint::black_box`] it.
