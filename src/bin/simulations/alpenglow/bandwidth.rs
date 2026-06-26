@@ -134,10 +134,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
             bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i);
         }
 
-        bandwidth_usage.sort_unstable_by(|a, b| {
-            a.0.partial_cmp(&b.0)
-                .expect("bandwidth values should not be NaN")
-        });
+        bandwidth_usage.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         let mut binned_bandwidth_usage = vec![(0.0, 0, 0); 99];
         for (i, (bandwidth, _)) in bandwidth_usage.into_iter().enumerate() {
             let bin = i / 13;
