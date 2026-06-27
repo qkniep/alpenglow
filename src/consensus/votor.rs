@@ -591,7 +591,7 @@ mod tests {
         let Vote::Notar(notar_vote) = vote else {
             unreachable!()
         };
-        let cert = Cert::Notar(NotarCert::new_unchecked(
+        let cert = Cert::Notar(NotarCert::new(
             &[notar_vote],
             ctx.epoch_info.validators(),
         ));
@@ -798,7 +798,7 @@ mod tests {
         else {
             unreachable!()
         };
-        let cert = Cert::Final(FinalCert::new_unchecked(
+        let cert = Cert::Final(FinalCert::new(
             &[final_vote],
             ctx.epoch_info.validators(),
         ));
