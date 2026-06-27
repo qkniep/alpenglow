@@ -42,8 +42,8 @@ jobs:
         if: ${{ !cancelled() }}
         uses: crate-ci/typos@37bb98842b0d8c4ffebdb75301a13db0267cef89 # v1
 
-      # Mirrors `just license`: every .rs/.py source file must open with the
-      # SPDX copyright + license header. Pure bash so no extra tooling is needed.
+      # Mirrors `just license`:
+      # every .rs/.py source file must start with the copyright/license header.
       - name: Check license headers
         if: ${{ !cancelled() }}
         run: |
