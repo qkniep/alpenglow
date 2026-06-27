@@ -597,10 +597,7 @@ mod tests {
         let Vote::Notar(notar_vote) = vote else {
             unreachable!()
         };
-        let cert = Cert::Notar(NotarCert::new_unchecked(
-            &[notar_vote],
-            ctx.epoch_info.validators(),
-        ));
+        let cert = Cert::Notar(NotarCert::new(&[notar_vote], ctx.epoch_info.validators()));
         ctx.pool_tx
             .send(PoolEvent::CertCreated(Box::new(cert)))
             .await
@@ -804,10 +801,7 @@ mod tests {
         else {
             unreachable!()
         };
-        let cert = Cert::Final(FinalCert::new_unchecked(
-            &[final_vote],
-            ctx.epoch_info.validators(),
-        ));
+        let cert = Cert::Final(FinalCert::new(&[final_vote], ctx.epoch_info.validators()));
         let event = PoolEvent::CertCreated(Box::new(cert));
         votor.handle_pool_event(event).await;
         assert_eq!(votor.highest_final_cert_slot, finalized);

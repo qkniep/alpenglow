@@ -25,8 +25,8 @@ impl SliceIndex {
     /// Creates a new slice index for testing purposes.
     ///
     /// Panics if `index` is not in the valid range.
-    #[cfg(test)]
-    pub(crate) fn new_unchecked(index: usize) -> Self {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn new_for_test(index: usize) -> Self {
         Self::new(index).unwrap()
     }
 

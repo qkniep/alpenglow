@@ -299,7 +299,7 @@ impl SlotState {
         {
             let notar_votes = self.votes.notar_votes(block_hash);
             let nf_votes = self.votes.notar_fallback_votes(block_hash);
-            let cert = NotarFallbackCert::new_unchecked(
+            let cert = NotarFallbackCert::new(
                 &notar_votes,
                 &nf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -309,15 +309,14 @@ impl SlotState {
         if self.epoch_info.epoch_info().is_quorum(notar_stake) && self.certificates.notar.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = NotarCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Notar(cert));
         }
         if self.epoch_info.epoch_info().is_strong_quorum(notar_stake)
             && self.certificates.fast_finalize.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert =
-                FastFinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FastFinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -352,7 +351,7 @@ impl SlotState {
         {
             let notar_votes = self.votes.notar_votes(block_hash);
             let nf_votes = self.votes.notar_fallback_votes(block_hash);
-            let cert = NotarFallbackCert::new_unchecked(
+            let cert = NotarFallbackCert::new(
                 &notar_votes,
                 &nf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -394,7 +393,7 @@ impl SlotState {
         {
             let skip_votes = self.votes.skip_votes();
             let sf_votes = self.votes.skip_fallback_votes();
-            let cert = SkipCert::new_unchecked(
+            let cert = SkipCert::new(
                 &skip_votes,
                 &sf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -428,7 +427,7 @@ impl SlotState {
             && self.certificates.finalize.is_none()
         {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())

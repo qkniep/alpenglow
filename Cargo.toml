@@ -72,6 +72,9 @@ hotpath-alloc = ["hotpath/hotpath-alloc"]
 # stake_distribution}`) and the `simulations` binary. Pulls in `csv` /
 # `serde_json` for parsing `data/*.{csv,json}` and `rayon` for parallel sims.
 simulations = ["dep:rayon", "dep:csv", "dep:serde_json"]
+# Exposes `test_utils` and other test-only methods to out-of-crate test/bench targets.
+# Off by default; enabled implicitly by `cargo test` and explicitly for some benches.
+test-utils = []
 # Enables `fastrace` span collection and OpenTelemetry (OTLP) export.
 # Off by default: Without it, `fastrace` instrumentation compiles to no-ops and
 # the gRPC/OTLP dependency stack is dropped entirely.
@@ -120,14 +123,17 @@ harness = false
 [[bench]]
 name = "disseminator"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "network"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "shredder"
 harness = false
+required-features = ["test-utils"]
 
 [[bin]]
 name = "all2all_test"
