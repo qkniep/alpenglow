@@ -9,43 +9,43 @@ use log::debug;
 use rand::prelude::*;
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs as part of `just test-slow`"]
 async fn only_correct_nodes() {
     liveness_test(6, 0).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs as part of `just test-slow`"]
 async fn single_crash() {
     liveness_test(11, 1).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs as part of `just test-slow`"]
 async fn max_fast_crashes() {
     liveness_test(11, 2).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs as part of `just test-slow`"]
 async fn too_many_fast_crashes() {
     liveness_test(11, 3).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs in release via `just test-sequential`"]
 async fn max_crashes() {
     liveness_test(11, 4).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs as part of `just test-slow`"]
 async fn three_nodes() {
     liveness_test(3, 0).await;
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "slow multi-node test; runs in release via `just test-sequential`"]
 async fn three_nodes_crash() {
     liveness_test(3, 1).await;
 }
@@ -112,7 +112,8 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
     };
 
     // check result of liveness test
-    assert_eq!(res.unwrap_err().is_cancelled(), should_succeed);
+    let err = res.expect_err("liveness tester runs forever, it can only be aborted or panic");
+    assert_eq!(err.is_cancelled(), should_succeed);
 
     // kill other nodes
     for token in node_cancel_tokens {

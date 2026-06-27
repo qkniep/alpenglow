@@ -69,8 +69,11 @@ impl<'a> ValidatedShreds<'a> {
 
     /// Returns a reference to any shred in this set.
     pub(super) fn any_shred(self) -> &'a ValidatedShred {
-        // constructor ensures at least one shred
-        self.shreds.iter().flatten().next().unwrap()
+        self.shreds
+            .iter()
+            .flatten()
+            .next()
+            .expect("constructor ensures at least one shred")
     }
 
     /// Returns `(index, payload)` pairs for all present data shreds.
@@ -124,7 +127,7 @@ mod tests {
         assert!(ValidatedShreds::try_new(&shreds, 1, TOTAL_SHREDS - 1).is_none());
 
         // there are coding shreds in data shred positions in the array
-        let shreds = shredder.shred(slice.clone(), &sk).unwrap().map(Some);
+        let shreds = shredder.shred(slice, &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, TOTAL_SHREDS - 1, 1).is_none());
 
         // mixing shreds of different sizes

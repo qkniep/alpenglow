@@ -296,7 +296,7 @@ impl ExecutionEngine for DummyExecution {
                     block_id,
                     result: Ok(result),
                 })
-                .unwrap();
+                .expect("execution event channel should have capacity and a live receiver");
         }
     }
 
@@ -393,7 +393,7 @@ mod tests {
 
         let id = InProgressBlock::Pending(Slot::new(5));
         engine.begin_block(id.clone(), Some(block_id(4)));
-        engine.execute_transactions(id.clone(), vec![Transaction(vec![0]); 7]);
+        engine.execute_transactions(id, vec![Transaction(vec![0]); 7]);
 
         let bid = block_id(5);
         engine.end_block(bid.clone());
@@ -412,7 +412,7 @@ mod tests {
         let bid = block_id(10);
         let id = InProgressBlock::Known(bid.clone());
         engine.begin_block(id.clone(), Some(block_id(9)));
-        engine.execute_transactions(id.clone(), vec![Transaction(vec![42]); 2]);
+        engine.execute_transactions(id, vec![Transaction(vec![42]); 2]);
 
         engine.end_block(bid.clone());
 
@@ -437,10 +437,7 @@ mod tests {
         // Slot 2 must be startable with slot 1 as its parent even after end_block.
         let id2 = InProgressBlock::Pending(Slot::new(2));
         engine.begin_block(id2.clone(), Some(bid1));
-        engine.execute_transactions(
-            id2.clone(),
-            vec![Transaction(vec![2]), Transaction(vec![3])],
-        );
+        engine.execute_transactions(id2, vec![Transaction(vec![2]), Transaction(vec![3])]);
 
         let bid2 = block_id(2);
         engine.end_block(bid2.clone());

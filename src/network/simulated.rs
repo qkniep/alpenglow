@@ -84,7 +84,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = wincode::serialize(msg).unwrap();
+        let bytes = crate::serialize(msg);
         let tasks = addrs.map(|addr| {
             let bytes = bytes.clone();
             async move { self.send_serialized(bytes, addr).await }
@@ -96,7 +96,7 @@ where
     }
 
     async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = wincode::serialize(msg).unwrap();
+        let bytes = crate::serialize(msg);
         self.send_serialized(bytes, addr).await
     }
 
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; runs as part of `just test-slow`"]
     async fn high_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; runs as part of `just test-slow`"]
     async fn unlimited_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(

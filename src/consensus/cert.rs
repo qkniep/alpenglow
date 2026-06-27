@@ -216,7 +216,7 @@ impl NotarCert {
     ///
     /// Panics if `try_new` returns an error.
     pub fn new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Self {
-        Self::try_new(votes, validators).unwrap()
+        Self::try_new(votes, validators).expect("votes should form a valid certificate")
     }
 
     /// Checks that the stake threshold is met.
@@ -341,7 +341,8 @@ impl NotarFallbackCert {
         nf_votes: &[NotarFallbackVote],
         validators: &[ValidatorInfo],
     ) -> Self {
-        Self::try_new(notar_votes, nf_votes, validators).unwrap()
+        Self::try_new(notar_votes, nf_votes, validators)
+            .expect("votes should form a valid certificate")
     }
 
     /// Checks that the stake threshold is met.
@@ -479,7 +480,8 @@ impl SkipCert {
         sf_votes: &[SkipFallbackVote],
         validators: &[ValidatorInfo],
     ) -> Self {
-        Self::try_new(skip_votes, sf_votes, validators).unwrap()
+        Self::try_new(skip_votes, sf_votes, validators)
+            .expect("votes should form a valid certificate")
     }
 
     /// Checks that the stake threshold is met.
@@ -580,7 +582,7 @@ impl FastFinalCert {
     ///
     /// Panics if `try_new` returns an error.
     pub fn new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Self {
-        Self::try_new(votes, validators).unwrap()
+        Self::try_new(votes, validators).expect("votes should form a valid certificate")
     }
 
     /// Checks that the stake threshold is met.
@@ -659,7 +661,7 @@ impl FinalCert {
     ///
     /// Panics if `try_new` returns an error.
     pub fn new(votes: &[FinalVote], validators: &[ValidatorInfo]) -> Self {
-        Self::try_new(votes, validators).unwrap()
+        Self::try_new(votes, validators).expect("votes should form a valid certificate")
     }
 
     /// Checks that the stake threshold is met.
@@ -869,7 +871,7 @@ mod tests {
         assert_eq!(res.err(), Some(CertError::SlotMismatch));
 
         // block hash mismatch
-        let vote1 = NotarVote::new(Slot::new(1), hash.clone(), &sks[0], ValidatorIndex::new(0));
+        let vote1 = NotarVote::new(Slot::new(1), hash, &sks[0], ValidatorIndex::new(0));
         let vote2 = NotarVote::new(
             Slot::new(1),
             Hash::random_for_test().into(),
@@ -901,8 +903,7 @@ mod tests {
         assert_eq!(res.err(), Some(CertError::SlotMismatch));
 
         // block hash mismatch in notar-fallback votes
-        let vote1 =
-            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[0], ValidatorIndex::new(0));
+        let vote1 = NotarFallbackVote::new(Slot::new(1), hash, &sks[0], ValidatorIndex::new(0));
         let vote2 = NotarFallbackVote::new(
             Slot::new(1),
             Hash::random_for_test().into(),
@@ -942,7 +943,7 @@ mod tests {
         assert_eq!(res.err(), Some(CertError::SlotMismatch));
 
         // block hash mismatch
-        let vote1 = NotarVote::new(Slot::new(1), hash.clone(), &sks[0], ValidatorIndex::new(0));
+        let vote1 = NotarVote::new(Slot::new(1), hash, &sks[0], ValidatorIndex::new(0));
         let vote2 = NotarVote::new(
             Slot::new(1),
             Hash::random_for_test().into(),
@@ -1062,7 +1063,7 @@ mod tests {
 
         // invalid sig (wrong key for validator 0)
         let vote1 = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(0));
-        let vote2 = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let vote2 = NotarVote::new(Slot::new(1), hash, &sks[1], ValidatorIndex::new(1));
         let cert = NotarCert::try_new(&[vote1, vote2], &info).unwrap();
         assert!(!cert.check_sig(&info));
     }
@@ -1081,8 +1082,7 @@ mod tests {
 
         // invalid sig (wrong key for validator 0)
         let nv = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(0));
-        let nfv =
-            NotarFallbackVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let nfv = NotarFallbackVote::new(Slot::new(1), hash, &sks[1], ValidatorIndex::new(1));
         let cert = NotarFallbackCert::try_new(&[nv], &[nfv], &info).unwrap();
         assert!(!cert.check_sig(&info));
     }
@@ -1134,7 +1134,7 @@ mod tests {
 
         // invalid sig (wrong key for validator 0)
         let vote1 = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(0));
-        let vote2 = NotarVote::new(Slot::new(1), hash.clone(), &sks[1], ValidatorIndex::new(1));
+        let vote2 = NotarVote::new(Slot::new(1), hash, &sks[1], ValidatorIndex::new(1));
         let cert = FastFinalCert::try_new(&[vote1, vote2], &info).unwrap();
         assert!(!cert.check_sig(&info));
     }

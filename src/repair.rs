@@ -49,7 +49,7 @@ impl RepairRequestType {
             req_type: self.clone(),
             sender: ValidatorIndex::new(0),
         };
-        let msg_bytes = wincode::serialize(&repair).unwrap();
+        let msg_bytes = crate::serialize(&repair);
         hash(&msg_bytes)
     }
 }
@@ -179,22 +179,24 @@ where
             RepairRequestType::LastSliceRoot(block_id) => {
                 let blockstore = self.blockstore.read().await;
                 let last_slice = blockstore.get_last_slice_index(block_id)?;
-                let root = blockstore.get_slice_root(block_id, last_slice)?;
+                let root = blockstore.get_slice_root(block_id, last_slice)?.clone();
                 let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
+                drop(blockstore);
                 Some(RepairResponse::LastSliceRoot(
                     request.req_type.clone(),
                     last_slice,
-                    root.clone(),
+                    root,
                     proof,
                 ))
             }
             RepairRequestType::SliceRoot(block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
-                let root = blockstore.get_slice_root(block_id, *slice)?;
+                let root = blockstore.get_slice_root(block_id, *slice)?.clone();
                 let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
+                drop(blockstore);
                 Some(RepairResponse::SliceRoot(
                     request.req_type.clone(),
-                    root.clone(),
+                    root,
                     proof,
                 ))
             }
@@ -203,6 +205,7 @@ where
                 let shred = blockstore
                     .get_shred(block_id, *slice, *shred_index)
                     .cloned()?;
+                drop(blockstore);
                 Some(RepairResponse::Shred(
                     request.req_type.clone(),
                     shred.into_shred(),
@@ -592,10 +595,8 @@ mod tests {
         repair_block(10).await;
     }
 
-    // test takes a long time to run in debug mode.
-    // so ignored for normal runs and ran as part of sequential tests
     #[tokio::test]
-    #[ignore]
+    #[ignore = "slow in debug mode; runs in release via `just test-sequential`"]
     async fn repair_large_block() {
         repair_block(MAX_SLICES_PER_BLOCK).await;
     }
@@ -728,12 +729,13 @@ mod tests {
         let block_to_repair = (slot, block_hash.clone());
 
         // ingest the block into blockstore
+        let mut b = ctx.blockstore.write().await;
         for slice_shreds in shreds.clone() {
-            let mut b = ctx.blockstore.write().await;
             for shred in slice_shreds {
                 let _ = b.add_shred_from_dissemination(shred).await;
             }
         }
+        drop(b);
         assert_eq!(
             ctx.blockstore.read().await.disseminated_block_hash(slot),
             Some(&block_hash)
