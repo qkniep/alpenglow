@@ -26,7 +26,7 @@ impl SliceIndex {
     ///
     /// Panics if `index` is not in the valid range.
     #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) fn new_unchecked(index: usize) -> Self {
+    pub(crate) fn new_for_test(index: usize) -> Self {
         Self::new(index).unwrap()
     }
 
