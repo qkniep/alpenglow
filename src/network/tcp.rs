@@ -29,6 +29,7 @@ type StreamWriter = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
 // WARN: this is incomplete!
 pub struct TcpNetwork<S, R> {
     listener: TcpListener,
+    port: u16,
     readers: RwLock<Vec<Mutex<StreamReader>>>,
     writers: RwLock<Vec<Mutex<StreamWriter>>>,
     _msg_types: PhantomData<(S, R)>,
@@ -51,9 +52,15 @@ impl<S, R> TcpNetwork<S, R> {
         let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
         let listener = futures::executor::block_on(TcpListener::bind(addr))
             .expect("binding TCP listener should succeed; is the port already in use?");
+        // `port` might be 0 above, which has the OS assign a free one
+        let port = listener
+            .local_addr()
+            .expect("bound socket should have a local address")
+            .port();
         let (_tx, _rx) = mpsc::channel::<TcpMessage<S, R>>(1024);
         Self {
             listener,
+            port,
             readers: RwLock::new(Vec::new()),
             writers: RwLock::new(Vec::new()),
             _msg_types: PhantomData,
@@ -72,10 +79,7 @@ impl<S, R> TcpNetwork<S, R> {
     ///
     /// This port is used by all streams and to listen for incoming connections.
     pub fn port(&self) -> u16 {
-        self.listener
-            .local_addr()
-            .expect("bound socket should have a local address")
-            .port()
+        self.port
     }
 
     async fn send_serialized(&self, bytes: &[u8], _addr: SocketAddr) -> std::io::Result<()> {

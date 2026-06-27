@@ -28,6 +28,7 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 /// Implementation of network abstraction over a simple UDP socket.
 pub struct UdpNetwork<S, R> {
     socket: UdpSocket,
+    port: u16,
     _msg_types: PhantomData<(S, R)>,
 }
 
@@ -42,8 +43,14 @@ impl<S, R> UdpNetwork<S, R> {
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
         let socket = futures::executor::block_on(UdpSocket::bind(addr))
             .expect("binding UDP socket should succeed; is the port already in use?");
+        // `port` might be 0 above, which has the OS assign a free one
+        let port = socket
+            .local_addr()
+            .expect("bound socket should have a local address")
+            .port();
         Self {
             socket,
+            port,
             _msg_types: PhantomData,
         }
     }
@@ -57,10 +64,7 @@ impl<S, R> UdpNetwork<S, R> {
 
     /// Returns the UDP port number the network is bound to.
     pub fn port(&self) -> u16 {
-        self.socket
-            .local_addr()
-            .expect("bound socket should have a local address")
-            .port()
+        self.port
     }
 
     async fn send_serialized(&self, bytes: &[u8], addr: SocketAddr) -> std::io::Result<()> {
