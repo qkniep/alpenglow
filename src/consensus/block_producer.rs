@@ -231,22 +231,8 @@ where
                         // It's a NOP if we have been using the same parent as before.
 
                         let start = Instant::now();
-                        let (new_slot, new_hash) =
-                            res.expect("ParentReady sender should not be dropped");
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash == *parent_hash {
-                            debug!("parent is ready, continuing with same parent");
-                        } else {
-                            assert_ne!(new_slot, *parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                parent_hash.short_hex(),
-                                parent_slot,
-                                new_hash.short_hex(),
-                                new_slot
-                            );
-                            payload.parent = Some((new_slot, new_hash));
-                        }
+                        apply_parent_ready(&mut payload, res, &parent_block_id);
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
@@ -258,22 +244,8 @@ where
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if is_last && !parent_ready_receiver.is_terminated() {
-                let (new_slot, new_hash) = (&mut parent_ready_receiver)
-                    .await
-                    .expect("ParentReady sender should not be dropped");
-                if new_hash != *parent_hash {
-                    assert_ne!(new_slot, *parent_slot);
-                    debug!(
-                        "changed parent from {} in slot {} to {} in slot {}",
-                        parent_hash.short_hex(),
-                        parent_slot,
-                        new_hash.short_hex(),
-                        new_slot
-                    );
-                    payload.parent = Some((new_slot, new_hash));
-                } else {
-                    debug!("parent is ready, continuing with same parent");
-                }
+                let received = (&mut parent_ready_receiver).await;
+                apply_parent_ready(&mut payload, received, &parent_block_id);
             }
             let header = SliceHeader {
                 slot,
@@ -401,6 +373,31 @@ where
             debug_assert!(maybe_block_hash.is_none());
             Ok(None)
         }
+    }
+}
+
+/// Unwraps a received `ParentReady` event and applies its parent to `payload`.
+///
+/// A no-op if the ready parent matches the one we were already building on.
+fn apply_parent_ready(
+    payload: &mut SlicePayload,
+    received: Result<BlockId, oneshot::error::RecvError>,
+    parent_block_id: &BlockId,
+) {
+    let (new_slot, new_hash) = received.expect("ParentReady sender should not be dropped");
+    let (parent_slot, parent_hash) = parent_block_id;
+    if &new_hash == parent_hash {
+        debug!("parent is ready, continuing with same parent");
+    } else {
+        assert_ne!(&new_slot, parent_slot);
+        debug!(
+            "changed parent from {} in slot {} to {} in slot {}",
+            parent_hash.short_hex(),
+            parent_slot,
+            new_hash.short_hex(),
+            new_slot
+        );
+        payload.parent = Some((new_slot, new_hash));
     }
 }
 
