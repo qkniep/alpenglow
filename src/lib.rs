@@ -52,9 +52,9 @@ const_assert_eq!(std::mem::size_of::<usize>(), 8);
 
 /// Serializes an in-memory value with [`wincode`].
 ///
-/// Panics on encoder failure, which is unreachable for the `Vec`-backed writer
-/// used here — serialization only fails on I/O errors, and writing to a `Vec`
-/// never errors.
+/// Panics on encoder failure,
+/// which can't happen with a `Vec` writer:
+/// wincode only fails on writer I/O errors, and a `Vec` never errors.
 pub(crate) fn serialize<T>(value: &T) -> Vec<u8>
 where
     T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
