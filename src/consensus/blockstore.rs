@@ -128,16 +128,9 @@ impl BlockstoreImpl {
     }
 
     async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
-                self.votor_channel
-                    .send(event)
-                    .await
-                    .expect("votor should not drop the event receiver");
-                None
-            }
+        let block_info = match &event {
+            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => None,
             BlockstoreEvent::Block { slot, block_info } => {
-                let block_info = block_info.clone();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     block_info.hash.short_hex(),
@@ -145,14 +138,14 @@ impl BlockstoreImpl {
                     block_info.parent.1.short_hex(),
                     block_info.parent.0,
                 );
-                self.votor_channel
-                    .send(event)
-                    .await
-                    .expect("votor should not drop the event receiver");
-
-                Some(block_info)
+                Some(block_info.clone())
             }
-        }
+        };
+        self.votor_channel
+            .send(event)
+            .await
+            .expect("votor should not drop the event receiver");
+        block_info
     }
 
     /// Gives reference to stored block data for the given `block_id`.
