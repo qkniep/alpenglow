@@ -17,7 +17,7 @@ setup:
     @echo "  go install github.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker@latest"
 
 # Full local check suite (mirrors the core CI). Roughly the old check.sh.
-check: _check-tools editorconfig fmt clippy build doc deny machete typos fuzz-build test-ci
+check: _check-tools editorconfig fmt clippy build doc deny machete typos license fuzz-build test-ci
 
 # Check formatting (nightly rustfmt).
 fmt:
@@ -46,6 +46,27 @@ machete:
 # Check spelling.
 typos:
     typos
+
+# Check every source file starts with the copyright + SPDX license header.
+license:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail=0
+    while IFS= read -r f; do
+        # Python uses '#' line comments; everything else uses '//'.
+        case "$f" in
+            *.py) c='#' ;;
+            *)    c='//' ;;
+        esac
+        line1="" line2=""
+        { IFS= read -r line1; IFS= read -r line2; } < "$f" || true
+        if [ "$line1" != "$c Copyright (c) Anza Technology, Inc." ] \
+            || [ "$line2" != "$c SPDX-License-Identifier: Apache-2.0" ]; then
+            echo "missing/malformed license header: $f" >&2
+            fail=1
+        fi
+    done < <(git ls-files --cached --others --exclude-standard -- '*.rs' '*.py')
+    [ "$fail" -eq 0 ] || { echo "Headers must match src/lib.rs (Copyright line + SPDX-License-Identifier)." >&2; exit 1; }
 
 # Lint the GitHub Actions workflows.
 actionlint:
