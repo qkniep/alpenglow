@@ -369,14 +369,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for (attack_index, attack) in self.attacks.iter().enumerate() {
                 if attack.evaluate(&corrupted) {
                     self.failures.write()[attack_index] += 1;
-                    if *self
-                        .failures
-                        .read()
-                        .iter()
-                        .min()
-                        .expect("there should be at least one attack")
-                        >= MAX_FAILURES
-                    {
+                    if self.failures.read().iter().all(|&f| f >= MAX_FAILURES) {
                         return (tests, true);
                     }
                 }
