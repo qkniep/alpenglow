@@ -47,7 +47,7 @@ machete:
 typos:
     typos
 
-# Check every source file starts with the SPDX license header.
+# Check every source file starts with the copyright + SPDX license header.
 license:
     #!/usr/bin/env bash
     set -euo pipefail
