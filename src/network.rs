@@ -47,22 +47,19 @@ use crate::shredder::Shred;
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
 
-/// wincode configuration for decoding a single off-the-wire message.
+/// Configuration for [`wincode`] decoding a single off-the-wire message.
 ///
-/// Identical to the [default](wincode::config::DefaultConfig), except
-/// preallocation is capped at one [`MTU_BYTES`] datagram instead of wincode's
-/// 4 MiB default. Used by [`deserialize`].
+/// Identical to the [default](wincode::config::DefaultConfig),
+/// except preallocation is capped at [`MTU_BYTES`] instead of wincode's 4 MiB default.
+/// Used by [`deserialize`].
 pub type NetworkMessageConfig = Configuration<true, MTU_BYTES>;
 
 /// Deserializes a single message received off the network.
 ///
-/// Every message in our protocols fits in one [`MTU_BYTES`] datagram, so unlike
-/// a plain [`wincode::deserialize`], this:
-/// - caps preallocation at [`MTU_BYTES`] (wincode defaults to 4 MiB), bounding
-///   the allocation a crafted length prefix can request before decoding fails,
-///   and
-/// - requires the bytes to be fully consumed, rejecting trailing garbage (one
-///   message per datagram).
+/// Every message in our protocols fits in one [`MTU_BYTES`] datagram,
+/// so unlike a plain [`wincode::deserialize`], this:
+/// - caps preallocation at [`MTU_BYTES`] (wincode defaults to 4 MiB), and
+/// - requires the bytes to be fully consumed, rejecting trailing garbage.
 pub fn deserialize<'de, T>(bytes: &'de [u8]) -> ReadResult<T>
 where
     T: SchemaRead<'de, NetworkMessageConfig, Dst = T>,
@@ -140,10 +137,6 @@ pub fn dontcare_sockaddr() -> SocketAddr {
 mod tests {
     use super::*;
 
-    /// A well-formed message round-trips, but trailing bytes are rejected.
-    ///
-    /// Unlike a plain [`wincode::deserialize`], [`deserialize`] requires the
-    /// bytes to be fully consumed (one message per datagram).
     #[test]
     fn deserialize_requires_exact() {
         let bytes = wincode::serialize(&42u64).unwrap();
