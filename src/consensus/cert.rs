@@ -215,7 +215,7 @@ impl NotarCert {
     /// # Panics
     ///
     /// Panics if `try_new` returns an error.
-    pub fn new_unchecked(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Self {
+    pub fn new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Self {
         Self::try_new(votes, validators).unwrap()
     }
 
@@ -336,7 +336,7 @@ impl NotarFallbackCert {
     /// # Panics
     ///
     /// Panics if `try_new` returns an error.
-    pub fn new_unchecked(
+    pub fn new(
         notar_votes: &[NotarVote],
         nf_votes: &[NotarFallbackVote],
         validators: &[ValidatorInfo],
@@ -474,7 +474,7 @@ impl SkipCert {
     /// # Panics
     ///
     /// Panics if `try_new` returns an error.
-    pub fn new_unchecked(
+    pub fn new(
         skip_votes: &[SkipVote],
         sf_votes: &[SkipFallbackVote],
         validators: &[ValidatorInfo],
@@ -579,7 +579,7 @@ impl FastFinalCert {
     /// # Panics
     ///
     /// Panics if `try_new` returns an error.
-    pub fn new_unchecked(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Self {
+    pub fn new(votes: &[NotarVote], validators: &[ValidatorInfo]) -> Self {
         Self::try_new(votes, validators).unwrap()
     }
 
@@ -658,7 +658,7 @@ impl FinalCert {
     /// # Panics
     ///
     /// Panics if `try_new` returns an error.
-    pub fn new_unchecked(votes: &[FinalVote], validators: &[ValidatorInfo]) -> Self {
+    pub fn new(votes: &[FinalVote], validators: &[ValidatorInfo]) -> Self {
         Self::try_new(votes, validators).unwrap()
     }
 
