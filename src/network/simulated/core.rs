@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::binary_heap::PeekMut;
 use std::collections::{BinaryHeap, HashMap};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -72,17 +73,25 @@ impl SimulatedNetworkCore {
         tokio::spawn(async move {
             loop {
                 let mut guard = p.lock().await;
-                if let Some(msg) = guard.peek()
-                    && msg.deliver_at <= Instant::now()
-                {
-                    let msg = guard.pop().unwrap();
-                    let n_guard = n.read().await;
-                    let channel = n_guard.get(&msg.to).unwrap();
-                    if let Err(_e) = channel.send(msg).await {
-                        #[cfg(test)]
-                        println!("sending failed. Ignoring");
-                        warn!("sending failed. Ignoring");
-                    }
+                let Some(next) = guard.peek_mut() else {
+                    continue;
+                };
+                if next.deliver_at > Instant::now() {
+                    continue;
+                }
+                let msg = PeekMut::pop(next);
+                // release the queue lock before sending, senders need it
+                drop(guard);
+                let channel = n
+                    .read()
+                    .await
+                    .get(&msg.to)
+                    .cloned()
+                    .expect("destination should have a registered channel");
+                if let Err(_e) = channel.send(msg).await {
+                    #[cfg(test)]
+                    println!("sending failed. Ignoring");
+                    warn!("sending failed. Ignoring");
                 }
             }
         });
@@ -241,6 +250,7 @@ impl SimulatedNetworkCore {
         let now = Instant::now();
         let guard = self.latencies.read().await;
         let mut latency = *guard.get(&(from, to)).unwrap_or(&self.default_latency);
+        drop(guard);
         if self.per_packet_jitter_ms > 0.0 {
             let jitter = rand::rng().random_range(0.0..self.per_packet_jitter_ms);
             latency += Duration::from_secs_f64(jitter / 1000.0);
@@ -280,7 +290,7 @@ mod tests {
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn symmetric() {
         // set up network with two nodes
         let msg = Ping::default();
@@ -322,7 +332,7 @@ mod tests {
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn asymmetric() {
         // set up network with two nodes
         let msg = Ping::default();

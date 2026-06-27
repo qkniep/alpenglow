@@ -39,8 +39,7 @@
 //!
 //! [`sample_quorum`]: QuorumSamplingStrategy::sample_quorum
 
-use std::sync::Mutex;
-
+use parking_lot::Mutex;
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
 
@@ -193,7 +192,8 @@ impl StakeWeightedSampler {
     /// Creates a new `StakeWeightedSampler` instance.
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
         let stakes = validators.iter().map(|v| v.stake.inner());
-        let stake_index = WeightedIndex::new(stakes).unwrap();
+        let stake_index =
+            WeightedIndex::new(stakes).expect("validator stakes should be non-empty and positive");
         Self {
             validators,
             stake_index,
@@ -349,7 +349,7 @@ impl DecayingAcceptanceSampler {
     /// Resets the internal state of this stateful sampler.
     /// After resetting it is just as it was when it was first created.
     pub fn reset(&self) {
-        let mut sample_count = self.sample_count.lock().unwrap();
+        let mut sample_count = self.sample_count.lock();
         *sample_count = vec![0; self.stake_weighted.validators.len()];
     }
 
@@ -363,10 +363,11 @@ impl DecayingAcceptanceSampler {
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
     ///
     /// [`reset`]: DecayingAcceptanceSampler::reset
+    #[expect(clippy::significant_drop_tightening, reason = "nothing to tighten")]
     pub fn sample_one<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
-            let mut sample_count = self.sample_count.lock().unwrap();
+            let mut sample_count = self.sample_count.lock();
             let p_reject = sample_count[sample.as_usize()] as f64 / self.max_samples;
             if rng.random::<f64>() >= p_reject {
                 sample_count[sample.as_usize()] += 1;
@@ -406,7 +407,7 @@ impl Clone for DecayingAcceptanceSampler {
         Self {
             stake_weighted: self.stake_weighted.clone(),
             max_samples: self.max_samples,
-            sample_count: Mutex::new(self.sample_count.lock().unwrap().clone()),
+            sample_count: Mutex::new(self.sample_count.lock().clone()),
             k: self.k,
         }
     }
@@ -476,7 +477,8 @@ impl PartitionSampler {
         // generate stake weighted indices for each bin
         let mut bins = Vec::with_capacity(num_bins);
         for stakes in &bin_stakes {
-            let bin = WeightedIndex::new(stakes.iter().map(|s| s.inner())).unwrap();
+            let bin = WeightedIndex::new(stakes.iter().map(|s| s.inner()))
+                .expect("validator stakes should be non-empty and positive");
             bins.push(bin);
         }
 
@@ -886,7 +888,7 @@ mod tests {
 
         // test `clone` and `reset`
         // resetting after each iteration should behave the same as `max_samples = inf`
-        let mut sampler = sampler.clone();
+        let mut sampler = sampler;
         sampler.max_samples = 5.0;
         for _ in 0..100 {
             sampler.reset();
@@ -896,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "slow statistical test; runs as part of `just test-slow`"]
     fn turbine_sampler() {
         const SLICES: usize = 100_000;
 
@@ -975,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "slow statistical test; runs as part of `just test-slow`"]
     fn turbine_sampler_real_world() {
         const SLICES: usize = 100_000;
 
@@ -1163,7 +1165,7 @@ mod tests {
         let validators = create_validator_info(10);
         sample_all_validators(&UniformSampler::new(validators.clone()));
         sample_all_validators(&StakeWeightedSampler::new(validators.clone()));
-        sample_all_validators(&TurbineSampler::new(validators.clone()));
+        sample_all_validators(&TurbineSampler::new(validators));
     }
 
     fn sample_all_validators<S: SamplingStrategy>(sampler: &S) {

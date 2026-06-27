@@ -413,7 +413,7 @@ mod tests {
         let event = tracker.add_parent((slot7, hash7.clone()), (slot5, hash5.clone()));
         assert_eq!(event, FinalizationEvent::default());
         let event = tracker.mark_fast_finalized((slot7, hash7.clone()));
-        assert_eq!(event.finalized, Some((slot7, hash7.clone())));
+        assert_eq!(event.finalized, Some((slot7, hash7)));
         assert_eq!(event.implicitly_finalized, vec![(slot5, hash5)]);
         assert_eq!(event.implicitly_skipped, vec![slot7.prev()]);
     }
@@ -435,10 +435,10 @@ mod tests {
 
         // do NOT implicitly finalize parent, that is already directly finalized
         let (slot2, hash2) = random_block_id(slot1.next());
-        let event = tracker.add_parent((slot2, hash2.clone()), (slot2.prev(), hash1.clone()));
+        let event = tracker.add_parent((slot2, hash2.clone()), (slot2.prev(), hash1));
         assert_eq!(event, FinalizationEvent::default());
         let event = tracker.mark_fast_finalized((slot2, hash2.clone()));
-        assert_eq!(event.finalized, Some((slot2, hash2.clone())));
+        assert_eq!(event.finalized, Some((slot2, hash2)));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // do NOT implicitly finalize parent again when adding parent again
-        let event = tracker.add_parent((slot4, hash4.clone()), (slot3, hash3.clone()));
+        let event = tracker.add_parent((slot4, hash4), (slot3, hash3));
         assert_eq!(event, FinalizationEvent::default());
     }
 
