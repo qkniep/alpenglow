@@ -233,12 +233,11 @@ pub fn validators_from_validator_data(
         let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
             continue;
         };
-        let ping_server = find_closest_ping_server(
-            lat.parse()
-                .expect("validator coordinates should parse as f64"),
-            lon.parse()
-                .expect("validator coordinates should parse as f64"),
-        );
+        let parse = |s: &str| {
+            s.parse()
+                .expect("validator coordinates should parse as f64")
+        };
+        let ping_server = find_closest_ping_server(parse(lat), parse(lon));
         stake_with_ping_server += stake;
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
