@@ -265,8 +265,9 @@ impl BlockData {
 
         // assuming caller has inserted at least one valid shred so unwrap() should be safe
         let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
-            Ok(output) => output,
+        // missing shreds are reconstructed in place into `slice_shreds`
+        let reconstructed_slice = match shredder.deshred(slice_shreds) {
+            Ok(slice) => slice,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
             rest => {
                 warn!("deshreding failed with {rest:?}");
@@ -281,10 +282,8 @@ impl BlockData {
             return ReconstructSliceResult::Error;
         }
 
-        // insert reconstructed slice and shreds
+        // insert reconstructed slice
         entry.insert(reconstructed_slice);
-        let mut reconstructed_shreds = reconstructed_shreds.map(Some);
-        std::mem::swap(slice_shreds, &mut reconstructed_shreds);
         trace!("reconstructed slice {} in slot {}", index, self.slot);
 
         ReconstructSliceResult::Complete
