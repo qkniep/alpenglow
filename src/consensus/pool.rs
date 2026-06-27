@@ -186,7 +186,10 @@ impl PoolImpl {
         // handle resulting state updates
         match &cert {
             Cert::Notar(_) | Cert::NotarFallback(_) => {
-                let block_hash = cert.block_hash().cloned().unwrap();
+                let block_hash = cert
+                    .block_hash()
+                    .cloned()
+                    .expect("notar(-fallback) cert always references a block");
                 let block_id = (slot, block_hash.clone());
                 info!(
                     "notarized(-fallback) block {} in slot {}",
@@ -460,12 +463,12 @@ impl Pool for PoolImpl {
 
         // check if the certificate is a duplicate
         let certs = &mut self.slot_state(slot).certificates;
-        let duplicate = match cert {
+        let duplicate = match &cert {
             Cert::Notar(_) => certs.notar.is_some(),
-            Cert::NotarFallback(_) => certs
+            Cert::NotarFallback(nf_cert) => certs
                 .notar_fallback
                 .iter()
-                .any(|nf| nf.block_hash() == cert.block_hash().unwrap()),
+                .any(|nf| nf.block_hash() == nf_cert.block_hash()),
             Cert::Skip(_) => certs.skip.is_some(),
             Cert::FastFinal(_) => certs.fast_finalize.is_some(),
             Cert::Final(_) => certs.finalize.is_some(),

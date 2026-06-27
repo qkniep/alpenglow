@@ -15,7 +15,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use anyhow::Result;
 use log::{debug, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -106,7 +105,7 @@ impl<A: All2All> Votor<A> {
     ///
     /// Checks consensus conditions and broadcasts new votes.
     #[fastrace::trace]
-    pub async fn voting_loop(&mut self) -> Result<()> {
+    pub async fn voting_loop(&mut self) {
         loop {
             tokio::select! {
                 Some(event) = self.pool_receiver.recv() => self.handle_pool_event(event).await,
@@ -115,8 +114,6 @@ impl<A: All2All> Votor<A> {
                 else => break,
             }
         }
-
-        Ok(())
     }
 
     /// Broadcasts a consensus message to all other nodes on a best-effort basis.
@@ -234,8 +231,8 @@ impl<A: All2All> Votor<A> {
     /// Updates state based on a newly created certificate and re-broadcasts it.
     async fn handle_cert_created(&mut self, cert: Box<Cert>) {
         match cert.as_ref() {
-            Cert::Notar(_) => {
-                let hash = cert.block_hash().unwrap();
+            Cert::Notar(notar_cert) => {
+                let hash = notar_cert.block_hash();
                 // need to mark notarized BEFORE trying finalization
                 self.state_mut(cert.slot()).block_notarized = Some(hash.clone());
                 self.try_final(cert.slot(), hash).await;
@@ -328,7 +325,7 @@ impl<A: All2All> Votor<A> {
             let _ = sender.send(VotorTimeout::TimeoutCrashedLeader(slot)).await;
             for s in slot.slots_in_window() {
                 if s.is_start_of_window() {
-                    tokio::time::sleep(DELTA_BLOCK - DELTA_FIRST_SLICE).await;
+                    tokio::time::sleep(DELTA_BLOCK.saturating_sub(DELTA_FIRST_SLICE)).await;
                 } else {
                     tokio::time::sleep(DELTA_BLOCK).await;
                 }
@@ -562,7 +559,7 @@ mod tests {
     async fn start_votor() -> TestContext {
         let (mut votor, ctx) = build_votor().await;
         tokio::spawn(async move {
-            votor.voting_loop().await.unwrap();
+            votor.voting_loop().await;
         });
         ctx
     }

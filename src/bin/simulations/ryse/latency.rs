@@ -244,7 +244,7 @@ impl Event for LatencyEvent {
                             start_time + prop_delay + tx_delay
                         })
                         .max()
-                        .unwrap();
+                        .expect("there should be at least one leader");
                     timings[relay.as_usize()] =
                         timings[relay.as_usize()].max(shreds_from_all_leaders);
                 }
@@ -293,7 +293,7 @@ impl Event for LatencyEvent {
                             dependency_timings[0][relay.as_usize()] + prop_delay + tx_delay
                         })
                         .min()
-                        .unwrap();
+                        .expect("slice should have at least one relay");
                     *timing = first_shred_time;
                 }
                 timings

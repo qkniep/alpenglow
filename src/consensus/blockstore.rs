@@ -75,15 +75,12 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    #[allow(clippy::needless_lifetimes)]
+    #[expect(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
     -> Option<&'a SliceRoot>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
         block_id: &BlockId,
