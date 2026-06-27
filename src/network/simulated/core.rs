@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::binary_heap::PeekMut;
 use std::collections::{BinaryHeap, HashMap};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -72,25 +73,25 @@ impl SimulatedNetworkCore {
         tokio::spawn(async move {
             loop {
                 let mut guard = p.lock().await;
-                if let Some(msg) = guard.peek()
-                    && msg.deliver_at <= Instant::now()
-                {
-                    let msg = guard.pop().expect(
-                        "queue should be non-empty, it was just peeked under the same lock",
-                    );
-                    // release the queue lock before sending, senders need it
-                    drop(guard);
-                    let channel = n
-                        .read()
-                        .await
-                        .get(&msg.to)
-                        .cloned()
-                        .expect("destination validator should have a registered channel");
-                    if let Err(_e) = channel.send(msg).await {
-                        #[cfg(test)]
-                        println!("sending failed. Ignoring");
-                        warn!("sending failed. Ignoring");
-                    }
+                let Some(next) = guard.peek_mut() else {
+                    continue;
+                };
+                if next.deliver_at > Instant::now() {
+                    continue;
+                }
+                let msg = PeekMut::pop(next);
+                // release the queue lock before sending, senders need it
+                drop(guard);
+                let channel = n
+                    .read()
+                    .await
+                    .get(&msg.to)
+                    .cloned()
+                    .expect("destination should have a registered channel");
+                if let Err(_e) = channel.send(msg).await {
+                    #[cfg(test)]
+                    println!("sending failed. Ignoring");
+                    warn!("sending failed. Ignoring");
                 }
             }
         });
