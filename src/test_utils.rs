@@ -121,7 +121,7 @@ pub fn random_block_id(slot: Slot) -> BlockId {
 ///
 /// Returns all slices, as [`Slice`].
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
-    let final_slice_index = SliceIndex::new_unchecked(num_slices - 1);
+    let final_slice_index = SliceIndex::new_for_test(num_slices - 1);
     let parent_slot = Slot::genesis();
     assert_ne!(slot, parent_slot);
     let mut slices = Vec::new();
