@@ -315,8 +315,7 @@ impl SlotState {
             && self.certificates.fast_finalize.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert =
-                FastFinalCert::new(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FastFinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
