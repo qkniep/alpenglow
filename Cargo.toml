@@ -121,6 +121,11 @@ name = "shredder"
 harness = false
 required-features = ["test-utils"]
 
+[[bench]]
+name = "pool"
+harness = false
+required-features = ["test-utils"]
+
 [[bin]]
 name = "all2all_test"
 path = "src/bin/all2all_test.rs"
