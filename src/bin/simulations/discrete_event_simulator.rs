@@ -183,6 +183,12 @@ impl<P: Protocol> SimulationEngine<P> {
     pub(crate) fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
         self.stats.read()
     }
+
+    /// Consumes the engine and returns the accumulated timing stats by value.
+    #[cfg(test)]
+    pub(crate) fn into_stats(self) -> TimingStats<P> {
+        self.stats.into_inner()
+    }
 }
 
 impl<P: Protocol> SimulationEngine<P>
@@ -594,14 +600,12 @@ mod tests {
     const CUSTOM_EPSILON: f64 = 1e-6;
 
     #[test]
-    // stats guard is used until the end of the test, there is nothing to tighten
-    #[expect(clippy::significant_drop_tightening)]
     fn many_parallel() {
         let (engine, _builder) = setup();
         engine.run_many_parallel(NUM_SIMULATION_ITERATIONS);
 
         // check that the timings are correct
-        let stats = engine.stats();
+        let stats = engine.into_stats();
         for event_id in 0..NUM_EVENTS {
             let event_stats = stats.get(&TestEvent(event_id)).unwrap();
             // timings should be the same for all validators, thus also for all percentiles
@@ -615,14 +619,12 @@ mod tests {
     }
 
     #[test]
-    // stats guard is used until the end of the test, there is nothing to tighten
-    #[expect(clippy::significant_drop_tightening)]
     fn many_sequential() {
         let (engine, _builder) = setup();
         engine.run_many_sequential(NUM_SIMULATION_ITERATIONS);
 
         // check that the timings are correct
-        let stats = engine.stats();
+        let stats = engine.into_stats();
         for event_id in 0..NUM_EVENTS {
             let event_stats = stats.get(&TestEvent(event_id)).unwrap();
             // timings should be the same for all validators, thus also for all percentiles
