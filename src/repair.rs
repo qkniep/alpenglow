@@ -620,7 +620,7 @@ mod tests {
         // answer LastSliceRoot request
         let response = RepairResponse::LastSliceRoot(
             req_type,
-            SliceIndex::new_unchecked(num_slices - 1),
+            SliceIndex::new_for_test(num_slices - 1),
             shreds.last().unwrap()[0].merkle_root().clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
@@ -706,7 +706,7 @@ mod tests {
         // no response is expected; verify by following up with a valid request
         // and checking we get its response (proves the handler is still alive)
         let valid_request = RepairRequest {
-            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_unchecked(0)),
+            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_for_test(0)),
             sender: ValidatorIndex::new(0),
         };
         ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();

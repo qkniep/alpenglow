@@ -173,7 +173,7 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(1);
+        let final_slice_index = SliceIndex::new_for_test(1);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
@@ -237,7 +237,7 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(1023);
+        let final_slice_index = SliceIndex::new_for_test(1023);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
@@ -299,7 +299,7 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(1023);
+        let final_slice_index = SliceIndex::new_for_test(1023);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
