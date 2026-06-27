@@ -109,9 +109,9 @@ impl<'de> Visitor<'de> for SliceIndexVisitor {
     }
 }
 
-// SAFETY: `TYPE_META` is left as the default `Dynamic`. `read` initializes `dst`
-// when it returns `Ok(())`; in the `Err` case the already initialized `SliceIndex`
-// is `Copy` and thus cannot leak.
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `read` initializes `dst` when it returns `Ok(())`; in the `Err` case the
+// already-initialized `SliceIndex` is `Copy` and thus cannot leak.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for SliceIndex {
     type Dst = Self;
 
