@@ -74,7 +74,10 @@ pub async fn generate_all2all_instances(
             .with_packet_loss(0.0),
     );
     for (i, val) in validators.iter_mut().enumerate() {
-        val.all2all_address = localhost_ip_sockaddr(i.try_into().unwrap());
+        val.all2all_address = localhost_ip_sockaddr(
+            i.try_into()
+                .expect("validator count fits in the address type"),
+        );
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {
@@ -95,7 +98,12 @@ pub fn create_random_shredded_block(
     let mut shredder = RegularShredder::default();
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(shredder.shred(slice.clone(), sk).unwrap().to_vec());
+        shreds.push(
+            shredder
+                .shred(slice.clone(), sk)
+                .expect("shredding a valid slice cannot fail")
+                .to_vec(),
+        );
     }
     let merkle_roots = shreds
         .iter()
