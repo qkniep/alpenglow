@@ -121,11 +121,11 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         let all2all_address =
-            localhost_ip_sockaddr((id).try_into().expect("validator id should fit in u16"));
+            localhost_ip_sockaddr((id).try_into().expect("node count fits in u16 port range"));
         let disseminator_address = localhost_ip_sockaddr(
             (id + count)
                 .try_into()
-                .expect("validator id should fit in u16"),
+                .expect("node count fits in u16 port range"),
         );
         let repair_requester_address =
             localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
