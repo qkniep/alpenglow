@@ -365,8 +365,7 @@ where
             .expect("pool always has a shredder, block production is sequential")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
-        // move the large shred array to the heap, so it is not held across `await`
-        // points below, which would bloat this (and every calling) future
+        // heap-iterate so the large shred array doesn't bloat this future
         for s in Vec::from(shreds) {
             self.disseminator.send(s.as_shred()).await?;
             // PERF: move expensive add_shred() call out of block production
@@ -384,7 +383,7 @@ where
                 "leader produced bad shreds"
             );
             if let Ok(Some(block_info)) = block {
-                assert!(maybe_block_hash.is_none());
+                debug_assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash.clone());
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
@@ -396,10 +395,10 @@ where
         }
         if is_last {
             Ok(Some(maybe_block_hash.expect(
-                "adding the last shred completes the block, so the hash is known",
+                "adding the last slice completed the block, so the hash is known",
             )))
         } else {
-            assert!(maybe_block_hash.is_none());
+            debug_assert!(maybe_block_hash.is_none());
             Ok(None)
         }
     }
