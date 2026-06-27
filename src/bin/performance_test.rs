@@ -1,7 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -47,24 +46,20 @@ type TestNode = Alpenglow<
 >;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
-    // open sockets with arbitrary ports
-    let mut tx_receivers = (0..count)
-        .map(|_| UdpNetwork::new_with_any_port())
-        .collect::<VecDeque<_>>();
-    let mut repair_requester_networks = (0..count)
-        .map(|_| UdpNetwork::new_with_any_port())
-        .collect::<VecDeque<_>>();
-    let mut repair_responder_networks = (0..count)
-        .map(|_| UdpNetwork::new_with_any_port())
-        .collect::<VecDeque<_>>();
-
-    // first `count` networks are for all2all and the next `count` networks are for disseminator
+    // open one set of networks per validator:
+    // (all2all, disseminator, repair_requester, repair_responder, txs_receiver)
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-    let mut all2all_networks = VecDeque::new();
-    let mut disseminator_networks = VecDeque::new();
+    let mut networks = Vec::with_capacity(count as usize);
     for i in 0..count {
-        all2all_networks.push_back(core.join_unlimited(ValidatorIndex::new(i)).await);
-        disseminator_networks.push_back(core.join_unlimited(ValidatorIndex::new(i + count)).await);
+        let all2all = core.join_unlimited(ValidatorIndex::new(i)).await;
+        let disseminator = core.join_unlimited(ValidatorIndex::new(i + count)).await;
+        networks.push((
+            all2all,
+            disseminator,
+            UdpNetwork::new_with_any_port(),
+            UdpNetwork::new_with_any_port(),
+            UdpNetwork::new_with_any_port(),
+        ));
     }
 
     for a in 0..count {
@@ -127,10 +122,9 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
                 .try_into()
                 .expect("node count fits in u16 port range"),
         );
-        let repair_requester_address =
-            localhost_ip_sockaddr(repair_requester_networks[id as usize].port());
-        let repair_responder_address =
-            localhost_ip_sockaddr(repair_responder_networks[id as usize].port());
+        let (_, _, repair_req, repair_res, _) = &networks[id as usize];
+        let repair_requester_address = localhost_ip_sockaddr(repair_req.port());
+        let repair_responder_address = localhost_ip_sockaddr(repair_res.port());
         validators.push(ValidatorInfo {
             id: ValidatorIndex::new(id),
             stake: Stake::new(1),
@@ -147,36 +141,20 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let shared_epoch = EpochInfo::new(validators.clone());
     validators
         .iter()
-        .map(|v| {
+        .zip(networks)
+        .map(|(v, networks)| {
+            let (all2all, disseminator, repair_requester, repair_responder, txs_receiver) =
+                networks;
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v.id, shared_epoch.clone()));
-            let all2all = TrivialAll2All::new(
-                validators.clone(),
-                all2all_networks
-                    .pop_front()
-                    .expect("one network was prepared per validator"),
-            );
-            let disseminator = Rotor::new(
-                disseminator_networks
-                    .pop_front()
-                    .expect("one network was prepared per validator"),
-                epoch_info.clone(),
-            );
-            let repair_requester_network = repair_requester_networks
-                .pop_front()
-                .expect("one network was prepared per validator");
-            let repair_responder_network = repair_responder_networks
-                .pop_front()
-                .expect("one network was prepared per validator");
-            let txs_receiver = tx_receivers
-                .pop_front()
-                .expect("one network was prepared per validator");
+            let all2all = TrivialAll2All::new(validators.clone(), all2all);
+            let disseminator = Rotor::new(disseminator, epoch_info.clone());
             Alpenglow::new(
                 sks[v.id.as_usize()].clone(),
                 voting_sks[v.id.as_usize()].clone(),
                 all2all,
                 disseminator,
-                repair_requester_network,
-                repair_responder_network,
+                repair_requester,
+                repair_responder,
                 epoch_info,
                 txs_receiver,
             )
