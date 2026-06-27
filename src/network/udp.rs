@@ -16,7 +16,7 @@ use tokio::net::UdpSocket;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::MTU_BYTES;
+use super::{MTU_BYTES, NetworkMessageConfig};
 use crate::network::Network;
 
 /// Number of bytes used as buffer for any incoming packet.
@@ -71,7 +71,7 @@ impl<S, R> UdpNetwork<S, R> {
 impl<S, R> Network for UdpNetwork<S, R>
 where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
+    R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -97,8 +97,8 @@ where
     async fn receive(&self) -> std::io::Result<R> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
-            let _bytes_recved = self.socket.recv(&mut buf).await?;
-            let msg = match wincode::deserialize(&buf) {
+            let bytes_recved = self.socket.recv(&mut buf).await?;
+            let msg = match crate::network::deserialize(&buf[..bytes_recved]) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("deserializing failed with {err:?}");

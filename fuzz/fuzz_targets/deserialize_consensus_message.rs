@@ -4,5 +4,5 @@ use alpenglow::consensus::ConsensusMessage;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let _res = wincode::deserialize::<ConsensusMessage>(data);
+    let _res = alpenglow::network::deserialize::<ConsensusMessage>(data);
 });
