@@ -84,8 +84,8 @@ impl SimulatedNetworkCore {
                         .read()
                         .await
                         .get(&msg.to)
-                        .expect("destination validator should have a registered channel")
-                        .clone();
+                        .cloned()
+                        .expect("destination validator should have a registered channel");
                     if let Err(_e) = channel.send(msg).await {
                         #[cfg(test)]
                         println!("sending failed. Ignoring");

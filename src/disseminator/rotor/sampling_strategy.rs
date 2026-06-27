@@ -363,9 +363,7 @@ impl DecayingAcceptanceSampler {
     /// Panics if after [`MAX_TRIES_PER_SAMPLE`] samples none was valid.
     ///
     /// [`reset`]: DecayingAcceptanceSampler::reset
-    // the lock guard is dropped at the end of each iteration in all paths,
-    // there is nothing to tighten
-    #[expect(clippy::significant_drop_tightening)]
+    #[expect(clippy::significant_drop_tightening, reason = "nothing to tighten")]
     pub fn sample_one<R: Rng>(&self, rng: &mut R) -> ValidatorIndex {
         for _ in 0..MAX_TRIES_PER_SAMPLE {
             let sample = self.stake_weighted.sample(rng);
