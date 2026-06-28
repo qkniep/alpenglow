@@ -47,7 +47,6 @@ pub struct Turbine<N: Network> {
 #[derive(Clone, Debug)]
 pub(crate) struct TurbineTree {
     root: ValidatorIndex,
-    #[allow(dead_code)]
     parent: Option<ValidatorIndex>,
     children: Vec<ValidatorIndex>,
 }
@@ -170,7 +169,10 @@ impl TurbineTree {
         ]
         .concat();
         assert_eq!(seed.len(), 32);
-        let mut rng = StdRng::from_seed(seed.try_into().unwrap());
+        let mut rng = StdRng::from_seed(
+            seed.try_into()
+                .expect("turbine seed should be exactly 32 bytes"),
+        );
 
         // stake-weighted shuffle
         let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
@@ -182,7 +184,10 @@ impl TurbineTree {
 
         // find root & parent
         let root = validator_indices[0];
-        let own_pos = validator_indices.iter().position(|v| *v == own_id).unwrap();
+        let own_pos = validator_indices
+            .iter()
+            .position(|v| *v == own_id)
+            .expect("own validator id should be in the validator set");
         let parent_pos = match own_pos {
             0 => None,
             _ => Some((own_pos - 1) / fanout),
@@ -211,7 +216,7 @@ impl TurbineTree {
 
     /// Gives the parent of this validator in the Turbine tree.
     /// Returns `None` iff this validator is the root of the tree.
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code))]
     const fn get_parent(&self) -> Option<ValidatorIndex> {
         self.parent
     }

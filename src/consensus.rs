@@ -125,6 +125,21 @@ where
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Interprets a joined task result during shutdown.
+///
+/// On shutdown the loops are aborted.
+/// So a [`JoinError`] from cancellation is the expected outcome and maps to `Ok(())`.
+/// A panic still propagates, as does any error the task itself returned.
+///
+/// [`JoinError`]: tokio::task::JoinError
+fn join_for_shutdown(res: Result<Result<()>, tokio::task::JoinError>) -> Result<()> {
+    match res {
+        Ok(inner) => inner,
+        Err(err) if err.is_cancelled() => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Send + Sync + 'static,
@@ -136,7 +151,7 @@ where
     /// `repair_requester_network` - [`RepairRequesterNetwork`] for sending requests and receiving responses.
     /// `repair_responder_network` - [`RepairResponderNetwork`] for answering incoming requests.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new<RQ, RP>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
@@ -194,7 +209,7 @@ where
             all2all.clone(),
         );
         let votor_handle = tokio::spawn(
-            async move { votor.voting_loop().await.unwrap() }
+            async move { votor.voting_loop().await }
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
@@ -255,8 +270,8 @@ where
         prod_loop.abort();
 
         let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
-        msg_res??;
-        prod_res??;
+        join_for_shutdown(msg_res)?;
+        join_for_shutdown(prod_res)?;
         Ok(())
     }
 
@@ -356,9 +371,12 @@ where
             .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
-            let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
-            guard.add_block(block_id, block_info.parent).await;
+            self.pool
+                .write()
+                .await
+                .add_block(block_id, block_info.parent)
+                .await;
         }
         Ok(())
     }

@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
             node_tasks.push(tokio::spawn(node.run().in_span(span)));
         }
 
-        tokio::signal::ctrl_c().await.unwrap();
+        tokio::signal::ctrl_c().await?;
         warn!("shutting down all nodes");
         for token in &cancel_tokens {
             token.cancel();

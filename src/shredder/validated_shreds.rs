@@ -20,14 +20,15 @@ pub struct ValidatedShreds<'a> {
 impl<'a> ValidatedShreds<'a> {
     /// Creates a new [`ValidatedShreds`].
     ///
-    /// Returns `None` if the input array contains:
-    /// - a shred with the wrong type for the index, or
-    /// - shreds of different sizes.
+    /// Returns `None` if the input array:
+    /// - contains no shreds at all,
+    /// - contains a shred with the wrong type for its index, or
+    /// - contains shreds of different sizes.
     ///
     /// # Panics
     ///
-    /// - Panics if the input array contains a shred at the wrong index.
-    /// - Panics if `shreds` contains no shreds.
+    /// - Panics if `data_shreds + coding_shreds != TOTAL_SHREDS`.
+    /// - Panics if a shred is stored at a position other than its own index.
     pub(super) fn try_new(
         shreds: &'a [Option<ValidatedShred>; TOTAL_SHREDS],
         data_shreds: usize,
@@ -35,8 +36,8 @@ impl<'a> ValidatedShreds<'a> {
     ) -> Option<Self> {
         assert_eq!(data_shreds + coding_shreds, TOTAL_SHREDS);
 
-        // check all shred sizes match
-        let any_shred = shreds.iter().flatten().next().unwrap();
+        // check all shred sizes match (also rejects an empty input)
+        let any_shred = shreds.iter().flatten().next()?;
         let shred_size = any_shred.payload().data.len();
         for s in shreds.iter().flatten() {
             if s.payload().data.len() != shred_size {
@@ -68,8 +69,11 @@ impl<'a> ValidatedShreds<'a> {
 
     /// Returns a reference to any shred in this set.
     pub(super) fn any_shred(self) -> &'a ValidatedShred {
-        // constructor ensures at least one shred
-        self.shreds.iter().flatten().next().unwrap()
+        self.shreds
+            .iter()
+            .flatten()
+            .next()
+            .expect("constructor ensures at least one shred")
     }
 
     /// Returns `(index, payload)` pairs for all present data shreds.
@@ -123,7 +127,7 @@ mod tests {
         assert!(ValidatedShreds::try_new(&shreds, 1, TOTAL_SHREDS - 1).is_none());
 
         // there are coding shreds in data shred positions in the array
-        let shreds = shredder.shred(slice.clone(), &sk).unwrap().map(Some);
+        let shreds = shredder.shred(slice, &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, TOTAL_SHREDS - 1, 1).is_none());
 
         // mixing shreds of different sizes

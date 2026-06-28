@@ -66,7 +66,7 @@ where
     D: Disseminator,
     T: TransactionNetwork,
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
         epoch_info: Arc<ValidatorEpochInfo>,
@@ -287,7 +287,8 @@ where
             .expect("pool always has a shredder available for sequential block production")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
-        for s in shreds {
+        // heap-iterate so the large shred array doesn't bloat this future
+        for s in Vec::from(shreds) {
             self.disseminator.send(s.as_shred()).await?;
             // PERF: move expensive add_shred() call out of block production
             let block = self
@@ -304,7 +305,7 @@ where
                 "leader produced bad shreds"
             );
             if let Ok(Some(block_info)) = block {
-                assert!(maybe_block_hash.is_none());
+                debug_assert!(maybe_block_hash.is_none());
                 maybe_block_hash = Some(block_info.hash.clone());
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
@@ -315,9 +316,11 @@ where
             }
         }
         if is_last {
-            Ok(Some(maybe_block_hash.unwrap()))
+            Ok(Some(maybe_block_hash.expect(
+                "adding the last slice completed the block, so the hash is known",
+            )))
         } else {
-            assert!(maybe_block_hash.is_none());
+            debug_assert!(maybe_block_hash.is_none());
             Ok(None)
         }
     }
@@ -392,7 +395,8 @@ where
         };
         let tx = res.expect("receiving tx");
         tx_count += 1;
-        wincode::serialize_into(&mut buffer, &tx).unwrap();
+        wincode::serialize_into(&mut buffer, &tx)
+            .expect("serializing transaction into buffer should not fail");
 
         // if there is not enough space for another tx, break
         // +8 for the transaction length overhead
@@ -514,7 +518,7 @@ async fn wait_for_first_slot(
         } => {
             match res {
                 None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash.clone()), rx),
+                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
             }
         }
     }
@@ -535,7 +539,7 @@ mod tests {
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
-    use crate::test_utils::generate_validators;
+    use crate::test_utils::{generate_validators, random_block_id};
     use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
@@ -774,8 +778,8 @@ mod tests {
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let slot_hash: BlockHash = Hash::random_for_test().into();
-        let old_parent = (slot.prev(), Hash::random_for_test().into());
-        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
+        let old_parent = random_block_id(slot.prev());
+        let new_parent = random_block_id(slot.prev().prev());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,
