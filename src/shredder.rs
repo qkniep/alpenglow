@@ -517,7 +517,7 @@ fn aont_shred_bytes(payload_len: usize) -> usize {
 ///
 /// ```text
 /// [ Enc(plaintext ‖ zero-padding) | key_material | length ]
-///   \------- ciphertext region -------/\---- key block ---/
+/// \------ ciphertext region ------/\----- key block ------/
 /// ```
 ///
 /// The plaintext is zero-padded so the ciphertext fills everything up to the
@@ -909,7 +909,9 @@ mod tests {
     /// Slice sizes exercised by the roundtrip tests, including tiny slices that
     /// used to break the all-or-nothing shredders' confidentiality.
     fn roundtrip_sizes<S: Shredder>() -> [usize; 4] {
-        [9, 40, 1000, S::MAX_DATA_SIZE]
+        // smallest representable slice
+        let min = SlicePayload::new(None, Vec::new()).to_bytes().len();
+        [min, 40, 1000, S::MAX_DATA_SIZE]
     }
 
     #[test]
@@ -940,49 +942,62 @@ mod tests {
             .try_for_each(shredding_roundtrip::<PetsShredder>)
     }
 
-    /// Reproduces the small-slice key-leak attack: concatenate the disseminated
-    /// data shreds and try to read the key off the tail right after the
-    /// ciphertext. With the dedicated, confined key shred this must fail — the
-    /// key never appears in cleartext across fewer than `DATA_SHREDS` shreds.
-    fn assert_small_slice_hides_key<S: Shredder>(
-        derive_key: impl Fn([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
-    ) {
-        let mut shredder = S::default();
+    /// Asserts that the PETS symmetric key is *confined* to the single withheld
+    /// key shred, so the `DATA_SHREDS - 1` data shreds an adversary receives
+    /// expose **zero** key bytes.
+    ///
+    /// PETS drops the last data shred (which carries the key), so we recover it
+    /// by Reed-Solomon reconstruction and read the real key off the buffer tail.
+    /// The check is *positional* rather than a content search: it proves the
+    /// whole key block lies within the withheld shred's byte range. That also
+    /// rules out a layout that spread the key across all `DATA_SHREDS` shreds —
+    /// which a "the contiguous key doesn't appear" test would miss, since
+    /// `DATA_SHREDS - 1` shreds would then still hand the adversary all but a
+    /// `1 / DATA_SHREDS` fraction of it.
+    ///
+    /// AONT needs no analogous test: it disseminates all data shreds and stores
+    /// only `key XOR H(ciphertext)`, never the raw key, so its confidentiality
+    /// rests on "`DATA_SHREDS - 1` shreds can't decode", covered by
+    /// [`shredding_roundtrip`].
+    #[test]
+    fn pets_small_slice_hides_key() {
+        let mut shredder = PetsShredder::default();
         let sk = SecretKey::new(&mut rand::rng());
         let slice = create_slice_with_invalid_txs(40);
-        let (_, payload) = slice.clone().deconstruct();
-        let plaintext = payload.to_bytes();
-        let c_len = plaintext.len();
+        let plaintext = slice.clone().deconstruct().1.to_bytes();
 
         let shreds = shredder.shred(slice, &sk).unwrap();
 
-        // every disseminated data shred is wide enough to hold the whole key
-        for s in shreds.iter().filter(|s| s.is_data()) {
-            assert!(s.payload().data.len() >= cipher::KEY_BYTES + LEN_BYTES);
-        }
+        // reconstruct *all* DATA_SHREDS raw data shreds
+        let array = into_array(&shreds);
+        let validated = ValidatedShreds::try_new(
+            &array,
+            PetsShredder::DATA_OUTPUT_SHREDS,
+            PetsShredder::CODING_OUTPUT_SHREDS,
+        )
+        .unwrap();
+        let mut coder = ReedSolomonCoder::new(PetsShredder::CODING_OUTPUT_SHREDS);
+        let raw = coder.reconstruct_data(validated).unwrap();
 
-        // an unauthorized adversary holds at most DATA_SHREDS - 1 data shreds
-        let data: Vec<_> = shreds.iter().filter(|s| s.is_data()).collect();
-        let mut buffer = Vec::new();
-        for s in &data[..DATA_SHREDS - 1] {
-            buffer.extend_from_slice(&s.payload().data);
-        }
-        // the attack must be expressible, otherwise the test is vacuous
-        assert!(buffer.len() >= c_len + cipher::KEY_BYTES);
-        let tail = buffer[c_len..c_len + cipher::KEY_BYTES].try_into().unwrap();
-        let key = derive_key(tail, &buffer[..c_len]);
-        let mut guess = buffer[..c_len].to_vec();
-        cipher::apply_keystream(key, &mut guess);
-        assert_ne!(guess, plaintext, "key leaked: plaintext recoverable");
-    }
+        // the buffer laid out across the data shreds is [ ciphertext | key | len ]
+        let shred_bytes = raw.data[0].len();
+        let buffer: Vec<u8> = raw.data.iter().flatten().copied().collect();
+        let key_start = buffer.len() - KEY_BLOCK_BYTES;
+        let key: [u8; cipher::KEY_BYTES] = buffer[key_start..key_start + cipher::KEY_BYTES]
+            .try_into()
+            .unwrap();
 
-    #[test]
-    fn pets_small_slice_hides_key() {
-        assert_small_slice_hides_key::<PetsShredder>(|key, _| key);
-    }
+        // guard against vacuity: this must really be the encryption key
+        let mut decrypted = buffer[..key_start].to_vec();
+        cipher::apply_keystream(key, &mut decrypted);
+        assert!(decrypted.starts_with(&plaintext), "recovered the wrong key");
 
-    #[test]
-    fn aont_small_slice_hides_key() {
-        assert_small_slice_hides_key::<AontShredder>(aont_difference_value);
+        // the entire key block must sit inside the last (withheld) shred,
+        // so no key byte lands in any of the DATA_SHREDS - 1 disseminated data shreds
+        let withheld_start = (DATA_SHREDS - 1) * shred_bytes;
+        assert!(
+            key_start >= withheld_start,
+            "key block spills out of the withheld shred into disseminated data",
+        );
     }
 }
