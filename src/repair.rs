@@ -21,10 +21,8 @@ use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
-use crate::network::{Network, RepairNetwork, RepairRequestNetwork};
-use crate::shredder::{Shred, ShredIndex, ShredVerifyError, ValidatedShred};
 use crate::network::{Network, RepairRequesterNetwork, RepairResponderNetwork};
-use crate::shredder::{Shred, ShredIndex, ValidatedShred};
+use crate::shredder::{Shred, ShredIndex, ShredVerifyError, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorIndex};
 
