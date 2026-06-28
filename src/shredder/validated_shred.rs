@@ -176,16 +176,15 @@ mod tests {
         let res = ValidatedShred::try_new(shred, None, &sk.to_pk());
         assert!(res.is_ok());
 
-        let (invalid_shred, invalid_shred_sk) = create_random_shred();
+        let (other_shred, other_sk) = create_random_shred();
 
-        // checking against other public key should fail
+        // checking against wrong public key should fail
         // and should not be considered as equivocation
-        let res = ValidatedShred::try_new(invalid_shred.clone(), Some(&cached), &random_pk);
+        let res = ValidatedShred::try_new(other_shred.clone(), Some(&cached), &random_pk);
         assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
 
-        // checking different shred (with different Merkle root and valid sig)
-        // against existing signed message should fail and detect equivocation
-        let res = ValidatedShred::try_new(invalid_shred, Some(&cached), &invalid_shred_sk.to_pk());
+        // checking different shred with valid signature should detect equivocation
+        let res = ValidatedShred::try_new(other_shred, Some(&cached), &other_sk.to_pk());
         assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
 
