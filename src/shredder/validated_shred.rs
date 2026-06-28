@@ -35,7 +35,7 @@ pub struct ValidatedShred {
 }
 
 impl ValidatedShred {
-    /// Performs various verification checks on the [`Shred`].
+    /// Validates the inner [`Shred`] and returns a new [`ValidatedShred`].
     ///
     /// Derives the [`SliceCommitment`] from `shred` and uses `cached_commitment`,
     /// the [`SliceCommitment`] of an earlier shred verified for the same slice,
@@ -54,16 +54,13 @@ impl ValidatedShred {
         cached_commitment: Option<&SliceCommitment>,
         pk: &PublicKey,
     ) -> Result<Self, ShredVerifyError> {
-        let derived_root = shred.merkle_root();
-        let msg = SliceCommitment::new(&shred.payload().header, &derived_root);
+        let merkle_root = shred.merkle_root();
+        let msg = SliceCommitment::new(&shred.payload().header, &merkle_root);
 
         match cached_commitment {
             Some(cached) => {
                 if cached == &msg {
-                    return Ok(Self {
-                        shred,
-                        merkle_root: derived_root,
-                    });
+                    return Ok(Self { shred, merkle_root });
                 }
                 if shred.merkle_root_sig.verify_bytes(msg.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
@@ -73,10 +70,7 @@ impl ValidatedShred {
             }
             None => {
                 if shred.merkle_root_sig.verify_bytes(msg.as_ref(), pk) {
-                    Ok(Self {
-                        shred,
-                        merkle_root: derived_root,
-                    })
+                    Ok(Self { shred, merkle_root })
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
