@@ -423,21 +423,17 @@ where
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
                 let validated = match ValidatedShred::try_new(shred, Some(root), leader_pk) {
                     Ok(v) => v,
+                    Err(ShredVerifyError::InvalidSignature) => {
+                        warn!("repair response (Shred) with invalid Merkle proof or signature");
+                        return;
+                    }
                     Err(ShredVerifyError::Equivocation) => {
-                        // Leader signed a different Merkle root for this slice
-                        // than the one anchored in the requested block hash.
-                        // The bad shred is unusable, but the signature itself
-                        // is proof of leader misbehavior for `slot`.
                         warn!("repair response (Shred) proves leader equivocation in slot {slot}");
                         self.blockstore
                             .write()
                             .await
                             .report_equivocation(*slot)
                             .await;
-                        return;
-                    }
-                    Err(ShredVerifyError::InvalidSignature) => {
-                        warn!("repair response (Shred) with invalid Merkle proof or signature");
                         return;
                     }
                 };
