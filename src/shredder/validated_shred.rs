@@ -86,16 +86,6 @@ impl ValidatedShred {
         }
     }
 
-    /// The [`SliceCommitment`] the leader's signature covers for this shred.
-    ///
-    /// Suitable for seeding a cache to short-circuit re-verification of further
-    /// shreds in the same slice (see [`ValidatedShred::try_new`]). Uses the cached
-    /// Merkle root, so it does not re-derive it from the proof.
-    #[must_use]
-    pub fn commitment(&self) -> SliceCommitment {
-        SliceCommitment::new(&self.shred.payload().header, &self.merkle_root)
-    }
-
     /// Creates a new [`ValidatedShred`] when the inner [`Shred`] does not need to be verified.
     ///
     /// Used only by the parent module to wrap shreds that are already known to be valid.
@@ -103,6 +93,17 @@ impl ValidatedShred {
     pub(super) fn new_validated(shred: Shred, merkle_root: SliceRoot) -> Self {
         debug_assert_eq!(shred.merkle_root(), merkle_root);
         Self { shred, merkle_root }
+    }
+
+    /// The [`SliceCommitment`] the leader's signature covers for this shred.
+    ///
+    /// This commitment binds to the slice header and the Merkle root.
+    /// Suitable for seeding a cache to short-circuit re-verification
+    /// of further shreds in the same slice (see [`ValidatedShred::try_new`]).
+    /// Uses the cached Merkle root, so it does not re-derive it from the proof.
+    #[must_use]
+    pub fn commitment(&self) -> SliceCommitment {
+        SliceCommitment::new(&self.shred.payload().header, &self.merkle_root)
     }
 
     /// Returns the cached Merkle root of the slice this shred belongs to.
