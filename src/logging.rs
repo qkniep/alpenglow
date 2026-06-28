@@ -9,7 +9,8 @@ use std::io::{IsTerminal, stderr};
 use fastrace::collector::Config;
 #[cfg(feature = "telemetry")]
 use fastrace_opentelemetry::OpenTelemetryReporter;
-use logforth::filter::env_filter::EnvFilterBuilder;
+use logforth::bridge::log::LogBridge;
+use logforth::filter::rustlog::RustLogFilterBuilder;
 use logforth::record::Level;
 use logforth::{Layout, append};
 #[cfg(feature = "telemetry")]
@@ -116,10 +117,13 @@ pub fn enable_logforth_stderr() {
 }
 
 fn enable_logforth_append<A: logforth::Append>(to_append: A) {
-    let filter = EnvFilterBuilder::from_default_env_or("info").build();
-    logforth::starter_log::builder()
+    let filter = RustLogFilterBuilder::from_default_env_or("info").build();
+    let logger = logforth::core::builder()
         .dispatch(|d| d.filter(filter).append(to_append))
-        .apply();
+        .build();
+    log::set_boxed_logger(Box::new(LogBridge::new(logger)))
+        .expect("logging system has already been set up");
+    log::set_max_level(log::LevelFilter::Trace);
 }
 
 #[cfg(test)]

@@ -110,6 +110,9 @@ impl PublicKey {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IndividualSignature(BlstSignature);
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `read` writes `dst` only via the single `dst.write(...)` on its `Ok` path;
+// every `?` returns `Err` before `dst` is touched.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
     type Dst = IndividualSignature;
 
@@ -128,6 +131,8 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
     }
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `size_of` returns exactly the bytes `write` produces (`UNCOMPRESSED_SIG_SIZE`).
 unsafe impl<C: Config> SchemaWrite<C> for IndividualSignature {
     type Src = IndividualSignature;
 
@@ -149,6 +154,9 @@ pub struct AggregateSignature {
     bitmask: BitVec,
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `read` writes `dst` only via the single `dst.write(...)` on its `Ok` path;
+// every `?` returns `Err` before `dst` is touched.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
     type Dst = AggregateSignature;
 
@@ -167,6 +175,9 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
     }
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `size_of` returns exactly the bytes `write` produces: `UNCOMPRESSED_SIG_SIZE`
+// for `serialize()` plus `bitvec_size`, matching `write_bitvec`.
 unsafe impl<C: Config> SchemaWrite<C> for AggregateSignature {
     type Src = AggregateSignature;
 

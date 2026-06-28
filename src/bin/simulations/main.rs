@@ -44,7 +44,7 @@ mod ryse;
 use std::cmp::Reverse;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use ::alpenglow::disseminator::rotor::sampling_strategy::{
     AllSameSampler, DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler,
@@ -61,6 +61,7 @@ use ::alpenglow::{Stake, ValidatorIndex, ValidatorInfo, logging};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
+use parking_lot::Mutex;
 use rayon::prelude::*;
 
 use crate::alpenglow::{

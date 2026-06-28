@@ -422,7 +422,7 @@ mod tests {
         let parent = random_block_id(block.0.prev());
         let parent_parent = random_block_id(parent.0.prev());
         let event = FinalizationEvent {
-            finalized: Some(block.clone()),
+            finalized: Some(block),
             implicitly_finalized: vec![parent.clone(), parent_parent.clone()],
             implicitly_skipped: vec![],
         };

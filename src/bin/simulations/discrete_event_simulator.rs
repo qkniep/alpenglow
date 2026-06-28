@@ -12,10 +12,10 @@ mod timings;
 use std::cmp::Reverse;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{RwLock, RwLockReadGuard};
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
 use alpenglow::{Stake, ValidatorIndex, ValidatorInfo};
+use parking_lot::{RwLock, RwLockReadGuard};
 use rand::prelude::*;
 use rayon::prelude::*;
 
@@ -155,7 +155,11 @@ impl<P: Protocol> SimulationEngine<P> {
                 let dep_timings = event
                     .dependencies(self.builder.params())
                     .into_iter()
-                    .map(|dep| timings.get(dep).unwrap())
+                    .map(|dep| {
+                        timings
+                            .get(dep)
+                            .expect("dependency timings should be initialized before use")
+                    })
                     .collect::<Vec<_>>();
                 let latencies = event.calculate_timing(
                     timings.start_time(),
@@ -171,13 +175,19 @@ impl<P: Protocol> SimulationEngine<P> {
         }
 
         // commit timings to stats
-        let mut stats_map = self.stats.write().unwrap();
+        let mut stats_map = self.stats.write();
         stats_map.record_latencies(timings, &self.environment);
     }
 
     /// References the timing stats.
     pub(crate) fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
-        self.stats.read().unwrap()
+        self.stats.read()
+    }
+
+    /// Consumes the engine and returns the accumulated timing stats by value.
+    #[cfg(test)]
+    pub(crate) fn into_stats(self) -> TimingStats<P> {
+        self.stats.into_inner()
     }
 }
 
@@ -279,7 +289,8 @@ impl SimulationEnvironment {
     ) -> SimTime {
         let sender_server = self.ping_servers[sender.as_usize()].id;
         let receiver_server = self.ping_servers[receiver.as_usize()].id;
-        let rtt_ping_ms = get_ping(sender_server, receiver_server).unwrap();
+        let rtt_ping_ms = get_ping(sender_server, receiver_server)
+            .expect("ping data should exist for all validator pairs");
         let one_way_ping_secs = rtt_ping_ms / 2.0 / 1e3;
         SimTime::from_secs(one_way_ping_secs)
     }
@@ -363,7 +374,7 @@ pub(crate) fn broadcast_first_arrival_or_dep(
                 *start_send + prop_delay + tx_delay
             })
             .min()
-            .unwrap();
+            .expect("there should be at least one sender");
 
         if first_arrival_time < *recipient_timing {
             *recipient_timing = first_arrival_time;
@@ -594,8 +605,8 @@ mod tests {
         engine.run_many_parallel(NUM_SIMULATION_ITERATIONS);
 
         // check that the timings are correct
+        let stats = engine.into_stats();
         for event_id in 0..NUM_EVENTS {
-            let stats = engine.stats();
             let event_stats = stats.get(&TestEvent(event_id)).unwrap();
             // timings should be the same for all validators, thus also for all percentiles
             for percentile in 1..=100 {
@@ -613,8 +624,8 @@ mod tests {
         engine.run_many_sequential(NUM_SIMULATION_ITERATIONS);
 
         // check that the timings are correct
+        let stats = engine.into_stats();
         for event_id in 0..NUM_EVENTS {
-            let stats = engine.stats();
             let event_stats = stats.get(&TestEvent(event_id)).unwrap();
             // timings should be the same for all validators, thus also for all percentiles
             for percentile in 1..=100 {

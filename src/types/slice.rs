@@ -5,6 +5,7 @@
 
 use std::ops::Deref;
 
+#[cfg(any(test, feature = "test-utils"))]
 use rand::prelude::*;
 use thiserror::Error;
 use wincode::config::DefaultConfig;
@@ -159,13 +160,13 @@ impl SlicePayload {
 
     /// Serializes the payload into bytes.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        wincode::serialize(self).unwrap()
+        crate::serialize(self)
     }
 }
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        wincode::serialize(&payload).unwrap()
+        payload.to_bytes()
     }
 }
 
@@ -202,22 +203,21 @@ impl TryFrom<&[u8]> for SlicePayload {
 /// Creates a [`SlicePayload`] with a random payload of desired size (in bytes).
 ///
 /// The payload does not contain valid transactions.
-/// This function should only be used for testing and benchmarking.
-//
-// TODO: This is only used in test and benchmarking code.
-// Ensure it is only compiled when we are testing or benchmarking.
+/// This function should only be used for testing and benchmarking,
+/// hence it is only compiled under `cfg(test)` or the `test-utils` feature.
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let parent_bytes =
-        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
+    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent)
+        .expect("computing the serialized size of the payload header should not fail");
     // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
     let data_len_bytes = 8;
 
     let size = desired_size
         .checked_sub(parent_bytes + data_len_bytes)
-        .unwrap();
+        .expect("desired size should be large enough to hold the payload header");
     let mut data = vec![0; size];
     let mut rng = rand::rng();
     rng.fill_bytes(&mut data);
@@ -228,10 +228,9 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
 /// Creates a [`Slice`] with a random payload of desired size (in bytes).
 ///
 /// The slice does not contain valid transactions.
-/// This function should only be used for testing and benchmarking.
-//
-// TODO: This is only used in test and benchmarking code.
-// Ensure it is only compiled when we are testing or benchmarking.
+/// This function should only be used for testing and benchmarking,
+/// hence it is only compiled under `cfg(test)` or the `test-utils` feature.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
     let payload = create_slice_payload_with_invalid_txs(None, desired_size);
     let header = SliceHeader {
