@@ -473,8 +473,11 @@ mod tests {
             net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
+        // drain until no packet arrives for `max_time`. This must comfortably
+        // exceed the network latency (100ms default), otherwise the very first
+        // packet races the timeout and the loop can exit with nothing received.
         let mut pings_received = 0;
-        let max_time = Duration::from_millis(100);
+        let max_time = Duration::from_secs(1);
         while let Ok(Ok(_)) = timeout(max_time, net2.receive()).await {
             pings_received += 1;
         }
