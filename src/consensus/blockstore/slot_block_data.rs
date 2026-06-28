@@ -329,8 +329,8 @@ impl BlockData {
         }
 
         // calculate double-Merkle tree & block hash
-        let merkle_roots = self.slices.values().map(|s| s.merkle_root());
-        let tree = DoubleMerkleTree::new(merkle_roots);
+        let slice_roots = self.slices.values().map(|s| s.slice_root());
+        let tree = DoubleMerkleTree::new(slice_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
 
