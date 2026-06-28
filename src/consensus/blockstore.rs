@@ -74,7 +74,7 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    async fn report_equivocation(&mut self, slot: Slot);
+    async fn flag_misbehavior(&mut self, slot: Slot);
     #[expect(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
@@ -252,10 +252,9 @@ impl Blockstore for BlockstoreImpl {
         {
             Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
             Ok(None) => Ok(None),
-            Err(AddShredError::InvalidShred) => {
-                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
-                    .await;
-                Err(AddShredError::InvalidShred)
+            Err(err @ (AddShredError::Equivocation | AddShredError::InvalidShred)) => {
+                self.flag_misbehavior(slot).await;
+                Err(err)
             }
             Err(e) => Err(e),
         }
@@ -285,24 +284,26 @@ impl Blockstore for BlockstoreImpl {
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self
+
+        let result = self
             .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, &mut shredder)?
-        {
+            .add_shred_from_repair(hash, shred, &mut shredder);
+        if matches!(
+            result,
+            Err(AddShredError::Equivocation | AddShredError::InvalidShred)
+        ) {
+            self.flag_misbehavior(slot).await;
+        }
+        match result? {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
         }
     }
 
-    /// Records that the leader equivocated for `slot` and notifies Votor.
+    /// Flags the leader as misbehaving for `slot`, notifying Votor exactly once.
     ///
-    /// Called when an out-of-band check (e.g. a repair-response shred whose
-    /// signature is valid on a Merkle root other than the one anchored in the
-    /// block hash we requested) proves leader equivocation without the shred
-    /// ever reaching [`Blockstore::add_shred_from_dissemination`] or
-    /// [`Blockstore::add_shred_from_repair`]. Idempotent across repeat calls
-    /// and across paths that have already flagged the slot.
-    async fn report_equivocation(&mut self, slot: Slot) {
+    /// Emits [`BlockstoreEvent::InvalidBlock`] the first time the slot is flagged.
+    async fn flag_misbehavior(&mut self, slot: Slot) {
         if self.slot_data_mut(slot).mark_leader_misbehaved() {
             self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
                 .await;
@@ -648,6 +649,68 @@ mod tests {
 
         // should only store one copy
         assert_eq!(ctx.blockstore.stored_shreds_for_slot(slot), 1);
+
+        Ok(())
+    }
+
+    fn count_invalid_block_events(rx: &mut mpsc::Receiver<BlockstoreEvent>, slot: Slot) -> usize {
+        let mut count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, BlockstoreEvent::InvalidBlock(s) if s == slot) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    #[tokio::test]
+    async fn dissemination_equivocation() -> Result<()> {
+        let sk = SecretKey::new(&mut rand::rng());
+        let (tx, mut rx) = mpsc::channel(1000);
+        let mut blockstore = BlockstoreImpl::new(tx);
+        let slot = Slot::genesis().next();
+
+        // disseminate two distinct blocks for the same slot
+        let (_h0, _t0, slices0) = create_random_shredded_block(slot, 1, &sk);
+        let (_h1, _t1, slices1) = create_random_shredded_block(slot, 1, &sk);
+        blockstore
+            .add_shred_from_dissemination(slices0[0][0].clone())
+            .await?;
+        let res = blockstore
+            .add_shred_from_dissemination(slices1[0][0].clone())
+            .await;
+
+        // equivocation detected, Votor should be notified
+        assert_eq!(res, Err(AddShredError::Equivocation));
+        assert_eq!(count_invalid_block_events(&mut rx, slot), 1);
+
+        // idempotent: later misbehavior does not re-notify
+        blockstore.flag_misbehavior(slot).await;
+        assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_conflicting_block_not_flagged_as_equivocation() -> Result<()> {
+        let sk = SecretKey::new(&mut rand::rng());
+        let (tx, mut rx) = mpsc::channel(1000);
+        let mut blockstore = BlockstoreImpl::new(tx);
+        let slot = Slot::genesis().next();
+
+        // see different blocks from dissemination and repair
+        let (_h0, _t0, slices0) = create_random_shredded_block(slot, 1, &sk);
+        let (hash, _t1, slices1) = create_random_shredded_block(slot, 1, &sk);
+        blockstore
+            .add_shred_from_dissemination(slices0[0][0].clone())
+            .await?;
+        let res = blockstore
+            .add_shred_from_repair(hash, slices1[0][0].clone())
+            .await;
+
+        // TODO: Detect equivocation across the dissemination and repair spots.
+        assert_eq!(res, Ok(None));
+        assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
 
         Ok(())
     }
