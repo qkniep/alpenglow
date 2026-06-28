@@ -150,6 +150,7 @@ mod tests {
     use super::*;
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{RegularShredder, Shredder};
+    use crate::types::SliceIndex;
     use crate::types::slice::create_slice_with_invalid_txs;
 
     fn create_random_shred() -> (Shred, SecretKey) {
@@ -188,21 +189,8 @@ mod tests {
         assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
     }
 
-    /// Mutating any `SliceHeader` field on a real shred must invalidate the
-    /// signature on **both** verification paths:
-    /// - cold path (`cached_commitment = None`): full Ed25519 verify fails.
-    /// - fast path (`cached_commitment = Some`): the cached bytes mismatch the
-    ///   tampered shred's commitment, forcing a re-verify that then fails.
-    ///
-    /// The fast path is the regression-critical one: comparing only the Merkle
-    /// root in the cache would let header tampering (e.g. flipping `is_last` on
-    /// a shred whose data is identical to one we've already accepted) slip
-    /// through without ever re-checking the signature.
     #[test]
-    fn header_is_bound_to_signature() {
-        use crate::Slot;
-        use crate::types::SliceIndex;
-
+    fn commitment_binds_header() {
         let (shred, sk) = create_random_shred();
         let pk = sk.to_pk();
         let cached = SliceCommitment::new(&shred.payload().header, &shred.merkle_root());
@@ -211,8 +199,7 @@ mod tests {
         assert!(ValidatedShred::try_new(shred.clone(), None, &pk).is_ok());
         assert!(ValidatedShred::try_new(shred.clone(), Some(&cached), &pk).is_ok());
 
-        // Each mutation tampers one header field and must be rejected on both
-        // verification paths. `expect_invalid` runs both.
+        // `expect_invalid` runs both verification paths (with/without cached commitment)
         let expect_invalid = |tampered: Shred| {
             for cache in [None, Some(&cached)] {
                 let res = ValidatedShred::try_new(tampered.clone(), cache, &pk);
@@ -224,22 +211,19 @@ mod tests {
             }
         };
 
-        // cross-slot replay: mutate header.slot
+        // cross-slot replay
         let mut tampered = shred.clone();
         let original_slot = tampered.payload().header.slot;
-        tampered.payload_mut().header.slot = Slot::new(original_slot.inner() + 1);
+        tampered.payload_mut().header.slot = original_slot.next();
         expect_invalid(tampered);
 
-        // mutate header.slice_index — derive the new index from the original so
-        // the mutation can never be a no-op (which would leave the signature valid).
+        // cross-slice replay
         let mut tampered = shred.clone();
         let original_index = tampered.payload().header.slice_index.inner();
         tampered.payload_mut().header.slice_index = SliceIndex::new_for_test(original_index + 1);
         expect_invalid(tampered);
 
-        // mutate header.is_last — regression case: same Merkle root as cached,
-        // only the header bit differs. Caching just the root would have
-        // accepted this on the fast path. (Last use of `shred`, so move it.)
+        // length extension
         let mut tampered = shred;
         tampered.payload_mut().header.is_last = !tampered.payload().header.is_last;
         expect_invalid(tampered);
