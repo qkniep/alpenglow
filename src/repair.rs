@@ -22,7 +22,7 @@ use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, RepairRequesterNetwork, RepairResponderNetwork};
-use crate::shredder::{Shred, ShredIndex, ShredVerifyError, ValidatedShred};
+use crate::shredder::{Shred, ShredIndex, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorIndex};
 
@@ -179,7 +179,7 @@ where
             RepairRequestType::LastSliceRoot(block_id) => {
                 let blockstore = self.blockstore.read().await;
                 let last_slice = blockstore.get_last_slice_index(block_id)?;
-                let root = blockstore.get_slice_root(block_id, last_slice)?.clone();
+                let root = blockstore.get_slice_root(block_id, last_slice)?;
                 let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
                 drop(blockstore);
                 Some(RepairResponse::LastSliceRoot(
@@ -191,7 +191,7 @@ where
             }
             RepairRequestType::SliceRoot(block_id, slice) => {
                 let blockstore = self.blockstore.read().await;
-                let root = blockstore.get_slice_root(block_id, *slice)?.clone();
+                let root = blockstore.get_slice_root(block_id, *slice)?;
                 let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
                 drop(blockstore);
                 Some(RepairResponse::SliceRoot(
@@ -421,21 +421,15 @@ where
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
-                let validated = match ValidatedShred::try_new(shred, Some(root), leader_pk) {
-                    Ok(v) => v,
-                    Err(ShredVerifyError::InvalidSignature) => {
-                        warn!("repair response (Shred) with invalid Merkle proof or signature");
-                        return;
-                    }
-                    Err(ShredVerifyError::Equivocation) => {
-                        warn!("repair response (Shred) proves leader equivocation in slot {slot}");
-                        self.blockstore
-                            .write()
-                            .await
-                            .flag_leader_misbehavior(*slot)
-                            .await;
-                        return;
-                    }
+                // shred for the wrong slice root, don't even try to verify signature
+                if &shred.merkle_root() != root {
+                    warn!("repair response (Shred) with slice root not matching proved slice root");
+                    return;
+                }
+                // have no commitment cache for repair, always verify signature (i.e. `None` here)
+                let Ok(validated) = ValidatedShred::try_new(shred, None, leader_pk) else {
+                    warn!("repair response (Shred) with invalid Merkle proof or signature");
+                    return;
                 };
 
                 // store shred
