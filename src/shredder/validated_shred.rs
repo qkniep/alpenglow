@@ -35,21 +35,19 @@ pub struct ValidatedShred {
 }
 
 impl ValidatedShred {
-    /// Performs various verification checks on the [`Shred`] and if they succeed, returns a shred.
+    /// Performs various verification checks on the [`Shred`].
     ///
-    /// `cached_commitment`: The [`SliceCommitment`] of an earlier shred verified for
-    /// the same slice, if any. Used to skip expensive signature verification when the new
-    /// shred reproduces the exact same authenticated content, and to detect leader
-    /// equivocation otherwise.
-    ///
-    /// The fast path **must** compare the full commitment — comparing only the Merkle
-    /// root would let header tampering (e.g. flipping `is_last`) slip through, since the
-    /// Merkle root commits to payload data but not to the `SliceHeader` fields the
-    /// signature covers.
+    /// Derives the [`SliceCommitment`] from `shred` and uses `cached_commitment`,
+    /// the [`SliceCommitment`] of an earlier shred verified for the same slice,
+    /// if any, to skip signature verification or detect leader equivocation.
+    /// Signature verification can only be skipped if the two commitments match.
     ///
     /// # Errors
     ///
-    /// Returns [`ShredVerifyError`] if the [`Shred`] does not pass all verification checks.
+    /// - [`ShredVerifyError::InvalidSignature`] if the signature verification fails
+    ///   against the shred's commitment.
+    /// - [`ShredVerifyError::Equivocation`] if the signature is valid but
+    ///   the shred's commitment does not match the cached commitment.
     #[hotpath::measure]
     pub fn try_new(
         shred: Shred,
