@@ -22,7 +22,7 @@ use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use crate::network::{Network, RepairRequesterNetwork, RepairResponderNetwork};
-use crate::shredder::{Shred, ShredIndex, ValidatedShred};
+use crate::shredder::{Shred, ShredIndex, ShredVerifyError, ValidatedShred};
 use crate::types::SliceIndex;
 use crate::{BlockId, ValidatorIndex};
 
@@ -421,9 +421,21 @@ where
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
-                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
-                    warn!("repair response (Shred) with invalid Merkle proof or signature");
-                    return;
+                let validated = match ValidatedShred::try_new(shred, Some(root), leader_pk) {
+                    Ok(v) => v,
+                    Err(ShredVerifyError::InvalidSignature) => {
+                        warn!("repair response (Shred) with invalid Merkle proof or signature");
+                        return;
+                    }
+                    Err(ShredVerifyError::Equivocation) => {
+                        warn!("repair response (Shred) proves leader equivocation in slot {slot}");
+                        self.blockstore
+                            .write()
+                            .await
+                            .flag_leader_misbehavior(*slot)
+                            .await;
+                        return;
+                    }
                 };
 
                 // store shred

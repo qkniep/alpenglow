@@ -3,16 +3,20 @@
 
 //! Defines the [`ValidatedShred`] type.
 
+use thiserror::Error;
+
 use crate::crypto::merkle::SliceRoot;
 use crate::crypto::signature::PublicKey;
 use crate::shredder::{Shred, ShredPayload};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum ShredVerifyError {
     /// The signature verification failed.
+    #[error("signature verification failed")]
     InvalidSignature,
     /// Leader showed equivocation: a valid signature was seen on a different Merkle root.
+    #[error("leader equivocation: signed two slices with different Merkle roots")]
     Equivocation,
 }
 
