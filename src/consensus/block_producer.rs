@@ -481,8 +481,10 @@ impl SliceProducer {
         }
     }
 
-    /// Deadline for producing one slice: the per-slice cap (`delta_first_slice` for the first
-    /// slice, else `delta_block`), clamped to the block deadline once the timer is running.
+    /// Deadline for producing one slice.
+    ///
+    /// The per-slice cap (`delta_first_slice` for the first slice, else `delta_block`),
+    /// clamped to the block deadline once the timer is running.
     fn slice_deadline(&self, is_first: bool) -> Instant {
         let cap = if is_first {
             self.delta_first_slice
@@ -496,9 +498,12 @@ impl SliceProducer {
         }
     }
 
-    /// Applies a resolved `ParentReady`: starts the timer and, if the confirmed parent differs
-    /// from our guess, records an override for the next slice. Returns [`ControlFlow::Break`]
-    /// if the sender was dropped (the slot was pruned and production must abort).
+    /// Applies a resolved `ParentReady`: starts the timer and,
+    /// if the confirmed parent differs from our guess,
+    /// records an override for the next slice.
+    ///
+    /// Returns [`ControlFlow::Break`] if the sender was dropped
+    /// (the slot was pruned and production must abort).
     fn apply_parent_ready(
         &mut self,
         res: Result<BlockId, oneshot::error::RecvError>,
