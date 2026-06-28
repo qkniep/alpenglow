@@ -166,7 +166,7 @@ impl Shred {
 
     /// Derives the Merkle root of the slice from this shred's proof.
     #[must_use]
-    pub fn merkle_root(&self) -> SliceRoot {
+    pub fn slice_root(&self) -> SliceRoot {
         SliceMerkleTree::derive_root(
             &self.payload().data,
             *self.payload().shred_index,
@@ -196,7 +196,7 @@ impl ShredPayload {
 
 /// Number of bytes in the commitment that the leader signs for each slice.
 ///
-/// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `merkle_root` (32 B).
+/// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `slice_root` (32 B).
 const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
 
 /// Commitment the leader signs for each slice.
@@ -212,12 +212,12 @@ pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
 
 impl SliceCommitment {
     /// Creates a [`SliceCommitment`] covering a [`SliceHeader`] and a [`SliceRoot`].
-    pub(crate) fn new(header: &SliceHeader, merkle_root: &SliceRoot) -> Self {
+    pub(crate) fn new(header: &SliceHeader, slice_root: &SliceRoot) -> Self {
         let mut buf = [0u8; SLICE_COMMITMENT_LEN];
         buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
         buf[8..16].copy_from_slice(&(header.slice_index.inner() as u64).to_le_bytes());
         buf[16] = u8::from(header.is_last);
-        buf[17..49].copy_from_slice(merkle_root.as_ref());
+        buf[17..49].copy_from_slice(slice_root.as_ref());
         Self(buf)
     }
 }
@@ -493,13 +493,13 @@ fn finalize_deshred(
     payload: SlicePayload,
 ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
     let any_shred = shreds.any_shred();
-    let merkle_root = any_shred.merkle_root().clone();
+    let slice_root = any_shred.slice_root().clone();
 
     // additional Merkle tree validity check
     // NOTE: This is necessary to catch maliciously constructed slices.
-    let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
+    let tree = check_merkle_tree(&raw_shreds, &slice_root)?;
 
-    let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
+    let slice = ReconstructedSlice::from_shreds(payload, any_shred, slice_root);
     let header = slice.to_header();
 
     // turn reconstructed shreds into output shreds (with root, path, sig)
@@ -547,8 +547,8 @@ fn data_and_coding_to_output_shreds(
     sk: &SecretKey,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
-    let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign_bytes(SliceCommitment::new(&header, &merkle_root).as_ref());
+    let slice_root = tree.get_root();
+    let merkle_root_sig = sk.sign_bytes(SliceCommitment::new(&header, &slice_root).as_ref());
     assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
 }
 
@@ -565,7 +565,7 @@ fn assemble_output_shreds(
     tree: &SliceMerkleTree,
     merkle_root_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
-    let merkle_root = tree.get_root();
+    let slice_root = tree.get_root();
     let num_data = raw_shreds.data.len();
     raw_shreds
         .data
@@ -590,7 +590,7 @@ fn assemble_output_shreds(
                     merkle_root_sig,
                     merkle_path: tree.create_proof(index),
                 },
-                merkle_root.clone(),
+                slice_root.clone(),
             )
         })
         .collect::<Vec<_>>()
