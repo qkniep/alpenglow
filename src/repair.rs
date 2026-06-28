@@ -429,7 +429,11 @@ where
                     }
                     Err(ShredVerifyError::Equivocation) => {
                         warn!("repair response (Shred) proves leader equivocation in slot {slot}");
-                        self.blockstore.write().await.flag_misbehavior(*slot).await;
+                        self.blockstore
+                            .write()
+                            .await
+                            .flag_leader_misbehavior(*slot)
+                            .await;
                         return;
                     }
                 };

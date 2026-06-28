@@ -74,7 +74,7 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    async fn flag_misbehavior(&mut self, slot: Slot);
+    async fn flag_leader_misbehavior(&mut self, slot: Slot);
     #[expect(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
@@ -253,7 +253,7 @@ impl Blockstore for BlockstoreImpl {
             Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
             Ok(None) => Ok(None),
             Err(err @ (AddShredError::Equivocation | AddShredError::InvalidShred)) => {
-                self.flag_misbehavior(slot).await;
+                self.flag_leader_misbehavior(slot).await;
                 Err(err)
             }
             Err(e) => Err(e),
@@ -292,7 +292,7 @@ impl Blockstore for BlockstoreImpl {
             result,
             Err(AddShredError::Equivocation | AddShredError::InvalidShred)
         ) {
-            self.flag_misbehavior(slot).await;
+            self.flag_leader_misbehavior(slot).await;
         }
         match result? {
             Some(event) => Ok(self.send_blockstore_event(event).await),
@@ -303,7 +303,7 @@ impl Blockstore for BlockstoreImpl {
     /// Flags the leader as misbehaving for `slot`, notifying Votor exactly once.
     ///
     /// Emits [`BlockstoreEvent::InvalidBlock`] the first time the slot is flagged.
-    async fn flag_misbehavior(&mut self, slot: Slot) {
+    async fn flag_leader_misbehavior(&mut self, slot: Slot) {
         if self.slot_data_mut(slot).mark_leader_misbehaved() {
             self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
                 .await;
@@ -685,7 +685,7 @@ mod tests {
         assert_eq!(count_invalid_block_events(&mut rx, slot), 1);
 
         // idempotent: later misbehavior does not re-notify
-        blockstore.flag_misbehavior(slot).await;
+        blockstore.flag_leader_misbehavior(slot).await;
         assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
 
         Ok(())
