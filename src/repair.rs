@@ -421,26 +421,16 @@ where
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
-                // Always verify the signature: a matching Merkle root alone does not
-                // authenticate the header (e.g. `is_last`), so the cached slice root
-                // must not be used to skip verification here. Passing `None` means
-                // `try_new` never reports equivocation itself; we detect it below.
+                // shred for the wrong slice root, don't even try to verify signature
+                if &shred.merkle_root() != root {
+                    warn!("repair response (Shred) with slice root not matching proved slice root");
+                    return;
+                }
+                // have no commitment cache for repair, always verify signature (i.e. `None` here)
                 let Ok(validated) = ValidatedShred::try_new(shred, None, leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };
-                // The shred carries a valid leader signature. If its Merkle root differs
-                // from the slice root we already proved for this slice, the leader signed
-                // two different roots for the same slice: equivocation.
-                if validated.merkle_root() != root {
-                    warn!("repair response (Shred) proves leader equivocation in slot {slot}");
-                    self.blockstore
-                        .write()
-                        .await
-                        .flag_leader_misbehavior(*slot)
-                        .await;
-                    return;
-                }
 
                 // store shred
                 let res = self
