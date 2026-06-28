@@ -72,14 +72,7 @@ impl SlotBlockData {
             debug!("received shred from misbehaving leader, not adding to blockstore");
             return Err(AddShredError::InvalidShred);
         }
-        self.disseminated
-            .add_shred(shred, shredder)
-            .inspect_err(|err| match err {
-                AddShredError::Equivocation | AddShredError::InvalidShred => {
-                    self.leader_misbehaved = true;
-                }
-                AddShredError::Duplicate => (),
-            })
+        self.disseminated.add_shred(shred, shredder)
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -97,14 +90,18 @@ impl SlotBlockData {
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        block_data
-            .add_shred(shred, shredder)
-            .inspect_err(|err| match err {
-                AddShredError::Equivocation | AddShredError::InvalidShred => {
-                    self.leader_misbehaved = true;
-                }
-                AddShredError::Duplicate => (),
-            })
+        block_data.add_shred(shred, shredder)
+    }
+
+    /// Records that the leader was observed equivocating for this slot.
+    ///
+    /// Returns `true` iff this was the first time this method was called.
+    pub(super) fn mark_leader_misbehaved(&mut self) -> bool {
+        if self.leader_misbehaved {
+            return false;
+        }
+        self.leader_misbehaved = true;
+        true
     }
 }
 
