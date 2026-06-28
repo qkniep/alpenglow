@@ -122,7 +122,7 @@ pub enum ShredPayloadType {
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     payload_type: ShredPayloadType,
-    merkle_root_sig: Signature,
+    slice_sig: Signature,
     merkle_path: SliceProof,
 }
 
@@ -503,7 +503,7 @@ fn finalize_deshred(
     let header = slice.to_header();
 
     // turn reconstructed shreds into output shreds (with root, path, sig)
-    let leader_sig = any_shred.as_shred().merkle_root_sig;
+    let leader_sig = any_shred.as_shred().slice_sig;
     let reconstructed_shreds = assemble_output_shreds(header, raw_shreds, &tree, leader_sig);
     Ok((slice, reconstructed_shreds))
 }
@@ -548,13 +548,13 @@ fn data_and_coding_to_output_shreds(
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
     let slice_root = tree.get_root();
-    let merkle_root_sig = sk.sign_bytes(SliceCommitment::new(&header, &slice_root).as_ref());
-    assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
+    let slice_sig = sk.sign_bytes(SliceCommitment::new(&header, &slice_root).as_ref());
+    assemble_output_shreds(header, raw_shreds, &tree, slice_sig)
 }
 
 /// Assembles the reconstructed `raw_shreds` into the final output shreds.
 ///
-/// Puts the `raw_shreds` together with the `header`, `merkle_root_sig`,
+/// Puts the `raw_shreds` together with the `header`, `slice_sig`,
 /// and a Merkle proof generated from the given `tree`.
 /// Used both when producing our own block and when reconstructing another leader's block.
 ///
@@ -563,7 +563,7 @@ fn assemble_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
     tree: &SliceMerkleTree,
-    merkle_root_sig: Signature,
+    slice_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let slice_root = tree.get_root();
     let num_data = raw_shreds.data.len();
@@ -587,7 +587,7 @@ fn assemble_output_shreds(
             ValidatedShred::new_validated(
                 Shred {
                     payload_type,
-                    merkle_root_sig,
+                    slice_sig,
                     merkle_path: tree.create_proof(index),
                 },
                 slice_root.clone(),

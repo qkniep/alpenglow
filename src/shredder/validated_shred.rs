@@ -62,14 +62,14 @@ impl ValidatedShred {
                 if cached == &msg {
                     return Ok(Self { shred, slice_root });
                 }
-                if shred.merkle_root_sig.verify_bytes(msg.as_ref(), pk) {
+                if shred.slice_sig.verify_bytes(msg.as_ref(), pk) {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             None => {
-                if shred.merkle_root_sig.verify_bytes(msg.as_ref(), pk) {
+                if shred.slice_sig.verify_bytes(msg.as_ref(), pk) {
                     Ok(Self { shred, slice_root })
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
