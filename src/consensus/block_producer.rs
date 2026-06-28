@@ -3,7 +3,7 @@
 
 //! Block production, leader-side of the consensus protocol.
 
-use std::pin::Pin;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -141,7 +141,13 @@ where
             let skip = first_slot_in_window.is_genesis() as usize;
             for slot in first_slot_in_window.slots_in_window().skip(skip) {
                 let start = Instant::now();
-                parent = self.produce_block(slot, parent, rx).await?;
+                let Some(block_id) = self.produce_block(slot, parent, rx).await? else {
+                    // The window was finalized while we were still producing it (Pool pruned
+                    // the slot, dropping the `ParentReady` sender). The block is moot, so stop
+                    // and move on to the next window, mirroring the `SlotReady::Skip` path above.
+                    break;
+                };
+                parent = block_id;
                 rx = None;
                 debug!(
                     "produced block {} in {} ms",
@@ -156,17 +162,21 @@ where
 
     /// Produces a block for the given slot.
     ///
-    /// If `parent_ready_rx` is `None`, it indicates the parent is ready.
-    /// In that case, the `DELTA_BLOCK` timer starts immediately.
-    /// Otherwise, block production begins optimistically.
-    /// The timer then only starts upon receipt of the `ParentReady` event.
+    /// If `parent_ready_rx` is `None`, the parent is already confirmed and the `DELTA_BLOCK`
+    /// timer starts immediately. Otherwise production begins optimistically on the guessed
+    /// parent and the timer starts once the `ParentReady` event arrives (see [`SliceProducer`],
+    /// which owns all of the optimistic-handover and timing state).
+    ///
+    /// Returns `Ok(None)` if production was aborted because the slot was pruned while we were
+    /// producing it: a dropped `parent_ready_rx` sender means the Pool finalized past this slot,
+    /// so the block is moot and the caller should stop producing this window.
     #[hotpath::measure]
     async fn produce_block(
         &self,
         slot: Slot,
         parent_block_id: BlockId,
-        mut parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
-    ) -> Result<BlockId> {
+        parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
+    ) -> Result<Option<BlockId>> {
         let _slot_span = Span::enter_with_local_parent(format!("slot {slot}"));
 
         // Optimistic production guesses the parent from the previous slot and may switch to
@@ -183,86 +193,37 @@ where
             parent_hash.short_hex(),
         );
 
-        // The DELTA_BLOCK timer starts as soon as the parent is known: immediately in the
-        // ready case, or upon receipt of the `ParentReady` event in the optimistic case.
-        // `Duration::MAX` marks "timer not started yet"; it is always clamped via `.min()`
-        // before it could reach a `sleep()`.
-        let mut duration_left = if optimistic {
-            Duration::MAX
-        } else {
-            self.delta_block
-        };
+        let mut producer = SliceProducer::new(
+            parent_block_id,
+            parent_ready_rx,
+            self.delta_block,
+            self.delta_first_slice,
+        );
 
         for slice_index in SliceIndex::all() {
-            let is_first = slice_index.is_first();
-            let is_max = slice_index.is_max();
-
-            // Block for `ParentReady` before the final slice (if still pending) so it carries
-            // the confirmed parent and gets the full DELTA_BLOCK window.
-            let mut handover = None;
-            if is_max && let Some(rx) = parent_ready_rx.as_mut().filter(|rx| !rx.is_terminated()) {
-                // fall back to optimistic parent if sender was dropped
-                if let Ok(new_parent) = rx.await {
-                    handover = apply_parent_update(&parent_block_id, new_parent);
-                }
-                debug!("starting blocktime timer");
-                duration_left = self.delta_block;
-            }
-
-            // The first slice always carries the (current best) parent; the final slice carries
-            // the confirmed parent if the handover changed it.
-            let parent = if is_first {
-                Some(handover.unwrap_or_else(|| parent_block_id.clone()))
-            } else {
-                handover
-            };
-
-            let time_for_slice = duration_left.min(if is_first {
-                self.delta_first_slice
-            } else {
-                self.delta_block
-            });
-
-            // Still optimistically awaiting the handover? (Only possible on non-final slices,
-            // since the `is_max` block above drains a pending receiver first.)
-            let awaiting_handover = parent_ready_rx
-                .as_ref()
-                .is_some_and(|rx| !rx.is_terminated());
-
-            let (payload, new_duration_left) = if awaiting_handover {
-                // The handover may attach a parent to this slice even when it currently has
-                // none, so reserve parent space regardless of `parent`.
-                let produce_future =
-                    produce_slice_payload(&self.txs_receiver, parent, true, time_for_slice);
-                pin!(produce_future);
-                race_slice_against_parent_ready(
-                    produce_future,
-                    &parent_block_id,
-                    parent_ready_rx.as_mut().unwrap(),
-                    self.delta_block,
-                )
+            let (payload, is_last) = match producer
+                .next_slice(&self.txs_receiver, slice_index)
                 .await
-            } else {
-                // The timer is running, so deduct the time spent on this slice from the budget.
-                let (payload, remaining) =
-                    produce_slice_payload(&self.txs_receiver, parent, false, time_for_slice).await;
-                let elapsed = time_for_slice.saturating_sub(remaining);
-                (payload, duration_left.saturating_sub(elapsed))
+            {
+                SliceOutcome::Produced { payload, is_last } => (payload, is_last),
+                // The Pool pruned this slot (finalization advanced past it), so the block
+                // is moot; stop and let the caller move on to the next window.
+                SliceOutcome::Aborted => {
+                    warn!(
+                        "aborting block production for slot {slot}: slot pruned (ParentReady sender dropped)"
+                    );
+                    return Ok(None);
+                }
             };
 
-            let is_last = is_max || new_duration_left.is_zero();
             let header = SliceHeader {
                 slot,
                 slice_index,
                 is_last,
             };
-
             match self.shred_and_disseminate(header, payload).await? {
-                Some(block_hash) => return Ok((slot, block_hash)),
-                None => {
-                    assert!(!new_duration_left.is_zero());
-                    duration_left = new_duration_left;
-                }
+                Some(block_hash) => return Ok(Some((slot, block_hash))),
+                None => debug_assert!(!is_last, "the final slice must complete the block"),
             }
         }
         unreachable!()
@@ -333,6 +294,11 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
     let (old_slot, old_hash) = old;
     let (new_slot, new_hash) = &new;
     if new_hash != old_hash {
+        // The confirmed parent may share the optimistic guess's slot (the previous leader
+        // equivocated and a different block there was certified) or sit in an earlier slot
+        // (intervening slots were skipped), but never a later one: a `ParentReady` for a
+        // window-start slot only certifies parents strictly before it.
+        debug_assert!(new_slot <= old_slot);
         debug!(
             "changed parent from {} in slot {} to {} in slot {}",
             old_hash.short_hex(),
@@ -347,50 +313,38 @@ fn apply_parent_update(old: &BlockId, new: BlockId) -> Option<BlockId> {
     }
 }
 
-/// Collects transactions into a slice payload, waiting up to `duration_left` for more.
+/// Collects transactions into a slice payload, gathering until the slice is full or `deadline`.
 ///
-/// Listens to transactions on `txs_receiver` for at most `duration_left`.
-/// Manually serializes a [`Vec<Transaction>`] to keep track of how much space is left.
-/// Stops if either the slice cannot fit any more transactions, or time runs out.
-///
-/// When `reserve_handover_space` is set, space for a parent is reserved even if `parent`
-/// is [`None`], so that an optimistic `ParentReady` handover can later attach one without
-/// overflowing the slice. Under `FixInt` encoding every `Some(BlockId)` is the same size.
-///
-/// Returns the completed payload and the remaining time in `duration_left`.
+/// Listens to transactions on `txs_receiver` and manually serializes them into a
+/// [`Vec<Transaction>`] to track how much space is left, reserving room for `parent` (if any)
+/// plus the 8-byte length prefix. Stops once another transaction could not fit, or `deadline`
+/// is reached.
 async fn produce_slice_payload<T>(
     txs_receiver: &T,
     parent: Option<BlockId>,
-    reserve_handover_space: bool,
-    duration_left: Duration,
-) -> (SlicePayload, Duration)
+    deadline: Instant,
+) -> SlicePayload
 where
     T: TransactionNetwork,
 {
-    let start_time = Instant::now();
-
     // each slice should be able hold at least 1 transaction
     // +8 to encode number of txs, +8 to encode tx payload length
     const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
-    // Reserve space for: parent info, and 8 bytes for SlicePayload::data length.
-    // Uses genesis as sentinel, assuming every `Some(BlockId)` is the same size.
-    // This invariant is pinned by the test `block_id_option_is_fixed_size`.
-    let sizing_parent: Option<BlockId> =
-        (parent.is_some() || reserve_handover_space).then(|| (Slot::genesis(), GENESIS_BLOCK_HASH));
-    let parent_encoded_len = wincode::serialized_size(&sizing_parent).unwrap() as usize;
+    // reserve space for the parent info and 8 bytes for the SlicePayload::data length
+    let parent_encoded_len = wincode::serialized_size(&parent)
+        .expect("computing serialized size of parent should not fail")
+        as usize;
     let buffer_space = MAX_DATA_PER_SLICE - parent_encoded_len - 8;
     let mut buffer = Vec::<u8>::with_capacity(buffer_space);
     let mut tx_count = 0u64;
     // reserve space for the length prefix
     buffer.extend([0; 8]);
 
-    let ret = loop {
-        let sleep_duration = duration_left.saturating_sub(start_time.elapsed());
+    loop {
+        let sleep_duration = deadline.saturating_duration_since(Instant::now());
         let res = tokio::select! {
-            () = sleep(sleep_duration) => {
-                break Duration::ZERO;
-            }
+            () = sleep(sleep_duration) => break,
             res = txs_receiver.receive() => res,
         };
         let tx = res.expect("receiving tx");
@@ -401,51 +355,164 @@ where
         // if there is not enough space for another tx, break
         // +8 for the transaction length overhead
         if buffer_space - buffer.len() < MAX_TRANSACTION_SIZE + 8 {
-            break duration_left.saturating_sub(start_time.elapsed());
+            break;
         }
-    };
+    }
 
     buffer[0..8].copy_from_slice(&tx_count.to_le_bytes());
-
-    (SlicePayload::new(parent, buffer), ret)
+    SlicePayload::new(parent, buffer)
 }
 
-/// Race slice payload production against a pending `ParentReady` channel.
+/// Outcome of producing a single slice via [`SliceProducer::next_slice`].
+enum SliceOutcome {
+    /// Slice produced successfully; `is_last` marks the final slice of the block.
+    Produced {
+        payload: SlicePayload,
+        is_last: bool,
+    },
+    /// The `ParentReady` sender was dropped (the slot was pruned after finalization advanced
+    /// past it). Production must abort; the block is moot.
+    Aborted,
+}
+
+/// Drives production of the slices of one block, owning the optimistic `ParentReady` handover
+/// and the `DELTA_BLOCK` timing.
 ///
-/// Returns `(payload, new_duration_left)`:
-/// - If production completes first: [`Duration::MAX`] is returned (timer not yet started).
-/// - If `ParentReady` arrives during production: updates the payload's parent if it changed,
-///   starts the DELTA_BLOCK timer, and returns the remaining budget after finishing the slice.
-///
-/// The caller must produce `produce_future` with parent space reserved (see
-/// [`produce_slice_payload`]'s `reserve_handover_space`) so attaching a parent here cannot
-/// overflow the slice.
-async fn race_slice_against_parent_ready(
-    mut produce_future: Pin<&mut (dyn Future<Output = (SlicePayload, Duration)> + Send)>,
-    parent_block_id: &BlockId,
-    rx: &mut oneshot::Receiver<BlockId>,
+/// Each slice's parent is decided *before* the slice is produced: the first slice carries the
+/// (possibly guessed) parent; if `ParentReady` later confirms a *different* parent, the first
+/// slice produced afterwards carries the correction exactly once (the wire format allows one
+/// such parent override on a non-first slice, see `try_reconstruct_block`). No payload is ever
+/// mutated after production, so a slice only reserves parent space when it actually carries one.
+struct SliceProducer {
+    /// Best-known parent: the optimistic guess until `ParentReady` confirms the real one.
+    parent: BlockId,
+    /// Delivers the confirmed parent while we are still producing optimistically; `None` once
+    /// the parent is confirmed (or it was already confirmed when production started).
+    parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
+    /// Set once `ParentReady` confirmed a parent that differs from our guess and that has not
+    /// yet been written onto a slice. The next slice produced carries it, exactly once.
+    override_pending: bool,
+    /// Absolute end of the `DELTA_BLOCK` budget, set once the parent is confirmed; `None` while
+    /// still producing optimistically (the timer has not started yet).
+    deadline: Option<Instant>,
     delta_block: Duration,
-) -> (SlicePayload, Duration) {
-    tokio::select! {
-        res = &mut produce_future => {
-            let (payload, _) = res;
-            // ParentReady not yet seen; do not start DELTA_BLOCK timer yet
-            (payload, Duration::MAX)
+    delta_first_slice: Duration,
+}
+
+impl SliceProducer {
+    fn new(
+        parent: BlockId,
+        parent_ready_rx: Option<oneshot::Receiver<BlockId>>,
+        delta_block: Duration,
+        delta_first_slice: Duration,
+    ) -> Self {
+        // When the parent is already confirmed, the timer starts right away.
+        let deadline = parent_ready_rx
+            .is_none()
+            .then(|| Instant::now() + delta_block);
+        Self {
+            parent,
+            parent_ready_rx,
+            override_pending: false,
+            deadline,
+            delta_block,
+            delta_first_slice,
         }
-        res = rx => {
-            // got ParentReady while producing this slice (or the sender was dropped)
-            // start timer, accounting for time spent producing this slice
-            let start = Instant::now();
-            let (mut payload, _) = produce_future.await;
-            // A dropped sender resolves to `Err`; keep the optimistic parent rather than panicking.
-            if let Ok(new_parent) = res
-                && let Some(new) = apply_parent_update(parent_block_id, new_parent)
-            {
-                payload.parent = Some(new);
+    }
+
+    /// Produces the next slice, resolving the optimistic `ParentReady` handover as needed.
+    async fn next_slice<T>(&mut self, txs_receiver: &T, slice_index: SliceIndex) -> SliceOutcome
+    where
+        T: TransactionNetwork,
+    {
+        let is_first = slice_index.is_first();
+        let is_max = slice_index.is_max();
+
+        // The final slice is the last chance to carry a parent correction, so block for
+        // `ParentReady` before producing it if it is still pending.
+        if is_max && self.parent_ready_rx.is_some() {
+            let mut rx = self.parent_ready_rx.take().expect("just checked is_some");
+            if self.apply_parent_ready((&mut rx).await).is_break() {
+                return SliceOutcome::Aborted;
             }
-            debug!("starting blocktime timer");
-            (payload, delta_block.saturating_sub(start.elapsed()))
         }
+
+        let parent = self.parent_for_slice(is_first);
+        let slice_deadline = self.slice_deadline(is_first);
+
+        // While still optimistic, race tx-gathering against `ParentReady`: whichever resolves
+        // first wins. The event starts the timer and may flag an override for the next slice.
+        let payload = if self.parent_ready_rx.is_some() {
+            let mut rx = self.parent_ready_rx.take().expect("just checked is_some");
+            let produce = produce_slice_payload(txs_receiver, parent, slice_deadline);
+            pin!(produce);
+            tokio::select! {
+                payload = &mut produce => {
+                    // `ParentReady` not seen yet; keep awaiting it on later slices.
+                    self.parent_ready_rx = Some(rx);
+                    payload
+                }
+                res = &mut rx => {
+                    if self.apply_parent_ready(res).is_break() {
+                        return SliceOutcome::Aborted;
+                    }
+                    // finish gathering this slice (its parent was already decided above)
+                    produce.await
+                }
+            }
+        } else {
+            produce_slice_payload(txs_receiver, parent, slice_deadline).await
+        };
+
+        let is_last = is_max || self.deadline.is_some_and(|d| Instant::now() >= d);
+        SliceOutcome::Produced { payload, is_last }
+    }
+
+    /// The parent this slice carries: the first slice always carries the current best parent;
+    /// the first slice after a confirmed change carries the correction (once); others none.
+    fn parent_for_slice(&mut self, is_first: bool) -> Option<BlockId> {
+        if is_first {
+            Some(self.parent.clone())
+        } else if self.override_pending {
+            self.override_pending = false;
+            Some(self.parent.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Deadline for producing one slice: the per-slice cap (`delta_first_slice` for the first
+    /// slice, else `delta_block`), clamped to the block deadline once the timer is running.
+    fn slice_deadline(&self, is_first: bool) -> Instant {
+        let cap = if is_first {
+            self.delta_first_slice
+        } else {
+            self.delta_block
+        };
+        let by_cap = Instant::now() + cap;
+        match self.deadline {
+            Some(deadline) => deadline.min(by_cap),
+            None => by_cap,
+        }
+    }
+
+    /// Applies a resolved `ParentReady`: starts the timer and, if the confirmed parent differs
+    /// from our guess, records an override for the next slice. Returns [`ControlFlow::Break`]
+    /// if the sender was dropped (the slot was pruned and production must abort).
+    fn apply_parent_ready(
+        &mut self,
+        res: Result<BlockId, oneshot::error::RecvError>,
+    ) -> ControlFlow<()> {
+        let Ok(new_parent) = res else {
+            return ControlFlow::Break(());
+        };
+        if let Some(new) = apply_parent_update(&self.parent, new_parent) {
+            self.parent = new;
+            self.override_pending = true;
+        }
+        debug!("starting blocktime timer");
+        self.deadline = Some(Instant::now() + self.delta_block);
+        ControlFlow::Continue(())
     }
 }
 
@@ -526,7 +593,7 @@ async fn wait_for_first_slot(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use mockall::{Sequence, predicate};
     use tokio::sync::RwLock;
@@ -545,20 +612,17 @@ mod tests {
     #[tokio::test]
     async fn produce_slice_empty_slices() {
         let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
-        let duration_left = Duration::ZERO;
+        // a deadline in the past makes production return immediately with no transactions
+        let deadline = Instant::now();
 
         let parent = None;
-        let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
-        assert_eq!(maybe_duration, Duration::ZERO);
+        let payload = produce_slice_payload(&txs_receiver, parent.clone(), deadline).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 8 bytes
         assert_eq!(payload.data.len(), 8);
 
         let parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
-        let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
-        assert_eq!(maybe_duration, Duration::ZERO);
+        let payload = produce_slice_payload(&txs_receiver, parent.clone(), deadline).await;
         assert_eq!(payload.parent, parent);
         // bin encoding an empty Vec takes 8 bytes
         assert_eq!(payload.data.len(), 8);
@@ -582,20 +646,23 @@ mod tests {
 
         let parent = None;
         let parent_len = wincode::serialized_size(&parent).unwrap() as usize;
-        let (payload, maybe_duration) =
-            produce_slice_payload(&txs_receiver, parent.clone(), false, duration_left).await;
-        assert!(maybe_duration > Duration::ZERO);
+        let payload = produce_slice_payload(
+            &txs_receiver,
+            parent.clone(),
+            Instant::now() + duration_left,
+        )
+        .await;
         assert_eq!(payload.parent, parent);
         let max_len = MAX_DATA_PER_SLICE - parent_len - 8;
         assert!(payload.data.len() <= max_len);
         assert!(payload.data.len() + MAX_TRANSACTION_SIZE + 8 > max_len);
     }
 
-    /// An optimistic `ParentReady` handover attaches a parent to a slice that was produced
-    /// without one. With `reserve_handover_space`, even a full slice must stay within
-    /// `MAX_DATA_PER_SLICE` after the parent is attached (otherwise shredding would fail).
+    /// A full slice that carries a parent must still fit within `MAX_DATA_PER_SLICE`:
+    /// `produce_slice_payload` reserves room for the parent up front before packing txs, so
+    /// shredding the slice can never fail because of the parent.
     #[tokio::test]
-    async fn produce_slice_reserves_handover_space() {
+    async fn produce_slice_full_slice_with_parent_fits() {
         let txs_receiver: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
         let addr = localhost_ip_sockaddr(txs_receiver.port());
         let txs_sender: UdpNetwork<Transaction, Transaction> = UdpNetwork::new_with_any_port();
@@ -608,29 +675,78 @@ mod tests {
             }
         });
 
-        // produce a full slice with no parent, but reserving space for a later handover
-        let (mut payload, _) =
-            produce_slice_payload(&txs_receiver, None, true, duration_left).await;
-        assert_eq!(payload.parent, None);
+        let parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
+        let payload = produce_slice_payload(
+            &txs_receiver,
+            parent.clone(),
+            Instant::now() + duration_left,
+        )
+        .await;
+        assert_eq!(payload.parent, parent);
         // the slice is full: it cannot fit another transaction
         assert!(payload.to_bytes().len() + MAX_TRANSACTION_SIZE + 8 > MAX_DATA_PER_SLICE);
-
-        // attaching the handover parent after the fact must not overflow the slice
-        payload.parent = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
+        // but it still fits within the slice limit, including the reserved parent
         assert!(payload.to_bytes().len() <= MAX_DATA_PER_SLICE);
     }
 
-    /// `produce_slice_payload` reserves handover space sized from a sentinel `Some(genesis)`,
-    /// relying on every `Some(BlockId)` serializing to the same length. Pin that assumption so
-    /// a future encoding change (e.g. switching to VarInt) fails here, not in production.
+    /// When an optimistic `ParentReady` confirms a *different* parent than we guessed, the
+    /// correction is written onto exactly one slice — the first produced after the handover,
+    /// never the first slice and never twice — and the timer only starts at the handover.
     #[test]
-    fn block_id_option_is_fixed_size() {
-        let sentinel: Option<BlockId> = Some((Slot::genesis(), GENESIS_BLOCK_HASH));
-        let other: Option<BlockId> = Some((Slot::new(12_345), Hash::random_for_test().into()));
+    fn slice_producer_writes_override_once_after_handover() {
+        let delta = Duration::from_millis(400);
+        let slot = Slot::windows().nth(10).unwrap();
+        let guess = random_block_id(slot.prev());
+        let confirmed = random_block_id(slot.prev().prev());
+
+        let (_tx, rx) = oneshot::channel();
+        let mut producer = SliceProducer::new(guess.clone(), Some(rx), delta, delta);
+
+        // first slice carries the optimistic guess; the timer has not started yet
+        assert_eq!(producer.parent_for_slice(true), Some(guess));
+        assert!(producer.deadline.is_none());
+
+        // the handover confirms a different parent: the timer starts, an override is queued
         assert_eq!(
-            wincode::serialized_size(&sentinel).unwrap(),
-            wincode::serialized_size(&other).unwrap(),
+            producer.apply_parent_ready(Ok(confirmed.clone())),
+            ControlFlow::Continue(())
         );
+        assert!(producer.deadline.is_some());
+
+        // the next non-first slice carries the correction, exactly once
+        assert_eq!(producer.parent_for_slice(false), Some(confirmed));
+        assert_eq!(producer.parent_for_slice(false), None);
+    }
+
+    /// A handover confirming the *same* parent we guessed writes no override.
+    #[test]
+    fn slice_producer_no_override_when_parent_unchanged() {
+        let delta = Duration::from_millis(400);
+        let guess = random_block_id(Slot::windows().nth(10).unwrap().prev());
+
+        let (_tx, rx) = oneshot::channel();
+        let mut producer = SliceProducer::new(guess.clone(), Some(rx), delta, delta);
+
+        assert_eq!(producer.parent_for_slice(true), Some(guess.clone()));
+        assert_eq!(
+            producer.apply_parent_ready(Ok(guess)),
+            ControlFlow::Continue(())
+        );
+        assert_eq!(producer.parent_for_slice(false), None);
+    }
+
+    /// A dropped `ParentReady` sender (the slot was pruned) makes the handover signal an abort.
+    #[tokio::test]
+    async fn slice_producer_apply_parent_ready_aborts_on_dropped_sender() {
+        let delta = Duration::from_millis(400);
+        let guess = random_block_id(Slot::windows().nth(10).unwrap().prev());
+
+        let (tx, rx) = oneshot::channel::<BlockId>();
+        drop(tx);
+        let dropped = rx.await; // resolves to `Err(RecvError)`
+
+        let mut producer = SliceProducer::new(guess, None, delta, delta);
+        assert_eq!(producer.apply_parent_ready(dropped), ControlFlow::Break(()));
     }
 
     #[tokio::test]
@@ -769,7 +885,8 @@ mod tests {
         let ret = block_producer
             .produce_block(slot, block_info.parent, None)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("block should be produced, not aborted");
         assert_eq!(slot, ret.0);
         assert_eq!(block_info.hash, ret.1);
     }
@@ -867,10 +984,53 @@ mod tests {
         let ret = block_producer
             .produce_block(slot, old_block_info.parent, Some(parent_ready_rx))
             .await
-            .unwrap();
+            .unwrap()
+            .expect("block should be produced, not aborted");
 
         assert_eq!(slot, ret.0);
         assert_eq!(new_block_info.hash, ret.1);
         assert_eq!(new_block_info.parent, new_parent);
+    }
+
+    /// If the `ParentReady` sender is dropped while we are optimistically producing (the Pool
+    /// pruned the slot after finalization advanced past it), `produce_block` must abort and
+    /// return `Ok(None)` rather than swallowing the drop and emitting a block for a moot slot.
+    #[tokio::test]
+    async fn produce_block_aborts_on_dropped_parent_ready() {
+        let slot = Slot::windows().nth(10).unwrap();
+        let parent = random_block_id(slot.prev());
+
+        // A dropped sender: the receiver resolves to `Err` when polled, exactly as it would
+        // after `ParentReadyTracker::prune` drops the slot's `ParentReadyState`.
+        let (parent_ready_tx, parent_ready_rx) = oneshot::channel::<BlockId>();
+        drop(parent_ready_tx);
+
+        // Nothing should be shredded, disseminated, or added: the abort fires on the optimistic
+        // race for the first slice, before any slice is produced.
+        let mut blockstore = MockBlockstore::new();
+        blockstore.expect_add_shred_from_dissemination().never();
+        let mut pool = MockPool::new();
+        pool.expect_add_block().never();
+        let mut disseminator = MockDisseminator::new();
+        disseminator.expect_send().never();
+
+        // Long slice budgets so payload production stays pending, making the optimistic race
+        // resolve deterministically on the already-dropped `ParentReady` channel.
+        let block_producer = setup(
+            blockstore,
+            pool,
+            disseminator,
+            Duration::from_secs(100),
+            Duration::from_secs(100),
+        );
+
+        let ret = block_producer
+            .produce_block(slot, parent, Some(parent_ready_rx))
+            .await
+            .unwrap();
+        assert!(
+            ret.is_none(),
+            "a dropped ParentReady sender must abort production, not emit a block"
+        );
     }
 }
