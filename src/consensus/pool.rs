@@ -35,7 +35,7 @@ use crate::{BlockId, Slot, ValidatorIndex};
 ///
 /// [`Votor`]: crate::consensus::votor::Votor
 // PERF: Short-lived channel message; boxing the cert isn't worth the allocation.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum PoolEvent {
