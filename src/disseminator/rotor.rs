@@ -17,6 +17,7 @@ pub mod sampling_strategy;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use quick_cache::sync::Cache;
 use rand::prelude::*;
 
 use self::sampling_strategy::PartitionSampler;
@@ -25,10 +26,17 @@ pub use self::sampling_strategy::{
     StakeWeightedSampler,
 };
 use super::Disseminator;
-use crate::ValidatorId;
 use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
+use crate::{Slot, ValidatorIndex};
+
+/// Maximum number of per-slice relay committees cached.
+///
+/// Each committee is a `[ValidatorIndex; TOTAL_SHREDS]` (~512 B).
+/// Caching up to 2^14 of them occupies on the order of 8 MiB of memory.
+/// This comfortably covers the slices of all recently active slots.
+const MAX_CACHED_COMMITTEES: usize = 1 << 14;
 
 /// Rotor is a new block dissemination protocol presented together with Alpenglow.
 ///
@@ -37,6 +45,12 @@ pub struct Rotor<N: Network, S: QuorumSamplingStrategy> {
     network: N,
     sampler: S,
     epoch_info: Arc<ValidatorEpochInfo>,
+    /// Caches the full relay committee indexed by `(slot, slice)`.
+    ///
+    /// The same committee is needed for all [`TOTAL_SHREDS`] shreds of a slice.
+    /// So computing it once and caching it avoids re-seeding the RNG and
+    /// re-running [`QuorumSamplingStrategy::sample_quorum`] for every shred.
+    relay_cache: Cache<(Slot, usize), Arc<[ValidatorIndex]>>,
 }
 
 impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
@@ -51,6 +65,7 @@ impl<N: Network> Rotor<N, IidQuorumSampler<StakeWeightedSampler>> {
             network,
             sampler,
             epoch_info,
+            relay_cache: Cache::new(MAX_CACHED_COMMITTEES),
         }
     }
 }
@@ -68,6 +83,7 @@ impl<N: Network> Rotor<N, FaitAccompli1Sampler<PartitionSampler>> {
             network,
             sampler,
             epoch_info,
+            relay_cache: Cache::new(MAX_CACHED_COMMITTEES),
         }
     }
 }
@@ -77,9 +93,15 @@ where
     N: ShredNetwork,
 {
     /// Turns this instance into a new instance with a different sampling strategy.
+    ///
+    /// This invalidates all cached relay committees.
     #[must_use]
     pub fn with_sampler(self, sampler: S) -> Self {
-        Self { sampler, ..self }
+        Self {
+            sampler,
+            relay_cache: Cache::new(MAX_CACHED_COMMITTEES),
+            ..self
+        }
     }
 
     /// Sends the shred to the correct relay.
@@ -120,13 +142,24 @@ where
 
     /// Deterministically samples the relay for a given shred.
     ///
-    /// Seeds an RNG per slice and calls [`QuorumSamplingStrategy::sample_quorum`]
-    /// to get all relays for that slice, then picks the one at the shred's position.
-    fn sample_relay(&self, shred: &Shred) -> ValidatorId {
+    /// Picks the relay at the shred's position from the slice's relay committee
+    /// (see [`Self::sample_relays`]).
+    fn sample_relay(&self, shred: &Shred) -> ValidatorIndex {
         let slot = shred.payload().header.slot;
         let slice = shred.payload().header.slice_index.inner();
         let shred = shred.payload().shred_index.inner();
+        self.sample_relays(slot, slice)[shred]
+    }
 
+    /// Deterministically samples the full relay committee for a given slice.
+    ///
+    /// Seeds an RNG from `(slot, slice)` and calls [`QuorumSamplingStrategy::sample_quorum`]
+    /// to obtain all [`TOTAL_SHREDS`] relays for that slice at once.
+    /// The committee is then cached for `(slot, slice)` and reused in subsequent calls.
+    fn sample_relays(&self, slot: Slot, slice: usize) -> Arc<[ValidatorIndex]> {
+        if let Some(relays) = self.relay_cache.get(&(slot, slice)) {
+            return relays;
+        }
         let seed = [
             slot.inner().to_be_bytes(),
             slice.to_be_bytes(),
@@ -134,9 +167,14 @@ where
             [0; 8],
         ]
         .concat();
-        let mut rng = StdRng::from_seed(seed.try_into().unwrap());
-        let relays = self.sampler.sample_quorum(&mut rng);
-        relays[shred]
+        let mut rng = StdRng::from_seed(
+            seed.try_into()
+                .expect("rotor seed should be exactly 32 bytes"),
+        );
+        // PERF: Could avoid an allocation here if we had `SamplingStrategy::sample_quorum_into`.
+        let relays: Arc<[ValidatorIndex]> = self.sampler.sample_quorum(&mut rng).into();
+        self.relay_cache.insert((slot, slice), relays.clone());
+        relays
     }
 }
 
@@ -174,7 +212,7 @@ mod tests {
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-    use crate::{Stake, ValidatorId, ValidatorInfo};
+    use crate::{Stake, ValidatorIndex, ValidatorInfo};
 
     type MyRotor = Rotor<UdpNetwork<Shred, Shred>, IidQuorumSampler<StakeWeightedSampler>>;
 
@@ -186,21 +224,21 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
 
         let epoch_info = EpochInfo::new(validators.clone());
         let mut rotors = Vec::new();
         for i in 0..count {
-            let v = ValidatorId::new(i);
+            let v = ValidatorIndex::new(i);
             let validator_epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info.clone()));
             let network = UdpNetwork::new(base_port + i as u16);
             rotors.push(Rotor::new(network, validator_epoch_info));

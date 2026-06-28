@@ -14,7 +14,7 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
-use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use alpenglow::{Stake, Transaction, ValidatorIndex, ValidatorInfo, logging};
 use anyhow::{Context, Result};
 use clap::Parser;
 use fastrace::prelude::*;
@@ -93,7 +93,7 @@ type Node = Alpenglow<
 fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
     let epoch_info = Arc::new(ValidatorEpochInfo::new(
-        ValidatorId::new(config.id),
+        ValidatorIndex::new(config.id),
         EpochInfo::new(config.gossip.clone()),
     ));
     let start_port = config.port;
@@ -101,16 +101,16 @@ fn create_node(config: ConfigFile) -> Node {
     let all2all = TrivialAll2All::new(config.gossip, network);
     let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
-    let repair_network = UdpNetwork::new(start_port + 2);
-    let repair_request_network = UdpNetwork::new(start_port + 3);
+    let repair_requester_network = UdpNetwork::new(start_port + 2);
+    let repair_responder_network = UdpNetwork::new(start_port + 3);
     let txs_receiver = UdpNetwork::new(start_port + 4);
     Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
         disseminator,
-        repair_network,
-        repair_request_network,
+        repair_requester_network,
+        repair_responder_network,
         epoch_info,
         txs_receiver,
     )
@@ -139,14 +139,14 @@ async fn create_node_configs(
         ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(id),
+            id: ValidatorIndex::new(id),
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: sockaddr,
             disseminator_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 1),
-            repair_request_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
-            repair_response_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 3),
+            repair_requester_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
+            repair_responder_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 3),
         });
     }
 

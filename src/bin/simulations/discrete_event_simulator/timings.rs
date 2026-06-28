@@ -17,7 +17,7 @@ use std::io::{BufWriter, Write};
 use std::ops::{Add, AddAssign};
 use std::path::Path;
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 
 use crate::discrete_event_simulator::{Event, Protocol, SimulationEnvironment, Stage};
 
@@ -133,9 +133,14 @@ impl<E: Event> Timings<E> {
     }
 
     /// Records the latency for the given event and validator.
-    pub(crate) fn record(&mut self, event: E, timing: SimTime, validator: ValidatorId) {
-        let vec = self.event_timings.get_mut(&event).unwrap();
-        let entry = vec.get_mut(validator.as_index()).unwrap();
+    pub(crate) fn record(&mut self, event: E, timing: SimTime, validator: ValidatorIndex) {
+        let vec = self
+            .event_timings
+            .get_mut(&event)
+            .expect("event row should be initialized");
+        let entry = vec
+            .get_mut(validator.as_usize())
+            .expect("validator index should be in range");
         if timing < *entry {
             *entry = timing;
         }
@@ -225,7 +230,9 @@ impl<P: Protocol> TimingStats<P> {
             let event_timings = events
                 .iter()
                 .map(|(_name, event)| {
-                    let event_stats = self.get(event).unwrap();
+                    let event_stats = self
+                        .get(event)
+                        .expect("event stats should exist for tracked event");
                     event_stats
                         .get_avg_percentile_latency(percentile)
                         .to_string()
@@ -264,7 +271,8 @@ impl EventTimingStats {
             .enumerate()
             .map(|(v, l)| (*l, v))
             .collect::<Vec<_>>();
-        latencies.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        latencies
+            .sort_unstable_by(|a, b| a.partial_cmp(b).expect("timing values should not be NaN"));
         let percentile_stake = environment.total_stake.inner() as f64 / 100.0;
         let mut percentile = 1;
         let mut stake_so_far = 0.0;
@@ -336,7 +344,7 @@ mod tests {
         let mut timings = Timings::<LatencyEvent>::default();
         let event = LatencyEvent::BlockSent;
         timings.initialize(event, 2);
-        timings.record(event, SimTime::new(10), ValidatorId::new(0));
+        timings.record(event, SimTime::new(10), ValidatorIndex::new(0));
         assert_eq!(timings.get(event).unwrap()[0], SimTime::new(10));
         assert_eq!(timings.get(event).unwrap()[1], SimTime::NEVER);
     }

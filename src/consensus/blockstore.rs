@@ -75,15 +75,12 @@ pub trait Blockstore {
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
     async fn report_equivocation(&mut self, slot: Slot);
-    #[allow(clippy::needless_lifetimes)]
+    #[expect(clippy::needless_lifetimes)]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
     -> Option<&'a SliceRoot>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_shred<'a>(
         &'a self,
         block_id: &BlockId,
@@ -132,13 +129,9 @@ impl BlockstoreImpl {
     }
 
     async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
-                self.votor_channel.send(event).await.unwrap();
-                None
-            }
+        let block_info = match &event {
+            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => None,
             BlockstoreEvent::Block { slot, block_info } => {
-                let block_info = block_info.clone();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     block_info.hash.short_hex(),
@@ -146,11 +139,14 @@ impl BlockstoreImpl {
                     block_info.parent.1.short_hex(),
                     block_info.parent.0,
                 );
-                self.votor_channel.send(event).await.unwrap();
-
-                Some(block_info)
+                Some(block_info.clone())
             }
-        }
+        };
+        self.votor_channel
+            .send(event)
+            .await
+            .expect("votor should not drop the event receiver");
+        block_info
     }
 
     /// Gives reference to stored block data for the given `block_id`.

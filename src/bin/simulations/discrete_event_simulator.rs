@@ -12,10 +12,10 @@ mod timings;
 use std::cmp::Reverse;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{RwLock, RwLockReadGuard};
 
 use alpenglow::network::simulated::ping_data::{PingServer, get_ping};
-use alpenglow::{Stake, ValidatorId, ValidatorInfo};
+use alpenglow::{Stake, ValidatorIndex, ValidatorInfo};
+use parking_lot::{RwLock, RwLockReadGuard};
 use rand::prelude::*;
 use rayon::prelude::*;
 
@@ -155,7 +155,11 @@ impl<P: Protocol> SimulationEngine<P> {
                 let dep_timings = event
                     .dependencies(self.builder.params())
                     .into_iter()
-                    .map(|dep| timings.get(dep).unwrap())
+                    .map(|dep| {
+                        timings
+                            .get(dep)
+                            .expect("dependency timings should be initialized before use")
+                    })
                     .collect::<Vec<_>>();
                 let latencies = event.calculate_timing(
                     timings.start_time(),
@@ -165,19 +169,25 @@ impl<P: Protocol> SimulationEngine<P> {
                     &self.environment,
                 );
                 for (validator, latency) in latencies.iter().enumerate() {
-                    timings.record(event, *latency, ValidatorId::new(validator as u64));
+                    timings.record(event, *latency, ValidatorIndex::new(validator as u64));
                 }
             }
         }
 
         // commit timings to stats
-        let mut stats_map = self.stats.write().unwrap();
+        let mut stats_map = self.stats.write();
         stats_map.record_latencies(timings, &self.environment);
     }
 
     /// References the timing stats.
     pub(crate) fn stats(&'_ self) -> RwLockReadGuard<'_, TimingStats<P>> {
-        self.stats.read().unwrap()
+        self.stats.read()
+    }
+
+    /// Consumes the engine and returns the accumulated timing stats by value.
+    #[cfg(test)]
+    pub(crate) fn into_stats(self) -> TimingStats<P> {
+        self.stats.into_inner()
     }
 }
 
@@ -241,7 +251,7 @@ impl SimulationEnvironment {
         let mut vals_with_ping_data = validators_with_ping_data.to_vec();
         vals_with_ping_data.sort_by_key(|(v, _)| Reverse(v.stake));
         for (i, (v, _)) in vals_with_ping_data.iter_mut().enumerate() {
-            v.id = ValidatorId::new(i as u64);
+            v.id = ValidatorIndex::new(i as u64);
         }
 
         // split and build environment
@@ -263,19 +273,24 @@ impl SimulationEnvironment {
     }
 
     /// Calculates how long it takes the `validator` to serialize `bytes` onto the wire.
-    pub(crate) fn transmission_delay(&self, bytes: usize, validator: ValidatorId) -> SimTime {
+    pub(crate) fn transmission_delay(&self, bytes: usize, validator: ValidatorIndex) -> SimTime {
         let Some(bandwidths) = &self.bandwidths else {
             return SimTime::ZERO;
         };
-        let latency_secs = bytes as f64 * 8.0 / bandwidths[validator.as_index()] as f64;
+        let latency_secs = bytes as f64 * 8.0 / bandwidths[validator.as_usize()] as f64;
         SimTime::from_secs(latency_secs)
     }
 
     /// Finds the latency between the `sender` and `receiver` validators.
-    pub(crate) fn propagation_delay(&self, sender: ValidatorId, receiver: ValidatorId) -> SimTime {
-        let sender_server = self.ping_servers[sender.as_index()].id;
-        let receiver_server = self.ping_servers[receiver.as_index()].id;
-        let rtt_ping_ms = get_ping(sender_server, receiver_server).unwrap();
+    pub(crate) fn propagation_delay(
+        &self,
+        sender: ValidatorIndex,
+        receiver: ValidatorIndex,
+    ) -> SimTime {
+        let sender_server = self.ping_servers[sender.as_usize()].id;
+        let receiver_server = self.ping_servers[receiver.as_usize()].id;
+        let rtt_ping_ms = get_ping(sender_server, receiver_server)
+            .expect("ping data should exist for all validator pairs");
         let one_way_ping_secs = rtt_ping_ms / 2.0 / 1e3;
         SimTime::from_secs(one_way_ping_secs)
     }
@@ -351,15 +366,15 @@ pub(crate) fn broadcast_first_arrival_or_dep(
             .iter()
             .enumerate()
             .map(|(sender, start_send)| {
-                let sender = ValidatorId::new(sender as u64);
+                let sender = ValidatorIndex::new(sender as u64);
                 let prop_delay =
-                    environment.propagation_delay(sender, ValidatorId::new(recipient as u64));
+                    environment.propagation_delay(sender, ValidatorIndex::new(recipient as u64));
                 let tx_offset_bytes = (recipient + 1) * message_size;
                 let tx_delay = environment.transmission_delay(tx_offset_bytes, sender);
                 *start_send + prop_delay + tx_delay
             })
             .min()
-            .unwrap();
+            .expect("there should be at least one sender");
 
         if first_arrival_time < *recipient_timing {
             *recipient_timing = first_arrival_time;
@@ -390,9 +405,9 @@ pub(crate) fn broadcast_stake_threshold(
             .iter()
             .enumerate()
             .map(|(sender, start_send)| {
-                let sender = ValidatorId::new(sender as u64);
+                let sender = ValidatorIndex::new(sender as u64);
                 let prop_delay =
-                    environment.propagation_delay(sender, ValidatorId::new(recipient as u64));
+                    environment.propagation_delay(sender, ValidatorIndex::new(recipient as u64));
                 let tx_offset_bytes = (recipient + 1) * message_size;
                 let tx_delay = environment.transmission_delay(tx_offset_bytes, sender);
                 (*start_send + prop_delay + tx_delay, sender)
@@ -404,7 +419,7 @@ pub(crate) fn broadcast_stake_threshold(
         let mut stake_so_far = Stake::new(0);
         for (arrival_timing, sender) in arrival_timings {
             *recipient_timing = arrival_timing;
-            stake_so_far += environment.validators[sender.as_index()].stake;
+            stake_so_far += environment.validators[sender.as_usize()].stake;
             if stake_so_far.inner() as f64 >= threshold * environment.total_stake.inner() as f64 {
                 break;
             }
@@ -435,13 +450,13 @@ pub(crate) fn broadcast(
         .enumerate()
         .map(|(sender, sender_timing)| {
             res.network
-                .time_next_free_after(ValidatorId::new(sender as u64), *sender_timing)
+                .time_next_free_after(ValidatorIndex::new(sender as u64), *sender_timing)
         })
         .collect();
 
     // reserve the network resource for the full broadcast
     for (sender, &start_time) in start_times.iter().enumerate() {
-        let sender = ValidatorId::new(sender as u64);
+        let sender = ValidatorIndex::new(sender as u64);
         let total_bytes = environment.num_validators() * message_size;
         let total_tx_time = environment.transmission_delay(total_bytes, sender);
         resources
@@ -590,8 +605,8 @@ mod tests {
         engine.run_many_parallel(NUM_SIMULATION_ITERATIONS);
 
         // check that the timings are correct
+        let stats = engine.into_stats();
         for event_id in 0..NUM_EVENTS {
-            let stats = engine.stats();
             let event_stats = stats.get(&TestEvent(event_id)).unwrap();
             // timings should be the same for all validators, thus also for all percentiles
             for percentile in 1..=100 {
@@ -609,8 +624,8 @@ mod tests {
         engine.run_many_sequential(NUM_SIMULATION_ITERATIONS);
 
         // check that the timings are correct
+        let stats = engine.into_stats();
         for event_id in 0..NUM_EVENTS {
-            let stats = engine.stats();
             let event_stats = stats.get(&TestEvent(event_id)).unwrap();
             // timings should be the same for all validators, thus also for all percentiles
             for percentile in 1..=100 {

@@ -55,14 +55,20 @@ impl ValidatedShred {
                         merkle_root: derived_root,
                     });
                 }
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                if shred
+                    .merkle_root_sig
+                    .verify_bytes(derived_root.as_ref(), pk)
+                {
                     Err(ShredVerifyError::Equivocation)
                 } else {
                     Err(ShredVerifyError::InvalidSignature)
                 }
             }
             None => {
-                if shred.merkle_root_sig.verify(derived_root.as_ref(), pk) {
+                if shred
+                    .merkle_root_sig
+                    .verify_bytes(derived_root.as_ref(), pk)
+                {
                     Ok(Self {
                         shred,
                         merkle_root: derived_root,
@@ -76,9 +82,10 @@ impl ValidatedShred {
 
     /// Creates a new [`ValidatedShred`] when the inner [`Shred`] does not need to be verified.
     ///
-    /// Used only by the parent module to create a validated shred when it is guaranteed that the inner shred comes from verified sources and does not need to be verified.
-    pub(super) fn new_validated(shred: Shred) -> Self {
-        let merkle_root = shred.merkle_root();
+    /// Used only by the parent module to wrap shreds that are already known to be valid.
+    /// The caller must pass the slice's Merkle root, which avoids re-deriving it from the shred's proof.
+    pub(super) fn new_validated(shred: Shred, merkle_root: SliceRoot) -> Self {
+        debug_assert_eq!(shred.merkle_root(), merkle_root);
         Self { shred, merkle_root }
     }
 
@@ -126,13 +133,13 @@ mod tests {
 
     use super::*;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+    use crate::shredder::{RegularShredder, Shredder};
     use crate::types::slice::create_slice_with_invalid_txs;
 
     fn create_random_shred() -> (Shred, SecretKey) {
         let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE - 16);
+        let slice = create_slice_with_invalid_txs(RegularShredder::MAX_DATA_SIZE);
         let shreds = shredder.shred(slice, &sk).unwrap();
         let shred = shreds[shreds.len() - 1].clone().into_shred();
         (shred, sk)

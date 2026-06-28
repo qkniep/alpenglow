@@ -16,11 +16,12 @@
 //!   - The maximum goodput that can be achieved for a given bandwidth distribution.
 
 use std::fs::File;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use alpenglow::ValidatorInfo;
 use alpenglow::disseminator::rotor::{QuorumSamplingStrategy, SamplingStrategy};
 use alpenglow::shredder::MAX_DATA_PER_SHRED;
+use parking_lot::Mutex;
 use rand::prelude::*;
 
 /// Instance of a bandwidth requirements test.
@@ -108,7 +109,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
-        let mut csv_file = csv_file.lock().unwrap();
+        let mut csv_file = csv_file.lock();
         csv_file
             .write_record(&[
                 stake_distribution.to_string(),
@@ -117,8 +118,8 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
                 self.workload_test.num_shreds().to_string(),
                 (min_supported_bandwidth / 2.0).to_string(),
             ])
-            .unwrap();
-        csv_file.flush().unwrap();
+            .expect("failed to write CSV record");
+        csv_file.flush().expect("failed to flush CSV file");
     }
 
     /// Evaluates the bandwidth usage.
@@ -133,7 +134,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
             bandwidth_usage[i] = (self.leader_bandwidth as f64 * ratio, i);
         }
 
-        bandwidth_usage.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        bandwidth_usage.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         let mut binned_bandwidth_usage = vec![(0.0, 0, 0); 99];
         for (i, (bandwidth, _)) in bandwidth_usage.into_iter().enumerate() {
             let bin = i / 13;
@@ -149,7 +150,7 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
         let stake_distribution = parts[0];
         let sampling_strategy = parts[1];
 
-        let mut csv_file = csv_file.lock().unwrap();
+        let mut csv_file = csv_file.lock();
         for (bandwidth, validator, _) in binned_bandwidth_usage {
             csv_file
                 .write_record(&[
@@ -161,9 +162,9 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> BandwidthTest<L, R> {
                     32_270_000.0.to_string(),
                     bandwidth.to_string(),
                 ])
-                .unwrap();
+                .expect("failed to write CSV record");
         }
-        csv_file.flush().unwrap();
+        csv_file.flush().expect("failed to flush CSV file");
     }
 
     /// Resets the internal state.
@@ -210,13 +211,13 @@ impl<L: SamplingStrategy, R: QuorumSamplingStrategy> WorkloadTest<L, R> {
         let num_shreds = self.rotor_sampler.quorum_size();
         let leader = self.leader_sampler.sample(rng);
         self.leader_workload += num_shreds as u64;
-        self.workload[leader.as_index()] += num_shreds as u64;
+        self.workload[leader.as_usize()] += num_shreds as u64;
         let relays = self.rotor_sampler.sample_quorum(rng);
         for relay in relays {
             if leader == relay {
-                self.workload[relay.as_index()] += self.validators.len() as u64 - 1;
+                self.workload[relay.as_usize()] += self.validators.len() as u64 - 1;
             } else {
-                self.workload[relay.as_index()] += self.validators.len() as u64 - 2;
+                self.workload[relay.as_usize()] += self.validators.len() as u64 - 2;
             }
         }
     }

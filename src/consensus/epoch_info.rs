@@ -5,7 +5,7 @@ use crate::consensus::{
     QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, WEAK_QUORUM_THRESHOLD, WEAKEST_QUORUM_THRESHOLD,
 };
 use crate::types::SLOTS_PER_WINDOW;
-use crate::{Slot, Stake, ValidatorId, ValidatorInfo};
+use crate::{Slot, Stake, ValidatorIndex, ValidatorInfo};
 
 /// Shared epoch information, identical across all validators.
 ///
@@ -22,7 +22,7 @@ pub struct EpochInfo {
 /// Adds the node's own identity on top of the shared epoch data.
 #[derive(Clone, Debug)]
 pub struct ValidatorEpochInfo {
-    own_id: ValidatorId,
+    own_id: ValidatorIndex,
     epoch: EpochInfo,
 }
 
@@ -35,7 +35,7 @@ impl EpochInfo {
     pub fn new(validators: Vec<ValidatorInfo>) -> Self {
         for (i, v) in validators.iter().enumerate() {
             assert!(
-                v.id.as_index() == i,
+                v.id.as_usize() == i,
                 "validator at index {i} has id {}, expected {i}",
                 v.id
             );
@@ -53,14 +53,14 @@ impl EpochInfo {
         &self.validators
     }
 
-    /// Gives the validator info for the given validator ID.
+    /// Gives the validator info for the given validator index.
     ///
     /// # Panics
     ///
-    /// Panics if the validator ID is out of range.
+    /// Panics if the validator index is out of range.
     #[must_use]
-    pub fn validator(&self, id: ValidatorId) -> &ValidatorInfo {
-        &self.validators[id.as_index()]
+    pub fn validator(&self, id: ValidatorIndex) -> &ValidatorInfo {
+        &self.validators[id.as_usize()]
     }
 
     /// Gives the validator info for the leader for the given slot.
@@ -68,7 +68,7 @@ impl EpochInfo {
     pub fn leader(&self, slot: Slot) -> &ValidatorInfo {
         let window = slot.inner() / SLOTS_PER_WINDOW;
         let leader_id = window % (self.validators.len() as u64);
-        self.validator(ValidatorId::new(leader_id))
+        self.validator(ValidatorIndex::new(leader_id))
     }
 
     /// Gives the total stake over all validators.
@@ -108,18 +108,18 @@ impl ValidatorEpochInfo {
     /// # Panics
     ///
     /// Panics if `own_id` is not a valid validator index.
-    pub fn new(own_id: ValidatorId, epoch: EpochInfo) -> Self {
+    pub fn new(own_id: ValidatorIndex, epoch: EpochInfo) -> Self {
         assert!(
-            own_id.as_index() < epoch.validators.len(),
+            own_id.as_usize() < epoch.validators.len(),
             "own_id {own_id} is out of range for {} validators",
             epoch.validators.len()
         );
         Self { own_id, epoch }
     }
 
-    /// Returns our own validator ID.
+    /// Returns our own validator index.
     #[must_use]
-    pub fn own_id(&self) -> ValidatorId {
+    pub fn own_id(&self) -> ValidatorIndex {
         self.own_id
     }
 

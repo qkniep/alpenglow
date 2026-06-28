@@ -16,7 +16,7 @@ use tokio::net::UdpSocket;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::MTU_BYTES;
+use super::{MTU_BYTES, NetworkMessageConfig};
 use crate::network::Network;
 
 /// Number of bytes used as buffer for any incoming packet.
@@ -28,6 +28,7 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 /// Implementation of network abstraction over a simple UDP socket.
 pub struct UdpNetwork<S, R> {
     socket: UdpSocket,
+    port: u16,
     _msg_types: PhantomData<(S, R)>,
 }
 
@@ -40,9 +41,16 @@ impl<S, R> UdpNetwork<S, R> {
     #[must_use]
     pub fn new(port: u16) -> Self {
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-        let socket = futures::executor::block_on(UdpSocket::bind(addr)).unwrap();
+        let socket = futures::executor::block_on(UdpSocket::bind(addr))
+            .expect("binding UDP socket should succeed; is the port already in use?");
+        // `port` might be 0 above, which has the OS assign a free one
+        let port = socket
+            .local_addr()
+            .expect("bound socket should have a local address")
+            .port();
         Self {
             socket,
+            port,
             _msg_types: PhantomData,
         }
     }
@@ -56,7 +64,7 @@ impl<S, R> UdpNetwork<S, R> {
 
     /// Returns the UDP port number the network is bound to.
     pub fn port(&self) -> u16 {
-        self.socket.local_addr().unwrap().port()
+        self.port
     }
 
     async fn send_serialized(&self, bytes: &[u8], addr: SocketAddr) -> std::io::Result<()> {
@@ -71,7 +79,7 @@ impl<S, R> UdpNetwork<S, R> {
 impl<S, R> Network for UdpNetwork<S, R>
 where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
+    R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -81,7 +89,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = &wincode::serialize(msg).unwrap();
+        let bytes = &crate::serialize(msg);
         let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
@@ -90,15 +98,15 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = &wincode::serialize(msg).unwrap();
+        let bytes = &crate::serialize(msg);
         self.send_serialized(bytes, addr).await
     }
 
     async fn receive(&self) -> std::io::Result<R> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
-            let _bytes_recved = self.socket.recv(&mut buf).await?;
-            let msg = match wincode::deserialize(&buf) {
+            let bytes_recved = self.socket.recv(&mut buf).await?;
+            let msg = match crate::network::deserialize(&buf[..bytes_recved]) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("deserializing failed with {err:?}");

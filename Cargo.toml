@@ -16,10 +16,10 @@ publish = false
 aes = { version = "0.9", features = ["hazmat", "zeroize"] }
 async-trait = "0.1"
 anyhow = "1"
-bitvec = { version = "1", features = ["serde"] }
+bitvec = "1"
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
-clap = { version = "4", features = ["derive"] }
-csv = "1"
+clap = { version = "4", features = ["derive"], optional = true }
+csv = { version = "1", optional = true }
 ctr = "0.10"
 derive_more = { version = "2", features = ["add", "add_assign", "as_ref", "from", "into", "sum"] }
 ed25519-zebra = "4"
@@ -29,40 +29,52 @@ fastrace-opentelemetry = { version = "0.18", optional = true }
 futures = "0.3"
 hex = "0.4"
 hex-literal = "1"
-hotpath = "0.16"
+hotpath = "0.18"
 log = "0.4"
-logforth = { version = "0.29", features = ["append-fastrace", "bridge-log"] }
+logforth = { version = "0.30", features = ["append-fastrace", "bridge-log", "filter-rustlog"] }
 quick_cache = "0.6"
 opentelemetry = { version = "0.32", optional = true }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"], optional = true }
 opentelemetry_sdk = { version = "0.32", optional = true }
 owo-colors = "4"
+parking_lot = "0.12"
 rand = "0.10"
 rayon = { version = "1", optional = true }
 reed-solomon-simd = "3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", optional = true }
 sha2 = "0.11"
 smallvec = "1"
 static_assertions = "1"
-statrs = { version = "0.18", optional = true }
 thiserror = "2"
 time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
-toml = "1"
+toml = { version = "1", optional = true }
 wincode = { version = "0.5", features = ["derive"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+csv = "1"
 divan = "0.1"
 mockall = "0.14"
+serde_json = "1"
 tempfile = "3"
+toml = "1"
 
 [features]
+# CLI binaries (everything under `src/bin/`). Off by default to keep the
+# library build lean — pass `--features cli` to build them.
+cli = ["dep:clap", "dep:toml"]
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
-simulations = ["dep:rayon", "dep:statrs"]
+# Mainnet-derived simulation inputs (`network::simulated::{ping_data,
+# stake_distribution}`) and the `simulations` binary. Pulls in `csv` /
+# `serde_json` for parsing `data/*.{csv,json}` and `rayon` for parallel sims.
+simulations = ["dep:rayon", "dep:csv", "dep:serde_json"]
+# Exposes `test_utils` and other test-only methods to out-of-crate test/bench targets.
+# Off by default; enabled implicitly by `cargo test` and explicitly for some benches.
+test-utils = []
 # Enables `fastrace` span collection and OpenTelemetry (OTLP) export.
 # Off by default: Without it, `fastrace` instrumentation compiles to no-ops and
 # the gRPC/OTLP dependency stack is dropped entirely.
@@ -80,6 +92,19 @@ unreachable_pub = "warn"
 
 [lints.clippy]
 cast_possible_truncation = "allow"
+# panic hygiene
+unwrap_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes = "warn"
+ignore_without_reason = "warn"
+# async / perf
+large_futures = "warn"
+redundant_clone = "warn"
+significant_drop_tightening = "warn"
+or_fun_call = "warn"
+unchecked_time_subtraction = "warn"
 
 [profile.release]
 debug = true
@@ -98,16 +123,44 @@ harness = false
 [[bench]]
 name = "disseminator"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "network"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "shredder"
 harness = false
+required-features = ["test-utils"]
+
+[[bin]]
+name = "all2all_test"
+path = "src/bin/all2all_test.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "local_cluster"
+path = "src/bin/local_cluster.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "node"
+path = "src/bin/node.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "performance_test"
+path = "src/bin/performance_test.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "workload_generator"
+path = "src/bin/workload_generator.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "simulations"
 path = "src/bin/simulations/main.rs"
-required-features = ["simulations"]
+required-features = ["cli", "simulations"]

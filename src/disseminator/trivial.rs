@@ -63,7 +63,7 @@ mod tests {
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-    use crate::{Stake, ValidatorId};
+    use crate::{Stake, ValidatorIndex};
 
     fn create_disseminator_instances(
         count: u64,
@@ -79,14 +79,14 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
 

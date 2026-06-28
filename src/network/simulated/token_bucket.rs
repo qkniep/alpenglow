@@ -91,7 +91,7 @@ mod tests {
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn extreme_rate() {
         // 1 GiB/s : 5M packets a 1500 bytes
         token_bucket_experiment(1024 * 1024 * 1024, 5_000_000, 1500).await;

@@ -1,0 +1,42 @@
+name: Coverage
+
+# Test coverage analysis with cargo-llvm-cov, uploaded to Codecov.
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/rust-setup
+        with:
+          tools: nextest,cargo-llvm-cov
+      - uses: ./.github/actions/download-data
+
+      - name: Coverage
+        run: |
+          cargo llvm-cov --lcov --workspace --all-features \
+            --ignore-filename-regex='(benches|src/bin|src/main.rs)' \
+            --output-path lcov.info nextest
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        with:
+          files: lcov.info
+          # Keep false: `true` fails CI on fork PRs that can't read the repo
+          # secret. Flip to true once coverage runs only on trusted events.
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true

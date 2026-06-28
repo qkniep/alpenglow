@@ -29,19 +29,21 @@ use super::ping_data::{PingServer, coordinates_for_city, find_closest_ping_serve
 use crate::crypto::aggsig;
 use crate::crypto::signature::SecretKey;
 use crate::network::dontcare_sockaddr;
-use crate::{Stake, ValidatorId, ValidatorInfo};
+use crate::{Stake, ValidatorIndex, ValidatorInfo};
 
 /// Information about all validators on Solana mainnet.
 pub static VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
-    let file = File::open("data/mainnet_validators_epoch860.json").unwrap();
-    let validators: Vec<ValidatorData> = serde_json::from_reader(file).unwrap();
+    let file = File::open("data/mainnet_validators_epoch860.json")
+        .expect("mainnet validator JSON should be present; run ./download_data.sh");
+    let validators: Vec<ValidatorData> =
+        serde_json::from_reader(file).expect("mainnet validator JSON should parse");
     validators
 });
 
 /// Data for a single validator on Solana.
 ///
 /// This matches the format of the data in `data/mainnet_validators_epoch860.json`.
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ValidatorData {
     network: String,
@@ -103,7 +105,8 @@ impl ValidatorData {
 /// Same as [`VALIDATOR_DATA`], but for Sui mainnet.
 pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     // read CSV
-    let file = File::open("data/sui_validators.csv").unwrap();
+    let file = File::open("data/sui_validators.csv")
+        .expect("Sui validator CSV should be present; run ./download_data.sh");
     let reader = csv::Reader::from_reader(file);
     let sui_validators = reader
         .into_deserialize::<SuiValidatorData>()
@@ -113,7 +116,10 @@ pub static SUI_VALIDATOR_DATA: LazyLock<Vec<ValidatorData>> = LazyLock::new(|| {
     let validators: Vec<ValidatorData> = sui_validators
         .into_iter()
         .map(|v| {
-            let (lat, lon) = v.coords.split_once(',').unwrap();
+            let (lat, lon) = v
+                .coords
+                .split_once(',')
+                .expect("coords field should contain a comma separating lat and lon");
             ValidatorData {
                 name: Some(v.name),
                 is_active: true,
@@ -200,7 +206,7 @@ pub fn validators_from_validator_data(
     let mut validators = Vec::new();
     for v in validator_data {
         if let Some(stake) = v.active_stake() {
-            let id = ValidatorId::new(validators.len() as u64);
+            let id = ValidatorIndex::new(validators.len() as u64);
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
@@ -210,8 +216,8 @@ pub fn validators_from_validator_data(
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
     }
@@ -227,20 +233,24 @@ pub fn validators_from_validator_data(
         let (Some(lat), Some(lon)) = (&v.latitude, &v.longitude) else {
             continue;
         };
-        let ping_server = find_closest_ping_server(lat.parse().unwrap(), lon.parse().unwrap());
+        let parse = |s: &str| {
+            s.parse()
+                .expect("validator coordinates should parse as f64")
+        };
+        let ping_server = find_closest_ping_server(parse(lat), parse(lon));
         stake_with_ping_server += stake;
         let sk = SecretKey::new(&mut rand::rng());
         let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
         validators_with_ping_data.push((
             ValidatorInfo {
-                id: ValidatorId::new(validators_with_ping_data.len() as u64),
+                id: ValidatorIndex::new(validators_with_ping_data.len() as u64),
                 stake,
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             },
             ping_server,
         ));
@@ -271,7 +281,7 @@ pub fn validators_from_validator_data(
 
     // give validators with ping data consecutive IDs
     for (i, v) in validators_with_ping_data.iter_mut().enumerate() {
-        v.0.id = ValidatorId::new(i as u64);
+        v.0.id = ValidatorIndex::new(i as u64);
     }
 
     (validators, validators_with_ping_data)
@@ -286,7 +296,8 @@ pub fn validators_from_validator_data(
 pub fn hub_validator_data(hubs: Vec<(String, f64)>) -> Vec<ValidatorData> {
     let mut validators = Vec::new();
     for (city, frac_stake) in hubs {
-        let (lat, lon) = coordinates_for_city(&city).unwrap();
+        let (lat, lon) =
+            coordinates_for_city(&city).expect("hub city should be present in the ping dataset");
         for _ in 0..30 {
             let stake = Stake::new((frac_stake * 100.0 * 10_000.0 / 30.0).round() as u64);
             validators.push(ValidatorData {
