@@ -321,14 +321,18 @@ impl Blockstore for BlockstoreImpl {
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> Option<BlockInfo> {
         let slot = slice.slot;
-        let events = self.slot_data_mut(slot).add_own_slice(slice, shreds);
-        let mut block_info = None;
-        for event in events {
-            if let Some(info) = self.send_blockstore_event(event).await {
-                block_info = Some(info);
-            }
+        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(slice, shreds);
+        if first_shred {
+            self.send_blockstore_event(BlockstoreEvent::FirstShred(slot))
+                .await;
         }
-        block_info
+        match completed {
+            Some(block_info) => {
+                self.send_blockstore_event(BlockstoreEvent::Block { slot, block_info })
+                    .await
+            }
+            None => None,
+        }
     }
 
     /// Gives the disseminated block hash for a given `slot`, if any.

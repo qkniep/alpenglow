@@ -20,7 +20,7 @@ use crate::consensus::{SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool, TOTAL_SHREDS};
 use crate::types::{ReconstructedSlice, Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
@@ -353,6 +353,7 @@ where
         payload: SlicePayload,
     ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
+        let slice_index = header.slice_index;
         let is_last = header.is_last;
         // Keep the payload so we can hand a ready-made slice to the blockstore,
         // instead of making it Reed-Solomon-decode our own data back out.
@@ -364,8 +365,20 @@ where
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
 
+        // Disseminate every shred. Dissemination is best-effort: a send failure
+        // is usually transient (e.g. a full socket buffer), so we try every
+        // shred rather than bailing on the first, and we never propagate the
+        // error. The slice is recorded locally below regardless, so any shred
+        // that didn't make it out is recoverable by peers via repair — aborting
+        // block production over a transient send error would needlessly stall
+        // this leader.
+        let mut failed = 0;
+        let mut first_err = None;
         for s in &shreds {
-            self.disseminator.send(s.as_shred()).await?;
+            if let Err(e) = self.disseminator.send(s.as_shred()).await {
+                failed += 1;
+                first_err.get_or_insert(e);
+            }
         }
 
         // Fast path: we already have every shred and the reconstructed slice, so
@@ -379,6 +392,14 @@ where
             .await
             .add_own_slice(slice, shreds)
             .await;
+
+        if let Some(e) = first_err {
+            warn!(
+                "failed to disseminate {failed}/{TOTAL_SHREDS} shreds for slice \
+                 {slice_index} in slot {slot}: {e}; slice is recorded locally, \
+                 relying on repair"
+            );
+        }
 
         match block_info {
             Some(block_info) => {

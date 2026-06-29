@@ -114,7 +114,7 @@ impl SlotBlockData {
         &mut self,
         slice: ReconstructedSlice,
         shreds: [ValidatedShred; TOTAL_SHREDS],
-    ) -> Vec<BlockstoreEvent> {
+    ) -> (bool, Option<BlockInfo>) {
         debug_assert_eq!(slice.slot, self.slot);
         self.disseminated.add_own_slice(slice, shreds)
     }
@@ -205,11 +205,7 @@ impl BlockData {
         }
 
         match (header.is_last, self.last_slice) {
-            (true, None) => {
-                self.last_slice = Some(slice_index);
-                self.slices.retain(|&ind, _| ind <= slice_index);
-                self.shreds.retain(|&ind, _| ind <= slice_index);
-            }
+            (true, None) => self.mark_last_slice(slice_index),
             (true, Some(l)) => {
                 if slice_index != l {
                     return Err(AddShredError::InvalidShred);
@@ -256,50 +252,51 @@ impl BlockData {
         }
     }
 
+    /// Marks `slice_index` as the block's last slice and prunes anything cached
+    /// beyond it. Shared by the dissemination and own-slice paths so the
+    /// trimming rule lives in exactly one place.
+    fn mark_last_slice(&mut self, slice_index: SliceIndex) {
+        self.last_slice = Some(slice_index);
+        self.slices.retain(|&ind, _| ind <= slice_index);
+        self.shreds.retain(|&ind, _| ind <= slice_index);
+    }
+
     /// Ingests a slice produced locally (the leader's own block).
     ///
     /// Stores all shreds and the already-reconstructed slice directly, skipping
     /// Reed-Solomon decoding and re-verification, then assembles the block if
     /// this was the last slice. Leaves the same state behind as the
     /// dissemination path (shreds, slices, caches, double-Merkle tree, completed
-    /// block) and returns the same events.
+    /// block).
+    ///
+    /// Returns `(is_first_slice, completed_block)`: the first flag asks the
+    /// caller to emit a [`BlockstoreEvent::FirstShred`], the second carries the
+    /// [`BlockInfo`] once the final slice completes the block.
     fn add_own_slice(
         &mut self,
         slice: ReconstructedSlice,
         shreds: [ValidatedShred; TOTAL_SHREDS],
-    ) -> Vec<BlockstoreEvent> {
+    ) -> (bool, Option<BlockInfo>) {
         debug_assert_eq!(slice.slot, self.slot);
         let slice_index = slice.slice_index;
         let is_first = self.shreds.is_empty();
 
-        // Merkle root is trusted: we built and signed these shreds ourselves.
+        // Merkle root is trusted: we built and signed these shreds ourselves,
+        // and each slice is produced exactly once, so the entry is always vacant.
         self.merkle_root_cache
-            .entry(slice_index)
-            .or_insert_with(|| slice.merkle_root().clone());
+            .insert(slice_index, slice.merkle_root().clone());
 
-        // mirror the last-slice bookkeeping from `add_validated_shred`
         if slice.is_last {
-            self.last_slice = Some(slice_index);
-            self.slices.retain(|&ind, _| ind <= slice_index);
-            self.shreds.retain(|&ind, _| ind <= slice_index);
+            self.mark_last_slice(slice_index);
         }
 
         // store everything directly — no `deshred()` / RS decode
         self.shreds.insert(slice_index, shreds.map(Some));
         self.slices.insert(slice_index, slice);
 
-        let mut events = Vec::new();
-        if is_first {
-            events.push(BlockstoreEvent::FirstShred(self.slot));
-        }
-        match self.try_reconstruct_block() {
-            ReconstructBlockResult::NoAction => {}
-            ReconstructBlockResult::Complete(block_info) => {
-                events.push(BlockstoreEvent::Block {
-                    slot: self.slot,
-                    block_info,
-                });
-            }
+        let block_info = match self.try_reconstruct_block() {
+            ReconstructBlockResult::NoAction => None,
+            ReconstructBlockResult::Complete(block_info) => Some(block_info),
             ReconstructBlockResult::Error => {
                 // Our own block, built from data we serialized and signed, must
                 // reconstruct. Reaching here means a producer-side logic bug,
@@ -309,8 +306,8 @@ impl BlockData {
                     self.slot,
                 );
             }
-        }
-        events
+        };
+        (is_first, block_info)
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
