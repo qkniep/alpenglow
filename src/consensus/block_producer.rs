@@ -382,7 +382,10 @@ where
 
         match block_info {
             Some(block_info) => {
-                debug_assert!(is_last, "block completed before its last slice");
+                // Trusted local data: a violation here is our own producer bug,
+                // and the only alternative is proposing a truncated block that
+                // followers can never reconstruct. Crash loudly instead.
+                assert!(is_last, "block completed before its last slice");
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
                     .write()
@@ -392,7 +395,7 @@ where
                 Ok(Some(block_info.hash))
             }
             None => {
-                debug_assert!(!is_last, "last slice did not complete the block");
+                assert!(!is_last, "last slice did not complete the block");
                 Ok(None)
             }
         }

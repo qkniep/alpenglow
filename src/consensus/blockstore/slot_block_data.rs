@@ -301,7 +301,13 @@ impl BlockData {
                 });
             }
             ReconstructBlockResult::Error => {
-                debug_assert!(false, "leader produced a block that failed reconstruction");
+                // Our own block, built from data we serialized and signed, must
+                // reconstruct. Reaching here means a producer-side logic bug,
+                // not adversarial input, so there is no graceful recovery.
+                unreachable!(
+                    "leader produced a block that failed reconstruction: slot {}, slice {slice_index:?}",
+                    self.slot,
+                );
             }
         }
         events
