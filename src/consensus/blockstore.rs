@@ -18,7 +18,7 @@ use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
 use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, TOTAL_SHREDS, ValidatedShred};
-use crate::types::{ReconstructedSlice, SliceIndex};
+use crate::types::{SliceIndex, SlicePayload};
 use crate::{Block, BlockId, Slot};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
@@ -77,12 +77,13 @@ pub trait Blockstore {
     /// Ingests a slice the local node produced itself, as leader.
     ///
     /// Skips Reed-Solomon decoding and re-verification: the caller hands over
-    /// all [`TOTAL_SHREDS`] freshly produced shreds plus the matching
-    /// [`ReconstructedSlice`]. Returns the [`BlockInfo`] once the final slice
-    /// completes the block, mirroring [`Blockstore::add_shred_from_dissemination`].
+    /// all [`TOTAL_SHREDS`] freshly produced shreds plus the decoded slice
+    /// payload, and the blockstore rebuilds the slice from them. Returns the
+    /// [`BlockInfo`] once the final slice completes the block, mirroring
+    /// [`Blockstore::add_shred_from_dissemination`].
     async fn add_own_slice(
         &mut self,
-        slice: ReconstructedSlice,
+        payload: SlicePayload,
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> Option<BlockInfo>;
     #[allow(clippy::needless_lifetimes)]
@@ -310,18 +311,19 @@ impl Blockstore for BlockstoreImpl {
 
     /// Ingests a locally produced slice (leader fast path); see trait docs.
     ///
-    /// No shredder is checked out and no decoding happens: the shreds and the
-    /// reconstructed slice are stored as-is. Emits the same [`BlockstoreEvent`]s
-    /// as the dissemination path and returns the [`BlockInfo`] on completion.
+    /// No shredder is checked out and no decoding happens: the shreds are stored
+    /// as-is and the slice is rebuilt from them. Emits the same
+    /// [`BlockstoreEvent`]s as the dissemination path and returns the
+    /// [`BlockInfo`] on completion.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_own_slice(
         &mut self,
-        slice: ReconstructedSlice,
+        payload: SlicePayload,
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> Option<BlockInfo> {
-        let slot = slice.slot;
-        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(slice, shreds);
+        let slot = shreds[0].payload().header.slot;
+        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(payload, shreds);
         if first_shred {
             self.send_blockstore_event(BlockstoreEvent::FirstShred(slot))
                 .await;
@@ -422,7 +424,7 @@ mod tests {
     use crate::crypto::signature::SecretKey;
     use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::test_utils::{create_random_block, create_random_shredded_block};
-    use crate::types::{ReconstructedSlice, Slice, SliceIndex};
+    use crate::types::{Slice, SliceIndex, SlicePayload};
 
     struct TestContext {
         sk: SecretKey,
@@ -457,12 +459,10 @@ mod tests {
     fn shred_as_leader(
         slice: Slice,
         sk: &SecretKey,
-    ) -> (ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]) {
+    ) -> (SlicePayload, [ValidatedShred; TOTAL_SHREDS]) {
         let payload = slice.clone().deconstruct().1;
         let shreds = RegularShredder::default().shred(slice, sk).unwrap();
-        let merkle_root = shreds[0].merkle_root().clone();
-        let reconstructed = ReconstructedSlice::from_shreds(payload, &shreds[0], merkle_root);
-        (reconstructed, shreds)
+        (payload, shreds)
     }
 
     #[tokio::test]
@@ -777,8 +777,8 @@ mod tests {
         let mut completed = None;
         for slice in slices {
             let is_last = slice.is_last;
-            let (reconstructed, shreds) = shred_as_leader(slice, &sk);
-            let block_info = own.add_own_slice(reconstructed, shreds).await;
+            let (payload, shreds) = shred_as_leader(slice, &sk);
+            let block_info = own.add_own_slice(payload, shreds).await;
             // Only the last slice completes the block.
             assert_eq!(block_info.is_some(), is_last);
             if let Some(info) = block_info {

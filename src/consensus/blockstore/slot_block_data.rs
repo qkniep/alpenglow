@@ -14,7 +14,7 @@ use thiserror::Error;
 use super::{BlockInfo, BlockstoreEvent};
 use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
 use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
-use crate::types::{ReconstructedSlice, SliceIndex};
+use crate::types::{ReconstructedSlice, SliceIndex, SlicePayload};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
@@ -107,16 +107,15 @@ impl SlotBlockData {
     /// Ingests a slice that the local node produced itself (as the leader).
     ///
     /// Unlike [`Self::add_shred_from_dissemination`], the caller already holds
-    /// all [`TOTAL_SHREDS`] freshly produced shreds and the matching
-    /// [`ReconstructedSlice`], so no Reed-Solomon decoding, Merkle verification,
-    /// or equivocation check is performed — the data is correct by construction.
+    /// all [`TOTAL_SHREDS`] freshly produced shreds and the decoded slice
+    /// payload, so no Reed-Solomon decoding, Merkle verification, or equivocation
+    /// check is performed — the data is correct by construction.
     pub(super) fn add_own_slice(
         &mut self,
-        slice: ReconstructedSlice,
+        payload: SlicePayload,
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> (bool, Option<BlockInfo>) {
-        debug_assert_eq!(slice.slot, self.slot);
-        self.disseminated.add_own_slice(slice, shreds)
+        self.disseminated.add_own_slice(payload, shreds)
     }
 }
 
@@ -263,7 +262,7 @@ impl BlockData {
 
     /// Ingests a slice produced locally (the leader's own block).
     ///
-    /// Stores all shreds and the already-reconstructed slice directly, skipping
+    /// Stores all shreds and rebuilds the slice from them directly, skipping
     /// Reed-Solomon decoding and re-verification, then assembles the block if
     /// this was the last slice. Leaves the same state behind as the
     /// dissemination path (shreds, slices, caches, double-Merkle tree, completed
@@ -274,9 +273,14 @@ impl BlockData {
     /// [`BlockInfo`] once the final slice completes the block.
     fn add_own_slice(
         &mut self,
-        slice: ReconstructedSlice,
+        payload: SlicePayload,
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> (bool, Option<BlockInfo>) {
+        // Build the slice from the shreds so the two can't disagree — the
+        // dissemination path likewise reconstructs its slice from shreds.
+        let any_shred = &shreds[0];
+        let slice =
+            ReconstructedSlice::from_shreds(payload, any_shred, any_shred.merkle_root().clone());
         debug_assert_eq!(slice.slot, self.slot);
         let slice_index = slice.slice_index;
         let is_first = self.shreds.is_empty();
@@ -286,6 +290,15 @@ impl BlockData {
         self.merkle_root_cache
             .insert(slice_index, slice.merkle_root().clone());
 
+        // The leader produces each slice once, in order, and stops after the
+        // last, so a last slice must never already be set. This subsumes the
+        // dissemination path's per-arm last-slice checks (no re-marking, nothing
+        // at or after the last slice).
+        assert!(
+            self.last_slice.is_none(),
+            "own slice {slice_index:?} added after the last slice in slot {}",
+            self.slot,
+        );
         if slice.is_last {
             self.mark_last_slice(slice_index);
         }

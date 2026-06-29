@@ -143,7 +143,7 @@ pub(crate) struct SliceHeader {
 ///
 /// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
-pub(crate) struct SlicePayload {
+pub struct SlicePayload {
     /// Same as [`Slice::parent`].
     pub(crate) parent: Option<(Slot, BlockHash)>,
     /// Same as [`Slice::data`].

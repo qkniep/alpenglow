@@ -21,7 +21,7 @@ use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
 use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool, TOTAL_SHREDS};
-use crate::types::{ReconstructedSlice, Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
+use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
 /// Produces blocks from transactions and dissminates them.
@@ -381,16 +381,14 @@ where
             }
         }
 
-        // Fast path: we already have every shred and the reconstructed slice, so
-        // the blockstore can skip RS-decode, Merkle verification and the
-        // per-shred lock churn. The completed block hands back (slot, hash).
-        let merkle_root = shreds[0].merkle_root().clone();
-        let slice = ReconstructedSlice::from_shreds(payload, &shreds[0], merkle_root);
+        // Fast path: we already have every shred and the decoded payload, so the
+        // blockstore can skip RS-decode, Merkle verification and the per-shred
+        // lock churn. The completed block hands back (slot, hash).
         let block_info = self
             .blockstore
             .write()
             .await
-            .add_own_slice(slice, shreds)
+            .add_own_slice(payload, shreds)
             .await;
 
         if let Some(e) = first_err {
