@@ -164,7 +164,7 @@ where
     /// Tries to answer the given repair request.
     ///
     /// If we have the information in blockstore, it is sent to the requester.
-    /// Otherwise, a [`RepairResponse::Nack`] is sent back to the requester.
+    /// Otherwise, a [`RepairResponsePayload::Nack`] is sent back to the requester.
     #[hotpath::measure]
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
@@ -522,13 +522,20 @@ where
     async fn send_request(&mut self, req_type: RepairRequestType) -> std::io::Result<()> {
         let hash = req_type.hash();
         let peers = self.pick_random_peers();
+        let addrs: Vec<SocketAddr> = {
+            let epoch = self.epoch_info.epoch_info();
+            peers
+                .iter()
+                .map(|id| epoch.validator(*id).repair_responder_address)
+                .collect()
+        };
 
         let expiry = Instant::now() + REPAIR_TIMEOUT;
         self.outstanding_requests.insert(
             hash.clone(),
             OutstandingRequest {
                 req_type: req_type.clone(),
-                pending: peers.clone(),
+                pending: peers,
             },
         );
         self.request_timeouts.retain(|(_, h)| h != &hash);
@@ -537,13 +544,6 @@ where
         let request = RepairRequest {
             sender: self.epoch_info.own_id(),
             req_type,
-        };
-        let addrs: Vec<SocketAddr> = {
-            let epoch = self.epoch_info.epoch_info();
-            peers
-                .iter()
-                .map(|id| epoch.validator(*id).repair_responder_address)
-                .collect()
         };
         self.network
             .send_to_many(&request, addrs.into_iter())
