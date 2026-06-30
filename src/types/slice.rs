@@ -94,8 +94,8 @@ impl Slice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReconstructedSlice {
     inner: Slice,
-    /// Merkle root hash over all shreds in this slice.
-    merkle_root: SliceRoot,
+    /// Slice root (Merkle root hash over all shreds in this slice).
+    slice_root: SliceRoot,
 }
 
 impl ReconstructedSlice {
@@ -104,19 +104,19 @@ impl ReconstructedSlice {
     pub(crate) fn from_shreds(
         payload: SlicePayload,
         any_shred: &ValidatedShred,
-        merkle_root: SliceRoot,
+        slice_root: SliceRoot,
     ) -> Self {
         let header = any_shred.payload().header;
         Self {
             inner: Slice::from_parts(header, payload),
-            merkle_root,
+            slice_root,
         }
     }
 
-    /// Returns the Merkle root hash over all shreds in this slice.
+    /// Returns the slice root (Merkle root hash over all shreds in this slice).
     #[must_use]
-    pub fn merkle_root(&self) -> &SliceRoot {
-        &self.merkle_root
+    pub fn slice_root(&self) -> &SliceRoot {
+        &self.slice_root
     }
 }
 
