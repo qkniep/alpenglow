@@ -18,14 +18,14 @@ use alpenglow::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use color_eyre::Result;
+use anyhow::Result;
 
 use super::RotorParams;
 use crate::quorum_robustness::{AdversaryStrength, QuorumRobustnessTest, QuorumThreshold};
 
 // TODO: support different: stake distributions, sampling strategies, Rotor params
 
-pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Result<()> {
+pub(crate) fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler = StakeWeightedSampler::new(validators.clone()).into_quorum_strategy(1);
     let rotor_sampler =
@@ -76,9 +76,9 @@ pub fn run_rotor_robustness_test(data_shreds: usize, total_shreds: usize) -> Res
         .join(filename)
         .with_extension("csv");
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        std::fs::create_dir_all(parent)?;
     }
-    let file = File::create(path).unwrap();
+    let file = File::create(path)?;
     let mut csv_file = csv::Writer::from_writer(file);
 
     test.run(adversary_strength, &mut csv_file)

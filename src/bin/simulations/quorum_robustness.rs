@@ -14,12 +14,12 @@
 
 use std::cmp::Reverse;
 use std::fs::File;
-use std::sync::RwLock;
 
 use alpenglow::disseminator::rotor::{FaitAccompli1Sampler, QuorumSamplingStrategy};
 use alpenglow::{Stake, ValidatorInfo};
-use color_eyre::Result;
+use anyhow::Result;
 use log::debug;
+use parking_lot::RwLock;
 use rand::prelude::*;
 use rayon::prelude::*;
 use static_assertions::const_assert_eq;
@@ -36,15 +36,15 @@ const MAX_FAILURES: usize = 1;
 
 /// Adversary strength.
 #[derive(Clone, Copy, Debug)]
-pub struct AdversaryStrength {
+pub(crate) struct AdversaryStrength {
     /// Fraction of stake that may crash.
-    pub crashed: f64,
+    pub(crate) crashed: f64,
     /// Fraction of stake that may be arbitrarily controlled by the adversary.
-    pub byzantine: f64,
+    pub(crate) byzantine: f64,
 }
 
 /// Test harness for quorum robustness testing.
-pub struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
+pub(crate) struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
     samplers: Vec<S>,
     quorum_samplers: Vec<usize>,
     quorum_sizes: Vec<usize>,
@@ -61,7 +61,7 @@ pub struct QuorumRobustnessTest<S: QuorumSamplingStrategy> {
 
 impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Creates a new instance of the test harness.
-    pub fn new(
+    pub(crate) fn new(
         validators: Vec<ValidatorInfo>,
         stake_distribution: String,
         sampling_strategy: String,
@@ -96,7 +96,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     /// Returns the failure probability for the strongest adversary strategy.
     ///
     /// Results are written as a single line into `csv_file`.
-    pub fn run(
+    pub(crate) fn run(
         &self,
         adversary_strength: AdversaryStrength,
         csv_file: &mut csv::Writer<File>,
@@ -171,10 +171,10 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         for v in &validators_to_corrupt {
             let rel_stake = v.stake.inner() as f64 / self.total_stake.inner() as f64;
             if byzantine_stake + rel_stake < adversary_strength.byzantine {
-                byzantine[v.id.as_index()] = true;
+                byzantine[v.id.as_usize()] = true;
                 byzantine_stake += rel_stake;
             } else if crashed_stake + rel_stake < adversary_strength.crashed {
-                crashed[v.id.as_index()] = true;
+                crashed[v.id.as_usize()] = true;
                 crashed_stake += rel_stake;
             } else {
                 break;
@@ -186,7 +186,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
-                *self.tests.write().unwrap() += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -213,10 +213,10 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
         for v in &validators_to_corrupt {
             let rel_stake = v.stake.inner() as f64 / self.total_stake.inner() as f64;
             if byzantine_stake + rel_stake < adversary_strength.byzantine {
-                byzantine[v.id.as_index()] = true;
+                byzantine[v.id.as_usize()] = true;
                 byzantine_stake += rel_stake;
             } else if crashed_stake + rel_stake < adversary_strength.crashed {
-                crashed[v.id.as_index()] = true;
+                crashed[v.id.as_usize()] = true;
                 crashed_stake += rel_stake;
             } else {
                 break;
@@ -228,7 +228,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
-                *self.tests.write().unwrap() += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -256,10 +256,10 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for v in &validators_to_corrupt {
                 let rel_stake = v.stake.inner() as f64 / self.total_stake.inner() as f64;
                 if byzantine_stake + rel_stake < adversary_strength.byzantine {
-                    byzantine[v.id.as_index()] = true;
+                    byzantine[v.id.as_usize()] = true;
                     byzantine_stake += rel_stake;
                 } else if crashed_stake + rel_stake < adversary_strength.crashed {
-                    crashed[v.id.as_index()] = true;
+                    crashed[v.id.as_usize()] = true;
                     crashed_stake += rel_stake;
                 }
             }
@@ -268,7 +268,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &byzantine, &crashed);
-                *self.tests.write().unwrap() += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -308,13 +308,13 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                 let mut entries: Vec<_> = stakes[bin].iter().zip(vals[bin].iter()).collect();
                 entries.sort_by_key(|(s, _)| **s);
                 for (stake, id) in &entries {
-                    if corrupted[id.as_index()] {
+                    if corrupted[id.as_usize()] {
                         corrupted_stake += (**stake).inner() as f64;
                     }
                 }
                 for (stake, id) in entries {
-                    let val_stake = self.validators[id.as_index()].stake.inner() as f64;
-                    if corrupted[id.as_index()] {
+                    let val_stake = self.validators[id.as_usize()].stake.inner() as f64;
+                    if corrupted[id.as_usize()] {
                         continue;
                     }
                     if corrupted_stake + ((*stake).inner() as f64)
@@ -322,7 +322,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                         // && val_stake < stake_per_bin
                         && total_corrupted_stake + val_stake < self.total_stake.inner() as f64 * adversary_strength.byzantine
                     {
-                        corrupted[id.as_index()] = true;
+                        corrupted[id.as_usize()] = true;
                         corrupted_stake += (*stake).inner() as f64;
                         total_corrupted_stake += val_stake;
                     }
@@ -333,7 +333,7 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
             for _ in 0..TOTAL_ITERATIONS / PARALLELISM / WRITE_BATCH {
                 let (tests, hit_max_failures) =
                     self.run_with_corrupted(WRITE_BATCH, &corrupted, &[]);
-                *self.tests.write().unwrap() += tests;
+                *self.tests.write() += tests;
                 if hit_max_failures || self.is_better_attack_known(known_attack_probs) {
                     break;
                 }
@@ -361,15 +361,15 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
                     let sampler = &self.samplers[self.quorum_samplers[quorum_index]];
                     let sampled = sampler.sample_quorum(&mut rng);
                     let byzantine_samples =
-                        sampled.iter().filter(|v| byzantine[v.as_index()]).count();
-                    let crashed_samples = sampled.iter().filter(|v| crashed[v.as_index()]).count();
+                        sampled.iter().filter(|v| byzantine[v.as_usize()]).count();
+                    let crashed_samples = sampled.iter().filter(|v| crashed[v.as_usize()]).count();
                     (byzantine_samples, crashed_samples)
                 })
                 .collect::<Vec<_>>();
             for (attack_index, attack) in self.attacks.iter().enumerate() {
                 if attack.evaluate(&corrupted) {
-                    self.failures.write().unwrap()[attack_index] += 1;
-                    if *self.failures.read().unwrap().iter().min().unwrap() >= MAX_FAILURES {
+                    self.failures.write()[attack_index] += 1;
+                    if self.failures.read().iter().all(|&f| f >= MAX_FAILURES) {
                         return (tests, true);
                     }
                 }
@@ -379,15 +379,15 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 
     fn attack_probabilities(&self) -> Vec<f64> {
-        let tests = *self.tests.read().unwrap();
-        let failures = self.failures.read().unwrap();
+        let tests = *self.tests.read();
+        let failures = self.failures.read();
         failures.iter().map(|f| *f as f64 / tests as f64).collect()
     }
 
     fn is_better_attack_known(&self, known_attack_probs: &[f64]) -> bool {
         const MARGIN: f64 = 3.0;
-        let tests = *self.tests.read().unwrap();
-        let failures = self.failures.read().unwrap();
+        let tests = *self.tests.read();
+        let failures = self.failures.read();
         known_attack_probs
             .iter()
             .enumerate()
@@ -395,14 +395,14 @@ impl<S: QuorumSamplingStrategy + Send + Sync> QuorumRobustnessTest<S> {
     }
 
     fn reset(&self) {
-        *self.tests.write().unwrap() = 0;
-        *self.failures.write().unwrap() = vec![0; self.attacks.len()];
+        *self.tests.write() = 0;
+        *self.failures.write() = vec![0; self.attacks.len()];
     }
 }
 
 /// Named wrapper for a [`QuorumThreshold`].
 #[derive(Clone, Debug)]
-pub struct QuorumAttack {
+pub(crate) struct QuorumAttack {
     name: String,
     quorum: QuorumThreshold,
 }
@@ -417,7 +417,7 @@ impl QuorumAttack {
 ///
 /// This is used to model different attack scenarios in [`QuorumRobustnessTest`].
 #[derive(Clone, Debug)]
-pub enum QuorumThreshold {
+pub(crate) enum QuorumThreshold {
     /// This threshold is reached if the `quorum` contains at least `threshold` corrupted validators.
     ///
     /// Where "corrupted" means Byzantine (plus crashed if `is_crash_enough` is true).
@@ -427,7 +427,7 @@ pub enum QuorumThreshold {
         is_crash_enough: bool,
     },
     /// This threshold is reached if all of the contained thresholds are reached.
-    #[allow(dead_code)] // currently unused
+    #[cfg_attr(not(test), expect(dead_code))] // currently only used in tests
     All(Vec<Self>),
     /// This threshold is reached if at least one of the contained thresholds are reached.
     Any(Vec<Self>),
@@ -435,7 +435,7 @@ pub enum QuorumThreshold {
 
 impl QuorumThreshold {
     /// Returns a [`QuorumThreshold`] that is the logical OR of `self` and `other`.
-    pub fn or(self, other: Self) -> Self {
+    pub(crate) fn or(self, other: Self) -> Self {
         if let Self::Any(mut thresholds) = self {
             thresholds.push(other);
             Self::Any(thresholds)
@@ -445,7 +445,7 @@ impl QuorumThreshold {
     }
 
     /// Turns this [`QuorumThreshold`] into a [`QuorumAttack`] with the given name.
-    pub fn into_attack(self, name: &str) -> QuorumAttack {
+    pub(crate) fn into_attack(self, name: &str) -> QuorumAttack {
         QuorumAttack {
             name: name.to_owned(),
             quorum: self,

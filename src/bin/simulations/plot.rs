@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use color_eyre::Result;
+use anyhow::Result;
 use plotters::prelude::*;
 
 const PLOT_WIDTH: u32 = 1200;
@@ -83,7 +83,7 @@ impl CsvData {
                 })
             })
             .collect::<Result<Vec<f64>, _>>()
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     fn column_f64_or(&self, name: &str, default: f64) -> Vec<f64> {
@@ -94,7 +94,7 @@ impl CsvData {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct BarSeries {
     label: &'static str,
     values: Vec<f64>,
@@ -122,7 +122,7 @@ macro_rules! draw_stacked_bars {
     }};
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn plot_stacked_bar_linear(
     output_path: &Path,
     title: &str,
@@ -158,7 +158,7 @@ fn plot_stacked_bar_linear(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn plot_stacked_bar_log_y(
     output_path: &Path,
     title: &str,
@@ -194,7 +194,7 @@ fn plot_stacked_bar_log_y(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn plot_grouped_bar_log(
     output_path: &Path,
     title: &str,
@@ -292,7 +292,7 @@ fn city_display_name(city: &str) -> &str {
     }
 }
 
-pub fn generate_latency_plots(
+fn generate_latency_plots(
     distribution: &str,
     sampling: &str,
     data_shreds: usize,
@@ -334,7 +334,7 @@ pub fn generate_latency_plots(
             &[
                 BarSeries {
                     label: "Slow Finalization",
-                    values: slow_vals.clone(),
+                    values: slow_vals,
                     color: MAGENTA,
                 },
                 BarSeries {
@@ -373,7 +373,7 @@ pub fn generate_latency_plots(
                 &[
                     BarSeries {
                         label: "Block",
-                        values: block_vals.clone(),
+                        values: block_vals,
                         color: BLUE,
                     },
                     BarSeries {
@@ -426,7 +426,7 @@ pub fn generate_latency_plots(
     Ok(())
 }
 
-pub fn generate_city_latency_plots(
+fn generate_city_latency_plots(
     distribution: &str,
     sampling: &str,
     data_shreds: usize,
@@ -496,7 +496,7 @@ pub fn generate_city_latency_plots(
     Ok(())
 }
 
-pub fn generate_bandwidth_plots(
+fn generate_bandwidth_plots(
     distribution: &str,
     sampling_strat: &str,
     total_shreds: usize,
@@ -558,7 +558,7 @@ pub fn generate_bandwidth_plots(
             &[
                 BarSeries {
                     label: "Avg. Rotor",
-                    values: rotor_vals.clone(),
+                    values: rotor_vals,
                     color: BLUE,
                 },
                 BarSeries {
@@ -574,7 +574,7 @@ pub fn generate_bandwidth_plots(
     Ok(())
 }
 
-pub fn generate_safety_plots() -> Result<()> {
+fn generate_safety_plots() -> Result<()> {
     let dir = output_dir("safety");
     let expansions = [(32u64, 64u64), (32, 80), (32, 96)];
     let total_shreds_configs = [(32u64, 64u64), (64, 128), (128, 256)];
@@ -731,10 +731,7 @@ fn load_safety_data(
     include_strategies: &[&str],
 ) -> Result<Vec<SafetyRow>> {
     if !path.exists() {
-        return Err(color_eyre::eyre::eyre!(
-            "safety CSV not found: {}",
-            path.display()
-        ));
+        return Err(anyhow::anyhow!("safety CSV not found: {}", path.display()));
     }
     let data = CsvData::from_file(path)?;
     let mut rows = Vec::new();
@@ -742,7 +739,7 @@ fn load_safety_data(
     let strat_idx = data.column_index("sampling_strat");
     let crash_idx = data
         .column_index("crashed")
-        .or(data.column_index("adversary"));
+        .or_else(|| data.column_index("adversary"));
     let byz_idx = data.column_index("byzantine");
     let ds_idx = data.column_index("data_shreds");
     let ts_idx = data.column_index("total_shreds");
@@ -831,7 +828,7 @@ fn filter_safety(
         .collect()
 }
 
-pub fn generate_all_plots(
+pub(crate) fn generate_all_plots(
     distribution: &str,
     sampling: &str,
     data_shreds: usize,

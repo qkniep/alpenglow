@@ -34,6 +34,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 mod alpenglow;
+mod binomial;
 mod discrete_event_simulator;
 mod plot;
 mod pyjama;
@@ -44,7 +45,7 @@ mod ryse;
 use std::cmp::Reverse;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use ::alpenglow::disseminator::rotor::sampling_strategy::{
     AllSameSampler, DecayingAcceptanceSampler, FaitAccompli1Sampler, FaitAccompli2Sampler,
@@ -57,10 +58,11 @@ use ::alpenglow::network::simulated::ping_data::PingServer;
 use ::alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, ValidatorData, validators_from_validator_data,
 };
-use ::alpenglow::{Stake, ValidatorId, ValidatorInfo, logging};
+use ::alpenglow::{Stake, ValidatorIndex, ValidatorInfo, logging};
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use log::info;
+use parking_lot::Mutex;
 use rayon::prelude::*;
 
 use crate::alpenglow::{
@@ -118,9 +120,6 @@ const SHRED_COMBINATIONS: [(usize, usize); 1] = [
 struct Args {}
 
 fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     Args::parse();
 
     logging::enable_logforth();
@@ -158,7 +157,7 @@ fn main() -> Result<()> {
     }
 
     if RUN_ROTOR_ROBUSTNESS_TESTS {
-        // create saftey evaluation file
+        // create safety evaluation file
         let filename = PathBuf::from("data")
             .join("output")
             .join("simulations")
@@ -197,7 +196,7 @@ fn run_tests_for_stake_distribution(
     // sort by stake (from highest to lowest)
     validators_and_ping_servers.sort_by_key(|(v, _)| Reverse(v.stake));
     for (i, (v, _)) in validators_and_ping_servers.iter_mut().enumerate() {
-        v.id = ValidatorId::new(i as u64);
+        v.id = ValidatorIndex::new(i as u64);
     }
 
     // extract the validators only
@@ -382,7 +381,7 @@ fn run_tests_for_stake_distribution(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn run_tests<
     L: SamplingStrategy + QuorumSamplingStrategy + Send + Sync + Clone,
     R: QuorumSamplingStrategy + Send + Sync + Clone,

@@ -14,7 +14,7 @@ use alpenglow::disseminator::rotor::FaitAccompli1Sampler;
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use color_eyre::Result;
+use anyhow::Result;
 
 use super::parameters::{AdversaryStrength, PyjamaParameters};
 use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
@@ -26,7 +26,7 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     byzantine: 0.18,
 };
 
-pub fn run_robustness_tests() {
+pub(crate) fn run_robustness_tests() {
     PyjamaParameters::new(NUM_PROPOSERS, NUM_RELAYS)
         .print_failure_probabilities(ADVERSARY_STRENGTH);
     PyjamaParameters::new_paper1(NUM_PROPOSERS, NUM_RELAYS)
@@ -41,7 +41,7 @@ pub fn run_robustness_tests() {
         .print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
-pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
+pub(crate) fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let leader_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), 1);
@@ -127,9 +127,9 @@ pub fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
         .join(filename)
         .with_extension("csv");
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        std::fs::create_dir_all(parent)?;
     }
-    let file = File::create(path).unwrap();
+    let file = File::create(path)?;
     let mut csv_file = csv::Writer::from_writer(file);
 
     test.run(adversary_strength, &mut csv_file)

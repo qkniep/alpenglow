@@ -14,7 +14,7 @@ use alpenglow::disseminator::rotor::FaitAccompli1Sampler;
 use alpenglow::network::simulated::stake_distribution::{
     VALIDATOR_DATA, validators_from_validator_data,
 };
-use color_eyre::Result;
+use anyhow::Result;
 
 use super::parameters::{AdversaryStrength, RyseParameters};
 use crate::quorum_robustness::{QuorumRobustnessTest, QuorumThreshold};
@@ -26,14 +26,14 @@ const ADVERSARY_STRENGTH: AdversaryStrength = AdversaryStrength {
     byzantine: 0.2,
 };
 
-pub fn run_robustness_tests() {
+pub(crate) fn run_robustness_tests() {
     let params = RyseParameters::new(NUM_PROPOSERS, NUM_RELAYS);
     params.print_failure_probabilities(ADVERSARY_STRENGTH);
-    let optimal_params = params.optmize(ADVERSARY_STRENGTH);
+    let optimal_params = params.optimize(ADVERSARY_STRENGTH);
     optimal_params.print_failure_probabilities(ADVERSARY_STRENGTH);
 }
 
-pub fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
+pub(crate) fn run_ryse_robustness_test(total_shreds: u64) -> Result<()> {
     let (validators, _with_pings) = validators_from_validator_data(&VALIDATOR_DATA);
     let proposer_sampler =
         FaitAccompli1Sampler::new_with_stake_weighted_fallback(validators.clone(), NUM_PROPOSERS);

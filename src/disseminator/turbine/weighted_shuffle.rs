@@ -32,7 +32,7 @@ const BIT_MASK: usize = FANOUT - 1;
 ///   - Zero weighted indices are shuffled and appear only at the end, after
 ///     non-zero weighted indices.
 #[derive(Clone)]
-pub struct WeightedShuffle {
+pub(crate) struct WeightedShuffle {
     /// Number of "internal" nodes of the tree.
     num_nodes: usize,
     /// Underlying array implementing the tree.
@@ -49,7 +49,7 @@ pub struct WeightedShuffle {
 impl WeightedShuffle {
     /// If weights are negative or overflow the total sum
     /// they are treated as zero.
-    pub fn new<I>(weights: I) -> Self
+    pub(crate) fn new<I>(weights: I) -> Self
     where
         I: IntoIterator<Item: Borrow<Stake>>,
         <I as IntoIterator>::IntoIter: ExactSizeIterator,
@@ -136,7 +136,7 @@ impl WeightedShuffle {
                         false
                     }
                 })
-                .unwrap();
+                .expect("search value should be less than total subtree weight");
             // Traverse to the subtree of self.tree[index].
             index = (index << BIT_SHIFT) + offset + 1;
             if self.tree.len() <= index {
@@ -145,7 +145,10 @@ impl WeightedShuffle {
         }
     }
 
-    pub fn shuffle<'a, R: Rng>(&'a mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
+    pub(crate) fn shuffle<'a, R: Rng>(
+        &'a mut self,
+        rng: &'a mut R,
+    ) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
             if self.weight > Stake::new(0) {
                 let sample = Stake::new(rng.random_range(0..self.weight.inner()));
@@ -158,7 +161,7 @@ impl WeightedShuffle {
             }
             let index =
                 <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng)
-                    .unwrap();
+                    .expect("sampling from a non-empty range should succeed");
             Some(self.zeros.swap_remove(index))
         })
     }

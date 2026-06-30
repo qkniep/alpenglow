@@ -7,7 +7,7 @@
 
 use std::marker::PhantomData;
 
-use alpenglow::ValidatorId;
+use alpenglow::ValidatorIndex;
 use alpenglow::disseminator::rotor::{
     QuorumSamplingStrategy, SamplingStrategy, StakeWeightedSampler,
 };
@@ -25,7 +25,7 @@ use crate::rotor::RotorParams;
 ///
 /// This type implements the `Protocol` trait and can be passed to the simulation engine.
 /// There is probably never a need to construct this type directly.
-pub struct PyjamaLatencySimulation<
+pub(crate) struct PyjamaLatencySimulation<
     L: SamplingStrategy,
     P: QuorumSamplingStrategy,
     R: QuorumSamplingStrategy,
@@ -50,7 +50,7 @@ where
 
 /// Stages of the Pyjama latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyTestStage {
+pub(crate) enum LatencyTestStage {
     Propose,
     Relay,
     Attestation,
@@ -93,7 +93,7 @@ impl Stage for LatencyTestStage {
 
 /// Events that can occur at each validator during the Pyjama latency simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LatencyEvent {
+pub(crate) enum LatencyEvent {
     Propose,
     Relay,
     Attestation,
@@ -155,7 +155,7 @@ impl Event for LatencyEvent {
                     let start_sending_time =
                         resources.network.time_next_free_after(proposer, start_time);
                     resources.network.schedule(proposer, start_time, tx_time);
-                    timings[proposer.as_index()] = start_sending_time;
+                    timings[proposer.as_usize()] = start_sending_time;
                 }
                 timings
             }
@@ -167,7 +167,7 @@ impl Event for LatencyEvent {
                         .proposers
                         .iter()
                         .map(|proposer| {
-                            let start_send_time = dependency_timings[0][proposer.as_index()];
+                            let start_send_time = dependency_timings[0][proposer.as_usize()];
                             let prop_delay = environment.propagation_delay(*proposer, relay);
                             let shred_send_index = relay_offset + 1;
                             let tx_delay = environment.transmission_delay(
@@ -177,9 +177,9 @@ impl Event for LatencyEvent {
                             start_send_time + prop_delay + tx_delay
                         })
                         .max()
-                        .unwrap();
-                    timings[relay.as_index()] =
-                        timings[relay.as_index()].max(shreds_from_all_proposers);
+                        .expect("there should be at least one proposer");
+                    timings[relay.as_usize()] =
+                        timings[relay.as_usize()].max(shreds_from_all_proposers);
                 }
                 timings
             }
@@ -187,17 +187,17 @@ impl Event for LatencyEvent {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (i, relay) in instance.relays.iter().enumerate() {
-                    shred_timings[i] = dependency_timings[0][relay.as_index()]
+                    shred_timings[i] = dependency_timings[0][relay.as_usize()]
                         + environment.propagation_delay(*relay, instance.leader)
                         + environment.transmission_delay(MAX_DATA_PER_SHRED, *relay);
                 }
                 shred_timings.sort_unstable();
-                timings[instance.leader.as_index()] =
+                timings[instance.leader.as_usize()] =
                     shred_timings[instance.params.attestations_threshold as usize - 1];
                 timings
             }
             Self::Consensus => {
-                let consensus_start_time = dependency_timings[0][instance.leader.as_index()];
+                let consensus_start_time = dependency_timings[0][instance.leader.as_usize()];
                 // TODO: find better way of integrating sub-protocol
                 let slices_required = 3;
                 let rotor_params = RotorParams {
@@ -225,13 +225,13 @@ impl Event for LatencyEvent {
                 engine.run(&consensus_instance, &mut timings);
                 timings
                     .get(crate::alpenglow::LatencyEvent::Final)
-                    .unwrap()
+                    .expect("final event should be recorded")
                     .to_vec()
             }
             Self::Release => {
                 let mut timings = vec![SimTime::NEVER; environment.num_validators()];
                 for relay in &instance.relays {
-                    let dep_time = dependency_timings[0][relay.as_index()];
+                    let dep_time = dependency_timings[0][relay.as_usize()];
                     let block_bytes = environment.num_validators()
                         * instance.params.num_proposers as usize
                         * MAX_DATA_PER_SHRED;
@@ -239,7 +239,7 @@ impl Event for LatencyEvent {
                     let start_sending_time =
                         resources.network.time_next_free_after(*relay, dep_time);
                     resources.network.schedule(*relay, dep_time, tx_time);
-                    timings[relay.as_index()] = start_sending_time;
+                    timings[relay.as_usize()] = start_sending_time;
                 }
                 timings
             }
@@ -248,9 +248,9 @@ impl Event for LatencyEvent {
                 let mut shred_timings = vec![SimTime::NEVER; instance.params.num_relays as usize];
                 for (recipient, timing) in timings.iter_mut().enumerate() {
                     for (i, relay) in instance.relays.iter().enumerate() {
-                        shred_timings[i] = dependency_timings[0][relay.as_index()]
+                        shred_timings[i] = dependency_timings[0][relay.as_usize()]
                             + environment
-                                .propagation_delay(*relay, ValidatorId::new(recipient as u64))
+                                .propagation_delay(*relay, ValidatorIndex::new(recipient as u64))
                             + environment.transmission_delay(
                                 (recipient + 1)
                                     * instance.params.num_proposers as usize

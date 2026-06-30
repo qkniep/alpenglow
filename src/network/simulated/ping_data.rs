@@ -3,7 +3,7 @@
 
 //! Utilities for working with a real-world ping dataset.
 //!
-//! The specfic dataset is from [WonderProxy](https://wonderproxy.com/blog/a-day-in-the-life-of-the-internet/).
+//! The specific dataset is from [WonderProxy](https://wonderproxy.com/blog/a-day-in-the-life-of-the-internet/).
 //! It contains ping measurements between 200+ servers all around the world.
 //! These ping measurements were collected over the 24 hours of 2020-07-19.
 //!
@@ -26,19 +26,24 @@ use std::fs::File;
 use std::sync::LazyLock;
 
 use csv::ReaderBuilder;
-use geo::{Distance, Haversine, Point};
 use serde::Deserialize;
 
 const MAX_PING_SERVERS: usize = 300;
+
+/// Mean earth radius in meters (GRS80 ellipsoid), as recommended by the IUGG.
+///
+/// This matches the radius used by the `geo` crate's `Haversine` metric, so the
+/// inlined [`haversine_distance`] below reproduces its results exactly.
+const MEAN_EARTH_RADIUS: f64 = 6_371_008.8;
 
 static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
     let mut output = Vec::with_capacity(MAX_PING_SERVERS);
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_path("data/servers-2020-07-19.csv")
-        .unwrap();
+        .expect("ping server CSV should be present; run ./download_data.sh");
     for result in rdr.deserialize() {
-        let record: PingServer = result.unwrap();
+        let record: PingServer = result.expect("ping server CSV row should deserialize");
         output.push(record);
     }
     assert!(output.len() <= MAX_PING_SERVERS);
@@ -48,14 +53,17 @@ static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
 static PING_DATA: LazyLock<Vec<f64>> = LazyLock::new(|| {
     let mut output = vec![0.0; MAX_PING_SERVERS * MAX_PING_SERVERS];
     let mut counts = vec![0; MAX_PING_SERVERS * MAX_PING_SERVERS];
-    let file = File::open("data/pings-2020-07-19-2020-07-20.csv").unwrap();
+    let file = File::open("data/pings-2020-07-19-2020-07-20.csv")
+        .expect("ping data CSV should be present; run ./download_data.sh");
     let mut rdr = csv::Reader::from_reader(file);
     for result in rdr.deserialize() {
-        let record: PingMeasurement = result.unwrap();
+        let record: PingMeasurement = result.expect("ping data CSV row should deserialize");
         assert!(record.source < MAX_PING_SERVERS);
         assert!(record.destination < MAX_PING_SERVERS);
         let index = get_index(record.source, record.destination);
-        let count = counts.get_mut(index).unwrap();
+        let count = counts
+            .get_mut(index)
+            .expect("ping server index should be in bounds, it was asserted above");
         if *count == 0 {
             output[index] = record.avg;
         } else {
@@ -86,7 +94,7 @@ pub struct PingServer {
     #[serde(rename = "state_abbv")]
     _state_abbv: String,
     #[serde(rename = "continent")]
-    _contintent: Option<u8>,
+    _continent: Option<u8>,
     latitude: f64,
     longitude: f64,
 }
@@ -120,16 +128,29 @@ pub fn coordinates_for_city(city: &str) -> Option<(f64, f64)> {
     })
 }
 
+/// Great-circle distance between two geographic points.
+///
+/// Takes two points `(latitude, longitude)` (in degrees) as input.
+/// Calculates their distance with the haversine formula on a sphere of
+/// [`MEAN_EARTH_RADIUS`].
+///
+/// Returns the distance in meters.
+fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let delta_lat = (lat2 - lat1).to_radians();
+    let delta_lon = (lon2 - lon1).to_radians();
+    let a = (delta_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (delta_lon / 2.0).sin().powi(2);
+    let a_clamped = a.clamp(0.0, 1.0);
+    let c = 2.0 * a_clamped.sqrt().asin();
+    MEAN_EARTH_RADIUS * c
+}
+
 /// Gives the ping server from the dataset that is closest to the given coordinates.
 pub fn find_closest_ping_server(lat: f64, lon: f64) -> &'static PingServer {
     PING_SERVERS
         .iter()
-        .min_by_key(|server| {
-            let server_pos = Point::new(server.longitude, server.latitude);
-            let target_pos = Point::new(lon, lat);
-            Haversine.distance(server_pos, target_pos) as u64
-        })
-        .unwrap()
+        .min_by_key(|server| haversine_distance(server.latitude, server.longitude, lat, lon) as u64)
+        .expect("ping server dataset should be non-empty")
 }
 
 /// Gives the average ping from one server to another from the dataset.
@@ -153,6 +174,8 @@ impl PingServer {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::PI;
+
     use super::*;
 
     #[test]
@@ -170,5 +193,32 @@ mod tests {
         let ping = get_ping(frankfurt.id, singapore.id).unwrap();
         // ping is at least speed of light
         assert!(ping > 34.0);
+    }
+
+    #[test]
+    fn haversine_distance_sanity() {
+        const EPSILON: f64 = 1e-6;
+
+        // identical points have zero distance
+        assert_eq!(haversine_distance(0.0, 0.0, 0.0, 0.0), 0.0);
+        assert_eq!(haversine_distance(47.377, 8.454, 47.377, 8.454), 0.0);
+        assert_eq!(haversine_distance(-90.0, 0.0, -90.0, 0.0), 0.0);
+
+        // 1° along the equator equals MEAN_EARTH_RADIUS * PI/180
+        let one_degree_arc = MEAN_EARTH_RADIUS * PI / 180.0;
+        assert!((haversine_distance(0.0, 0.0, 0.0, 1.0) - one_degree_arc).abs() < EPSILON);
+        assert!((haversine_distance(0.0, 0.0, 1.0, 0.0) - one_degree_arc).abs() < EPSILON);
+
+        // symmetry: distance is independent of point order
+        let d_ab = haversine_distance(52.507, 13.260, 1.352, 103.819);
+        let d_ba = haversine_distance(1.352, 103.819, 52.507, 13.260);
+        assert!((d_ab - d_ba).abs() < EPSILON);
+
+        // antipodal points: half the Earth's circumference
+        let antipodal = haversine_distance(0.0, 0.0, 0.0, 180.0);
+        assert!((antipodal - MEAN_EARTH_RADIUS * PI).abs() < EPSILON);
+
+        // result must be finite for arbitrary valid inputs
+        assert!(haversine_distance(90.0, 0.0, -90.0, 0.0).is_finite());
     }
 }

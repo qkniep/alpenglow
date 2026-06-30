@@ -13,7 +13,7 @@ mod weighted_shuffle;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use moka::future::Cache;
+use quick_cache::sync::Cache;
 use rand::prelude::*;
 
 pub(crate) use self::weighted_shuffle::WeightedShuffle;
@@ -21,7 +21,7 @@ use super::Disseminator;
 use crate::consensus::ValidatorEpochInfo;
 use crate::network::{Network, ShredNetwork};
 use crate::shredder::Shred;
-use crate::{Slot, ValidatorId, ValidatorInfo};
+use crate::{Slot, ValidatorIndex, ValidatorInfo};
 
 /// Default fanout for the Turbine tree.
 pub const DEFAULT_FANOUT: usize = 200;
@@ -30,7 +30,7 @@ pub const DEFAULT_FANOUT: usize = 200;
 ///
 /// A [`TurbineTree`] takes roughly 1600 bytes of memory to store.
 /// So, caching up to 2^16 trees occupies roughly 100 MiB of memory.
-const MAX_CACHED_TREES: u64 = 65536;
+const MAX_CACHED_TREES: usize = 65536;
 
 /// Implementation of Solana's Turbine block dissemination protocol.
 pub struct Turbine<N: Network> {
@@ -46,10 +46,9 @@ pub struct Turbine<N: Network> {
 /// The rest of the tree is not stored, especially to make caching more efficient.
 #[derive(Clone, Debug)]
 pub(crate) struct TurbineTree {
-    root: ValidatorId,
-    #[allow(dead_code)]
-    parent: Option<ValidatorId>,
-    children: Vec<ValidatorId>,
+    root: ValidatorIndex,
+    parent: Option<ValidatorIndex>,
+    children: Vec<ValidatorIndex>,
 }
 
 impl<N> Turbine<N>
@@ -86,9 +85,7 @@ where
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn send_shred_to_root(&self, shred: &Shred) -> std::io::Result<()> {
-        let tree = self
-            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
-            .await;
+        let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
         let root = tree.get_root();
         let addr = self
             .epoch_info
@@ -105,9 +102,7 @@ where
     ///
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> std::io::Result<()> {
-        let tree = self
-            .get_tree(shred.payload().header.slot, shred.payload().index_in_slot())
-            .await;
+        let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
         let addrs = tree.get_children().iter().map(|child| {
             self.epoch_info
                 .epoch_info()
@@ -120,8 +115,8 @@ where
 
     /// Returns the correct Turbine tree for the given slot and shred index.
     /// If the tree is cached, it is returned, otherwise it is built and cached.
-    async fn get_tree(&self, slot: Slot, shred: usize) -> TurbineTree {
-        if let Some(tree) = self.tree_cache.get(&(slot, shred)).await {
+    fn get_tree(&self, slot: Slot, shred: usize) -> TurbineTree {
+        if let Some(tree) = self.tree_cache.get(&(slot, shred)) {
             return tree;
         }
         let tree = TurbineTree::new(
@@ -131,7 +126,7 @@ where
             slot,
             shred,
         );
-        self.tree_cache.insert((slot, shred), tree.clone()).await;
+        self.tree_cache.insert((slot, shred), tree.clone());
         tree
     }
 }
@@ -159,10 +154,10 @@ impl TurbineTree {
     ///
     /// This is deterministic, i.e., same parameters result in the same tree.
     /// Only the neighborhood of the validator given by `own_id` is kept.
-    pub fn new(
+    fn new(
         validators: &[ValidatorInfo],
         fanout: usize,
-        own_id: ValidatorId,
+        own_id: ValidatorIndex,
         slot: Slot,
         shred: usize,
     ) -> Self {
@@ -174,19 +169,25 @@ impl TurbineTree {
         ]
         .concat();
         assert_eq!(seed.len(), 32);
-        let mut rng = StdRng::from_seed(seed.try_into().unwrap());
+        let mut rng = StdRng::from_seed(
+            seed.try_into()
+                .expect("turbine seed should be exactly 32 bytes"),
+        );
 
         // stake-weighted shuffle
         let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
         // TODO: remove leader
-        let validator_ids: Vec<_> = weighted_shuffle
+        let validator_indices: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
-            .map(|i| ValidatorId::new(i as u64))
+            .map(|i| ValidatorIndex::new(i as u64))
             .collect();
 
         // find root & parent
-        let root = validator_ids[0];
-        let own_pos = validator_ids.iter().position(|v| *v == own_id).unwrap();
+        let root = validator_indices[0];
+        let own_pos = validator_indices
+            .iter()
+            .position(|v| *v == own_id)
+            .expect("own validator id should be in the validator set");
         let parent_pos = match own_pos {
             0 => None,
             _ => Some((own_pos - 1) / fanout),
@@ -194,7 +195,7 @@ impl TurbineTree {
 
         // find children
         let offset = own_pos * fanout + 1;
-        let children = validator_ids
+        let children = validator_indices
             .iter()
             .skip(offset)
             .take(fanout)
@@ -203,25 +204,25 @@ impl TurbineTree {
 
         Self {
             root,
-            parent: parent_pos.map(|p| validator_ids[p]),
+            parent: parent_pos.map(|p| validator_indices[p]),
             children,
         }
     }
 
     /// Gives the root validator of this Turbine tree.
-    pub const fn get_root(&self) -> ValidatorId {
+    const fn get_root(&self) -> ValidatorIndex {
         self.root
     }
 
     /// Gives the parent of this validator in the Turbine tree.
     /// Returns `None` iff this validator is the root of the tree.
-    #[allow(dead_code)]
-    pub const fn get_parent(&self) -> Option<ValidatorId> {
+    #[cfg_attr(not(test), expect(dead_code))]
+    const fn get_parent(&self) -> Option<ValidatorIndex> {
         self.parent
     }
 
     /// Gives the list of children of this validator in the Turbine tree.
-    pub fn get_children(&self) -> &[ValidatorId] {
+    fn get_children(&self) -> &[ValidatorIndex] {
         &self.children
     }
 }
@@ -253,14 +254,14 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
         (sks, validators)
@@ -279,7 +280,7 @@ mod tests {
         }
         let mut disseminators = Vec::new();
         for i in 0..validators.len() {
-            let v = ValidatorId::new(i as u64);
+            let v = ValidatorIndex::new(i as u64);
             let network = core.join_unlimited(v).await;
             let epoch_info = EpochInfo::new(validators.to_vec());
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info));
@@ -294,7 +295,7 @@ mod tests {
         let (_, validators) = create_validator_info(2000);
         let mut trees = Vec::new();
         for v in 0..validators.len() {
-            let v = ValidatorId::new(v as u64);
+            let v = ValidatorIndex::new(v as u64);
             let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             trees.push((v, tree));
         }
@@ -316,12 +317,12 @@ mod tests {
             }
             // parent-child compatibility
             for child in tree.get_children() {
-                let childs_parent = trees[child.as_index()].1.get_parent();
-                assert_eq!(childs_parent, Some(*v));
+                let c_parent = trees[child.as_usize()].1.get_parent();
+                assert_eq!(c_parent, Some(*v));
             }
             if let Some(parent) = tree.get_parent() {
-                let parents_children = trees[parent.as_index()].1.get_children();
-                assert!(parents_children.contains(v));
+                let p_children = trees[parent.as_usize()].1.get_children();
+                assert!(p_children.contains(v));
             }
         }
     }
@@ -330,7 +331,7 @@ mod tests {
     fn tree_fanouts() {
         let (_, validators) = create_validator_info(500);
         for v in 0..validators.len() {
-            let v = ValidatorId::new(v as u64);
+            let v = ValidatorIndex::new(v as u64);
             let tree = TurbineTree::new(&validators, 200, v, Slot::new(0), 0);
             assert!(tree.get_children().len() <= 200);
             let tree = TurbineTree::new(&validators, 1, v, Slot::new(0), 0);
@@ -373,7 +374,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         for shred in shreds {
-            disseminators[0].send(&shred).await.unwrap();
+            disseminators[0].send(shred.as_shred()).await.unwrap();
         }
 
         // forward shreds on the "leader" disseminator instance

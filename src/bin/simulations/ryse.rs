@@ -19,6 +19,8 @@ mod latency;
 mod parameters;
 mod robustness;
 
-pub use self::latency::{LatencySimInstanceBuilder, LatencySimParams, RyseLatencySimulation};
-pub use self::parameters::{RyseInstanceBuilder, RyseParameters};
-pub use self::robustness::{run_robustness_tests, run_ryse_robustness_test};
+pub(crate) use self::latency::{
+    LatencySimInstanceBuilder, LatencySimParams, RyseLatencySimulation,
+};
+pub(crate) use self::parameters::{RyseInstanceBuilder, RyseParameters};
+pub(crate) use self::robustness::{run_robustness_tests, run_ryse_robustness_test};

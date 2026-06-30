@@ -1,7 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
 use std::fs::File;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -15,17 +14,11 @@ use alpenglow::disseminator::Rotor;
 use alpenglow::disseminator::rotor::{IidQuorumSampler, StakeWeightedSampler};
 use alpenglow::network::UdpNetwork;
 use alpenglow::shredder::Shred;
-use alpenglow::{Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use alpenglow::{Stake, Transaction, ValidatorIndex, ValidatorInfo, logging};
+use anyhow::{Context, Result};
 use clap::Parser;
-use color_eyre::Result;
-use color_eyre::eyre::Context;
-use fastrace::collector::Config;
 use fastrace::prelude::*;
-use fastrace_opentelemetry::OpenTelemetryReporter;
 use log::warn;
-use opentelemetry::{InstrumentationScope, KeyValue};
-use opentelemetry_otlp::{SpanExporter, WithExportConfig};
-use opentelemetry_sdk::Resource;
 use rand::rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -55,9 +48,6 @@ struct Args {
 #[tokio::main]
 #[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     // parse args & load config from file
     let args = Args::parse();
     if let Some(ip_list) = args.generate_config_files {
@@ -69,25 +59,9 @@ async fn main() -> Result<()> {
     config.read_to_string(&mut config_string)?;
     let config: ConfigFile = toml::from_str(&config_string).context("Can not parse config")?;
 
-    // enable `fastrace` tracing
-    let reporter = OpenTelemetryReporter::new(
-        SpanExporter::builder()
-            .with_tonic()
-            .with_endpoint("http://127.0.0.1:4317".to_string())
-            .with_protocol(opentelemetry_otlp::Protocol::Grpc)
-            .with_timeout(opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
-            .build()
-            .expect("initialize oltp exporter"),
-        Cow::Owned(
-            Resource::builder()
-                .with_attributes([KeyValue::new("service.name", "alpenglow-main")])
-                .build(),
-        ),
-        InstrumentationScope::builder("alpenglow")
-            .with_version(env!("CARGO_PKG_VERSION"))
-            .build(),
-    );
-    fastrace::set_reporter(reporter, Config::default());
+    // enable `fastrace` tracing via OpenTelemetry export (only with `telemetry` feature)
+    #[cfg(feature = "telemetry")]
+    logging::enable_otel_tracing("alpenglow-main")?;
 
     logging::enable_logforth();
 
@@ -119,7 +93,7 @@ type Node = Alpenglow<
 fn create_node(config: ConfigFile) -> Node {
     // turn ConfigFile into an actual node
     let epoch_info = Arc::new(ValidatorEpochInfo::new(
-        ValidatorId::new(config.id),
+        ValidatorIndex::new(config.id),
         EpochInfo::new(config.gossip.clone()),
     ));
     let start_port = config.port;
@@ -127,16 +101,16 @@ fn create_node(config: ConfigFile) -> Node {
     let all2all = TrivialAll2All::new(config.gossip, network);
     let network = UdpNetwork::new(start_port + 1);
     let disseminator = Rotor::new(network, epoch_info.clone());
-    let repair_network = UdpNetwork::new(start_port + 2);
-    let repair_request_network = UdpNetwork::new(start_port + 3);
+    let repair_requester_network = UdpNetwork::new(start_port + 2);
+    let repair_responder_network = UdpNetwork::new(start_port + 3);
     let txs_receiver = UdpNetwork::new(start_port + 4);
     Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
         disseminator,
-        repair_network,
-        repair_request_network,
+        repair_requester_network,
+        repair_responder_network,
         epoch_info,
         txs_receiver,
     )
@@ -145,7 +119,7 @@ fn create_node(config: ConfigFile) -> Node {
 async fn create_node_configs(
     socket_list_filename: String,
     config_base_filename: String,
-) -> color_eyre::Result<()> {
+) -> Result<()> {
     // prepare ValidatorInfo for all nodes
     let mut rng = rng();
     let mut sks = Vec::new();
@@ -165,14 +139,14 @@ async fn create_node_configs(
         ports.push(sockaddr.port());
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(id),
+            id: ValidatorIndex::new(id),
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address: sockaddr,
             disseminator_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 1),
-            repair_request_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
-            repair_response_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 3),
+            repair_requester_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
+            repair_responder_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 3),
         });
     }
 
