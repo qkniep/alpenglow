@@ -99,8 +99,7 @@ const MAX_BANDWIDTHS: [u64; 4] = [
     100_000_000_000, // 100 Gbps
 ];
 
-// const SHRED_COUNTS: [usize; 4] = [64, 128, 256, 512];
-const SHRED_COUNTS: [usize; 1] = [64];
+const SHRED_COUNTS: [usize; 4] = [64, 128, 256, 512];
 
 const SHRED_COMBINATIONS: [(usize, usize); 1] = [
     // (32, 54),
