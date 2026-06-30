@@ -167,7 +167,10 @@ where
             [0; 8],
         ]
         .concat();
-        let mut rng = StdRng::from_seed(seed.try_into().unwrap());
+        let mut rng = StdRng::from_seed(
+            seed.try_into()
+                .expect("rotor seed should be exactly 32 bytes"),
+        );
         // PERF: Could avoid an allocation here if we had `SamplingStrategy::sample_quorum_into`.
         let relays: Arc<[ValidatorIndex]> = self.sampler.sample_quorum(&mut rng).into();
         self.relay_cache.insert((slot, slice), relays.clone());

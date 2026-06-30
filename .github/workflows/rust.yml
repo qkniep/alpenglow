@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: nightly
@@ -41,6 +41,28 @@ jobs:
       - name: Check spelling
         if: ${{ !cancelled() }}
         uses: crate-ci/typos@37bb98842b0d8c4ffebdb75301a13db0267cef89 # v1
+
+      # Mirrors `just license`:
+      # every .rs/.py source file must start with the copyright/license header.
+      - name: Check license headers
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            case "$f" in
+              *.py) c='#' ;;
+              *)    c='//' ;;
+            esac
+            line1="" line2=""
+            { IFS= read -r line1; IFS= read -r line2; } < "$f" || true
+            if [ "$line1" != "$c Copyright (c) Anza Technology, Inc." ] \
+              || [ "$line2" != "$c SPDX-License-Identifier: Apache-2.0" ]; then
+              echo "missing/malformed license header: $f" >&2
+              fail=1
+            fi
+          done < <(git ls-files -- '*.rs' '*.py')
+          [ "$fail" -eq 0 ] || { echo "Headers must match src/lib.rs." >&2; exit 1; }
 
       # Lints these workflow files for syntax errors, bad expressions, and (via
       # the runner's preinstalled shellcheck) issues in `run:` scripts. Pinned
@@ -62,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
 
       - name: Clippy
@@ -72,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
         with:
           tools: nextest
@@ -98,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: nightly
@@ -131,7 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
 
       - name: Build (release)
@@ -141,7 +163,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
         with:
           tools: cargo-deny,cargo-machete
@@ -156,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
 
       - name: Build docs

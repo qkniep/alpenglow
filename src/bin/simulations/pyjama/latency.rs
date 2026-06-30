@@ -177,7 +177,7 @@ impl Event for LatencyEvent {
                             start_send_time + prop_delay + tx_delay
                         })
                         .max()
-                        .unwrap();
+                        .expect("there should be at least one proposer");
                     timings[relay.as_usize()] =
                         timings[relay.as_usize()].max(shreds_from_all_proposers);
                 }
@@ -225,7 +225,7 @@ impl Event for LatencyEvent {
                 engine.run(&consensus_instance, &mut timings);
                 timings
                     .get(crate::alpenglow::LatencyEvent::Final)
-                    .unwrap()
+                    .expect("final event should be recorded")
                     .to_vec()
             }
             Self::Release => {

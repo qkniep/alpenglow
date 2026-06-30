@@ -49,7 +49,7 @@ impl RepairRequestType {
             req_type: self.clone(),
             sender: ValidatorIndex::new(0),
         };
-        let msg_bytes = wincode::serialize(&repair).unwrap();
+        let msg_bytes = crate::serialize(&repair);
         hash(&msg_bytes)
     }
 }
@@ -181,10 +181,11 @@ where
                 let last_slice = blockstore.get_last_slice_index(block_id)?;
                 let root = blockstore.get_slice_root(block_id, last_slice)?;
                 let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
+                drop(blockstore);
                 Some(RepairResponse::LastSliceRoot(
                     request.req_type.clone(),
                     last_slice,
-                    root.clone(),
+                    root,
                     proof,
                 ))
             }
@@ -192,9 +193,10 @@ where
                 let blockstore = self.blockstore.read().await;
                 let root = blockstore.get_slice_root(block_id, *slice)?;
                 let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
+                drop(blockstore);
                 Some(RepairResponse::SliceRoot(
                     request.req_type.clone(),
-                    root.clone(),
+                    root,
                     proof,
                 ))
             }
@@ -203,6 +205,7 @@ where
                 let shred = blockstore
                     .get_shred(block_id, *slice, *shred_index)
                     .cloned()?;
+                drop(blockstore);
                 Some(RepairResponse::Shred(
                     request.req_type.clone(),
                     shred.into_shred(),
@@ -418,7 +421,13 @@ where
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
-                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
+                // shred for the wrong slice root, don't even try to verify signature
+                if &shred.slice_root() != root {
+                    warn!("repair response (Shred) with slice root not matching proved slice root");
+                    return;
+                }
+                // have no commitment cache for repair, always verify signature (i.e. `None` here)
+                let Ok(validated) = ValidatedShred::try_new(shred, None, leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };
@@ -592,10 +601,8 @@ mod tests {
         repair_block(10).await;
     }
 
-    // test takes a long time to run in debug mode.
-    // so ignored for normal runs and ran as part of sequential tests
     #[tokio::test]
-    #[ignore]
+    #[ignore = "slow in debug mode; runs in release via `just test-sequential`"]
     async fn repair_large_block() {
         repair_block(MAX_SLICES_PER_BLOCK).await;
     }
@@ -620,8 +627,8 @@ mod tests {
         // answer LastSliceRoot request
         let response = RepairResponse::LastSliceRoot(
             req_type,
-            SliceIndex::new_unchecked(num_slices - 1),
-            shreds.last().unwrap()[0].merkle_root().clone(),
+            SliceIndex::new_for_test(num_slices - 1),
+            shreds.last().unwrap()[0].slice_root().clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
         // responses go to v1's repair requester socket (joined at index 2)
@@ -646,7 +653,7 @@ mod tests {
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
             let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
-            let root = shreds[slice.inner()][0].merkle_root().clone();
+            let root = shreds[slice.inner()][0].slice_root().clone();
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
             ctx.v0_request_net.send(&response, port1).await.unwrap();
@@ -706,7 +713,7 @@ mod tests {
         // no response is expected; verify by following up with a valid request
         // and checking we get its response (proves the handler is still alive)
         let valid_request = RepairRequest {
-            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_unchecked(0)),
+            req_type: RepairRequestType::SliceRoot(block_id, SliceIndex::new_for_test(0)),
             sender: ValidatorIndex::new(0),
         };
         ctx.v0_reply_net.send(&valid_request, port1).await.unwrap();
@@ -728,12 +735,13 @@ mod tests {
         let block_to_repair = (slot, block_hash.clone());
 
         // ingest the block into blockstore
+        let mut b = ctx.blockstore.write().await;
         for slice_shreds in shreds.clone() {
-            let mut b = ctx.blockstore.write().await;
             for shred in slice_shreds {
                 let _ = b.add_shred_from_dissemination(shred).await;
             }
         }
+        drop(b);
         assert_eq!(
             ctx.blockstore.read().await.disseminated_block_hash(slot),
             Some(&block_hash)
@@ -762,7 +770,7 @@ mod tests {
         };
         assert_eq!(req_type, request.req_type);
         assert_eq!(last_slice.inner(), SLICES - 1);
-        assert_eq!(&root, shreds[last_slice.inner()][0].merkle_root());
+        assert_eq!(&root, shreds[last_slice.inner()][0].slice_root());
         let correct_proof = ctx
             .blockstore
             .read()
@@ -785,7 +793,7 @@ mod tests {
                 panic!("not SliceRoot response");
             };
             assert_eq!(req_type, request.req_type);
-            assert_eq!(&root, shreds[slice.inner()][0].merkle_root());
+            assert_eq!(&root, shreds[slice.inner()][0].slice_root());
             let correct_proof = ctx
                 .blockstore
                 .read()
