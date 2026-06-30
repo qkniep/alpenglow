@@ -90,7 +90,7 @@ fn node_generate_config_files() {
 /// Launches a 2-node local cluster and verifies it keeps running and finalizes
 /// at least one slot within 15 seconds.
 #[test]
-#[ignore]
+#[ignore = "slow launch test; runs via `just test-smoke`"]
 fn local_cluster_short() {
     // `assert_cmd::Command` doesn't expose `spawn()`, so use `std::process::Command`
     // directly with the Cargo-provided binary path.
@@ -133,7 +133,7 @@ fn local_cluster_short() {
 /// Runs the performance test (11 nodes, simulated network) for 5 seconds and
 /// verifies that nodes actually finalize blocks, not just that the binary exits.
 #[test]
-#[ignore]
+#[ignore = "slow launch test; runs via `just test-smoke`"]
 fn performance_test_short() {
     let output = cargo_bin_cmd!("performance_test")
         .arg("--duration-secs")

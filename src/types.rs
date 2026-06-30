@@ -9,8 +9,13 @@ pub mod stake;
 pub mod validator_index;
 
 pub use self::fraction::Fraction;
+<<<<<<< qkniep/leader-add-own-block
 pub(crate) use self::slice::SliceHeader;
 pub use self::slice::{ReconstructedSlice, Slice, SlicePayload};
+=======
+pub use self::slice::{ReconstructedSlice, Slice};
+pub(crate) use self::slice::{SliceHeader, SlicePayload, SlicePayloadError};
+>>>>>>> main
 pub use self::slice_index::SliceIndex;
 pub use self::slot::{SLOTS_PER_EPOCH, SLOTS_PER_WINDOW, Slot};
 pub use self::stake::Stake;

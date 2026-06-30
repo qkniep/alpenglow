@@ -68,7 +68,7 @@ where
     D: Disseminator,
     T: TransactionNetwork,
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
         epoch_info: Arc<ValidatorEpochInfo>,
@@ -231,21 +231,8 @@ where
                         // It's a NOP if we have been using the same parent as before.
 
                         let start = Instant::now();
-                        let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash == *parent_hash {
-                            debug!("parent is ready, continuing with same parent");
-                        } else {
-                            assert_ne!(new_slot, *parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                parent_hash.short_hex(),
-                                parent_slot,
-                                new_hash.short_hex(),
-                                new_slot
-                            );
-                            payload.parent = Some((new_slot, new_hash));
-                        }
+                        apply_parent_ready(&mut payload, res, &parent_block_id);
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
@@ -257,20 +244,8 @@ where
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if is_last && !parent_ready_receiver.is_terminated() {
-                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                if new_hash != *parent_hash {
-                    assert_ne!(new_slot, *parent_slot);
-                    debug!(
-                        "changed parent from {} in slot {} to {} in slot {}",
-                        parent_hash.short_hex(),
-                        parent_slot,
-                        new_hash.short_hex(),
-                        new_slot
-                    );
-                    payload.parent = Some((new_slot, new_hash));
-                } else {
-                    debug!("parent is ready, continuing with same parent");
-                }
+                let received = (&mut parent_ready_receiver).await;
+                apply_parent_ready(&mut payload, received, &parent_block_id);
             }
             let header = SliceHeader {
                 slot,
@@ -318,7 +293,7 @@ where
                     time_for_slice,
                 )
                 .await;
-                let elapsed = self.delta_first_slice - slice_duration_left;
+                let elapsed = self.delta_first_slice.saturating_sub(slice_duration_left);
                 let left = duration_left.saturating_sub(elapsed);
 
                 (payload, left)
@@ -364,6 +339,7 @@ where
             .expect("pool always has a shredder, block production is sequential")
             .shred(slice, &self.secret_key)
             .expect("shredding of valid slice should never fail");
+<<<<<<< qkniep/leader-add-own-block
 
         // Disseminate every shred. Dissemination is best-effort: a send failure
         // is usually transient (e.g. a full socket buffer), so we try every
@@ -405,6 +381,28 @@ where
                 // and the only alternative is proposing a truncated block that
                 // followers can never reconstruct. Crash loudly instead.
                 assert!(is_last, "block completed before its last slice");
+=======
+        // heap-iterate so the large shred array doesn't bloat this future
+        for s in Vec::from(shreds) {
+            self.disseminator.send(s.as_shred()).await?;
+            // PERF: move expensive add_shred() call out of block production
+            let block = self
+                .blockstore
+                .write()
+                .await
+                .add_shred_from_dissemination(s)
+                .await;
+            debug_assert!(
+                !matches!(
+                    block,
+                    Err(AddShredError::InvalidShred | AddShredError::Equivocation),
+                ),
+                "leader produced bad shreds"
+            );
+            if let Ok(Some(block_info)) = block {
+                debug_assert!(maybe_block_hash.is_none());
+                maybe_block_hash = Some(block_info.hash.clone());
+>>>>>>> main
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
                     .write()
@@ -417,7 +415,43 @@ where
                 assert!(!is_last, "last slice did not complete the block");
                 Ok(None)
             }
+<<<<<<< qkniep/leader-add-own-block
+=======
         }
+        if is_last {
+            Ok(Some(maybe_block_hash.expect(
+                "adding the last slice completed the block, so the hash is known",
+            )))
+        } else {
+            debug_assert!(maybe_block_hash.is_none());
+            Ok(None)
+>>>>>>> main
+        }
+    }
+}
+
+/// Unwraps a received `ParentReady` event and applies its parent to `payload`.
+///
+/// A no-op if the ready parent matches the one we were already building on.
+fn apply_parent_ready(
+    payload: &mut SlicePayload,
+    received: Result<BlockId, oneshot::error::RecvError>,
+    parent_block_id: &BlockId,
+) {
+    let (new_slot, new_hash) = received.expect("ParentReady sender should not be dropped");
+    let (parent_slot, parent_hash) = parent_block_id;
+    if &new_hash == parent_hash {
+        debug!("parent is ready, continuing with same parent");
+    } else {
+        assert_ne!(&new_slot, parent_slot);
+        debug!(
+            "changed parent from {} in slot {} to {} in slot {}",
+            parent_hash.short_hex(),
+            parent_slot,
+            new_hash.short_hex(),
+            new_slot
+        );
+        payload.parent = Some((new_slot, new_hash));
     }
 }
 
@@ -444,7 +478,9 @@ where
 
     // reserve space for: parent info, and
     // 8 bytes for SlicePayload::data length
-    let parent_encoded_len = wincode::serialized_size(&parent).unwrap() as usize;
+    let parent_encoded_len = wincode::serialized_size(&parent)
+        .expect("computing serialized size of parent should not fail")
+        as usize;
     let buffer_space = MAX_DATA_PER_SLICE - parent_encoded_len - 8;
     let mut buffer = Vec::<u8>::with_capacity(buffer_space);
     let mut tx_count = 0u64;
@@ -461,7 +497,8 @@ where
         };
         let tx = res.expect("receiving tx");
         tx_count += 1;
-        wincode::serialize_into(&mut buffer, &tx).unwrap();
+        wincode::serialize_into(&mut buffer, &tx)
+            .expect("serializing transaction into buffer should not fail");
 
         // if there is not enough space for another tx, break
         // +8 for the transaction length overhead
@@ -544,7 +581,7 @@ async fn wait_for_first_slot(
         } => {
             match res {
                 None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash.clone()), rx),
+                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
             }
         }
     }
@@ -564,7 +601,12 @@ mod tests {
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
+<<<<<<< qkniep/leader-add-own-block
     use crate::test_utils::generate_validators;
+=======
+    use crate::shredder::TOTAL_SHREDS;
+    use crate::test_utils::{generate_validators, random_block_id};
+>>>>>>> main
     use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
@@ -753,8 +795,8 @@ mod tests {
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let slot_hash: BlockHash = Hash::random_for_test().into();
-        let old_parent = (slot.prev(), Hash::random_for_test().into());
-        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
+        let old_parent = random_block_id(slot.prev());
+        let new_parent = random_block_id(slot.prev().prev());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,

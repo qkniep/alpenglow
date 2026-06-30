@@ -62,8 +62,10 @@ impl ReedSolomonCoder {
 
         assert!(num_coding <= TOTAL_SHREDS);
 
-        let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
-        let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
+        let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED)
+            .expect("Reed-Solomon dimensions should be valid");
+        let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED)
+            .expect("Reed-Solomon dimensions should be valid");
 
         ReedSolomonCoder {
             num_coding,

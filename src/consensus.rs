@@ -49,7 +49,7 @@ pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, 
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
+use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
@@ -125,6 +125,21 @@ where
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Interprets a joined task result during shutdown.
+///
+/// On shutdown the loops are aborted.
+/// So a [`JoinError`] from cancellation is the expected outcome and maps to `Ok(())`.
+/// A panic still propagates, as does any error the task itself returned.
+///
+/// [`JoinError`]: tokio::task::JoinError
+fn join_for_shutdown(res: Result<Result<()>, tokio::task::JoinError>) -> Result<()> {
+    match res {
+        Ok(inner) => inner,
+        Err(err) if err.is_cancelled() => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Send + Sync + 'static,
@@ -133,23 +148,23 @@ where
 {
     /// Creates a new Alpenglow consensus node.
     ///
-    /// `repair_network` - [`RepairNetwork`] for sending requests and receiving responses.
-    /// `repair_request_network` - [`RepairRequestNetwork`] for answering incoming requests.
+    /// `repair_requester_network` - [`RepairRequesterNetwork`] for sending requests and receiving responses.
+    /// `repair_responder_network` - [`RepairResponderNetwork`] for answering incoming requests.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new<RN, RR>(
+    #[expect(clippy::too_many_arguments)]
+    pub fn new<RQ, RP>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
-        repair_network: RN,
-        repair_request_network: RR,
+        repair_requester_network: RQ,
+        repair_responder_network: RP,
         epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
     ) -> Self
     where
-        RR: RepairRequestNetwork + 'static,
-        RN: RepairNetwork + 'static,
+        RQ: RepairRequesterNetwork + 'static,
+        RP: RepairResponderNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
@@ -169,7 +184,7 @@ where
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
             blockstore.clone(),
-            repair_request_network,
+            repair_responder_network,
         );
         let _repair_request_handler =
             tokio::spawn(async move { repair_request_handler.run().await });
@@ -177,7 +192,7 @@ where
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
-            repair_network,
+            repair_requester_network,
             epoch_info.clone(),
         );
 
@@ -194,7 +209,7 @@ where
             all2all.clone(),
         );
         let votor_handle = tokio::spawn(
-            async move { votor.voting_loop().await.unwrap() }
+            async move { votor.voting_loop().await }
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
@@ -255,8 +270,8 @@ where
         prod_loop.abort();
 
         let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
-        msg_res??;
-        prod_res??;
+        join_for_shutdown(msg_res)?;
+        join_for_shutdown(prod_res)?;
         Ok(())
     }
 
@@ -334,8 +349,15 @@ where
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // validate shred before forwarding or inserting
         let slot = shred.payload().header.slot;
+        let slice_index = shred.payload().header.slice_index;
         let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
+        // use cached commitment, if we have it, to skip signature verification
+        let cached = self
+            .blockstore
+            .read()
+            .await
+            .cached_commitment(slot, slice_index);
+        let validated = match ValidatedShred::try_new(shred, cached.as_ref(), &leader_pk) {
             Ok(v) => v,
             Err(_) => return Ok(()),
         };
@@ -356,9 +378,12 @@ where
             .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
-            let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
-            guard.add_block(block_id, block_info.parent).await;
+            self.pool
+                .write()
+                .await
+                .add_block(block_id, block_info.parent)
+                .await;
         }
         Ok(())
     }
