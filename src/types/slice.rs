@@ -172,7 +172,7 @@ impl From<SlicePayload> for Vec<u8> {
 
 /// Errors that may occur while deserializing a [`SlicePayload`] from bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub(crate) enum SlicePayloadError {
+pub enum SlicePayloadError {
     /// The serialized payload is larger than a slice is allowed to hold.
     #[error("payload of {len} bytes exceeds the {MAX_DATA_PER_SLICE} byte slice limit")]
     TooLarge { len: usize },

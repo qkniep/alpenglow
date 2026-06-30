@@ -17,10 +17,10 @@ pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, TOTAL_SHREDS, ValidatedShred};
+use crate::shredder::{
+    RegularShredder, ShredIndex, ShredderPool, SliceCommitment, TOTAL_SHREDS, ValidatedShred,
+};
 use crate::types::{SliceIndex, SlicePayload};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, SliceCommitment, ValidatedShred};
-use crate::types::SliceIndex;
 use crate::{Block, BlockId, Slot};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
@@ -86,9 +86,13 @@ pub trait Blockstore {
     async fn add_own_slice(
         &mut self,
         payload: SlicePayload,
-        shreds: [ValidatedShred; TOTAL_SHREDS],
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
     ) -> Option<BlockInfo>;
     async fn flag_leader_misbehavior(&mut self, slot: Slot);
+    #[expect(
+        clippy::needless_lifetimes,
+        reason = "explicit lifetime is required by mockall::automock"
+    )]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
@@ -324,10 +328,10 @@ impl Blockstore for BlockstoreImpl {
     async fn add_own_slice(
         &mut self,
         payload: SlicePayload,
-        shreds: [ValidatedShred; TOTAL_SHREDS],
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
     ) -> Option<BlockInfo> {
         let slot = shreds[0].payload().header.slot;
-        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(payload, shreds);
+        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(payload, *shreds);
         if first_shred {
             self.send_blockstore_event(BlockstoreEvent::FirstShred(slot))
                 .await;
@@ -867,7 +871,7 @@ mod tests {
         for slice in slices {
             let is_last = slice.is_last;
             let (payload, shreds) = shred_as_leader(slice, &sk);
-            let block_info = own.add_own_slice(payload, shreds).await;
+            let block_info = own.add_own_slice(payload, Box::new(shreds)).await;
             // Only the last slice completes the block.
             assert_eq!(block_info.is_some(), is_last);
             if let Some(info) = block_info {

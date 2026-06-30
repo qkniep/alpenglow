@@ -333,13 +333,15 @@ where
         // Keep the payload so we can hand a ready-made slice to the blockstore,
         // instead of making it Reed-Solomon-decode our own data back out.
         let slice = Slice::from_parts(header, payload.clone());
-        let shreds = self
-            .shredders
-            .checkout()
-            .expect("pool always has a shredder, block production is sequential")
-            .shred(slice, &self.secret_key)
-            .expect("shredding of valid slice should never fail");
-<<<<<<< qkniep/leader-add-own-block
+        // Box the shreds so the large array lives on the heap instead of bloating
+        // this future across the dissemination and `add_own_slice` awaits below.
+        let shreds = Box::new(
+            self.shredders
+                .checkout()
+                .expect("pool always has a shredder, block production is sequential")
+                .shred(slice, &self.secret_key)
+                .expect("shredding of valid slice should never fail"),
+        );
 
         // Disseminate every shred. Dissemination is best-effort: a send failure
         // is usually transient (e.g. a full socket buffer), so we try every
@@ -350,7 +352,7 @@ where
         // this leader.
         let mut failed = 0;
         let mut first_err = None;
-        for s in &shreds {
+        for s in shreds.iter() {
             if let Err(e) = self.disseminator.send(s.as_shred()).await {
                 failed += 1;
                 first_err.get_or_insert(e);
@@ -381,28 +383,6 @@ where
                 // and the only alternative is proposing a truncated block that
                 // followers can never reconstruct. Crash loudly instead.
                 assert!(is_last, "block completed before its last slice");
-=======
-        // heap-iterate so the large shred array doesn't bloat this future
-        for s in Vec::from(shreds) {
-            self.disseminator.send(s.as_shred()).await?;
-            // PERF: move expensive add_shred() call out of block production
-            let block = self
-                .blockstore
-                .write()
-                .await
-                .add_shred_from_dissemination(s)
-                .await;
-            debug_assert!(
-                !matches!(
-                    block,
-                    Err(AddShredError::InvalidShred | AddShredError::Equivocation),
-                ),
-                "leader produced bad shreds"
-            );
-            if let Ok(Some(block_info)) = block {
-                debug_assert!(maybe_block_hash.is_none());
-                maybe_block_hash = Some(block_info.hash.clone());
->>>>>>> main
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
                     .write()
@@ -415,17 +395,6 @@ where
                 assert!(!is_last, "last slice did not complete the block");
                 Ok(None)
             }
-<<<<<<< qkniep/leader-add-own-block
-=======
-        }
-        if is_last {
-            Ok(Some(maybe_block_hash.expect(
-                "adding the last slice completed the block, so the hash is known",
-            )))
-        } else {
-            debug_assert!(maybe_block_hash.is_none());
-            Ok(None)
->>>>>>> main
         }
     }
 }
@@ -601,12 +570,7 @@ mod tests {
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
-<<<<<<< qkniep/leader-add-own-block
-    use crate::test_utils::generate_validators;
-=======
-    use crate::shredder::TOTAL_SHREDS;
     use crate::test_utils::{generate_validators, random_block_id};
->>>>>>> main
     use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
