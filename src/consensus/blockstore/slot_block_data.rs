@@ -36,7 +36,7 @@ use crate::shredder::{
     DeshredError, MAX_DATA_PER_SLICE, RegularShredder, Shredder, SliceCommitment, TOTAL_SHREDS,
     ValidatedShred,
 };
-use crate::types::{ReconstructedSlice, SliceIndex};
+use crate::types::{ReconstructedSlice, SliceIndex, SlicePayload};
 use crate::{Block, Slot};
 
 /// Errors that may be encountered when adding a shred.
@@ -122,6 +122,24 @@ impl SlotBlockData {
         self.leader_misbehaved = true;
         true
     }
+
+    /// Ingests a slice that the local node produced itself (as the leader).
+    ///
+    /// Unlike [`Self::add_shred_from_dissemination`] and [`Self::add_shred_from_repair`],
+    /// the caller already holds all [`TOTAL_SHREDS`] freshly produced shreds
+    /// and the decoded slice payload.
+    /// No deshredding, Merkle verification or equivocation check are performed.
+    ///
+    /// Returns `(is_first_slice, completed_block)`.
+    /// The first flag urges the caller to emit a [`BlockstoreEvent::FirstShred`],
+    /// the second entry urges the caller to emit a [`BlockstoreEvent::Block`].
+    pub(super) fn add_own_slice(
+        &mut self,
+        payload: SlicePayload,
+        shreds: [ValidatedShred; TOTAL_SHREDS],
+    ) -> (bool, Option<BlockInfo>) {
+        self.disseminated.add_own_slice(payload, shreds)
+    }
 }
 
 /// Returned value from [`BlockData::try_reconstruct_slice`]
@@ -180,43 +198,33 @@ impl BlockData {
         }
     }
 
+    /// Add a shred to this block.
+    ///
+    ///
     fn add_shred(
         &mut self,
         shred: ValidatedShred,
         shredder: &mut RegularShredder,
     ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        debug_assert_eq!(shred.payload().header.slot, self.slot);
-        let slice_index = shred.payload().header.slice_index;
-
-        // different valid commitments for the same slice -> leader equivocation
-        if let Some(cached) = self.commitment_cache.get(&slice_index)
-            && cached != &shred.commitment()
-        {
-            return Err(AddShredError::Equivocation);
-        }
-        self.add_validated_shred(shred, shredder)
-    }
-
-    fn add_validated_shred(
-        &mut self,
-        validated_shred: ValidatedShred,
-        shredder: &mut RegularShredder,
-    ) -> Result<Option<BlockstoreEvent>, AddShredError> {
-        let header = &validated_shred.payload().header;
+        let header = &shred.payload().header;
         debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
+        let is_last = header.is_last;
 
-        // populate commitment cache
-        if let Entry::Vacant(entry) = self.commitment_cache.entry(slice_index) {
-            entry.insert(validated_shred.commitment());
+        // first shred for a slice populates the commitment cache;
+        // a later shred with a different valid commitment means the leader equivocated.
+        match self.commitment_cache.entry(slice_index) {
+            Entry::Occupied(entry) if entry.get() != &shred.commitment() => {
+                return Err(AddShredError::Equivocation);
+            }
+            Entry::Occupied(_) => {}
+            Entry::Vacant(entry) => {
+                entry.insert(shred.commitment());
+            }
         }
 
-        match (header.is_last, self.last_slice) {
-            (true, None) => {
-                self.last_slice = Some(slice_index);
-                self.slices.retain(|&ind, _| ind <= slice_index);
-                self.shreds.retain(|&ind, _| ind <= slice_index);
-            }
+        match (is_last, self.last_slice) {
+            (true, None) => self.mark_last_slice(slice_index),
             (true, Some(l)) => {
                 if slice_index != l {
                     return Err(AddShredError::InvalidShred);
@@ -231,7 +239,7 @@ impl BlockData {
         }
 
         let is_first_shred = self.shreds.is_empty();
-        let shred_index = validated_shred.payload().shred_index;
+        let shred_index = shred.payload().shred_index;
         let slice_shreds = self
             .shreds
             .entry(slice_index)
@@ -243,7 +251,7 @@ impl BlockData {
             );
             return Err(AddShredError::Duplicate);
         }
-        slice_shreds[*shred_index] = Some(validated_shred);
+        slice_shreds[*shred_index] = Some(shred);
 
         if is_first_shred {
             return Ok(Some(BlockstoreEvent::FirstShred(self.slot)));
@@ -261,6 +269,67 @@ impl BlockData {
                 })),
             },
         }
+    }
+
+    /// Marks `slice_index` as the block's last slice and prunes anything cached beyond it.
+    fn mark_last_slice(&mut self, slice_index: SliceIndex) {
+        debug_assert!(self.last_slice.is_none());
+        self.last_slice = Some(slice_index);
+        self.slices.retain(|&ind, _| ind <= slice_index);
+        self.shreds.retain(|&ind, _| ind <= slice_index);
+    }
+
+    /// Ingests a slice that the local node produced itself (as the leader).
+    fn add_own_slice(
+        &mut self,
+        payload: SlicePayload,
+        shreds: [ValidatedShred; TOTAL_SHREDS],
+    ) -> (bool, Option<BlockInfo>) {
+        // Build the slice from the shreds so the two can't disagree — the
+        // dissemination path likewise reconstructs its slice from shreds.
+        let any_shred = &shreds[0];
+        let slice =
+            ReconstructedSlice::from_shreds(payload, any_shred, any_shred.slice_root().clone());
+        debug_assert_eq!(slice.slot, self.slot);
+        let slice_index = slice.slice_index;
+        let is_first = self.shreds.is_empty();
+
+        // Commitment is trusted: we built and signed these shreds ourselves,
+        // and each slice is produced exactly once, so the entry is always vacant.
+        self.commitment_cache
+            .insert(slice_index, any_shred.commitment());
+
+        // The leader produces each slice once, in order, and stops after the
+        // last, so a last slice must never already be set. This subsumes the
+        // dissemination path's per-arm last-slice checks (no re-marking, nothing
+        // at or after the last slice).
+        assert!(
+            self.last_slice.is_none(),
+            "own slice {slice_index:?} added after the last slice in slot {}",
+            self.slot,
+        );
+        if slice.is_last {
+            self.mark_last_slice(slice_index);
+        }
+
+        // store everything directly — no `deshred()` / RS decode
+        self.shreds.insert(slice_index, shreds.map(Some));
+        self.slices.insert(slice_index, slice);
+
+        let block_info = match self.try_reconstruct_block() {
+            ReconstructBlockResult::NoAction => None,
+            ReconstructBlockResult::Complete(block_info) => Some(block_info),
+            ReconstructBlockResult::Error => {
+                // Our own block, built from data we serialized and signed, must
+                // reconstruct. Reaching here means a producer-side logic bug,
+                // not adversarial input, so there is no graceful recovery.
+                unreachable!(
+                    "leader produced a block that failed reconstruction: slot {}, slice {slice_index:?}",
+                    self.slot,
+                );
+            }
+        };
+        (is_first, block_info)
     }
 
     /// Reconstructs the slice if the blockstore contains enough shreds.
