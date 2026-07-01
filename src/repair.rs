@@ -686,15 +686,21 @@ mod tests {
             }
         }
 
-        // after some time block should be repaired
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(
-            ctx.blockstore
+        // block should be repaired shortly; poll until it lands rather than
+        // relying on a fixed sleep, which is racy under CI load
+        let repaired = tokio::time::timeout(Duration::from_secs(10), async {
+            while ctx
+                .blockstore
                 .read()
                 .await
                 .get_block(&block_to_repair)
-                .is_some()
-        );
+                .is_none()
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(repaired.is_ok(), "block was not repaired within timeout");
     }
 
     #[tokio::test]
