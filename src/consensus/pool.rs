@@ -530,7 +530,7 @@ impl Pool for PoolImpl {
         self.slot_state(*slot)
             .notify_parent_known(block_hash.clone());
         if let Some(parent_state) = self.slot_states.get(parent_slot)
-            && parent_state.is_notar_fallback(parent_hash)
+            && parent_state.is_notarized_or_fallback(parent_hash)
             && let Some(output) = self
                 .slot_state(*slot)
                 .notify_parent_certified(block_hash.clone())
@@ -1408,5 +1408,117 @@ mod tests {
             }
             _ => unreachable!("unexpected event {event:?}"),
         }
+    }
+
+    /// Builds a notarization cert for `hash` in `slot` from the first `count` validators.
+    fn notar_cert(ctx: &TestContext, slot: Slot, hash: &BlockHash, count: u64) -> NotarCert {
+        let votes: Vec<NotarVote> = (0..count)
+            .map(|v| {
+                NotarVote::new(
+                    slot,
+                    hash.clone(),
+                    &ctx.sks[v as usize],
+                    ValidatorIndex::new(v),
+                )
+            })
+            .collect();
+        NotarCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap()
+    }
+
+    /// Builds a fast-finalization cert for `hash` in `slot` from the first `count` validators.
+    fn fast_final_cert(
+        ctx: &TestContext,
+        slot: Slot,
+        hash: &BlockHash,
+        count: u64,
+    ) -> FastFinalCert {
+        let votes: Vec<NotarVote> = (0..count)
+            .map(|v| {
+                NotarVote::new(
+                    slot,
+                    hash.clone(),
+                    &ctx.sks[v as usize],
+                    ValidatorIndex::new(v),
+                )
+            })
+            .collect();
+        FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap()
+    }
+
+    /// Drains all pending votor events and reports whether `SafeToNotar(slot, hash)` was emitted.
+    fn drained_safe_to_notar(ctx: &mut TestContext, slot: Slot, hash: &BlockHash) -> bool {
+        let mut seen = false;
+        while let Ok(event) = ctx.votor_rx.try_recv() {
+            if let PoolEvent::SafeToNotar(s, h) = event
+                && s == slot
+                && &h == hash
+            {
+                seen = true;
+            }
+        }
+        seen
+    }
+
+    /// Regression test: a child block must still reach safe-to-notar when its
+    /// parent was notarized via a directly received notarization cert (catch-up
+    /// scenario where certs propagate but raw votes do not), rather than via the
+    /// usual vote path that also builds a notar-fallback cert.
+    #[tokio::test]
+    async fn safe_to_notar_with_parent_notarized_via_cert() {
+        let mut ctx = setup();
+
+        let slot1 = Slot::genesis().next();
+        let slot2 = slot1.next();
+        let hash1: BlockHash = Hash::random_for_test().into();
+        let hash2: BlockHash = Hash::random_for_test().into();
+
+        // Parent (slot1) is notarized only via a received notar cert: this
+        // populates `certificates.notar` but no notar-fallback cert.
+        let cert = notar_cert(&ctx, slot1, &hash1, 7);
+        ctx.pool.add_cert(Cert::Notar(cert)).await.unwrap();
+
+        // Register the child block; its parent is the cert-notarized slot1 block.
+        ctx.pool
+            .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
+            .await;
+
+        // We skip slot2, but a weak quorum of others notarizes the child.
+        ctx.add_skip_votes(slot2, 0..1).await;
+        ctx.add_notar_votes(slot2, &hash2, 1..6).await;
+
+        assert!(
+            drained_safe_to_notar(&mut ctx, slot2, &hash2),
+            "child should be safe-to-notar once its parent is notarized via a received cert"
+        );
+    }
+
+    /// Same as above, but the parent is fast-finalized via a received cert. A
+    /// fast-finalization cert also implies notarization-fallback, so the child
+    /// must still reach safe-to-notar.
+    #[tokio::test]
+    async fn safe_to_notar_with_parent_fast_finalized_via_cert() {
+        let mut ctx = setup();
+
+        let slot1 = Slot::genesis().next();
+        let slot2 = slot1.next();
+        let hash1: BlockHash = Hash::random_for_test().into();
+        let hash2: BlockHash = Hash::random_for_test().into();
+
+        // Parent (slot1) is fast-finalized only via a received cert: this
+        // populates `certificates.fast_finalize` but no notar(-fallback) cert.
+        let cert = fast_final_cert(&ctx, slot1, &hash1, 9);
+        ctx.pool.add_cert(Cert::FastFinal(cert)).await.unwrap();
+
+        ctx.pool
+            .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
+            .await;
+
+        ctx.add_skip_votes(slot2, 0..1).await;
+        ctx.add_notar_votes(slot2, &hash2, 1..6).await;
+
+        assert!(
+            drained_safe_to_notar(&mut ctx, slot2, &hash2),
+            "child should be safe-to-notar once its parent is fast-finalized via a received cert"
+        );
     }
 }
