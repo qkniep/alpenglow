@@ -391,12 +391,20 @@ mod tests {
             }
         });
 
-        // wait for shreds to arrive
-        // needs to be longer than the latency of the simulated network
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // poll until all shreds arrive rather than relying on a fixed sleep,
+        // which is racy under CI load; the counter is monotonic so it can't
+        // overshoot the expected total
+        let expected = 9 * TOTAL_SHREDS;
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            while *shreds_received.lock().await < expected {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(received.is_ok(), "not all shreds arrived within timeout");
 
         // non-leaders should have received all shreds via Turbine
-        assert_eq!(*shreds_received.lock().await, 9 * TOTAL_SHREDS);
+        assert_eq!(*shreds_received.lock().await, expected);
         task_leader.abort();
         for task in tasks {
             task.abort();
