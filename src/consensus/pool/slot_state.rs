@@ -463,11 +463,20 @@ impl SlotState {
                 } else if self.votes.notar[v].is_some() {
                     return Some(SlashableOffence::SkipAndNotarize(voter, slot));
                 }
+                // NOTE: Skip together with SkipFallback is intentionally not
+                // slashable. It is provably non-honest (an honest node only
+                // casts SkipFallback after a Notar, which is exclusive with
+                // Skip), but benign: both feed the same skip certificate, the
+                // second is dropped as a duplicate by `should_ignore_vote`, so
+                // it cannot double-count or form a conflicting certificate. It
+                // is surfaced via a log instead (see `add_vote` in `pool.rs`).
             }
             Vote::SkipFallback(_) => {
                 if self.votes.finalize[v].is_some() {
                     return Some(SlashableOffence::SkipAndFinalize(voter, slot));
                 }
+                // NOTE: see the `Vote::Skip` arm above for why SkipFallback
+                // together with Skip is intentionally not slashable.
             }
             Vote::Final(_) => {
                 if self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some() {
@@ -495,6 +504,24 @@ impl SlotState {
                 self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some()
             }
             Vote::Final(_) => self.votes.finalize[v].is_some(),
+        }
+    }
+
+    /// Checks whether `vote` is a skip / skip-fallback vote cast by a validator
+    /// that already cast the *other* skip-type vote for this slot.
+    ///
+    /// An honest node never casts both: `SkipFallback` is only sent after a
+    /// `Notar` vote, which is mutually exclusive with `Skip`. The combination is
+    /// benign (the second vote is dropped as a duplicate by `should_ignore_vote`
+    /// and cannot double-count toward the skip certificate) and thus not
+    /// slashable, but it is provably non-honest, so we surface it for post-hoc
+    /// analysis.
+    pub(super) fn is_skip_skip_fallback_conflict(&self, vote: &Vote) -> bool {
+        let v = vote.signer().as_index();
+        match vote {
+            Vote::Skip(_) => self.votes.skip_fallback[v].is_some(),
+            Vote::SkipFallback(_) => self.votes.skip[v].is_some(),
+            _ => false,
         }
     }
 
@@ -937,5 +964,30 @@ mod tests {
         let nf_vote = Vote::new_notar_fallback(slot, hash, &sks[5], ValidatorIndex::new(5));
         let (certs, _, _) = add(&mut state, nf_vote);
         assert!(certs.is_empty());
+    }
+
+    #[test]
+    fn skip_skip_fallback_conflict() {
+        let (sks, epoch_info) = generate_validators(3);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let slot = Slot::new(1);
+        let mut slot_state = SlotState::new(slot, epoch_info.clone());
+
+        let skip = Vote::new_skip(slot, &sks[0], ValidatorId::new(0));
+        let skip_fallback = Vote::new_skip_fallback(slot, &sks[0], ValidatorId::new(0));
+        let voter_stake = epoch_info.epoch_info().validator(ValidatorId::new(0)).stake;
+
+        // neither is a conflict, nor slashable, before anything is recorded
+        assert!(!slot_state.is_skip_skip_fallback_conflict(&skip));
+        assert!(!slot_state.is_skip_skip_fallback_conflict(&skip_fallback));
+
+        // record a skip vote; the cross-type skip-fallback is now a conflict ...
+        slot_state.add_vote(skip.clone(), voter_stake);
+        assert!(slot_state.is_skip_skip_fallback_conflict(&skip_fallback));
+        // ... but a same-type skip duplicate is not flagged as a conflict, ...
+        assert!(!slot_state.is_skip_skip_fallback_conflict(&skip));
+        // ... and it remains benign (not slashable), just a duplicate.
+        assert!(slot_state.check_slashable_offence(&skip_fallback).is_none());
+        assert!(slot_state.should_ignore_vote(&skip_fallback));
     }
 }
