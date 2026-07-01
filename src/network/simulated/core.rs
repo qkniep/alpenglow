@@ -1,7 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::binary_heap::PeekMut;
 use std::collections::{BinaryHeap, HashMap};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -9,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use log::warn;
 use rand::prelude::*;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, Notify, RwLock, mpsc};
 
 use super::SimulatedNetwork;
 use super::token_bucket::TokenBucket;
@@ -57,12 +56,15 @@ pub struct SimulatedNetworkCore {
     per_packet_loss_probability: f64,
     /// Priority queue of packets that are waiting to be delivered.
     pending: Arc<Mutex<BinaryHeap<SimulatedPacket>>>,
+    /// Wakes the delivery loop whenever a packet is enqueued.
+    notify: Arc<Notify>,
 }
 
 impl SimulatedNetworkCore {
     /// Creates a new network core with the given latency and packet loss parameters.
     pub fn new(latency_ms: u64, jitter_ms: f64, packet_loss: f64) -> Self {
         let pending = Arc::new(Mutex::new(BinaryHeap::<SimulatedPacket>::new()));
+        let notify = Arc::new(Notify::new());
         let nodes = Arc::new(RwLock::new(HashMap::<
             ValidatorIndex,
             mpsc::Sender<SimulatedPacket>,
@@ -70,28 +72,49 @@ impl SimulatedNetworkCore {
 
         let p = pending.clone();
         let n = nodes.clone();
+        let notify_loop = notify.clone();
         tokio::spawn(async move {
             loop {
-                let mut guard = p.lock().await;
-                let Some(next) = guard.peek_mut() else {
-                    continue;
+                // Pop the next due packet, or learn when to wake up next. We hold
+                // the queue lock only for this scan, never while sleeping.
+                let deliver_at = {
+                    let mut guard = p.lock().await;
+                    // copy out the head's deadline so no borrow of `guard` survives
+                    match guard.peek().map(|next| next.deliver_at) {
+                        // queue empty: wait until a packet is enqueued
+                        None => None,
+                        // head not yet due: wait until then (or until an earlier
+                        // packet arrives and wakes us via `notify`)
+                        Some(deliver_at) if deliver_at > Instant::now() => Some(deliver_at),
+                        // head is due: deliver it now
+                        Some(_) => {
+                            let msg = guard.pop().expect("peeked a packet, so heap is non-empty");
+                            // release the queue lock before sending, senders need it
+                            drop(guard);
+                            let channel = n
+                                .read()
+                                .await
+                                .get(&msg.to)
+                                .cloned()
+                                .expect("destination should have a registered channel");
+                            if let Err(_e) = channel.send(msg).await {
+                                #[cfg(test)]
+                                println!("sending failed. Ignoring");
+                                warn!("sending failed. Ignoring");
+                            }
+                            continue;
+                        }
+                    }
                 };
-                if next.deliver_at > Instant::now() {
-                    continue;
-                }
-                let msg = PeekMut::pop(next);
-                // release the queue lock before sending, senders need it
-                drop(guard);
-                let channel = n
-                    .read()
-                    .await
-                    .get(&msg.to)
-                    .cloned()
-                    .expect("destination should have a registered channel");
-                if let Err(_e) = channel.send(msg).await {
-                    #[cfg(test)]
-                    println!("sending failed. Ignoring");
-                    warn!("sending failed. Ignoring");
+                match deliver_at {
+                    None => notify_loop.notified().await,
+                    Some(deliver_at) => {
+                        let until = tokio::time::Instant::from_std(deliver_at);
+                        tokio::select! {
+                            () = tokio::time::sleep_until(until) => {}
+                            () = notify_loop.notified() => {}
+                        }
+                    }
                 }
             }
         });
@@ -103,6 +126,7 @@ impl SimulatedNetworkCore {
             per_packet_jitter_ms: jitter_ms,
             per_packet_loss_probability: packet_loss,
             pending,
+            notify,
         }
     }
 
@@ -267,6 +291,9 @@ impl SimulatedNetworkCore {
         };
         let mut guard = self.pending.lock().await;
         guard.push(packet);
+        drop(guard);
+        // wake the delivery loop in case this packet is due before any it knows of
+        self.notify.notify_one();
     }
 }
 
@@ -446,8 +473,11 @@ mod tests {
             net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
+        // drain until no packet arrives for `max_time`. This must comfortably
+        // exceed the network latency (100ms default), otherwise the very first
+        // packet races the timeout and the loop can exit with nothing received.
         let mut pings_received = 0;
-        let max_time = Duration::from_millis(100);
+        let max_time = Duration::from_secs(1);
         while let Ok(Ok(_)) = timeout(max_time, net2.receive()).await {
             pings_received += 1;
         }
