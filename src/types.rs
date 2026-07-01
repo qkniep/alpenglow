@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Core protocol data types.
+
 pub mod fraction;
 pub mod slice;
 pub mod slice_index;

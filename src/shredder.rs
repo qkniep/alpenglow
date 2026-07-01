@@ -377,17 +377,21 @@ impl Default for CodingOnlyShredder {
     }
 }
 
-/// A shredder that uses the PETS all-or-nothing construction.
+/// A shredder using a PETS-style all-or-nothing construction.
 ///
-/// It outputs `DATA_SHREDS - 1` encrypted data shreds and
-/// `TOTAL_SHREDS - DATA_SHREDS + 1` coding shreds.
+/// The slice payload is encrypted under a random key, and the key is packed into
+/// the tail of the last data shred, which is *withheld* from dissemination. The
+/// remaining `DATA_SHREDS - 1` ciphertext data shreds and
+/// `TOTAL_SHREDS - DATA_SHREDS + 1` coding shreds are output. The key can only be
+/// reconstructed (via Reed-Solomon) once [`DATA_SHREDS`] shreds are available, so
+/// any smaller set of shreds reveals nothing about the plaintext.
 ///
-/// See also: <https://arxiv.org/abs/2502.02774>
+/// NOTE: This realizes the "withhold the key share" idea; it is not the
+/// polynomial-based scheme of <https://arxiv.org/abs/2502.02774>.
 pub struct PetsShredder(ReedSolomonCoder);
 
 impl Shredder for PetsShredder {
-    // needs space for the symmetric encryption key
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - cipher::KEY_BYTES;
+    const MAX_DATA_SIZE: usize = AONT_MAX_DATA_SIZE;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS - 1;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS + 1;
 
@@ -397,15 +401,10 @@ impl Shredder for PetsShredder {
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
-        let mut payload: Vec<u8> = payload.into();
-
-        let key = cipher::encrypt_with_random_key(&mut payload);
-        payload.extend_from_slice(&key);
-
-        let mut raw_shreds = self.0.shred(&payload)?;
-        // delete data shred containing key
+        // the PETS key material is just the key itself
+        let mut raw_shreds = aont_encode(&mut self.0, payload, |key, _ciphertext| key)?;
+        // withhold the last data shred, which carries the key in its tail
         raw_shreds.data.pop();
-
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
@@ -413,11 +412,11 @@ impl Shredder for PetsShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let (buffer, mut raw_shreds) = self.0.deshred(shreds)?;
-        // delete data shred that contained the key
+        let mut raw_shreds = self.0.reconstruct_data(shreds)?;
+        // the PETS key is stored directly in the last shred's tail
+        let payload = aont_decode(&raw_shreds, |key, _ciphertext| key)?;
+        // withhold the last shred again to match the leader's Merkle tree
         raw_shreds.data.pop();
-        // the PETS key is the plaintext tail of the buffer
-        let payload = decrypt_payload(buffer, |key, _buffer| key)?;
         finalize_deshred(raw_shreds, shreds, payload)
     }
 }
@@ -430,15 +429,18 @@ impl Default for PetsShredder {
 
 /// A shredder that uses the RAONT-RS all-or-nothing construction.
 ///
-/// It outputs [`DATA_SHREDS`] encrypted data shreds and
-/// `TOTAL_SHREDS - DATA_SHREDS` coding shreds.
+/// The slice payload is encrypted under a random key, and the *difference value*
+/// `cd = key XOR H(ciphertext)` is packed into the tail of the last data shred
+/// (all [`DATA_SHREDS`] data shreds and `TOTAL_SHREDS - DATA_SHREDS` coding shreds
+/// are output). To recover the key one needs both `cd` and the entire ciphertext
+/// (to recompute `H(ciphertext)`), so no set of fewer than [`DATA_SHREDS`] shreds
+/// can.
 ///
 /// See also: <https://eprint.iacr.org/2016/1014>
 pub struct AontShredder(ReedSolomonCoder);
 
 impl Shredder for AontShredder {
-    // needs space for the symmetric encryption key
-    const MAX_DATA_SIZE: usize = MAX_DATA_PER_SLICE - cipher::KEY_BYTES;
+    const MAX_DATA_SIZE: usize = AONT_MAX_DATA_SIZE;
     const DATA_OUTPUT_SHREDS: usize = DATA_SHREDS;
     const CODING_OUTPUT_SHREDS: usize = TOTAL_SHREDS - DATA_SHREDS;
 
@@ -448,14 +450,8 @@ impl Shredder for AontShredder {
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
         let (header, payload) = slice.deconstruct();
-        let mut payload: Vec<u8> = payload.into();
-
-        let key = cipher::encrypt_with_random_key(&mut payload);
-        // append the key XORed with the hash of the ciphertext
-        let hash = hash(&payload);
-        payload.extend(key.iter().zip(hash.as_ref()).map(|(k, h)| k ^ h));
-
-        let raw_shreds = self.0.shred(&payload)?;
+        // the RAONT-RS key material is the key XORed with the hash of the ciphertext
+        let raw_shreds = aont_encode(&mut self.0, payload, aont_difference_value)?;
         Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
@@ -463,17 +459,26 @@ impl Shredder for AontShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let (buffer, raw_shreds) = self.0.deshred(shreds)?;
-        // the RAONT-RS key is the tail XORed with the hash of the payload
-        let payload = decrypt_payload(buffer, |mut key, buffer| {
-            let hash = hash(buffer);
-            for (k, h) in key.iter_mut().zip(hash.as_ref()) {
-                *k ^= h;
-            }
-            key
-        })?;
+        let raw_shreds = self.0.reconstruct_data(shreds)?;
+        // inverting `cd = key XOR H(ciphertext)` recovers the key (XOR is its own inverse)
+        let payload = aont_decode(&raw_shreds, aont_difference_value)?;
         finalize_deshred(raw_shreds, shreds, payload)
     }
+}
+
+/// The RAONT-RS difference value `key XOR H(ciphertext)`.
+///
+/// XOR is its own inverse, so this maps key to `cd` when shredding and `cd` back
+/// to key when deshredding.
+fn aont_difference_value(
+    mut key: [u8; cipher::KEY_BYTES],
+    ciphertext: &[u8],
+) -> [u8; cipher::KEY_BYTES] {
+    let h = hash(ciphertext);
+    for (k, hb) in key.iter_mut().zip(h.as_ref()) {
+        *k ^= hb;
+    }
+    key
 }
 
 impl Default for AontShredder {
@@ -508,31 +513,127 @@ fn finalize_deshred(
     Ok((slice, reconstructed_shreds))
 }
 
-/// Decrypts a payload with an embedded key (at the end).
+/// Bytes used to store the true plaintext length after the key material.
+const LEN_BYTES: usize = 4;
+
+/// Size of the trailing key block: the key material plus the length field.
+const KEY_BLOCK_BYTES: usize = cipher::KEY_BYTES + LEN_BYTES;
+
+/// Maximum plaintext bytes the all-or-nothing layout can hold in one slice.
 ///
-/// Strips the trailing key material off `buffer`.
-/// Then, `derive_key` needs to turn the raw [`cipher::KEY_BYTES`]-byte tail
-/// and the remaining ciphertext `buffer` into the actual decryption key.
+/// All [`DATA_SHREDS`] shreds carry ciphertext except for the trailing key block.
+const AONT_MAX_DATA_SIZE: usize = DATA_SHREDS * MAX_DATA_PER_SHRED - KEY_BLOCK_BYTES;
+
+// `aont_shred_bytes` rounds shred sizes up to the next even number; this only
+// stays within `MAX_DATA_PER_SHRED` at max payload if that limit itself is even
+const _: () = assert!(MAX_DATA_PER_SHRED.is_multiple_of(2));
+
+/// Minimum shred size for the all-or-nothing layout.
 ///
-/// Returns the plaintext deserialized as a [`SlicePayload`].
+/// The trailing key block must fit entirely within the last shred, and shred
+/// sizes must be even (a `reed_solomon_simd` requirement).
+const AONT_MIN_SHRED_BYTES: usize = KEY_BLOCK_BYTES + KEY_BLOCK_BYTES % 2;
+
+/// Chooses the per-shred byte size for the all-or-nothing layout.
+///
+/// All [`DATA_SHREDS`] shreds together must hold `payload_len` ciphertext bytes
+/// plus the [`KEY_BLOCK_BYTES`]-byte key block, every shred must be at least
+/// [`AONT_MIN_SHRED_BYTES`] (so the key block fits in the last shred), and shred
+/// sizes must be even.
+fn aont_shred_bytes(payload_len: usize) -> usize {
+    let needed = (payload_len + KEY_BLOCK_BYTES).div_ceil(DATA_SHREDS);
+    needed.max(AONT_MIN_SHRED_BYTES).next_multiple_of(2)
+}
+
+/// Encrypts `payload` and lays it out for an all-or-nothing transform.
+///
+/// The layout is a single buffer of `DATA_SHREDS * shred_bytes` bytes:
+///
+/// ```text
+/// [ Enc(plaintext ‖ zero-padding) | key_material | length ]
+/// \------ ciphertext region ------/\----- key block ------/
+/// ```
+///
+/// The plaintext is zero-padded so the ciphertext fills everything up to the
+/// trailing key block; because the padding encrypts to keystream, the whole
+/// ciphertext region is pseudorandom. The key block is the last
+/// [`KEY_BLOCK_BYTES`] bytes and, since `shred_bytes >= AONT_MIN_SHRED_BYTES`,
+/// lies entirely within the last shred.
+///
+/// Returns all [`DATA_SHREDS`] data shreds with coding; the caller decides
+/// whether to keep or withhold the last (key-bearing) shred.
+///
+/// This confinement of the key material to a single, sufficiently large shred is
+/// what makes the construction secure: no set of fewer than [`DATA_SHREDS`]
+/// shreds can both obtain the key material and reconstruct the full ciphertext.
+fn aont_encode(
+    coder: &mut ReedSolomonCoder,
+    payload: SlicePayload,
+    key_material: impl FnOnce([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
+) -> Result<RawShreds, ShredError> {
+    let mut buffer: Vec<u8> = payload.into();
+    let payload_len = buffer.len();
+    if payload_len > AONT_MAX_DATA_SIZE {
+        return Err(ShredError::TooMuchData);
+    }
+
+    let shred_bytes = aont_shred_bytes(payload_len);
+    let region_len = DATA_SHREDS * shred_bytes - KEY_BLOCK_BYTES;
+
+    // zero-pad the plaintext to fill the ciphertext region, then encrypt
+    buffer.resize(region_len, 0);
+    let key = cipher::encrypt_with_random_key(&mut buffer);
+    let key_material = key_material(key, &buffer);
+
+    // append the trailing key block: key material then the true plaintext length
+    buffer.extend_from_slice(&key_material);
+    buffer.extend_from_slice(&(payload_len as u32).to_le_bytes());
+
+    let data: Vec<Vec<u8>> = buffer.chunks(shred_bytes).map(<[u8]>::to_vec).collect();
+    debug_assert_eq!(data.len(), DATA_SHREDS);
+    Ok(coder.encode_coding_from_data(&data))
+}
+
+/// Recovers the [`SlicePayload`] from an all-or-nothing layout.
+///
+/// Inverse of [`aont_encode`]: `derive_key` turns the trailing key material and
+/// the full ciphertext region back into the symmetric key. `raw_shreds` must
+/// contain all [`DATA_SHREDS`] data shreds.
 ///
 /// # Errors
 ///
-/// Returns [`DeshredError::BadEncoding`] if `buffer` is too short to contain a key
-/// or the decrypted plaintext is not a valid [`SlicePayload`].
-fn decrypt_payload(
-    mut buffer: Vec<u8>,
+/// Returns [`DeshredError::BadEncoding`] if the layout is malformed or the
+/// decrypted plaintext is not a valid [`SlicePayload`].
+fn aont_decode(
+    raw_shreds: &RawShreds,
     derive_key: impl FnOnce([u8; cipher::KEY_BYTES], &[u8]) -> [u8; cipher::KEY_BYTES],
 ) -> Result<SlicePayload, DeshredError> {
-    // split the key tail off the buffer, the remainder is the ciphertext
-    let ciphertext_len = buffer
-        .len()
-        .checked_sub(cipher::KEY_BYTES)
-        .ok_or(DeshredError::BadEncoding)?;
-    let tail = buffer.split_off(ciphertext_len);
-    let tail = tail.try_into().expect("tail is exactly KEY_BYTES long");
+    // concatenate all data shreds: [ciphertext region | key material | length]
+    let mut buffer = Vec::new();
+    for shred in &raw_shreds.data {
+        buffer.extend_from_slice(shred);
+    }
 
-    let key = derive_key(tail, &buffer);
+    // split the trailing key block off the end
+    let region_len = buffer
+        .len()
+        .checked_sub(KEY_BLOCK_BYTES)
+        .ok_or(DeshredError::BadEncoding)?;
+    let key_material: [u8; cipher::KEY_BYTES] = buffer[region_len..region_len + cipher::KEY_BYTES]
+        .try_into()
+        .expect("slice is exactly KEY_BYTES long");
+    let len_bytes: [u8; LEN_BYTES] = buffer[region_len + cipher::KEY_BYTES..]
+        .try_into()
+        .expect("slice is exactly LEN_BYTES long");
+    let payload_len = u32::from_le_bytes(len_bytes) as usize;
+    if payload_len > region_len {
+        return Err(DeshredError::BadEncoding);
+    }
+
+    buffer.truncate(region_len);
+    let key = derive_key(key_material, &buffer);
+    // decrypt only the real plaintext prefix; the rest was zero-padding
+    buffer.truncate(payload_len);
     cipher::apply_keystream(key, &mut buffer);
 
     Ok(SlicePayload::try_from(buffer.as_slice())?)
@@ -638,12 +739,12 @@ mod tests {
 
     /// Runs the shred/deshred roundtrip test suite for the given shredder.
     ///
-    /// Shreds a maximum-size slice, then checks that it can be restored from
+    /// Shreds a `data_size`-byte slice, then checks that it can be restored from
     /// any sufficient subset of shreds and not from an insufficient one.
-    fn shredding_roundtrip<S: Shredder>() -> Result<()> {
+    fn shredding_roundtrip<S: Shredder>(data_size: usize) -> Result<()> {
         let mut shredder = S::default();
         let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(S::MAX_DATA_SIZE);
+        let slice = create_slice_with_invalid_txs(data_size);
         let shreds = shredder.shred(slice.clone(), &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
@@ -768,6 +869,25 @@ mod tests {
         assert_eq!(result.err(), Some(DeshredError::TooMuchData));
     }
 
+    #[test]
+    fn deshred_rejects_all_zero_shreds() {
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let (header, _payload) = slice.deconstruct();
+        let sk = SecretKey::new(&mut rand::rng());
+
+        // a malicious leader signs all-zero shreds
+        // -> reconstructed payload contains no 0x80 padding marker
+        let raw_shreds = RawShreds {
+            data: vec![vec![0_u8; MAX_DATA_PER_SHRED]; DATA_SHREDS],
+            coding: vec![vec![0_u8; MAX_DATA_PER_SHRED]; TOTAL_SHREDS - DATA_SHREDS],
+        };
+        let shreds = data_and_coding_to_output_shreds(header, raw_shreds, &sk);
+
+        let input = into_array(&shreds[..DATA_SHREDS]);
+        let result = RegularShredder::default().deshred(&input);
+        assert_eq!(result.err(), Some(DeshredError::BadEncoding));
+    }
+
     /// Asserts that shredding a slice one byte too large errors (never panics).
     ///
     /// The AONT/PETS shredders reserve space for the encryption key, so their
@@ -820,23 +940,98 @@ mod tests {
         deshred_rejects_short_payload::<PetsShredder>();
     }
 
+    /// Slice sizes exercised by the roundtrip tests, including tiny slices that
+    /// used to break the all-or-nothing shredders' confidentiality.
+    fn roundtrip_sizes<S: Shredder>() -> [usize; 4] {
+        // smallest representable slice
+        let min = SlicePayload::new(None, Vec::new()).to_bytes().len();
+        [min, 40, 1000, S::MAX_DATA_SIZE]
+    }
+
     #[test]
     fn regular_shredding() -> Result<()> {
-        shredding_roundtrip::<RegularShredder>()
+        roundtrip_sizes::<RegularShredder>()
+            .into_iter()
+            .try_for_each(shredding_roundtrip::<RegularShredder>)
     }
 
     #[test]
     fn coding_only_shredding() -> Result<()> {
-        shredding_roundtrip::<CodingOnlyShredder>()
+        roundtrip_sizes::<CodingOnlyShredder>()
+            .into_iter()
+            .try_for_each(shredding_roundtrip::<CodingOnlyShredder>)
     }
 
     #[test]
     fn aont_shredding() -> Result<()> {
-        shredding_roundtrip::<AontShredder>()
+        roundtrip_sizes::<AontShredder>()
+            .into_iter()
+            .try_for_each(shredding_roundtrip::<AontShredder>)
     }
 
     #[test]
     fn pets_shredding() -> Result<()> {
-        shredding_roundtrip::<PetsShredder>()
+        roundtrip_sizes::<PetsShredder>()
+            .into_iter()
+            .try_for_each(shredding_roundtrip::<PetsShredder>)
+    }
+
+    /// Asserts that the PETS symmetric key is *confined* to the single withheld
+    /// key shred, so the `DATA_SHREDS - 1` data shreds an adversary receives
+    /// expose **zero** key bytes.
+    ///
+    /// PETS drops the last data shred (which carries the key), so we recover it
+    /// by Reed-Solomon reconstruction and read the real key off the buffer tail.
+    /// The check is *positional* rather than a content search: it proves the
+    /// whole key block lies within the withheld shred's byte range. That also
+    /// rules out a layout that spread the key across all `DATA_SHREDS` shreds —
+    /// which a "the contiguous key doesn't appear" test would miss, since
+    /// `DATA_SHREDS - 1` shreds would then still hand the adversary all but a
+    /// `1 / DATA_SHREDS` fraction of it.
+    ///
+    /// AONT needs no analogous test: it disseminates all data shreds and stores
+    /// only `key XOR H(ciphertext)`, never the raw key, so its confidentiality
+    /// rests on "`DATA_SHREDS - 1` shreds can't decode", covered by
+    /// [`shredding_roundtrip`].
+    #[test]
+    fn pets_small_slice_hides_key() {
+        let mut shredder = PetsShredder::default();
+        let sk = SecretKey::new(&mut rand::rng());
+        let slice = create_slice_with_invalid_txs(40);
+        let plaintext = slice.clone().deconstruct().1.to_bytes();
+
+        let shreds = shredder.shred(slice, &sk).unwrap();
+
+        // reconstruct *all* DATA_SHREDS raw data shreds
+        let array = into_array(&shreds);
+        let validated = ValidatedShreds::try_new(
+            &array,
+            PetsShredder::DATA_OUTPUT_SHREDS,
+            PetsShredder::CODING_OUTPUT_SHREDS,
+        )
+        .unwrap();
+        let mut coder = ReedSolomonCoder::new(PetsShredder::CODING_OUTPUT_SHREDS);
+        let raw = coder.reconstruct_data(validated).unwrap();
+
+        // the buffer laid out across the data shreds is [ ciphertext | key | len ]
+        let shred_bytes = raw.data[0].len();
+        let buffer: Vec<u8> = raw.data.iter().flatten().copied().collect();
+        let key_start = buffer.len() - KEY_BLOCK_BYTES;
+        let key: [u8; cipher::KEY_BYTES] = buffer[key_start..key_start + cipher::KEY_BYTES]
+            .try_into()
+            .unwrap();
+
+        // guard against vacuity: this must really be the encryption key
+        let mut decrypted = buffer[..key_start].to_vec();
+        cipher::apply_keystream(key, &mut decrypted);
+        assert!(decrypted.starts_with(&plaintext), "recovered the wrong key");
+
+        // the entire key block must sit inside the last (withheld) shred,
+        // so no key byte lands in any of the DATA_SHREDS - 1 disseminated data shreds
+        let withheld_start = (DATA_SHREDS - 1) * shred_bytes;
+        assert!(
+            key_start >= withheld_start,
+            "key block spills out of the withheld shred into disseminated data",
+        );
     }
 }
