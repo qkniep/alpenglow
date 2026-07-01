@@ -294,7 +294,21 @@ mod tests {
             }
         });
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // poll until every non-leader has all shreds rather than relying on a
+        // fixed sleep, which is racy under CI load
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            'wait: loop {
+                for i in 0..(count - 1) {
+                    if shreds_received[i as usize].lock().await.len() < TOTAL_SHREDS {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                        continue 'wait;
+                    }
+                }
+                break;
+            }
+        })
+        .await;
+        assert!(received.is_ok(), "not all shreds arrived within timeout");
 
         // non-leader instances should have received all shreds via Rotor
         for i in 0..(count - 1) {
