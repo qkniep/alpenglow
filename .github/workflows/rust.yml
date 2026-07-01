@@ -40,7 +40,7 @@ jobs:
 
       - name: Check spelling
         if: ${{ !cancelled() }}
-        uses: crate-ci/typos@37bb98842b0d8c4ffebdb75301a13db0267cef89 # v1
+        uses: crate-ci/typos@bee27e3a4fd1ea2111cf90ab89cd076c870fce14 # v1
 
       # Mirrors `just license`:
       # every .rs/.py source file must start with the copyright/license header.
