@@ -357,7 +357,7 @@ impl Blockstore for BlockstoreImpl {
             .get(&slice_index)?
             .iter()
             .find_map(|s| s.as_ref())
-            .map(|s| s.merkle_root().clone())
+            .map(|s| s.slice_root().clone())
     }
 
     /// Cached [`SliceCommitment`] for the slice if we have one.
@@ -450,7 +450,7 @@ mod tests {
         let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &ctx.sk);
         let block_id = (slot, block_hash);
 
-        let slice_hash = shreds[0][0].merkle_root();
+        let slice_hash = shreds[0][0].slice_root();
         for shred in &shreds[0] {
             // store shred
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred.clone()).await?;

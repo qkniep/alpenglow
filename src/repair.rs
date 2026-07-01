@@ -422,7 +422,7 @@ where
                 };
                 let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
                 // shred for the wrong slice root, don't even try to verify signature
-                if &shred.merkle_root() != root {
+                if &shred.slice_root() != root {
                     warn!("repair response (Shred) with slice root not matching proved slice root");
                     return;
                 }
@@ -628,7 +628,7 @@ mod tests {
         let response = RepairResponse::LastSliceRoot(
             req_type,
             SliceIndex::new_for_test(num_slices - 1),
-            shreds.last().unwrap()[0].merkle_root().clone(),
+            shreds.last().unwrap()[0].slice_root().clone(),
             merkle_tree.create_proof(num_slices - 1),
         );
         // responses go to v1's repair requester socket (joined at index 2)
@@ -653,7 +653,7 @@ mod tests {
         for slice in SliceIndex::all().take(num_slices) {
             assert!(slice_roots_requested.contains(&slice));
             let req_type = RepairRequestType::SliceRoot(block_to_repair.clone(), slice);
-            let root = shreds[slice.inner()][0].merkle_root().clone();
+            let root = shreds[slice.inner()][0].slice_root().clone();
             let proof = merkle_tree.create_proof(slice.inner());
             let response = RepairResponse::SliceRoot(req_type, root, proof);
             ctx.v0_request_net.send(&response, port1).await.unwrap();
@@ -776,7 +776,7 @@ mod tests {
         };
         assert_eq!(req_type, request.req_type);
         assert_eq!(last_slice.inner(), SLICES - 1);
-        assert_eq!(&root, shreds[last_slice.inner()][0].merkle_root());
+        assert_eq!(&root, shreds[last_slice.inner()][0].slice_root());
         let correct_proof = ctx
             .blockstore
             .read()
@@ -799,7 +799,7 @@ mod tests {
                 panic!("not SliceRoot response");
             };
             assert_eq!(req_type, request.req_type);
-            assert_eq!(&root, shreds[slice.inner()][0].merkle_root());
+            assert_eq!(&root, shreds[slice.inner()][0].slice_root());
             let correct_proof = ctx
                 .blockstore
                 .read()

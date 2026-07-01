@@ -105,10 +105,10 @@ pub fn create_random_shredded_block(
                 .to_vec(),
         );
     }
-    let merkle_roots = shreds
+    let slice_roots = shreds
         .iter()
-        .map(|slice_shreds| slice_shreds[0].merkle_root());
-    let tree = DoubleMerkleTree::new(merkle_roots);
+        .map(|slice_shreds| slice_shreds[0].slice_root());
+    let tree = DoubleMerkleTree::new(slice_roots);
     let block_hash = tree.get_root();
     (block_hash, tree, shreds)
 }
