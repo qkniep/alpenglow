@@ -311,8 +311,22 @@ mod tests {
     use crate::network::{Network, localhost_ip_sockaddr};
     use crate::test_utils::{Ping, PingOrPong};
 
-    // test simulated latency accuracy to within +/-5%
+    // Simulated latency should be accurate to within +/-5% of the configured
+    // delay. On top of that we allow a fixed absolute slack on the *upper*
+    // bound to absorb OS/timer scheduling overhead: on a loaded CI runner,
+    // waking the receiving task after the sleep adds a roughly *constant* ~1ms,
+    // which dwarfs 5% of a short (10ms) delay even when tests run sequentially.
+    // The lower bound needs no slack — a simulated delay only ever adds time.
     const ACCURACY: f64 = 0.05;
+    const SCHEDULING_SLACK_US: u128 = 2_000;
+
+    fn min_latency_us(target_us: f64) -> u128 {
+        (target_us * (1.0 - ACCURACY)) as u128
+    }
+
+    fn max_latency_us(target_us: f64) -> u128 {
+        (target_us * (1.0 + ACCURACY)) as u128 + SCHEDULING_SLACK_US
+    }
 
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
@@ -340,8 +354,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(10_000.0);
+        let max = max_latency_us(10_000.0);
         assert!(latency > min);
         assert!(latency < max);
 
@@ -350,8 +364,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(10_000.0);
+        let max = max_latency_us(10_000.0);
         assert!(latency > min);
         assert!(latency < max);
     }
@@ -388,8 +402,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(10_000.0);
+        let max = max_latency_us(10_000.0);
         assert!(
             latency > min,
             "latency {latency} should be greater than {min}"
@@ -404,8 +418,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (100_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (100_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(100_000.0);
+        let max = max_latency_us(100_000.0);
         assert!(latency > min);
         assert!(latency < max);
     }
