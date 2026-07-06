@@ -485,8 +485,10 @@ impl Pool for PoolImpl {
         }
 
         // check if vote is valid and should be counted
-        let voter_stake = epoch.validator(vote.signer()).stake;
-        if let Some(offence) = self.slot_state(slot).check_slashable_offence(&vote) {
+        let voter = vote.signer();
+        let voter_stake = epoch.validator(voter).stake;
+        let slot_state = self.slot_state(slot);
+        if let Some(offence) = slot_state.check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if slot_state.should_ignore_vote(&vote) {
             // Not slashable, but a validator casting both skip and skip-fallback

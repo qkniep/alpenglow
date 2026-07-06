@@ -517,7 +517,7 @@ impl SlotState {
     /// slashable, but it is provably non-honest, so we surface it for post-hoc
     /// analysis.
     pub(super) fn is_skip_skip_fallback_conflict(&self, vote: &Vote) -> bool {
-        let v = vote.signer().as_index();
+        let v = vote.signer().as_usize();
         match vote {
             Vote::Skip(_) => self.votes.skip_fallback[v].is_some(),
             Vote::SkipFallback(_) => self.votes.skip[v].is_some(),
@@ -973,9 +973,12 @@ mod tests {
         let slot = Slot::new(1);
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
 
-        let skip = Vote::new_skip(slot, &sks[0], ValidatorId::new(0));
-        let skip_fallback = Vote::new_skip_fallback(slot, &sks[0], ValidatorId::new(0));
-        let voter_stake = epoch_info.epoch_info().validator(ValidatorId::new(0)).stake;
+        let skip = Vote::new_skip(slot, &sks[0], ValidatorIndex::new(0));
+        let skip_fallback = Vote::new_skip_fallback(slot, &sks[0], ValidatorIndex::new(0));
+        let voter_stake = epoch_info
+            .epoch_info()
+            .validator(ValidatorIndex::new(0))
+            .stake;
 
         // neither is a conflict, nor slashable, before anything is recorded
         assert!(!slot_state.is_skip_skip_fallback_conflict(&skip));
