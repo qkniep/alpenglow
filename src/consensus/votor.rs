@@ -183,8 +183,10 @@ impl<A: All2All> Votor<A> {
         match event {
             PoolEvent::ParentReady { slot, parent } => {
                 let (parent_slot, parent_hash) = &parent;
-                let h = parent_hash.short_hex();
-                trace!("slot {slot} has new valid parent {h} in slot {parent_slot}");
+                trace!(
+                    "slot {slot} has new valid parent {} in slot {parent_slot}",
+                    parent_hash.short_hex()
+                );
                 self.state_mut(slot).parents_ready.insert(parent);
                 self.check_pending_blocks().await;
                 self.set_timeouts(slot);
