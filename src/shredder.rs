@@ -562,7 +562,7 @@ fn assemble_output_shreds(
 /// Reconstructs missing output shreds (data first, then coding) in place.
 ///
 /// For each missing shred, reconstructs the missing shred from the given `raw_shreds`,
-/// the slice's Merkle `tree`, and `merkle_root_sig`.
+/// the slice's Merkle `tree`, and `slice_sig`.
 /// Fills them into their respective positions in `shreds`.
 /// Already present shreds are left untouched.
 ///
