@@ -199,8 +199,6 @@ impl BlockData {
     }
 
     /// Add a shred to this block.
-    ///
-    ///
     fn add_shred(
         &mut self,
         shred: ValidatedShred,

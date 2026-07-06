@@ -76,13 +76,6 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    /// Ingests a slice the local node produced itself, as leader.
-    ///
-    /// Skips Reed-Solomon decoding and re-verification: the caller hands over
-    /// all [`TOTAL_SHREDS`] freshly produced shreds plus the decoded slice
-    /// payload, and the blockstore rebuilds the slice from them. Returns the
-    /// [`BlockInfo`] once the final slice completes the block, mirroring
-    /// [`Blockstore::add_shred_from_dissemination`].
     async fn add_own_slice(
         &mut self,
         payload: SlicePayload,
