@@ -272,8 +272,9 @@ impl BlockData {
         index: SliceIndex,
         shredder: &mut RegularShredder,
     ) -> ReconstructSliceResult {
-        if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
+        let slot = self.slot;
+        if let Some((hash, _)) = &self.completed {
+            trace!("already have block {} for slot {slot}", hash.short_hex());
             return ReconstructSliceResult::NoAction;
         }
 
@@ -282,12 +283,13 @@ impl BlockData {
             Entry::Vacant(entry) => entry,
         };
 
+        // missing shreds are reconstructed in place into `slice_shreds`
         let slice_shreds = self
             .shreds
             .get_mut(&index)
             .expect("caller must insert at least one shred before reconstructing");
-        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
-            Ok(output) => output,
+        let reconstructed_slice = match shredder.deshred(slice_shreds) {
+            Ok(slice) => slice,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
             rest => {
                 warn!("deshreding failed with {rest:?}");
@@ -295,18 +297,12 @@ impl BlockData {
             }
         };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
-            warn!(
-                "reconstructed slice {} in slot {} expected to contain parent",
-                index, self.slot
-            );
+            warn!("reconstructed slice {index} in slot {slot} expected to contain parent");
             return ReconstructSliceResult::Error;
         }
 
-        // insert reconstructed slice and shreds
         entry.insert(reconstructed_slice);
-        let mut reconstructed_shreds = reconstructed_shreds.map(Some);
-        std::mem::swap(slice_shreds, &mut reconstructed_shreds);
-        trace!("reconstructed slice {} in slot {}", index, self.slot);
+        trace!("reconstructed slice {index} in slot {slot}");
 
         ReconstructSliceResult::Complete
     }
@@ -316,15 +312,16 @@ impl BlockData {
     /// See [`ReconstructBlockResult`] for more info on what the function returns.
     #[hotpath::measure]
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
-        if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
+        let slot = self.slot;
+        if let Some((hash, _)) = &self.completed {
+            trace!("already have block {} for slot {slot}", hash.short_hex());
             return ReconstructBlockResult::NoAction;
         }
         let Some(last_slice) = self.last_slice else {
             return ReconstructBlockResult::NoAction;
         };
         if self.slices.len() != last_slice.inner() + 1 {
-            trace!("don't have all slices for slot {} yet", self.slot);
+            trace!("don't have all slices for slot {slot} yet");
             return ReconstructBlockResult::NoAction;
         }
 
@@ -377,7 +374,7 @@ impl BlockData {
         }
 
         let block = Block {
-            _slot: self.slot,
+            _slot: slot,
             hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
