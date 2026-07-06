@@ -265,9 +265,9 @@ pub trait Shredder: Default {
 
     /// Puts the given shreds back together into a complete slice, in place.
     ///
-    /// Reconstructs all missing shreds, storing them in the corresponding
-    /// `None` entries of `shreds`. Already present shreds are left untouched.
-    /// After a successful call, all [`TOTAL_SHREDS`] entries are `Some`.
+    /// Reconstructs any missing shreds (both data and coding),
+    /// storing them in the corresponding `None` entries of `shreds`.
+    /// Already present shreds are left untouched.
     ///
     /// # Errors
     ///
@@ -283,8 +283,7 @@ pub trait Shredder: Default {
         &mut self,
         shreds: &mut [Option<ValidatedShred>; TOTAL_SHREDS],
     ) -> Result<ReconstructedSlice, DeshredError> {
-        // an empty set is too few shreds, not an invalid layout; catch it here
-        // so it doesn't surface as the `InvalidLayout` that `try_new` returns
+        // an empty set is too few shreds, not an invalid layout
         if shreds.iter().all(Option::is_none) {
             return Err(DeshredError::NotEnoughShreds);
         }
@@ -297,7 +296,7 @@ pub trait Shredder: Default {
         let any_shred = validated.any_shred();
         let slice_root = any_shred.slice_root().clone();
         let header = any_shred.payload().header;
-        let leader_sig = any_shred.as_shred().slice_sig;
+        let slice_sig = any_shred.as_shred().slice_sig;
 
         // additional Merkle tree validity check
         // NOTE: This is necessary to catch maliciously constructed slices.
@@ -307,18 +306,17 @@ pub trait Shredder: Default {
         let slice = ReconstructedSlice::from_shreds(payload, any_shred, slice_root);
 
         // reconstruct missing output shreds (with root, path, sig) in place
-        fill_missing_shreds(shreds, header, raw_shreds, &tree, leader_sig);
+        fill_missing_shreds(shreds, header, raw_shreds, &tree, slice_sig);
         Ok(slice)
     }
 
     /// The core deshreding implementation that the actual shredders provide.
     ///
-    /// Decodes the erasure coding and reverses any shredder-specific payload
-    /// transformation. Returns the raw payload bytes of the slice together
-    /// with all [`TOTAL_SHREDS`] reconstructed raw shreds.
+    /// Decodes the erasure coding and reverses any shredder-specific payload transformation.
+    /// Returns the raw payload bytes of the slice,
+    /// together with all [`TOTAL_SHREDS`] reconstructed raw shreds.
     ///
-    /// NOTE: this is not part of the public API, normally, [`Shredder::deshred()`]
-    /// should be used.
+    /// NOTE: This is not part of the public API; use [`Shredder::deshred()`] instead.
     fn deshred_validated_shreds(
         &mut self,
         shreds: ValidatedShreds,
@@ -503,8 +501,8 @@ impl Default for AontShredder {
 
 /// Decrypts a payload with an embedded key (at the end).
 ///
-/// Strips the trailing key material off `buffer`, decrypts the remaining
-/// ciphertext in place, and returns the plaintext bytes.
+/// Strips the trailing key material off `buffer`,
+/// decrypts the remaining ciphertext in place, and returns the plaintext bytes.
 /// `derive_key` needs to turn the raw [`cipher::KEY_BYTES`]-byte tail
 /// and the remaining ciphertext `buffer` into the actual decryption key.
 ///
@@ -563,15 +561,16 @@ fn assemble_output_shreds(
 
 /// Reconstructs missing output shreds (data first, then coding) in place.
 ///
-/// Fills each `None` entry of `shreds` with the corresponding shred built from
-/// the reconstructed `raw_shreds`, the slice's Merkle `tree`, and
-/// `merkle_root_sig`. Already present shreds are left untouched.
+/// For each missing shred, reconstructs the missing shred from the given `raw_shreds`,
+/// the slice's Merkle `tree`, and `merkle_root_sig`.
+/// Fills them into their respective positions in `shreds`.
+/// Already present shreds are left untouched.
 ///
-/// Used both when producing our own block (signature freshly created over the
-/// root, see [`data_and_coding_to_output_shreds`]) and when reconstructing
-/// another leader's block (signature copied from a received shred, see
-/// [`Shredder::deshred`]). In the latter case `tree` must already match
-/// the reconstructed shreds.
+/// Used both when producing our own block
+/// (signature freshly created over the root, see [`data_and_coding_to_output_shreds`])
+/// and when reconstructing another leader's block
+/// (signature copied from a received shred, see [`Shredder::deshred`]).
+/// In the latter case `tree` must already match the reconstructed shreds.
 ///
 /// Each new shred contains the Merkle root, its own path and the signature.
 fn fill_missing_shreds(
@@ -707,6 +706,42 @@ mod tests {
     }
 
     #[test]
+    fn deshred_fills_missing_shreds() -> Result<()> {
+        let mut shredder = RegularShredder::default();
+        let sk = SecretKey::new(&mut rand::rng());
+        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
+        let shreds = shredder.shred(slice, &sk)?;
+
+        // restore in place from only the data shreds
+        let mut input = into_array(&shreds[..DATA_SHREDS]);
+        shredder.deshred(&mut input)?;
+
+        // all missing shreds should have been reconstructed in place
+        for (reconstructed, original) in input.iter().zip(&shreds) {
+            let reconstructed = reconstructed.as_ref().unwrap();
+            assert_eq!(reconstructed.is_data(), original.is_data());
+            assert_eq!(reconstructed.payload().data, original.payload().data);
+            assert_eq!(reconstructed.commitment(), original.commitment());
+        }
+
+        // try to restore with too few shreds
+        let mut input = into_array(&shreds[..DATA_SHREDS - 1]);
+        let before = input.clone();
+        assert!(shredder.deshred(&mut input).is_err());
+
+        // an error should leave the input untouched
+        let shred_fingerprint =
+            |s: &ValidatedShred| (s.is_data(), s.payload().data.clone(), s.commitment());
+        for (new, old) in input.iter().zip(before.iter()) {
+            let new = new.as_ref().map(shred_fingerprint);
+            let old = old.as_ref().map(shred_fingerprint);
+            assert_eq!(new, old);
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn deshred_rejects_undecodable_payload() {
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
         let (header, _payload) = slice.deconstruct();
@@ -719,35 +754,6 @@ mod tests {
         // decoding it fails, but never panics
         let result = RegularShredder::default().deshred(&mut into_array(&shreds));
         assert_eq!(result.err(), Some(DeshredError::BadEncoding));
-    }
-
-    #[test]
-    fn deshred_fills_missing_shreds() -> Result<()> {
-        let mut shredder = RegularShredder::default();
-        let sk = SecretKey::new(&mut rand::rng());
-        let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = shredder.shred(slice, &sk)?;
-
-        // restore in place from only the data shreds
-        // (the slice payload and `NotEnoughShreds` cases are covered by
-        // `shredding_roundtrip`; here we only assert the in-place behavior)
-        let mut input = into_array(&shreds[..DATA_SHREDS]);
-        shredder.deshred(&mut input)?;
-
-        // all missing shreds should have been reconstructed in place
-        for (reconstructed, original) in input.iter().zip(&shreds) {
-            let reconstructed = reconstructed.as_ref().unwrap();
-            assert_eq!(reconstructed.is_data(), original.is_data());
-            assert_eq!(reconstructed.payload().data, original.payload().data);
-            assert_eq!(reconstructed.commitment(), original.commitment());
-        }
-
-        // an error should leave the input untouched
-        let mut input = into_array(&shreds[..DATA_SHREDS - 1]);
-        assert!(shredder.deshred(&mut input).is_err());
-        assert_eq!(input.iter().flatten().count(), DATA_SHREDS - 1);
-
-        Ok(())
     }
 
     #[test]
