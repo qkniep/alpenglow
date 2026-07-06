@@ -3,17 +3,39 @@
 
 //! Data structure holding shreds, slices and blocks for a specific slot.
 //!
+//! Two nested containers organize a slot's data:
+//! - [`SlotBlockData`] is the per-slot entry point.
+//!   Holds at most one block from dissemination but may hold multiple from repair.
+//!   Repaired blocks are kept separately in map keyed by [`BlockHash`].
+//! - [`BlockData`] holds everything for a single block.
+//!   It holds received shreds, the slices reconstructed from them,
+//!   and the fully reconstructed block once all slices are present.
 //!
+//! Reconstruction is bottom-up:
+//! 1. enough shreds in a slice reconstruct that slice, and
+//! 2. enough slices (through the one marked last) reconstruct the block.
+//!
+//! Incoming shreds arrive already signature-verified (see [`ValidatedShred`]).
+//! They come from one either of two paths:
+//! - Dissemination shreds ([`SlotBlockData::add_shred_from_dissemination`])
+//!   feed a single [`BlockData`] and are checked for leader equivocation.
+//! - Repair shreds ([`SlotBlockData::add_shred_from_repair`])
+//!   are filed under their block hash (which is known when initiating repair),
+//!   so distinct blocks coexist without being treated as equivocation.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use log::{debug, trace, warn};
 use thiserror::Error;
+use wincode::config::DefaultConfig;
 
 use super::{BlockInfo, BlockstoreEvent};
-use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, SliceRoot};
-use crate::shredder::{DeshredError, RegularShredder, Shredder, TOTAL_SHREDS, ValidatedShred};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
+use crate::shredder::{
+    DeshredError, MAX_DATA_PER_SLICE, RegularShredder, Shredder, SliceCommitment, TOTAL_SHREDS,
+    ValidatedShred,
+};
 use crate::types::{ReconstructedSlice, SliceIndex};
 use crate::{Block, Slot};
 
@@ -69,14 +91,7 @@ impl SlotBlockData {
             debug!("received shred from misbehaving leader, not adding to blockstore");
             return Err(AddShredError::InvalidShred);
         }
-        self.disseminated
-            .add_shred(shred, shredder)
-            .inspect_err(|err| match err {
-                AddShredError::Equivocation | AddShredError::InvalidShred => {
-                    self.leader_misbehaved = true;
-                }
-                AddShredError::Duplicate => (),
-            })
+        self.disseminated.add_shred(shred, shredder)
     }
 
     /// Adds a shred received via repair to the spot given by block hash.
@@ -94,14 +109,18 @@ impl SlotBlockData {
             .repaired
             .entry(hash)
             .or_insert_with(|| BlockData::new(self.slot));
-        block_data
-            .add_shred(shred, shredder)
-            .inspect_err(|err| match err {
-                AddShredError::Equivocation | AddShredError::InvalidShred => {
-                    self.leader_misbehaved = true;
-                }
-                AddShredError::Duplicate => (),
-            })
+        block_data.add_shred(shred, shredder)
+    }
+
+    /// Records that the leader was observed equivocating for this slot.
+    ///
+    /// Returns `true` iff this was the first time this method was called.
+    pub(super) fn mark_leader_misbehaved(&mut self) -> bool {
+        if self.leader_misbehaved {
+            return false;
+        }
+        self.leader_misbehaved = true;
+        true
     }
 }
 
@@ -140,8 +159,11 @@ pub(super) struct BlockData {
     pub(super) last_slice: Option<SliceIndex>,
     /// Double merkle tree of this block, only known if block has been reconstructed.
     pub(super) double_merkle_tree: Option<DoubleMerkleTree>,
-    /// Cache of Merkle roots for which the leader signature has been verified.
-    pub(super) merkle_root_cache: BTreeMap<SliceIndex, SliceRoot>,
+    /// Cache of [`SliceCommitment`]s verified earlier.
+    ///
+    /// Lets [`ValidatedShred::try_new`] short-circuit verification for the same slice.
+    /// This is also what allows us to detect leader equivocation.
+    pub(super) commitment_cache: BTreeMap<SliceIndex, SliceCommitment>,
 }
 
 impl BlockData {
@@ -154,7 +176,7 @@ impl BlockData {
             slices: BTreeMap::new(),
             last_slice: None,
             double_merkle_tree: None,
-            merkle_root_cache: BTreeMap::new(),
+            commitment_cache: BTreeMap::new(),
         }
     }
 
@@ -166,9 +188,9 @@ impl BlockData {
         debug_assert_eq!(shred.payload().header.slot, self.slot);
         let slice_index = shred.payload().header.slice_index;
 
-        // different valid signatures for the same slice -> leader equivocation
-        if let Some(cached) = self.merkle_root_cache.get(&slice_index)
-            && cached != shred.merkle_root()
+        // different valid commitments for the same slice -> leader equivocation
+        if let Some(cached) = self.commitment_cache.get(&slice_index)
+            && cached != &shred.commitment()
         {
             return Err(AddShredError::Equivocation);
         }
@@ -184,9 +206,9 @@ impl BlockData {
         debug_assert_eq!(header.slot, self.slot);
         let slice_index = header.slice_index;
 
-        // populate Merkle root cache
-        if let Entry::Vacant(entry) = self.merkle_root_cache.entry(slice_index) {
-            entry.insert(validated_shred.merkle_root().clone());
+        // populate commitment cache
+        if let Entry::Vacant(entry) = self.commitment_cache.entry(slice_index) {
+            entry.insert(validated_shred.commitment());
         }
 
         match (header.is_last, self.last_slice) {
@@ -250,8 +272,9 @@ impl BlockData {
         index: SliceIndex,
         shredder: &mut RegularShredder,
     ) -> ReconstructSliceResult {
-        if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
+        let slot = self.slot;
+        if let Some((hash, _)) = &self.completed {
+            trace!("already have block {} for slot {slot}", hash.short_hex());
             return ReconstructSliceResult::NoAction;
         }
 
@@ -260,10 +283,13 @@ impl BlockData {
             Entry::Vacant(entry) => entry,
         };
 
-        // assuming caller has inserted at least one valid shred so unwrap() should be safe
-        let slice_shreds = self.shreds.get_mut(&index).unwrap();
-        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
-            Ok(output) => output,
+        // missing shreds are reconstructed in place into `slice_shreds`
+        let slice_shreds = self
+            .shreds
+            .get_mut(&index)
+            .expect("caller must insert at least one shred before reconstructing");
+        let reconstructed_slice = match shredder.deshred(slice_shreds) {
+            Ok(slice) => slice,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
             rest => {
                 warn!("deshreding failed with {rest:?}");
@@ -271,18 +297,12 @@ impl BlockData {
             }
         };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
-            warn!(
-                "reconstructed slice {} in slot {} expected to contain parent",
-                index, self.slot
-            );
+            warn!("reconstructed slice {index} in slot {slot} expected to contain parent");
             return ReconstructSliceResult::Error;
         }
 
-        // insert reconstructed slice and shreds
         entry.insert(reconstructed_slice);
-        let mut reconstructed_shreds = reconstructed_shreds.map(Some);
-        std::mem::swap(slice_shreds, &mut reconstructed_shreds);
-        trace!("reconstructed slice {} in slot {}", index, self.slot);
+        trace!("reconstructed slice {index} in slot {slot}");
 
         ReconstructSliceResult::Complete
     }
@@ -292,28 +312,34 @@ impl BlockData {
     /// See [`ReconstructBlockResult`] for more info on what the function returns.
     #[hotpath::measure]
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
-        if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
+        let slot = self.slot;
+        if let Some((hash, _)) = &self.completed {
+            trace!("already have block {} for slot {slot}", hash.short_hex());
             return ReconstructBlockResult::NoAction;
         }
         let Some(last_slice) = self.last_slice else {
             return ReconstructBlockResult::NoAction;
         };
         if self.slices.len() != last_slice.inner() + 1 {
-            trace!("don't have all slices for slot {} yet", self.slot);
+            trace!("don't have all slices for slot {slot} yet");
             return ReconstructBlockResult::NoAction;
         }
 
         // calculate double-Merkle tree & block hash
-        let merkle_roots = self.slices.values().map(|s| s.merkle_root());
-        let tree = DoubleMerkleTree::new(merkle_roots);
+        let slice_roots = self.slices.values().map(|s| s.slice_root());
+        let tree = DoubleMerkleTree::new(slice_roots);
         let block_hash = tree.get_root();
         self.double_merkle_tree = Some(tree);
 
         // reconstruct block header
-        let first_slice = self.slices.get(&SliceIndex::first()).unwrap();
-        // based on the logic in `try_reconstruct_slice`, first_slice should be valid i.e. it must contain a parent.
-        let mut parent = first_slice.parent.clone().unwrap();
+        let first_slice = self
+            .slices
+            .get(&SliceIndex::first())
+            .expect("all slices are present, including the first");
+        let mut parent = first_slice
+            .parent
+            .clone()
+            .expect("first slice contains a parent, validated in `try_reconstruct_slice`");
         let mut parent_switched = false;
 
         let mut transactions = vec![];
@@ -334,7 +360,10 @@ impl BlockData {
                 parent = new_parent;
             }
 
-            let mut txs = match wincode::deserialize(&slice.data) {
+            // cap preallocation to the slice size limit (wincode has a 4 MiB default)
+            let config =
+                DefaultConfig::default().with_preallocation_size_limit::<MAX_DATA_PER_SLICE>();
+            let mut txs = match wincode::config::deserialize_exact(&slice.data, config) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("decoding slice {ind} failed with {err:?}");
@@ -345,7 +374,7 @@ impl BlockData {
         }
 
         let block = Block {
-            _slot: self.slot,
+            _slot: slot,
             hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,

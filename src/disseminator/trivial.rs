@@ -85,8 +85,8 @@ mod tests {
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
 
@@ -143,10 +143,20 @@ mod tests {
             }
         });
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // poll until all shreds arrive rather than relying on a fixed sleep,
+        // which is racy under CI load; the counter is monotonic so it can't
+        // overshoot the expected total
+        let expected = 19 * TOTAL_SHREDS;
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            while *shreds_received.lock().await < expected {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(received.is_ok(), "not all shreds arrived within timeout");
 
         // non-leaders should have received all shreds via Rotor
-        assert_eq!(*shreds_received.lock().await, 19 * TOTAL_SHREDS);
+        assert_eq!(*shreds_received.lock().await, expected);
         rotor_task_leader.abort();
         for task in tasks {
             task.abort();

@@ -16,14 +16,14 @@
 //!
 //! let sk1 = SecretKey::new(&mut rand::rng());
 //! let pk1 = sk1.to_pk();
-//! let sig1 = sk1.sign(msg);
+//! let sig1 = sk1.sign_bytes(msg);
 //!
 //! let sk2 = SecretKey::new(&mut rand::rng());
 //! let pk2 = sk2.to_pk();
-//! let sig2 = sk2.sign(msg);
+//! let sig2 = sk2.sign_bytes(msg);
 //!
 //! let mut aggsig = AggregateSignature::new(&[sig1, sig2], [ValidatorIndex::new(0), ValidatorIndex::new(1)], 2);
-//! assert!(aggsig.verify(msg, &[pk1, pk2]));
+//! assert!(aggsig.verify_bytes(msg, &[pk1, pk2]));
 //! ```
 
 use std::mem::MaybeUninit;
@@ -42,6 +42,7 @@ use wincode::config::Config;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ValidatorIndex;
+use crate::crypto::Signable;
 
 /// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
 const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
@@ -102,13 +103,16 @@ impl PublicKey {
 ///
 /// Always in the prime-order subgroup (and not the identity).
 /// [`AggregateSignature::new`] relies on this to skip subgroup checks.
-//
+#[derive(Clone, Copy, Debug)]
 // NOTE: Deriving `PartialEq` and `Eq` to support testing.
 // It only makes sense because the underlying signature scheme happens to be deterministic and unique.
 // Reevaluate if we change the signature scheme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IndividualSignature(BlstSignature);
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `read` writes `dst` only via the single `dst.write(...)` on its `Ok` path;
+// every `?` returns `Err` before `dst` is touched.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
     type Dst = IndividualSignature;
 
@@ -127,6 +131,8 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IndividualSignature {
     }
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `size_of` returns exactly the bytes `write` produces (`UNCOMPRESSED_SIG_SIZE`).
 unsafe impl<C: Config> SchemaWrite<C> for IndividualSignature {
     type Src = IndividualSignature;
 
@@ -148,6 +154,9 @@ pub struct AggregateSignature {
     bitmask: BitVec,
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `read` writes `dst` only via the single `dst.write(...)` on its `Ok` path;
+// every `?` returns `Err` before `dst` is touched.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
     type Dst = AggregateSignature;
 
@@ -166,6 +175,9 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for AggregateSignature {
     }
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `size_of` returns exactly the bytes `write` produces: `UNCOMPRESSED_SIG_SIZE`
+// for `serialize()` plus `bitvec_size`, matching `write_bitvec`.
 unsafe impl<C: Config> SchemaWrite<C> for AggregateSignature {
     type Src = AggregateSignature;
 
@@ -269,10 +281,17 @@ impl SecretKey {
         PublicKey(pk)
     }
 
-    /// Signs the byte string `msg` using this secret key.
-    // TODO: use `Signable` here, and add new `sign_bytes` function?
+    /// Signs `msg` using this secret key.
     #[must_use]
-    pub fn sign(&self, msg: &[u8]) -> IndividualSignature {
+    pub fn sign(&self, msg: &impl Signable) -> IndividualSignature {
+        self.sign_bytes(&msg.bytes_to_sign())
+    }
+
+    /// Signs the raw byte string `msg` using this secret key.
+    ///
+    /// Prefer [`sign`](Self::sign) if possible.
+    #[must_use]
+    pub fn sign_bytes(&self, msg: &[u8]) -> IndividualSignature {
         let sig = self.0.sign(msg, DST, &[]);
         IndividualSignature(sig)
     }
@@ -281,7 +300,15 @@ impl SecretKey {
 impl IndividualSignature {
     /// Verifies that this is a valid signature of `msg` under `pk`.
     #[must_use]
-    pub fn verify(&self, msg: &[u8], pk: &PublicKey) -> bool {
+    pub fn verify(&self, msg: &impl Signable, pk: &PublicKey) -> bool {
+        self.verify_bytes(&msg.bytes_to_sign(), pk)
+    }
+
+    /// Verifies that this is a valid signature of the raw byte string `msg` under `pk`.
+    ///
+    ///  Prefer [`verify`](Self::verify) if possible.
+    #[must_use]
+    pub fn verify_bytes(&self, msg: &[u8], pk: &PublicKey) -> bool {
         // Skip the signature subgroup check (`sig_groupcheck=false`): the type
         // invariant already guarantees prime-order subgroup membership, as it is
         // established when signing and re-checked on deserialization (see `read`).
@@ -358,7 +385,15 @@ impl AggregateSignature {
 
     /// Verifies the aggregate signature against `msg` and `pks`.
     #[must_use]
-    pub fn verify(&self, msg: &[u8], pks: &[PublicKey]) -> bool {
+    pub fn verify(&self, msg: &impl Signable, pks: &[PublicKey]) -> bool {
+        self.verify_bytes(&msg.bytes_to_sign(), pks)
+    }
+
+    /// Verifies the aggregate signature against the raw byte string `msg` and `pks`.
+    ///
+    /// Prefer [`verify`](Self::verify) if possible.
+    #[must_use]
+    pub fn verify_bytes(&self, msg: &[u8], pks: &[PublicKey]) -> bool {
         if self.bitmask.len() != pks.len() {
             return false;
         }
@@ -405,8 +440,8 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         let pk = sk.to_pk();
         let msg = b"blst is such a blast";
-        let sig = sk.sign(msg);
-        assert!(sig.verify(msg, &pk));
+        let sig = sk.sign_bytes(msg);
+        assert!(sig.verify_bytes(msg, &pk));
     }
 
     #[test]
@@ -415,15 +450,15 @@ mod tests {
 
         let sk1 = SecretKey::new(&mut rand::rng());
         let pk1 = sk1.to_pk();
-        let sig1 = sk1.sign(msg);
+        let sig1 = sk1.sign_bytes(msg);
 
         let sk2 = SecretKey::new(&mut rand::rng());
         let pk2 = sk2.to_pk();
-        let sig2 = sk2.sign(msg);
+        let sig2 = sk2.sign_bytes(msg);
 
         // check individual signatures
-        assert!(sig1.verify(msg, &pk1));
-        assert!(sig2.verify(msg, &pk2));
+        assert!(sig1.verify_bytes(msg, &pk1));
+        assert!(sig2.verify_bytes(msg, &pk2));
 
         let mut aggsig = AggregateSignature::new(
             &[sig1, sig2],
@@ -432,16 +467,16 @@ mod tests {
         );
 
         // check aggregate signature
-        assert!(aggsig.verify(msg, &[pk1, pk2]));
+        assert!(aggsig.verify_bytes(msg, &[pk1, pk2]));
         assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk2]));
         assert!(aggsig.verify_without_bitmask(msg, &[pk2, pk1]));
 
         // check failure cases
-        assert!(!aggsig.verify(msg, &[pk1, pk2, pk1]));
-        assert!(!aggsig.verify(msg, &[pk1, pk1]));
-        assert!(!aggsig.verify(msg, &[pk1]));
-        assert!(!aggsig.verify(msg, &[]));
-        assert!(!aggsig.verify(b"not the original message", &[pk1]));
+        assert!(!aggsig.verify_bytes(msg, &[pk1, pk2, pk1]));
+        assert!(!aggsig.verify_bytes(msg, &[pk1, pk1]));
+        assert!(!aggsig.verify_bytes(msg, &[pk1]));
+        assert!(!aggsig.verify_bytes(msg, &[]));
+        assert!(!aggsig.verify_bytes(b"not the original message", &[pk1]));
         assert!(!aggsig.verify_without_bitmask(msg, &[pk1, pk2, pk1]));
         assert!(!aggsig.verify_without_bitmask(msg, &[pk1, pk1]));
         assert!(!aggsig.verify_without_bitmask(msg, &[pk1]));
@@ -450,13 +485,13 @@ mod tests {
 
         // modifying bitmask makes signature invalid
         aggsig.bitmask.set(0, false);
-        assert!(!aggsig.verify(msg, &[pk1, pk2]));
-        assert!(!aggsig.verify(msg, &[pk2]));
+        assert!(!aggsig.verify_bytes(msg, &[pk1, pk2]));
+        assert!(!aggsig.verify_bytes(msg, &[pk2]));
         assert!(!aggsig.verify_without_bitmask(msg, &[pk1, pk2]));
         assert!(!aggsig.verify_without_bitmask(msg, &[pk2]));
         aggsig.bitmask.set(1, false);
-        assert!(!aggsig.verify(msg, &[pk1, pk2]));
-        assert!(!aggsig.verify(msg, &[]));
+        assert!(!aggsig.verify_bytes(msg, &[pk1, pk2]));
+        assert!(!aggsig.verify_bytes(msg, &[]));
         assert!(!aggsig.verify_without_bitmask(msg, &[pk1, pk2]));
         assert!(!aggsig.verify_without_bitmask(msg, &[]));
     }
@@ -467,19 +502,19 @@ mod tests {
 
         let sk1 = SecretKey::new(&mut rand::rng());
         let pk1 = sk1.to_pk();
-        let sig1 = sk1.sign(msg);
+        let sig1 = sk1.sign_bytes(msg);
 
         let sk2 = SecretKey::new(&mut rand::rng());
         let pk2 = sk2.to_pk();
-        let sig2 = sk2.sign(msg);
+        let sig2 = sk2.sign_bytes(msg);
 
         let sk3 = SecretKey::new(&mut rand::rng());
         let pk3 = sk3.to_pk();
-        let sig3 = sk3.sign(msg);
+        let sig3 = sk3.sign_bytes(msg);
 
-        assert!(sig1.verify(msg, &pk1));
-        assert!(sig2.verify(msg, &pk2));
-        assert!(sig3.verify(msg, &pk3));
+        assert!(sig1.verify_bytes(msg, &pk1));
+        assert!(sig2.verify_bytes(msg, &pk2));
+        assert!(sig3.verify_bytes(msg, &pk3));
 
         // only aggregate over 2/3 signatures
         let aggsig = AggregateSignature::new(
@@ -497,22 +532,22 @@ mod tests {
 
         // check aggregate signature
         assert!(aggsig.verify_without_bitmask(msg, &[pk1, pk3]));
-        assert!(aggsig.verify(msg, &[pk1, pk2, pk3]));
+        assert!(aggsig.verify_bytes(msg, &[pk1, pk2, pk3]));
 
         // order for set of PKs matters
-        assert!(!aggsig.verify(msg, &[pk2, pk1, pk3]));
-        assert!(!aggsig.verify(msg, &[pk1, pk3, pk2]));
-        assert!(!aggsig.verify(msg, &[pk2, pk3, pk1]));
-        assert!(!aggsig.verify(msg, &[pk3, pk1, pk2]));
+        assert!(!aggsig.verify_bytes(msg, &[pk2, pk1, pk3]));
+        assert!(!aggsig.verify_bytes(msg, &[pk1, pk3, pk2]));
+        assert!(!aggsig.verify_bytes(msg, &[pk2, pk3, pk1]));
+        assert!(!aggsig.verify_bytes(msg, &[pk3, pk1, pk2]));
     }
 
     #[test]
     #[should_panic(expected = "duplicate signer")]
     fn duplicate_signer_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
-        let sig1 = sk1.sign(b"msg");
+        let sig1 = sk1.sign_bytes(b"msg");
         let sk2 = SecretKey::new(&mut rand::rng());
-        let sig2 = sk2.sign(b"msg");
+        let sig2 = sk2.sign_bytes(b"msg");
 
         // [v0, v1, v0] — the duplicate is reached only after a non-duplicate
         // has already been added, exercising the in-loop assert path.
@@ -531,7 +566,7 @@ mod tests {
     #[should_panic(expected = "length mismatch")]
     fn length_mismatch_fewer_sigs_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
-        let sig1 = sk1.sign(b"msg");
+        let sig1 = sk1.sign_bytes(b"msg");
         let _ =
             AggregateSignature::new(&[sig1], [ValidatorIndex::new(0), ValidatorIndex::new(1)], 2);
     }
@@ -540,9 +575,9 @@ mod tests {
     #[should_panic(expected = "length mismatch")]
     fn length_mismatch_fewer_indices_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
-        let sig1 = sk1.sign(b"msg");
+        let sig1 = sk1.sign_bytes(b"msg");
         let sk2 = SecretKey::new(&mut rand::rng());
-        let sig2 = sk2.sign(b"msg");
+        let sig2 = sk2.sign_bytes(b"msg");
         let _ = AggregateSignature::new(&[sig1, sig2], [ValidatorIndex::new(0)], 2);
     }
 
@@ -550,7 +585,7 @@ mod tests {
     #[should_panic(expected = "validator index")]
     fn out_of_bounds_first_index_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
-        let sig1 = sk1.sign(b"msg");
+        let sig1 = sk1.sign_bytes(b"msg");
         // num_bits=2, but the only validator index is 2 (>= num_bits)
         let _ = AggregateSignature::new(&[sig1], [ValidatorIndex::new(2)], 2);
     }
@@ -559,9 +594,9 @@ mod tests {
     #[should_panic(expected = "validator index")]
     fn out_of_bounds_later_index_panics() {
         let sk1 = SecretKey::new(&mut rand::rng());
-        let sig1 = sk1.sign(b"msg");
+        let sig1 = sk1.sign_bytes(b"msg");
         let sk2 = SecretKey::new(&mut rand::rng());
-        let sig2 = sk2.sign(b"msg");
+        let sig2 = sk2.sign_bytes(b"msg");
         // num_bits=2, first index ok, second index 2 (>= num_bits)
         let _ = AggregateSignature::new(
             &[sig1, sig2],

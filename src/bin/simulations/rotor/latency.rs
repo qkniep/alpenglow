@@ -201,7 +201,7 @@ impl Event for LatencyEvent {
                             dependency_timings[0][relay.as_usize()] + prop_delay + tx_delay
                         })
                         .min()
-                        .unwrap();
+                        .expect("slice should have at least one relay");
                     *timing = first_shred_time;
                 }
                 timings
