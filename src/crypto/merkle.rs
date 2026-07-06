@@ -220,8 +220,8 @@ impl MerkleRoot for DoubleMerkleRoot {
 impl DoubleMerkleRoot {
     /// Returns a short hex representation of the first 4 bytes, for use in logging.
     ///
-    /// The returned value implements [`Display`](std::fmt::Display) and formats
-    /// without allocating, unlike a `String`.
+    /// The returned value implements [`Display`](std::fmt::Display)
+    /// and formats without allocating, unlike a `String`.
     pub fn short_hex(&self) -> impl std::fmt::Display + '_ {
         struct ShortHex<'a>(&'a [u8]);
         impl std::fmt::Display for ShortHex<'_> {
