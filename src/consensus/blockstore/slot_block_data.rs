@@ -112,17 +112,6 @@ impl SlotBlockData {
         block_data.add_shred(shred, shredder)
     }
 
-    /// Records that the leader was observed equivocating for this slot.
-    ///
-    /// Returns `true` iff this was the first time this method was called.
-    pub(super) fn mark_leader_misbehaved(&mut self) -> bool {
-        if self.leader_misbehaved {
-            return false;
-        }
-        self.leader_misbehaved = true;
-        true
-    }
-
     /// Ingests a slice that the local node produced itself (as the leader).
     ///
     /// Unlike [`Self::add_shred_from_dissemination`] and [`Self::add_shred_from_repair`],
@@ -139,6 +128,17 @@ impl SlotBlockData {
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> (bool, Option<BlockInfo>) {
         self.disseminated.add_own_slice(payload, shreds)
+    }
+
+    /// Records that the leader was observed equivocating for this slot.
+    ///
+    /// Returns `true` iff this was the first time this method was called.
+    pub(super) fn mark_leader_misbehaved(&mut self) -> bool {
+        if self.leader_misbehaved {
+            return false;
+        }
+        self.leader_misbehaved = true;
+        true
     }
 }
 
@@ -283,22 +283,18 @@ impl BlockData {
         payload: SlicePayload,
         shreds: [ValidatedShred; TOTAL_SHREDS],
     ) -> (bool, Option<BlockInfo>) {
-        // Build the slice from the shreds so the two can't disagree — the
-        // dissemination path likewise reconstructs its slice from shreds.
+        let slot = self.slot;
         let any_shred = &shreds[0];
         let commitment = any_shred.commitment();
-        // Every shred is persisted, but only `shreds[0]` supplies the slice's
-        // header and Merkle root. Guard against a producer-side bug handing us a
-        // batch whose shreds disagree: the commitment binds both the header and
-        // the slice root, so one equality check per shred covers them together.
+        // check consistency of the shreds
         debug_assert!(
             shreds.iter().all(|s| s.commitment() == commitment),
-            "own shreds for slice in slot {} disagree on header or slice root",
-            self.slot,
+            "own shreds for slice in slot {slot} disagree on header or slice root",
         );
+        // build the slice from the shreds so the two can't disagree
         let slice =
             ReconstructedSlice::from_shreds(payload, any_shred, any_shred.slice_root().clone());
-        debug_assert_eq!(slice.slot, self.slot);
+        debug_assert_eq!(slice.slot, slot);
         let slice_index = slice.slice_index;
         let is_first = self.shreds.is_empty();
 
@@ -312,8 +308,7 @@ impl BlockData {
         // at or after the last slice).
         assert!(
             self.last_slice.is_none(),
-            "own slice {slice_index:?} added after the last slice in slot {}",
-            self.slot,
+            "own slice {slice_index:?} added after the last slice in slot {slot}",
         );
         if slice.is_last {
             self.mark_last_slice(slice_index);
@@ -331,8 +326,7 @@ impl BlockData {
                 // reconstruct. Reaching here means a producer-side logic bug,
                 // not adversarial input, so there is no graceful recovery.
                 unreachable!(
-                    "leader produced a block that failed reconstruction: slot {}, slice {slice_index:?}",
-                    self.slot,
+                    "leader produced a block that failed reconstruction: slot {slot}, slice {slice_index:?}",
                 );
             }
         };
@@ -348,8 +342,9 @@ impl BlockData {
         index: SliceIndex,
         shredder: &mut RegularShredder,
     ) -> ReconstructSliceResult {
+        let slot = self.slot;
         if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
+            trace!("already have block for slot {slot}");
             return ReconstructSliceResult::NoAction;
         }
 
@@ -371,10 +366,7 @@ impl BlockData {
             }
         };
         if reconstructed_slice.parent.is_none() && reconstructed_slice.slice_index.is_first() {
-            warn!(
-                "reconstructed slice {} in slot {} expected to contain parent",
-                index, self.slot
-            );
+            warn!("reconstructed slice {index} in slot {slot} expected to contain parent");
             return ReconstructSliceResult::Error;
         }
 
@@ -382,7 +374,7 @@ impl BlockData {
         entry.insert(reconstructed_slice);
         let mut reconstructed_shreds = reconstructed_shreds.map(Some);
         std::mem::swap(slice_shreds, &mut reconstructed_shreds);
-        trace!("reconstructed slice {} in slot {}", index, self.slot);
+        trace!("reconstructed slice {index} in slot {slot}");
 
         ReconstructSliceResult::Complete
     }
@@ -392,15 +384,16 @@ impl BlockData {
     /// See [`ReconstructBlockResult`] for more info on what the function returns.
     #[hotpath::measure]
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
+        let slot = self.slot;
         if self.completed.is_some() {
-            trace!("already have block for slot {}", self.slot);
+            trace!("already have block for slot {slot}");
             return ReconstructBlockResult::NoAction;
         }
         let Some(last_slice) = self.last_slice else {
             return ReconstructBlockResult::NoAction;
         };
         if self.slices.len() != last_slice.inner() + 1 {
-            trace!("don't have all slices for slot {} yet", self.slot);
+            trace!("don't have all slices for slot {slot} yet");
             return ReconstructBlockResult::NoAction;
         }
 
@@ -453,7 +446,7 @@ impl BlockData {
         }
 
         let block = Block {
-            _slot: self.slot,
+            _slot: slot,
             hash: block_hash.clone(),
             parent: parent.0,
             parent_hash: parent.1,
