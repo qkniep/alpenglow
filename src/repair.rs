@@ -639,7 +639,7 @@ mod tests {
 
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
-        for _ in 0..num_slices {
+        while slice_roots_requested.len() < num_slices {
             let msg = ctx.v0_request_net.receive().await.unwrap();
 
             for slice in SliceIndex::all().take(num_slices) {
@@ -662,7 +662,7 @@ mod tests {
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
-            for _ in ShredIndex::all() {
+            while shreds_requested.len() < TOTAL_SHREDS {
                 let msg = ctx.v0_request_net.receive().await.unwrap();
                 for shred_index in ShredIndex::all() {
                     let req_type =
