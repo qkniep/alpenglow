@@ -314,13 +314,15 @@ where
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&mut self, block_id: BlockId) {
         let (slot, block_hash) = &block_id;
-        let h = block_hash.short_hex();
         if self.blockstore.read().await.get_block(&block_id).is_some() {
-            trace!("ignoring repair for block {h} in slot {slot}, already have the block");
+            trace!(
+                "ignoring repair for block {} in slot {slot}, already have the block",
+                block_hash.short_hex()
+            );
             return;
         }
 
-        debug!("repairing block {h} in slot {slot}");
+        debug!("repairing block {} in slot {slot}", block_hash.short_hex());
         let req = RepairRequestType::LastSliceRoot(block_id);
         if let Err(err) = self.send_request(req).await {
             warn!("sending initial repair request failed: {err}");
