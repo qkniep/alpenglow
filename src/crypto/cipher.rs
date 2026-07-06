@@ -57,7 +57,7 @@ mod tests {
     fn random_keys_differ() {
         let plaintext = b"some plaintext payload".to_vec();
         let mut buffer1 = plaintext.clone();
-        let mut buffer2 = plaintext.clone();
+        let mut buffer2 = plaintext;
         let key1 = encrypt_with_random_key(&mut buffer1);
         let key2 = encrypt_with_random_key(&mut buffer2);
         assert_ne!(key1, key2);

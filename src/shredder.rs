@@ -122,7 +122,7 @@ pub enum ShredPayloadType {
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Shred {
     payload_type: ShredPayloadType,
-    merkle_root_sig: Signature,
+    slice_sig: Signature,
     merkle_path: SliceProof,
 }
 
@@ -166,7 +166,7 @@ impl Shred {
 
     /// Derives the Merkle root of the slice from this shred's proof.
     #[must_use]
-    pub fn merkle_root(&self) -> SliceRoot {
+    pub fn slice_root(&self) -> SliceRoot {
         SliceMerkleTree::derive_root(
             &self.payload().data,
             *self.payload().shred_index,
@@ -191,6 +191,40 @@ impl ShredPayload {
     #[must_use]
     pub fn index_in_slot(&self) -> usize {
         self.header.slice_index.inner() * TOTAL_SHREDS + *self.shred_index
+    }
+}
+
+/// Number of bytes in the commitment that the leader signs for each slice.
+///
+/// Layout: `slot` (u64 LE) || `slice_index` (u64 LE) || `is_last` (u8) || `slice_root` (32 B).
+const SLICE_COMMITMENT_LEN: usize = 8 + 8 + 1 + 32;
+
+/// Commitment the leader signs for each slice.
+///
+/// Binding the `SliceHeader` into the signature prevents replay attacks.
+/// A shred for slot `s`, slice `i` is never valid for slot `s'` or slice `i'`.
+/// What this commitment covers is determined by the crate-private `new` constructor.
+///
+/// This is an opaque capability, obtainable only via [`ValidatedShred::commitment`].
+/// The inner byte layout is a protocol detail, not a stable API.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SliceCommitment([u8; SLICE_COMMITMENT_LEN]);
+
+impl SliceCommitment {
+    /// Creates a [`SliceCommitment`] covering a [`SliceHeader`] and a [`SliceRoot`].
+    pub(crate) fn new(header: &SliceHeader, slice_root: &SliceRoot) -> Self {
+        let mut buf = [0u8; SLICE_COMMITMENT_LEN];
+        buf[0..8].copy_from_slice(&header.slot.inner().to_le_bytes());
+        buf[8..16].copy_from_slice(&(header.slice_index.inner() as u64).to_le_bytes());
+        buf[16] = u8::from(header.is_last);
+        buf[17..49].copy_from_slice(slice_root.as_ref());
+        Self(buf)
+    }
+}
+
+impl AsRef<[u8]> for SliceCommitment {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -504,14 +538,14 @@ fn data_and_coding_to_output_shreds(
     sk: &SecretKey,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let tree = build_merkle_tree(&raw_shreds);
-    let merkle_root = tree.get_root();
-    let merkle_root_sig = sk.sign_bytes(merkle_root.as_ref());
-    assemble_output_shreds(header, raw_shreds, &tree, merkle_root_sig)
+    let slice_root = tree.get_root();
+    let slice_sig = sk.sign_bytes(SliceCommitment::new(&header, &slice_root).as_ref());
+    assemble_output_shreds(header, raw_shreds, &tree, slice_sig)
 }
 
 /// Assembles the reconstructed `raw_shreds` into the final output shreds.
 ///
-/// Puts the `raw_shreds` together with the `header`, `merkle_root_sig`,
+/// Puts the `raw_shreds` together with the `header`, `slice_sig`,
 /// and a Merkle proof generated from the given `tree`.
 /// Used both when producing our own block and when reconstructing another leader's block.
 ///
@@ -520,7 +554,7 @@ fn assemble_output_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
     tree: &SliceMerkleTree,
-    merkle_root_sig: Signature,
+    slice_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let mut shreds = [const { None }; TOTAL_SHREDS];
     fill_missing_shreds(&mut shreds, header, raw_shreds, tree, merkle_root_sig);

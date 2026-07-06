@@ -285,11 +285,12 @@ impl SlotState {
             votor_events.push(PoolEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
-        let nf_stake = *self
+        let nf_stake = self
             .voted_stakes
             .notar_fallback
             .get(block_hash)
-            .unwrap_or(&Stake::default());
+            .copied()
+            .unwrap_or_default();
         if self
             .epoch_info
             .epoch_info()
@@ -298,7 +299,7 @@ impl SlotState {
         {
             let notar_votes = self.votes.notar_votes(block_hash);
             let nf_votes = self.votes.notar_fallback_votes(block_hash);
-            let cert = NotarFallbackCert::new_unchecked(
+            let cert = NotarFallbackCert::new(
                 &notar_votes,
                 &nf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -308,15 +309,14 @@ impl SlotState {
         if self.epoch_info.epoch_info().is_quorum(notar_stake) && self.certificates.notar.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = NotarCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Notar(cert));
         }
         if self.epoch_info.epoch_info().is_strong_quorum(notar_stake)
             && self.certificates.fast_finalize.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert =
-                FastFinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FastFinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -337,11 +337,12 @@ impl SlotState {
         let nf_stake = nf_stakes.entry(block_hash.clone()).or_default();
         *nf_stake += stake;
         let nf_stake = *nf_stake;
-        let notar_stake = *self
+        let notar_stake = self
             .voted_stakes
             .notar
             .get(block_hash)
-            .unwrap_or(&Stake::default());
+            .copied()
+            .unwrap_or_default();
         if self
             .epoch_info
             .epoch_info()
@@ -350,7 +351,7 @@ impl SlotState {
         {
             let notar_votes = self.votes.notar_votes(block_hash);
             let nf_votes = self.votes.notar_fallback_votes(block_hash);
-            let cert = NotarFallbackCert::new_unchecked(
+            let cert = NotarFallbackCert::new(
                 &notar_votes,
                 &nf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -392,7 +393,7 @@ impl SlotState {
         {
             let skip_votes = self.votes.skip_votes();
             let sf_votes = self.votes.skip_fallback_votes();
-            let cert = SkipCert::new_unchecked(
+            let cert = SkipCert::new(
                 &skip_votes,
                 &sf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -426,7 +427,7 @@ impl SlotState {
             && self.certificates.finalize.is_none()
         {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -499,11 +500,12 @@ impl SlotState {
 
     fn check_safe_to_notar(&mut self, block_hash: BlockHash) -> SafeToNotarStatus {
         // check general voted stake conditions
-        let notar_stake = *self
+        let notar_stake = self
             .voted_stakes
             .notar
             .get(&block_hash)
-            .unwrap_or(&Stake::default());
+            .copied()
+            .unwrap_or_default();
         let skip_stake = self.voted_stakes.skip;
         if !self.epoch_info.epoch_info().is_weakest_quorum(notar_stake) {
             return SafeToNotarStatus::AwaitingVotes;
@@ -713,7 +715,7 @@ mod tests {
 
         // validator 2 notarizes first, so a later skip is slashable
         let v2 = ValidatorIndex::new(2);
-        add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[2], v2));
+        add(&mut state, Vote::new_notar(slot, hash, &sks[2], v2));
         let skip_vote = Vote::new_skip(slot, &sks[2], v2);
         assert_eq!(
             state.check_slashable_offence(&skip_vote),
@@ -798,7 +800,7 @@ mod tests {
 
         // notar-fallback first, then finalize is slashable
         let v2 = ValidatorIndex::new(2);
-        let nf_vote_2 = Vote::new_notar_fallback(slot, hash.clone(), &sks[2], v2);
+        let nf_vote_2 = Vote::new_notar_fallback(slot, hash, &sks[2], v2);
         add(&mut state, nf_vote_2);
         assert_eq!(
             state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
@@ -816,7 +818,7 @@ mod tests {
         let v = ValidatorIndex::new(1);
 
         // no prior votes -> nothing is slashable
-        let notar_vote = Vote::new_notar(slot, hash.clone(), sk, v);
+        let notar_vote = Vote::new_notar(slot, hash, sk, v);
         let skip_vote = Vote::new_skip(slot, sk, v);
         let final_vote = Vote::new_final(slot, sk, v);
         assert!(state.check_slashable_offence(&notar_vote).is_none());
@@ -824,7 +826,7 @@ mod tests {
         assert!(state.check_slashable_offence(&final_vote).is_none());
 
         // notarizing then finalizing the same block is the happy path, not slashable
-        add(&mut state, notar_vote.clone());
+        add(&mut state, notar_vote);
         assert!(state.check_slashable_offence(&final_vote).is_none());
     }
 
@@ -858,7 +860,7 @@ mod tests {
 
         // notar-fallback is tracked per (validator, hash)
         let v4 = ValidatorIndex::new(4);
-        let nf_vote_1 = Vote::new_notar_fallback(slot, hash.clone(), &sks[4], v4);
+        let nf_vote_1 = Vote::new_notar_fallback(slot, hash, &sks[4], v4);
         add(&mut state, nf_vote_1.clone());
         assert!(state.should_ignore_vote(&nf_vote_1));
         let nf_vote_2 = Vote::new_notar_fallback(slot, other_hash, &sks[4], v4);
@@ -932,7 +934,7 @@ mod tests {
 
         // more notar-fallback votes do not emit new cert
         state.add_cert(cert);
-        let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[5], ValidatorIndex::new(5));
+        let nf_vote = Vote::new_notar_fallback(slot, hash, &sks[5], ValidatorIndex::new(5));
         let (certs, _, _) = add(&mut state, nf_vote);
         assert!(certs.is_empty());
     }

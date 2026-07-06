@@ -39,7 +39,7 @@ pub(crate) enum VotePayload {
 
 impl Signable for VotePayload {
     fn bytes_to_sign(&self) -> Vec<u8> {
-        wincode::serialize(self).expect("serialization should not panic")
+        crate::serialize(self)
     }
 }
 

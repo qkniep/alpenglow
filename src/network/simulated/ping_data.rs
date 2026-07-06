@@ -41,9 +41,9 @@ static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
     let mut rdr = ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_path("data/servers-2020-07-19.csv")
-        .unwrap();
+        .expect("ping server CSV should be present; run ./download_data.sh");
     for result in rdr.deserialize() {
-        let record: PingServer = result.unwrap();
+        let record: PingServer = result.expect("ping server CSV row should deserialize");
         output.push(record);
     }
     assert!(output.len() <= MAX_PING_SERVERS);
@@ -53,14 +53,17 @@ static PING_SERVERS: LazyLock<Vec<PingServer>> = LazyLock::new(|| {
 static PING_DATA: LazyLock<Vec<f64>> = LazyLock::new(|| {
     let mut output = vec![0.0; MAX_PING_SERVERS * MAX_PING_SERVERS];
     let mut counts = vec![0; MAX_PING_SERVERS * MAX_PING_SERVERS];
-    let file = File::open("data/pings-2020-07-19-2020-07-20.csv").unwrap();
+    let file = File::open("data/pings-2020-07-19-2020-07-20.csv")
+        .expect("ping data CSV should be present; run ./download_data.sh");
     let mut rdr = csv::Reader::from_reader(file);
     for result in rdr.deserialize() {
-        let record: PingMeasurement = result.unwrap();
+        let record: PingMeasurement = result.expect("ping data CSV row should deserialize");
         assert!(record.source < MAX_PING_SERVERS);
         assert!(record.destination < MAX_PING_SERVERS);
         let index = get_index(record.source, record.destination);
-        let count = counts.get_mut(index).unwrap();
+        let count = counts
+            .get_mut(index)
+            .expect("ping server index should be in bounds, it was asserted above");
         if *count == 0 {
             output[index] = record.avg;
         } else {
@@ -147,7 +150,7 @@ pub fn find_closest_ping_server(lat: f64, lon: f64) -> &'static PingServer {
     PING_SERVERS
         .iter()
         .min_by_key(|server| haversine_distance(server.latitude, server.longitude, lat, lon) as u64)
-        .unwrap()
+        .expect("ping server dataset should be non-empty")
 }
 
 /// Gives the average ping from one server to another from the dataset.
