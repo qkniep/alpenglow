@@ -295,16 +295,16 @@ pub trait Shredder: Default {
 
         // gather everything needed from any one of the received shreds
         let any_shred = validated.any_shred();
-        let merkle_root = any_shred.merkle_root().clone();
+        let slice_root = any_shred.slice_root().clone();
         let header = any_shred.payload().header;
-        let leader_sig = any_shred.as_shred().merkle_root_sig;
+        let leader_sig = any_shred.as_shred().slice_sig;
 
         // additional Merkle tree validity check
         // NOTE: This is necessary to catch maliciously constructed slices.
-        let tree = check_merkle_tree(&raw_shreds, &merkle_root)?;
+        let tree = check_merkle_tree(&raw_shreds, &slice_root)?;
 
         let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
-        let slice = ReconstructedSlice::from_shreds(payload, any_shred, merkle_root);
+        let slice = ReconstructedSlice::from_shreds(payload, any_shred, slice_root);
 
         // reconstruct missing output shreds (with root, path, sig) in place
         fill_missing_shreds(shreds, header, raw_shreds, &tree, leader_sig);
@@ -557,7 +557,7 @@ fn assemble_output_shreds(
     slice_sig: Signature,
 ) -> [ValidatedShred; TOTAL_SHREDS] {
     let mut shreds = [const { None }; TOTAL_SHREDS];
-    fill_missing_shreds(&mut shreds, header, raw_shreds, tree, merkle_root_sig);
+    fill_missing_shreds(&mut shreds, header, raw_shreds, tree, slice_sig);
     shreds.map(|shred| shred.expect("fill_missing_shreds fills all empty entries"))
 }
 
@@ -579,9 +579,9 @@ fn fill_missing_shreds(
     header: SliceHeader,
     raw_shreds: RawShreds,
     tree: &SliceMerkleTree,
-    merkle_root_sig: Signature,
+    slice_sig: Signature,
 ) {
-    let merkle_root = tree.get_root();
+    let root = tree.get_root();
     let num_data = raw_shreds.data.len();
     assert_eq!(num_data + raw_shreds.coding.len(), TOTAL_SHREDS);
     let raw = raw_shreds.data.into_iter().chain(raw_shreds.coding);
@@ -603,10 +603,10 @@ fn fill_missing_shreds(
         *shred = Some(ValidatedShred::new_validated(
             Shred {
                 payload_type,
-                merkle_root_sig,
+                slice_sig,
                 merkle_path: tree.create_proof(index),
             },
-            merkle_root.clone(),
+            root.clone(),
         ));
     }
 }
@@ -726,7 +726,7 @@ mod tests {
         let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rand::rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
+        let shreds = shredder.shred(slice, &sk)?;
 
         // restore in place from only the data shreds
         // (the slice payload and `NotEnoughShreds` cases are covered by
@@ -739,7 +739,7 @@ mod tests {
             let reconstructed = reconstructed.as_ref().unwrap();
             assert_eq!(reconstructed.is_data(), original.is_data());
             assert_eq!(reconstructed.payload().data, original.payload().data);
-            assert_eq!(reconstructed.merkle_root(), original.merkle_root());
+            assert_eq!(reconstructed.commitment(), original.commitment());
         }
 
         // an error should leave the input untouched
