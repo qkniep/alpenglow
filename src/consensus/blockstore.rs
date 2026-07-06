@@ -834,15 +834,26 @@ mod tests {
         Ok(())
     }
 
+    /// A multi-slice block through the leader fast path.
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_multi_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(3).await
+    }
+
+    /// A single-slice block, where the first slice is also the last: one
+    /// `add_own_slice` call must both emit `FirstShred` and complete the block.
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_single_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(1).await
+    }
+
     /// The leader fast path must reconstruct the exact same block as the
     /// dissemination path: a hash mismatch would mean the leader's own blocks
     /// never get notarized/finalized by followers.
-    #[tokio::test]
-    async fn add_own_slice_matches_dissemination() -> Result<()> {
-        const NUM_SLICES: usize = 3;
+    async fn check_own_slice_matches_dissemination(num_slices: usize) -> Result<()> {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::genesis().next();
-        let slices = create_random_block(slot, NUM_SLICES);
+        let slices = create_random_block(slot, num_slices);
 
         // Reference: reconstruct the block via the dissemination path.
         let (dissem_tx, _dissem_rx) = mpsc::channel(1000);

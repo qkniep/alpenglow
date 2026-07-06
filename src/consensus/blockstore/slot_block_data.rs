@@ -286,6 +286,16 @@ impl BlockData {
         // Build the slice from the shreds so the two can't disagree — the
         // dissemination path likewise reconstructs its slice from shreds.
         let any_shred = &shreds[0];
+        let commitment = any_shred.commitment();
+        // Every shred is persisted, but only `shreds[0]` supplies the slice's
+        // header and Merkle root. Guard against a producer-side bug handing us a
+        // batch whose shreds disagree: the commitment binds both the header and
+        // the slice root, so one equality check per shred covers them together.
+        debug_assert!(
+            shreds.iter().all(|s| s.commitment() == commitment),
+            "own shreds for slice in slot {} disagree on header or slice root",
+            self.slot,
+        );
         let slice =
             ReconstructedSlice::from_shreds(payload, any_shred, any_shred.slice_root().clone());
         debug_assert_eq!(slice.slot, self.slot);
@@ -294,8 +304,7 @@ impl BlockData {
 
         // Commitment is trusted: we built and signed these shreds ourselves,
         // and each slice is produced exactly once, so the entry is always vacant.
-        self.commitment_cache
-            .insert(slice_index, any_shred.commitment());
+        self.commitment_cache.insert(slice_index, commitment);
 
         // The leader produces each slice once, in order, and stops after the
         // last, so a last slice must never already be set. This subsumes the
