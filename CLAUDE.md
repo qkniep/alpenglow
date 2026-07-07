@@ -138,7 +138,7 @@ aliases — each in its own module under `src/types/`, re-exported from `types`:
 struct Slot(u64);                          // src/types/slot.rs
 struct Stake(u64);                         // src/types/stake.rs
 struct ValidatorIndex(u64);                // src/types/validator_index.rs (NOT `ValidatorId`)
-struct SliceIndex(u64);                    // src/types/slice_index.rs
+struct SliceIndex(usize);                  // src/types/slice_index.rs
 struct Fraction { numerator, denominator } // src/types/fraction.rs
 ```
 The only bare aliases are `type BlockId = (Slot, BlockHash)` (`src/lib.rs`) and
