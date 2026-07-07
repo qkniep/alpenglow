@@ -36,7 +36,7 @@
 
 use std::net::SocketAddr;
 
-use alpenglow::network::{Network, UdpNetwork, localhost_ip_sockaddr};
+use alpenglow::network::{Network, NetworkMessageConfig, UdpNetwork, localhost_ip_sockaddr};
 use divan::counter::{BytesCount, ItemsCount};
 use tokio::runtime::Runtime;
 use wincode::config::DefaultConfig;
@@ -49,7 +49,7 @@ trait BenchMsg:
     + Sync
     + 'static
     + SchemaWrite<DefaultConfig, Src = Self>
-    + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
+    + for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = Self>
 {
     const BYTES: u64;
 }
