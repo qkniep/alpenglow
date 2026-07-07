@@ -4,12 +4,11 @@
 //! Tiny sorted-vector map and set backed by inline [`SmallVec`] storage.
 //!
 //! These provide the handful of `BTreeMap`/`BTreeSet`-like operations
-//! the [`pool`](super) needs for its per-slot, per-block-hash bookkeeping.
+//! that [`pool`](super) needs for its per-slot, per-block-hash bookkeeping.
 //! A slot almost always tracks a single block,
-//! so keeping that entry inline avoids a per-entry heap allocation in the common case.
-//! Entries are kept sorted so lookups stay `O(log n)`
-//! even when an equivocating leader inflates the entry count for a slot
-//! (at which point the storage spills to the heap).
+//! so keeping that entry inline avoids heap allocations in the common case.
+//! The entries still need to be able to grow to handle equivocation.
+//! Entries are kept sorted so lookups stay `O(log n)`.
 
 use smallvec::SmallVec;
 

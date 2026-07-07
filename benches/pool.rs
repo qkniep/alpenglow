@@ -7,10 +7,7 @@
 //! which replays a batch of pre-signed votes into a fresh `SlotState`.
 //! It deliberately bypasses the consensus loop and signature verification
 //! (which would otherwise dominate)
-//! so that changes to the per-slot data structures
-//! — the `BlockHash`-keyed maps/sets that track notar/notar-fallback stake,
-//! parents, and the safe-to-notar bookkeeping —
-//! show up in the measurement.
+//! so that changes to the per-slot data structures show up in the measurement.
 //!
 //! Requires the `test-utils` feature:
 //! `cargo bench --features test-utils --bench pool`.
@@ -39,11 +36,8 @@ struct Workload {
 
 /// Builds a realistic single-slot vote mix for `num_validators` validators.
 ///
-/// Roughly half notarize one block, a quarter skip,
-/// and a quarter cast notar-fallback votes for a competing block
-/// — enough to exercise all of the converted per-slot structures
-/// (notar / notar-fallback stake maps, the parents map,
-/// and the pending/sent safe-to-notar sets).
+/// Roughly half notar b, a quarter skip, and a quarter notar-fallback b'.
+/// This split exercises all of the per-slot structures.
 fn build_workload(num_validators: u64) -> Workload {
     let (sks, epoch_info) = generate_validators(num_validators);
     let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));

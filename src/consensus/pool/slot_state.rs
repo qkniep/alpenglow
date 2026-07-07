@@ -33,9 +33,6 @@ pub(super) struct SlotState {
     /// Certificates for this slot, contains all certificate types and validators.
     pub(super) certificates: SlotCertificates,
     /// Indicates blocks for which we already know their parents.
-    ///
-    /// A slot almost always tracks a single block, so an inline sorted vec
-    /// avoids per-entry heap allocation versus a `BTreeMap`.
     parents: SortedVecMap<BlockHash, ParentStatus>,
     /// Hashes of blocks that have reached the necessary votes for safe-to-notar
     /// and are only waiting for our only vote to arrive.
