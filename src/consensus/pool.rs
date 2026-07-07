@@ -9,6 +9,7 @@
 mod finality_tracker;
 mod parent_ready_tracker;
 mod slot_state;
+mod sorted_vec;
 
 use std::collections::BTreeMap;
 use std::ops::RangeBounds;
@@ -522,8 +523,7 @@ impl Pool for PoolImpl {
             .handle_finalization(finalization_event);
         self.send_parent_ready_events(new_parents_ready).await;
 
-        self.slot_state(*slot)
-            .notify_parent_known(block_hash.clone());
+        self.slot_state(*slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(parent_slot)
             && parent_state.is_notar_fallback(parent_hash)
             && let Some(output) = self
@@ -582,6 +582,36 @@ impl Pool for PoolImpl {
     fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>> {
         self.parent_ready_tracker.wait_for_parent_ready(slot)
     }
+}
+
+/// Replays `votes` into a fresh [`SlotState`] for `slot`.
+///
+/// Lets out-of-crate benches drive the per-slot vote-counting hot path
+/// ([`SlotState::add_vote`]) directly.
+/// Every hash in `parents_certified` is marked known and certified up front
+/// so the safe-to-notar logic actually runs.
+///
+/// Returns an event count (certs + votor events + repair);
+/// only used as a [`std::hint::black_box`] sink.
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub fn bench_replay_votes(
+    slot: Slot,
+    epoch_info: Arc<ValidatorEpochInfo>,
+    parents_certified: &[BlockHash],
+    votes: &[(Vote, crate::Stake)],
+) -> usize {
+    let mut state = SlotState::new(slot, epoch_info);
+    for hash in parents_certified {
+        state.notify_parent_known(hash);
+        let _ = state.notify_parent_certified(hash.clone());
+    }
+    let mut produced = 0;
+    for (vote, stake) in votes {
+        let (certs, events, repair) = state.add_vote(vote.clone(), *stake);
+        produced += certs.len() + events.len() + repair.len();
+    }
+    produced
 }
 
 #[cfg(test)]
