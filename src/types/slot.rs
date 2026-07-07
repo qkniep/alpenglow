@@ -72,13 +72,29 @@ impl Slot {
     }
 
     /// Returns the next slot after `self`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is the maximum slot.
     pub const fn next(&self) -> Self {
-        Self(self.0 + 1)
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("next() should not be called on the maximum slot"),
+        )
     }
 
     /// Returns the previous slot before `self`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is the genesis slot.
     pub const fn prev(&self) -> Self {
-        Self(self.0.checked_sub(1).unwrap())
+        Self(
+            self.0
+                .checked_sub(1)
+                .expect("prev() should not be called on the genesis slot"),
+        )
     }
 
     /// Returns `true` iff this slot is part of the genesis window.

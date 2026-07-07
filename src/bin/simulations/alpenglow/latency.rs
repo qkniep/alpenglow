@@ -163,7 +163,7 @@ impl Event for LatencyEvent {
                 engine.run(&instance.rotor_instances[0], &mut timings);
                 timings
                     .get(crate::rotor::LatencyEvent::Block)
-                    .unwrap()
+                    .expect("rotor block event should be recorded")
                     .to_vec()
             }
             Self::LocalNotar => broadcast_vote_threshold(resources, 0.6),

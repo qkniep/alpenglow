@@ -135,7 +135,7 @@ impl Machine {
 
         // open UDP sockets
         for node in 0..NODES_PER_MACHINE {
-            let port = BASE_PORT + u16::try_from(node).unwrap();
+            let port = BASE_PORT + u16::try_from(node).expect("port offset should fit in u16");
             let addr = format!("0.0.0.0:{port}");
             let socket = Arc::new(UdpSocket::bind(&addr).await?);
             sockets.push(socket.clone());
@@ -150,7 +150,8 @@ impl Machine {
                 for id in 0..MACHINES {
                     for d_port in 0..NODES_PER_MACHINE {
                         let ip = get_machine_ip(self.id, id);
-                        let port = BASE_PORT + u16::try_from(d_port).unwrap();
+                        let port = BASE_PORT
+                            + u16::try_from(d_port).expect("port offset should fit in u16");
                         let rcv_addr = format!("{ip}:{port}");
                         let time = OffsetDateTime::now_utc();
                         let timestamp_nanos = time.unix_timestamp_nanos();
@@ -158,8 +159,12 @@ impl Machine {
                             machine: self.id,
                             timestamp_nanos,
                         });
-                        let bytes = wincode::serialize(&msg).unwrap();
-                        let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
+                        let bytes = wincode::serialize(&msg)
+                            .expect("serializing fixed message should not fail");
+                        let _ = socket
+                            .send_to(&bytes, rcv_addr)
+                            .await
+                            .expect("failed to send UDP datagram");
                     }
                 }
             }
@@ -175,14 +180,18 @@ impl Machine {
                 let mut round = 0;
                 let mut buf = [0; MSG_BUFFER_BYTES];
                 loop {
-                    let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
-                    let msg: Message = wincode::deserialize(&buf[..len]).unwrap();
+                    let (len, addr) = socket
+                        .recv_from(&mut buf)
+                        .await
+                        .expect("failed to receive UDP datagram");
+                    let msg: Message = wincode::deserialize(&buf[..len])
+                        .expect("failed to deserialize incoming message");
 
                     match msg {
                         Message::Vote(vote) => {
                             let timestamp = vote.timestamp_nanos;
-                            let vote_time =
-                                OffsetDateTime::from_unix_timestamp_nanos(timestamp).unwrap();
+                            let vote_time = OffsetDateTime::from_unix_timestamp_nanos(timestamp)
+                                .expect("timestamp from peer should be a valid unix timestamp");
                             let rcv_time = OffsetDateTime::now_utc();
                             let delay = (rcv_time - vote_time).as_seconds_f64() * 1000.0;
                             debug!("vote arrived with delay {delay:.1} ms");
@@ -191,7 +200,8 @@ impl Machine {
 
                             let block_timestamp = vote.block_timestamp;
                             let block_time =
-                                OffsetDateTime::from_unix_timestamp_nanos(block_timestamp).unwrap();
+                                OffsetDateTime::from_unix_timestamp_nanos(block_timestamp)
+                                    .expect("timestamp from peer should be a valid unix timestamp");
                             let delay = (rcv_time - block_time).as_seconds_f64() * 1000.0;
                             debug!("vote seen {delay:.1} ms after block production");
                             let mut wcvd_guard = wcvd.lock().await;
@@ -235,7 +245,9 @@ impl Machine {
                             for _ in 0..100 {
                                 for id in 0..MACHINES {
                                     for d_port in 0..NODES_PER_MACHINE {
-                                        let port = BASE_PORT + u16::try_from(d_port).unwrap();
+                                        let port = BASE_PORT
+                                            + u16::try_from(d_port)
+                                                .expect("port offset should fit in u16");
                                         let ip = get_machine_ip(self_id, id);
                                         let rcv_addr = format!("{ip}:{port}");
                                         let time = OffsetDateTime::now_utc();
@@ -259,8 +271,12 @@ impl Machine {
                                                 208, 210, 214, 217, 230, 234, 238, 241, 250,
                                             ],
                                         });
-                                        let bytes = wincode::serialize(&msg).unwrap();
-                                        let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
+                                        let bytes = wincode::serialize(&msg)
+                                            .expect("serializing fixed message should not fail");
+                                        let _ = socket
+                                            .send_to(&bytes, rcv_addr)
+                                            .await
+                                            .expect("failed to send UDP datagram");
                                         debug!("vote of {len} bytes sent");
                                     }
                                 }
@@ -293,15 +309,20 @@ impl Machine {
                             timestamp_nanos,
                             round,
                         });
-                        let bytes = wincode::serialize(&msg).unwrap();
+                        let bytes = wincode::serialize(&msg)
+                            .expect("serializing fixed message should not fail");
 
                         for id in 0..MACHINES {
                             for d_port in 0..NODES_PER_MACHINE {
-                                let port = BASE_PORT + u16::try_from(d_port).unwrap();
+                                let port = BASE_PORT
+                                    + u16::try_from(d_port).expect("port offset should fit in u16");
                                 let ip = get_machine_ip(self_id, id);
                                 let rcv_addr = format!("{ip}:{port}");
                                 debug!("sending block to {rcv_addr}");
-                                let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
+                                let _ = socket
+                                    .send_to(&bytes, rcv_addr)
+                                    .await
+                                    .expect("failed to send UDP datagram");
                             }
                         }
                     }
@@ -320,7 +341,11 @@ impl Machine {
         let pings = Arc::new(RwLock::new(vec![f64::INFINITY; MACHINES]));
 
         let addr = format!("0.0.0.0:{}", BASE_PORT - 1);
-        let socket = Arc::new(UdpSocket::bind(&addr).await.unwrap());
+        let socket = Arc::new(
+            UdpSocket::bind(&addr)
+                .await
+                .expect("failed to bind ping UDP socket; is the port already in use?"),
+        );
 
         let listener = {
             let socket = socket.clone();
@@ -329,7 +354,8 @@ impl Machine {
             tokio::task::spawn(async move {
                 let mut buf = [0; MSG_BUFFER_BYTES];
                 while let Ok((len, addr)) = socket.recv_from(&mut buf).await {
-                    let msg: Message = wincode::deserialize(&buf[..len]).unwrap();
+                    let msg: Message = wincode::deserialize(&buf[..len])
+                        .expect("failed to deserialize incoming message");
                     match msg {
                         Message::Ping(ping) => {
                             let ip = MACHINE_IPS[ping.machine];
@@ -341,16 +367,20 @@ impl Machine {
                                 timestamp_nanos,
                                 timestamp_ping_nanos: ping.timestamp_nanos,
                             });
-                            let bytes = wincode::serialize(&response).unwrap();
-                            let _ = socket.send_to(&bytes, ping_addr).await.unwrap();
+                            let bytes = wincode::serialize(&response)
+                                .expect("serializing fixed message should not fail");
+                            let _ = socket
+                                .send_to(&bytes, ping_addr)
+                                .await
+                                .expect("failed to send UDP datagram");
                         }
                         Message::Pong(pong) => {
                             let timestamp1 = pong.timestamp_ping_nanos;
-                            let time1 =
-                                OffsetDateTime::from_unix_timestamp_nanos(timestamp1).unwrap();
+                            let time1 = OffsetDateTime::from_unix_timestamp_nanos(timestamp1)
+                                .expect("timestamp from peer should be a valid unix timestamp");
                             let timestamp2 = pong.timestamp_nanos;
-                            let time2 =
-                                OffsetDateTime::from_unix_timestamp_nanos(timestamp2).unwrap();
+                            let time2 = OffsetDateTime::from_unix_timestamp_nanos(timestamp2)
+                                .expect("timestamp from peer should be a valid unix timestamp");
                             let now = OffsetDateTime::now_utc();
                             let rtt = (now - time1).as_seconds_f64() * 1000.0;
                             let ping_time = rtt / 2.0;
@@ -386,8 +416,12 @@ impl Machine {
                                 machine: self_id,
                                 timestamp_nanos,
                             });
-                            let bytes = wincode::serialize(&msg).unwrap();
-                            let _ = socket.send_to(&bytes, rcv_addr).await.unwrap();
+                            let bytes = wincode::serialize(&msg)
+                                .expect("serializing fixed message should not fail");
+                            let _ = socket
+                                .send_to(&bytes, rcv_addr)
+                                .await
+                                .expect("failed to send UDP datagram");
                         }
                     }
 

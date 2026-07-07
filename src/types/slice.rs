@@ -74,15 +74,6 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
-
-    /// Extracts the [`SliceHeader`] from a [`Slice`].
-    pub(crate) fn to_header(&self) -> SliceHeader {
-        SliceHeader {
-            slot: self.slot,
-            slice_index: self.slice_index,
-            is_last: self.is_last,
-        }
-    }
 }
 
 /// A slice recovered after deshredding.
@@ -94,8 +85,8 @@ impl Slice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReconstructedSlice {
     inner: Slice,
-    /// Merkle root hash over all shreds in this slice.
-    merkle_root: SliceRoot,
+    /// Slice root (Merkle root hash over all shreds in this slice).
+    slice_root: SliceRoot,
 }
 
 impl ReconstructedSlice {
@@ -104,19 +95,19 @@ impl ReconstructedSlice {
     pub(crate) fn from_shreds(
         payload: SlicePayload,
         any_shred: &ValidatedShred,
-        merkle_root: SliceRoot,
+        slice_root: SliceRoot,
     ) -> Self {
         let header = any_shred.payload().header;
         Self {
             inner: Slice::from_parts(header, payload),
-            merkle_root,
+            slice_root,
         }
     }
 
-    /// Returns the Merkle root hash over all shreds in this slice.
+    /// Returns the slice root (Merkle root hash over all shreds in this slice).
     #[must_use]
-    pub fn merkle_root(&self) -> &SliceRoot {
-        &self.merkle_root
+    pub fn slice_root(&self) -> &SliceRoot {
+        &self.slice_root
     }
 }
 
@@ -145,7 +136,7 @@ pub(crate) struct SliceHeader {
 ///
 /// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
-pub(crate) struct SlicePayload {
+pub struct SlicePayload {
     /// Same as [`Slice::parent`].
     pub(crate) parent: Option<BlockId>,
     /// Same as [`Slice::data`].
@@ -160,19 +151,19 @@ impl SlicePayload {
 
     /// Serializes the payload into bytes.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        wincode::serialize(self).unwrap()
+        crate::serialize(self)
     }
 }
 
 impl From<SlicePayload> for Vec<u8> {
     fn from(payload: SlicePayload) -> Self {
-        wincode::serialize(&payload).unwrap()
+        payload.to_bytes()
     }
 }
 
 /// Errors that may occur while deserializing a [`SlicePayload`] from bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub(crate) enum SlicePayloadError {
+pub enum SlicePayloadError {
     /// The serialized payload is larger than a slice is allowed to hold.
     #[error("payload of {len} bytes exceeds the {MAX_DATA_PER_SLICE} byte slice limit")]
     TooLarge { len: usize },
@@ -210,14 +201,14 @@ pub(crate) fn create_slice_payload_with_invalid_txs(
     parent: Option<BlockId>,
     desired_size: usize,
 ) -> SlicePayload {
-    let parent_bytes =
-        <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent).unwrap();
+    let parent_bytes = <Option<BlockId> as wincode::SchemaWrite<DefaultConfig>>::size_of(&parent)
+        .expect("computing the serialized size of the payload header should not fail");
     // 8 bytes for data length (usize), since wincode uses fixed-length integer encoding
     let data_len_bytes = 8;
 
     let size = desired_size
         .checked_sub(parent_bytes + data_len_bytes)
-        .unwrap();
+        .expect("desired size should be large enough to hold the payload header");
     let mut data = vec![0; size];
     let mut rng = rand::rng();
     rng.fill_bytes(&mut data);

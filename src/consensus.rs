@@ -22,6 +22,8 @@ mod blockstore;
 mod cert;
 mod epoch_info;
 mod pool;
+mod validated_cert;
+mod validated_vote;
 mod vote;
 mod votor;
 
@@ -47,6 +49,8 @@ pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 #[cfg(feature = "test-utils")]
 pub use self::pool::bench_replay_votes;
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
+pub use self::validated_cert::{CertValidationError, ValidatedCert};
+pub use self::validated_vote::{ValidatedVote, VoteValidationError};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
@@ -153,7 +157,7 @@ where
     /// `repair_requester_network` - [`RepairRequesterNetwork`] for sending requests and receiving responses.
     /// `repair_responder_network` - [`RepairResponderNetwork`] for answering incoming requests.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new<RQ, RP>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
@@ -211,7 +215,7 @@ where
             all2all.clone(),
         );
         let votor_handle = tokio::spawn(
-            async move { votor.voting_loop().await.unwrap() }
+            async move { votor.voting_loop().await }
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
@@ -331,18 +335,40 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: ConsensusMessage) {
         trace!("received all2all msg: {msg:?}");
+
+        // verify signatures BEFORE taking the pool lock,
+        // mirroring the `ValidatedShred` pattern on the shred path
+        let epoch_info = self.epoch_info.epoch_info();
         match msg {
-            ConsensusMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
-                Ok(()) => {}
-                Err(AddVoteError::Slashable(offence)) => {
-                    warn!("slashable offence detected: {offence}");
+            ConsensusMessage::Vote(v) => {
+                let vote = match ValidatedVote::try_new(v, epoch_info) {
+                    Ok(vote) => vote,
+                    Err(err) => {
+                        trace!("ignoring invalid vote: {err}");
+                        return;
+                    }
+                };
+                match self.pool.write().await.add_vote(vote).await {
+                    Ok(()) => {}
+                    Err(AddVoteError::Slashable(offence)) => {
+                        warn!("slashable offence detected: {offence}");
+                    }
+                    Err(err) => trace!("ignoring invalid vote: {err}"),
                 }
-                Err(err) => trace!("ignoring invalid vote: {err}"),
-            },
-            ConsensusMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
-                Ok(()) => {}
-                Err(err) => trace!("ignoring invalid cert: {err}"),
-            },
+            }
+            ConsensusMessage::Cert(c) => {
+                let cert = match ValidatedCert::try_new(c, epoch_info) {
+                    Ok(cert) => cert,
+                    Err(err) => {
+                        trace!("ignoring invalid cert: {err}");
+                        return;
+                    }
+                };
+                match self.pool.write().await.add_cert(cert).await {
+                    Ok(()) => {}
+                    Err(err) => trace!("ignoring invalid cert: {err}"),
+                }
+            }
         }
     }
 
@@ -351,8 +377,15 @@ where
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
         // validate shred before forwarding or inserting
         let slot = shred.payload().header.slot;
+        let slice_index = shred.payload().header.slice_index;
         let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        let validated = match ValidatedShred::try_new(shred, None, &leader_pk) {
+        // use cached commitment, if we have it, to skip signature verification
+        let cached = self
+            .blockstore
+            .read()
+            .await
+            .cached_commitment(slot, slice_index);
+        let validated = match ValidatedShred::try_new(shred, cached.as_ref(), &leader_pk) {
             Ok(v) => v,
             Err(_) => return Ok(()),
         };
@@ -373,9 +406,12 @@ where
             .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
-            let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
-            guard.add_block(block_id, block_info.parent).await;
+            self.pool
+                .write()
+                .await
+                .add_block(block_id, block_info.parent)
+                .await;
         }
         Ok(())
     }

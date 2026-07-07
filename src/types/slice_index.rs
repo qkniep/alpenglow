@@ -26,8 +26,8 @@ impl SliceIndex {
     ///
     /// Panics if `index` is not in the valid range.
     #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) fn new_unchecked(index: usize) -> Self {
-        Self::new(index).unwrap()
+    pub(crate) fn new_for_test(index: usize) -> Self {
+        Self::new(index).expect("index must be in the valid range")
     }
 
     /// Creates a new slice index.
@@ -101,12 +101,17 @@ impl<'de> Visitor<'de> for SliceIndexVisitor {
     where
         E: serde::de::Error,
     {
-        SliceIndex::new(v as usize).ok_or(de::Error::custom(
-            "input {v} is not in the range [0:{MAX_SLICES_PER_BLOCK})",
-        ))
+        SliceIndex::new(v as usize).ok_or_else(|| {
+            de::Error::custom(format!(
+                "input {v} is not in the range [0:{MAX_SLICES_PER_BLOCK})"
+            ))
+        })
     }
 }
 
+// SAFETY: `TYPE_META` is the default `Dynamic`, which carries no obligation.
+// `read` initializes `dst` when it returns `Ok(())`; in the `Err` case the
+// already-initialized `SliceIndex` is `Copy` and thus cannot leak.
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for SliceIndex {
     type Dst = Self;
 
@@ -143,7 +148,7 @@ mod tests {
     fn invalid_serde() {
         let vs = [
             (-1).to_string(),
-            i64::MIN.to_string().to_string(),
+            i64::MIN.to_string(),
             MAX_SLICES_PER_BLOCK.to_string(),
             (MAX_SLICES_PER_BLOCK + 1).to_string(),
             (i64::MAX).to_string(),
