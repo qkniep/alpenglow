@@ -1134,10 +1134,7 @@ mod tests {
             .collect();
         let notar_cert =
             NotarCert::try_new(&notar_votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.add_cert(Cert::Notar(notar_cert.clone())).await,
-            Ok(())
-        );
+        assert_eq!(ctx.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
 
         // insert a skip cert for slot 1
         let second_slot = first_slot.next();
@@ -1146,10 +1143,7 @@ mod tests {
             .collect();
         let skip_cert =
             SkipCert::try_new(&skip_votes, &[], ctx.epoch_info.epoch_info().validators()).unwrap();
-        assert_eq!(
-            ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
-            Ok(())
-        );
+        assert_eq!(ctx.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
 
         // inserting same certs again should fail
         assert_eq!(
@@ -1183,10 +1177,7 @@ mod tests {
                     &ctx.sks[v as usize],
                     ValidatorIndex::new(v),
                 );
-                assert_eq!(
-                    ctx.add_vote(vote).await,
-                    Err(AddVoteError::SlotOutOfBounds)
-                );
+                assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
             }
         }
 
@@ -1194,10 +1185,7 @@ mod tests {
         let slot = Slot::new(5 * SLOTS_PER_EPOCH);
         for v in 0..11 {
             let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
-            assert_eq!(
-                ctx.add_vote(vote).await,
-                Err(AddVoteError::SlotOutOfBounds)
-            );
+            assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
         }
     }
 

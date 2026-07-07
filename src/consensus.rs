@@ -47,8 +47,8 @@ pub use self::blockstore::{
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
-pub use self::validated_cert::{CertVerifyError, ValidatedCert};
-pub use self::validated_vote::{ValidatedVote, VoteVerifyError};
+pub use self::validated_cert::{CertValidationError, ValidatedCert};
+pub use self::validated_vote::{ValidatedVote, VoteValidationError};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;

@@ -10,16 +10,16 @@ use crate::Slot;
 
 /// Different errors returned from [`ValidatedCert::try_new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub enum CertVerifyError {
+pub enum CertValidationError {
     /// The combined stake of the signers does not meet the required threshold.
     #[error("stake threshold not met")]
-    ThresholdNotMet,
+    InsufficientStake,
     /// The aggregate signature verification failed.
     #[error("invalid signature on the cert")]
     InvalidSignature,
 }
 
-/// A verified wrapper around a [`Cert`].
+/// A validated wrapper around a [`Cert`].
 ///
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Cert`] has passed all signature-level checks:
@@ -46,15 +46,15 @@ impl ValidatedCert {
     ///
     /// # Errors
     ///
-    /// Returns [`CertVerifyError`] if the [`Cert`] does not pass all verification checks.
+    /// Returns [`CertValidationError`] if the [`Cert`] does not pass all verification checks.
     #[hotpath::measure]
-    pub fn try_new(cert: Cert, epoch_info: &EpochInfo) -> Result<Self, CertVerifyError> {
+    pub fn try_new(cert: Cert, epoch_info: &EpochInfo) -> Result<Self, CertValidationError> {
         // verify stake threshold (also sanity-checks the signer bitmask) & signature
         if !cert.check_threshold(epoch_info) {
-            return Err(CertVerifyError::ThresholdNotMet);
+            return Err(CertValidationError::InsufficientStake);
         }
         if !cert.check_sig(epoch_info.validators()) {
-            return Err(CertVerifyError::InvalidSignature);
+            return Err(CertValidationError::InvalidSignature);
         }
 
         Ok(Self { cert })
@@ -121,7 +121,7 @@ mod tests {
         let cert = Cert::Notar(NotarCert::try_new(&votes, epoch_info.validators()).unwrap());
         assert!(matches!(
             ValidatedCert::try_new(cert, &epoch_info),
-            Err(CertVerifyError::ThresholdNotMet)
+            Err(CertValidationError::InsufficientStake)
         ));
     }
 
@@ -149,7 +149,7 @@ mod tests {
         let cert = Cert::Notar(NotarCert::try_new(&votes, epoch_info.validators()).unwrap());
         assert!(matches!(
             ValidatedCert::try_new(cert, &epoch_info),
-            Err(CertVerifyError::InvalidSignature)
+            Err(CertValidationError::InvalidSignature)
         ));
     }
 }

@@ -11,7 +11,7 @@ use crate::shredder::{Shred, ShredPayload, SliceCommitment};
 
 /// Different errors returned from [`ValidatedShred::try_new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub enum ShredVerifyError {
+pub enum ShredValidationError {
     /// The signature verification failed.
     #[error("signature verification failed")]
     InvalidSignature,
@@ -20,7 +20,7 @@ pub enum ShredVerifyError {
     Equivocation,
 }
 
-/// A verified wrapper around a [`Shred`].
+/// A validated wrapper around a [`Shred`].
 ///
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Shred`] has passed all required checks.
@@ -44,16 +44,16 @@ impl ValidatedShred {
     ///
     /// # Errors
     ///
-    /// - [`ShredVerifyError::InvalidSignature`] if the signature verification fails
+    /// - [`ShredValidationError::InvalidSignature`] if the signature verification fails
     ///   against the shred's commitment.
-    /// - [`ShredVerifyError::Equivocation`] if the signature is valid but
+    /// - [`ShredValidationError::Equivocation`] if the signature is valid but
     ///   the shred's commitment does not match the cached commitment.
     #[hotpath::measure]
     pub fn try_new(
         shred: Shred,
         cached_commitment: Option<&SliceCommitment>,
         pk: &PublicKey,
-    ) -> Result<Self, ShredVerifyError> {
+    ) -> Result<Self, ShredValidationError> {
         let slice_root = shred.slice_root();
         let msg = SliceCommitment::new(&shred.payload().header, &slice_root);
 
@@ -63,16 +63,16 @@ impl ValidatedShred {
                     return Ok(Self { shred, slice_root });
                 }
                 if shred.slice_sig.verify_bytes(msg.as_ref(), pk) {
-                    Err(ShredVerifyError::Equivocation)
+                    Err(ShredValidationError::Equivocation)
                 } else {
-                    Err(ShredVerifyError::InvalidSignature)
+                    Err(ShredValidationError::InvalidSignature)
                 }
             }
             None => {
                 if shred.slice_sig.verify_bytes(msg.as_ref(), pk) {
                     Ok(Self { shred, slice_root })
                 } else {
-                    Err(ShredVerifyError::InvalidSignature)
+                    Err(ShredValidationError::InvalidSignature)
                 }
             }
         }
@@ -163,7 +163,7 @@ mod tests {
 
         // checking against other public key should fail
         let res = ValidatedShred::try_new(shred.clone(), None, &random_pk);
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+        assert!(matches!(res, Err(ShredValidationError::InvalidSignature)));
 
         // checking against correct public key should succeed
         let res = ValidatedShred::try_new(shred, None, &sk.to_pk());
@@ -174,11 +174,11 @@ mod tests {
         // checking against wrong public key should fail
         // and should not be considered as equivocation
         let res = ValidatedShred::try_new(other_shred.clone(), Some(&cached), &random_pk);
-        assert!(matches!(res, Err(ShredVerifyError::InvalidSignature)));
+        assert!(matches!(res, Err(ShredValidationError::InvalidSignature)));
 
         // checking different shred with valid signature should detect equivocation
         let res = ValidatedShred::try_new(other_shred, Some(&cached), &other_sk.to_pk());
-        assert!(matches!(res, Err(ShredVerifyError::Equivocation)));
+        assert!(matches!(res, Err(ShredValidationError::Equivocation)));
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
             for cache in [None, Some(&cached)] {
                 let res = ValidatedShred::try_new(tampered.clone(), cache, &pk);
                 assert!(
-                    matches!(res, Err(ShredVerifyError::InvalidSignature)),
+                    matches!(res, Err(ShredValidationError::InvalidSignature)),
                     "tampered header accepted (cached={}): {res:?}",
                     cache.is_some(),
                 );

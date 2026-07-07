@@ -10,7 +10,7 @@ use crate::Slot;
 
 /// Different errors returned from [`ValidatedVote::try_new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub enum VoteVerifyError {
+pub enum VoteValidationError {
     /// The signer is not a validator in the current epoch.
     #[error("signer is not a validator in the current epoch")]
     UnknownSigner,
@@ -19,7 +19,7 @@ pub enum VoteVerifyError {
     InvalidSignature,
 }
 
-/// A verified wrapper around a [`Vote`].
+/// A validated wrapper around a [`Vote`].
 ///
 /// It uses the new type pattern to encode verification in the type system.
 /// The encapsulated [`Vote`] has passed all signature-level checks:
@@ -43,19 +43,19 @@ impl ValidatedVote {
     ///
     /// # Errors
     ///
-    /// Returns [`VoteVerifyError`] if the [`Vote`] does not pass all verification checks.
+    /// Returns [`VoteValidationError`] if the [`Vote`] does not pass all verification checks.
     #[hotpath::measure]
-    pub fn try_new(vote: Vote, epoch_info: &EpochInfo) -> Result<Self, VoteVerifyError> {
+    pub fn try_new(vote: Vote, epoch_info: &EpochInfo) -> Result<Self, VoteValidationError> {
         // reject votes from validators outside the current epoch's set,
         // otherwise `validator()` indexing below would panic on byzantine input
         if vote.signer().inner() >= epoch_info.validators().len() as u64 {
-            return Err(VoteVerifyError::UnknownSigner);
+            return Err(VoteValidationError::UnknownSigner);
         }
 
         // verify the signature under the signer's voting key
         let pk = &epoch_info.validator(vote.signer()).voting_pubkey;
         if !vote.check_sig(pk) {
-            return Err(VoteVerifyError::InvalidSignature);
+            return Err(VoteValidationError::InvalidSignature);
         }
 
         Ok(Self { vote })
@@ -102,7 +102,7 @@ mod tests {
         );
         assert!(matches!(
             ValidatedVote::try_new(vote, &epoch_info),
-            Err(VoteVerifyError::InvalidSignature)
+            Err(VoteValidationError::InvalidSignature)
         ));
     }
 
@@ -120,13 +120,13 @@ mod tests {
         );
         assert!(matches!(
             ValidatedVote::try_new(vote, &epoch_info),
-            Err(VoteVerifyError::UnknownSigner)
+            Err(VoteValidationError::UnknownSigner)
         ));
 
         let vote = Vote::new_skip(Slot::new(0), &sks[0], ValidatorIndex::new(u64::MAX));
         assert!(matches!(
             ValidatedVote::try_new(vote, &epoch_info),
-            Err(VoteVerifyError::UnknownSigner)
+            Err(VoteValidationError::UnknownSigner)
         ));
     }
 }
