@@ -31,7 +31,7 @@ use self::reed_solomon::{
     RawShreds, ReedSolomonCoder, ReedSolomonDeshredError, ReedSolomonShredError,
 };
 pub use self::shred_index::ShredIndex;
-pub use self::validated_shred::{ShredVerifyError, ValidatedShred};
+pub use self::validated_shred::{ShredValidationError, ValidatedShred};
 use crate::crypto::merkle::{SliceMerkleTree, SliceProof, SliceRoot};
 use crate::crypto::signature::{SecretKey, Signature};
 use crate::crypto::{MerkleTree, cipher, hash};
