@@ -34,7 +34,7 @@ pub struct ValidatedVote {
 impl ValidatedVote {
     /// Verifies the signer and signature of `vote`.
     ///
-    /// Returns a [`ValidatedCert`] on success.
+    /// Returns a [`ValidatedVote`] on success.
     ///
     /// # Errors
     ///
