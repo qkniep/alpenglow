@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Certificate types used for the consensus protocol.
-//!
-//!
 
 use thiserror::Error;
 use wincode::{SchemaRead, SchemaWrite};
