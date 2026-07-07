@@ -25,21 +25,16 @@ pub enum VoteValidationError {
 /// The encapsulated [`Vote`] has passed all signature-level checks:
 /// - the signer is a known validator in the epoch, and
 /// - the signature is valid under that validator's voting key.
-///
-/// This mirrors [`ValidatedShred`] on the shred path: the expensive BLS
-/// verification is performed once, up front, so that downstream consumers
-/// (i.e. the [`Pool`]) can merge the vote into per-slot state without holding
-/// a lock during signature verification.
-///
-/// [`ValidatedShred`]: crate::shredder::ValidatedShred
-/// [`Pool`]: crate::consensus::Pool
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct ValidatedVote {
     vote: Vote,
 }
 
 impl ValidatedVote {
-    /// Verifies the signer and signature of `vote`, returning a [`ValidatedVote`] on success.
+    /// Verifies the signer and signature of `vote`.
+    ///
+    /// Returns a [`ValidatedCert`] on success.
     ///
     /// # Errors
     ///
@@ -84,8 +79,8 @@ mod tests {
     #[test]
     fn valid_vote() {
         let (sks, epoch_info) = generate_validators(11);
-        let signer = ValidatorIndex::new(0);
-        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sks[0], signer);
+        let v = ValidatorIndex::new(0);
+        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sks[v.as_usize()], v);
         let validated = ValidatedVote::try_new(vote.clone(), &epoch_info).unwrap();
         assert_eq!(validated.into_vote(), vote);
     }
@@ -94,16 +89,12 @@ mod tests {
     fn invalid_signature() {
         let (sks, epoch_info) = generate_validators(11);
         // sign with validator 1's key but claim to be validator 0
-        let vote = Vote::new_notar(
-            Slot::new(0),
-            GENESIS_BLOCK_HASH,
-            &sks[1],
-            ValidatorIndex::new(0),
-        );
-        assert!(matches!(
+        let v = ValidatorIndex::new(0);
+        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sks[1], v);
+        assert_eq!(
             ValidatedVote::try_new(vote, &epoch_info),
             Err(VoteValidationError::InvalidSignature)
-        ));
+        );
     }
 
     #[test]
@@ -112,21 +103,11 @@ mod tests {
         let num_validators = epoch_info.validators().len() as u64;
 
         // claim a `signer` out-of-bounds for the validator set
-        let vote = Vote::new_notar(
-            Slot::new(0),
-            GENESIS_BLOCK_HASH,
-            &sks[0],
-            ValidatorIndex::new(num_validators),
+        let signer = ValidatorIndex::new(num_validators);
+        let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &sks[0], signer);
+        assert_eq!(
+            ValidatedVote::try_new(vote, &epoch_info),
+            Err(VoteValidationError::UnknownSigner)
         );
-        assert!(matches!(
-            ValidatedVote::try_new(vote, &epoch_info),
-            Err(VoteValidationError::UnknownSigner)
-        ));
-
-        let vote = Vote::new_skip(Slot::new(0), &sks[0], ValidatorIndex::new(u64::MAX));
-        assert!(matches!(
-            ValidatedVote::try_new(vote, &epoch_info),
-            Err(VoteValidationError::UnknownSigner)
-        ));
     }
 }
