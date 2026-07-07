@@ -498,8 +498,7 @@ impl Pool for PoolImpl {
                 }
                 IgnoreReason::NotarNotarFallback => {
                     debug!(
-                        "validator {voter} cast both notar and notar-fallback \
-                         for the same block in slot {slot}"
+                        "validator {voter} cast both notar and notar-fallback for the same block in slot {slot}"
                     );
                 }
             }
