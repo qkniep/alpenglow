@@ -675,6 +675,11 @@ mod tests {
     }
 
     #[test]
+    fn non_last_slice_with_same_index_is_equivocation() {
+        assert_conflicting_slice_is_equivocation(2, false);
+    }
+
+    #[test]
     fn non_last_slice_beyond_declared_last_is_equivocation() {
         assert_conflicting_slice_is_equivocation(3, false);
     }
