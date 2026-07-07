@@ -800,7 +800,7 @@ mod tests {
         );
 
         // re-notarizing the same hash is a benign duplicate, not slashable
-        assert!(state.check_slashable_offence(&notar_a).is_none());
+        assert_eq!(state.check_slashable_offence(&notar_a), None);
     }
 
     #[test]
@@ -897,10 +897,9 @@ mod tests {
 
         // fresh validator: nothing to ignore
         let v1 = ValidatorIndex::new(1);
-        assert!(
-            state
-                .should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1))
-                .is_none()
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)),
+            None
         );
 
         // only one notar vote per validator counts, regardless of the hash
@@ -943,7 +942,7 @@ mod tests {
             Some(IgnoreReason::Duplicate)
         );
         let nf_vote_2 = Vote::new_notar_fallback(slot, other_hash, &sks[4], v4);
-        assert!(state.should_ignore_vote(&nf_vote_2).is_none());
+        assert_eq!(state.should_ignore_vote(&nf_vote_2), None);
     }
 
     #[test]
@@ -1025,30 +1024,29 @@ mod tests {
         let slot = Slot::new(1);
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
 
-        let skip = Vote::new_skip(slot, &sks[0], ValidatorIndex::new(0));
-        let skip_fallback = Vote::new_skip_fallback(slot, &sks[0], ValidatorIndex::new(0));
-        let voter_stake = epoch_info
-            .epoch_info()
-            .validator(ValidatorIndex::new(0))
-            .stake;
+        let v = ValidatorIndex::new(0);
+        let skip = Vote::new_skip(slot, &sks[v.as_usize()], v);
+        let skip_fallback = Vote::new_skip_fallback(slot, &sks[v.as_usize()], v);
+        let voter_stake = epoch_info.epoch_info().validator(v).stake;
 
         // neither should be ignored before anything is recorded
-        assert!(slot_state.should_ignore_vote(&skip).is_none());
-        assert!(slot_state.should_ignore_vote(&skip_fallback).is_none());
+        assert_eq!(slot_state.should_ignore_vote(&skip), None);
+        assert_eq!(slot_state.should_ignore_vote(&skip_fallback), None);
 
-        // record a skip vote; the cross-type skip-fallback is now a conflict ...
+        // record the skip vote
         slot_state.add_vote(skip.clone(), voter_stake);
+        // should now ignore the skip-fallback vote (as conflict)
         assert_eq!(
             slot_state.should_ignore_vote(&skip_fallback),
             Some(IgnoreReason::SkipSkipFallback)
         );
-        // ... a same-type skip duplicate is just a plain duplicate, ...
+        // should now ignore the same skip vote (as duplicate)
         assert_eq!(
             slot_state.should_ignore_vote(&skip),
             Some(IgnoreReason::Duplicate)
         );
-        // ... and the conflict remains benign (not slashable), just dropped.
-        assert!(slot_state.check_slashable_offence(&skip_fallback).is_none());
+        // and the skip-fallback vote should NOT be slashable
+        assert_eq!(slot_state.check_slashable_offence(&skip_fallback), None);
     }
 
     #[test]
@@ -1056,41 +1054,37 @@ mod tests {
         let (sks, epoch_info) = generate_validators(3);
         let epoch_info = wrap_epoch_info(epoch_info);
         let (slot, hash) = random_block_id(Slot::new(1));
-        let other_hash = random_block_id(Slot::new(1)).1;
+        let (_, other_hash) = random_block_id(slot);
         let mut slot_state = SlotState::new(slot, epoch_info.clone());
 
-        let v0 = ValidatorIndex::new(0);
-        let notar = Vote::new_notar(slot, hash.clone(), &sks[0], v0);
-        let notar_fallback = Vote::new_notar_fallback(slot, hash, &sks[0], v0);
-        let nf_other = Vote::new_notar_fallback(slot, other_hash, &sks[0], v0);
-        let voter_stake = epoch_info.epoch_info().validator(v0).stake;
+        let v = ValidatorIndex::new(0);
+        let notar = Vote::new_notar(slot, hash.clone(), &sks[v.as_usize()], v);
+        let notar_fallback = Vote::new_notar_fallback(slot, hash, &sks[v.as_usize()], v);
+        let nf_other = Vote::new_notar_fallback(slot, other_hash, &sks[v.as_usize()], v);
+        let voter_stake = epoch_info.epoch_info().validator(v).stake;
 
-        // nothing recorded yet: neither vote is ignored
-        assert!(slot_state.should_ignore_vote(&notar).is_none());
-        assert!(slot_state.should_ignore_vote(&notar_fallback).is_none());
+        // neither should be ignored before anything is recorded
+        assert_eq!(slot_state.should_ignore_vote(&notar), None);
+        assert_eq!(slot_state.should_ignore_vote(&notar_fallback), None);
 
-        // record a notar vote; a notar-fallback for the *same* block is now a
-        // cross-type conflict ...
+        // record the notar vote
         slot_state.add_vote(notar.clone(), voter_stake);
+        // should now ignore the notar-fallback vote (as conflict)
         assert_eq!(
             slot_state.should_ignore_vote(&notar_fallback),
             Some(IgnoreReason::NotarNotarFallback)
         );
-        // ... a second notar is just a plain duplicate, ...
+        // should now ignore the same notar vote (as duplicate)
         assert_eq!(
             slot_state.should_ignore_vote(&notar),
             Some(IgnoreReason::Duplicate)
         );
-        // ... a notar-fallback for a *different* block is honest and still counts, ...
-        assert!(slot_state.should_ignore_vote(&nf_other).is_none());
-        // ... and the same-block conflict is benign (not slashable), just dropped.
-        assert!(
-            slot_state
-                .check_slashable_offence(&notar_fallback)
-                .is_none()
-        );
+        // a notar-fallback for a DIFFERENT block is honest and still counts
+        assert_eq!(slot_state.should_ignore_vote(&nf_other), None);
+        // and the same-block conflict should NOT be slashable
+        assert_eq!(slot_state.check_slashable_offence(&notar_fallback), None);
 
-        // the conflict is symmetric: notar-fallback recorded first, then notar.
+        // the conflict is symmetric
         let mut slot_state = SlotState::new(slot, epoch_info);
         slot_state.add_vote(notar_fallback, voter_stake);
         assert_eq!(
