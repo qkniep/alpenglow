@@ -54,8 +54,8 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
             (shredder, shreds)
         })
         .bench_values(
-            |(mut shredder, shreds): (S, [Option<ValidatedShred>; TOTAL_SHREDS])| {
-                let _ = shredder.deshred(&shreds).unwrap();
+            |(mut shredder, mut shreds): (S, [Option<ValidatedShred>; TOTAL_SHREDS])| {
+                let _ = shredder.deshred(&mut shreds).unwrap();
             },
         );
 }

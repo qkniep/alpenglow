@@ -343,8 +343,8 @@ impl BlockData {
         shredder: &mut RegularShredder,
     ) -> ReconstructSliceResult {
         let slot = self.slot;
-        if self.completed.is_some() {
-            trace!("already have block for slot {slot}");
+        if let Some((hash, _)) = &self.completed {
+            trace!("already have block {} for slot {slot}", hash.short_hex());
             return ReconstructSliceResult::NoAction;
         }
 
@@ -353,12 +353,13 @@ impl BlockData {
             Entry::Vacant(entry) => entry,
         };
 
+        // missing shreds are reconstructed in place into `slice_shreds`
         let slice_shreds = self
             .shreds
             .get_mut(&index)
             .expect("caller must insert at least one shred before reconstructing");
-        let (reconstructed_slice, reconstructed_shreds) = match shredder.deshred(slice_shreds) {
-            Ok(output) => output,
+        let reconstructed_slice = match shredder.deshred(slice_shreds) {
+            Ok(slice) => slice,
             Err(DeshredError::NotEnoughShreds) => return ReconstructSliceResult::NoAction,
             rest => {
                 warn!("deshreding failed with {rest:?}");
@@ -370,10 +371,7 @@ impl BlockData {
             return ReconstructSliceResult::Error;
         }
 
-        // insert reconstructed slice and shreds
         entry.insert(reconstructed_slice);
-        let mut reconstructed_shreds = reconstructed_shreds.map(Some);
-        std::mem::swap(slice_shreds, &mut reconstructed_shreds);
         trace!("reconstructed slice {index} in slot {slot}");
 
         ReconstructSliceResult::Complete
@@ -385,8 +383,8 @@ impl BlockData {
     #[hotpath::measure]
     fn try_reconstruct_block(&mut self) -> ReconstructBlockResult {
         let slot = self.slot;
-        if self.completed.is_some() {
-            trace!("already have block for slot {slot}");
+        if let Some((hash, _)) = &self.completed {
+            trace!("already have block {} for slot {slot}", hash.short_hex());
             return ReconstructBlockResult::NoAction;
         }
         let Some(last_slice) = self.last_slice else {

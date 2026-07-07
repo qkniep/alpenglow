@@ -27,17 +27,17 @@ either = "1"
 fastrace = "0.7"
 fastrace-opentelemetry = { version = "0.18", optional = true }
 futures = "0.3"
-hex = "0.4"
 hex-literal = "1"
-hotpath = "0.18"
+hotpath = "0.19"
 log = "0.4"
 logforth = { version = "0.30", features = ["append-fastrace", "bridge-log", "filter-rustlog"] }
-quick_cache = "0.6"
+quick_cache = "0.7"
 opentelemetry = { version = "0.32", optional = true }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"], optional = true }
 opentelemetry_sdk = { version = "0.32", optional = true }
 owo-colors = "4"
 parking_lot = "0.12"
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "ab_glyph", "all_elements", "all_series", "histogram", "line_series"], optional = true }
 rand = "0.10"
 rayon = { version = "1", optional = true }
 reed-solomon-simd = "3"
@@ -57,7 +57,8 @@ wincode = { version = "0.5", features = ["derive"] }
 assert_cmd = "2"
 csv = "1"
 divan = "0.1"
-mockall = "0.14"
+hex = "0.4"
+mockall = "0.15"
 serde_json = "1"
 tempfile = "3"
 toml = "1"
@@ -71,7 +72,7 @@ hotpath-alloc = ["hotpath/hotpath-alloc"]
 # Mainnet-derived simulation inputs (`network::simulated::{ping_data,
 # stake_distribution}`) and the `simulations` binary. Pulls in `csv` /
 # `serde_json` for parsing `data/*.{csv,json}` and `rayon` for parallel sims.
-simulations = ["dep:rayon", "dep:csv", "dep:serde_json"]
+simulations = ["dep:rayon", "dep:csv", "dep:serde_json", "dep:plotters"]
 # Exposes `test_utils` and other test-only methods to out-of-crate test/bench targets.
 # Off by default; enabled implicitly by `cargo test` and explicitly for some benches.
 test-utils = []
