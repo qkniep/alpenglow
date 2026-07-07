@@ -36,7 +36,7 @@ cargo nextest run <name>     # Run a specific test directly
 
 ### Linting and Quality
 ```bash
-just check                   # Full local CI: fmt, clippy, build, doc, deny, machete, typos, fuzz-build, test-ci
+just check                   # Full local CI: editorconfig, fmt, clippy, build, doc, deny, machete, typos, license, fuzz-build, test-ci
 just fmt                     # cargo +nightly fmt --all -- --check
 just clippy                  # cargo clippy --all-targets --all-features -- -D warnings
 just doc                     # cargo doc with -D warnings
@@ -203,13 +203,27 @@ Configure simulations via constants at top of `src/bin/simulations/main.rs`:
 
 ## Key Types and Abstractions
 
-### Core Types (`src/types.rs`, `src/lib.rs`)
+### Core Types (`src/types/`, `src/lib.rs`)
+
+Domain scalars are **newtypes** (mostly tuple structs wrapping `u64`), not bare
+aliases — each lives in its own module under `src/types/` and is re-exported from
+`types`:
+
 ```rust
-type ValidatorId = u64;
-type Stake = u64;
-type BlockId = (Slot, BlockHash);
-type Slot = types::Slot;  // Newtype wrapper around u64
+struct Slot(u64);                          // src/types/slot.rs
+struct Stake(u64);                         // src/types/stake.rs
+struct ValidatorIndex(u64);                // src/types/validator_index.rs (NOT `ValidatorId`)
+struct SliceIndex(u64);                    // src/types/slice_index.rs
+struct Fraction { numerator, denominator } // src/types/fraction.rs
 ```
+
+The only bare aliases live in `src/lib.rs` / `src/crypto/merkle.rs`:
+```rust
+type BlockId = (Slot, BlockHash);      // src/lib.rs
+type BlockHash = DoubleMerkleRoot;     // src/crypto/merkle.rs
+```
+Prefer the newtype (with its `.inner()` / constructor API) over raw `u64`; new
+domain quantities should follow the same pattern rather than aliasing `u64`.
 
 ### Trait Boundaries
 
@@ -292,6 +306,67 @@ Uses `mockall` crate for mocking traits:
   forms compile identically (the comparison macros re-borrow), but `&` doesn't imply
   a move/copy that isn't happening and reads the same whether or not the type is
   `Copy`. Keep this consistent within a file.
+
+#### Formatting (`rustfmt.toml`, `.editorconfig`)
+
+- **rustfmt runs on nightly** (`cargo +nightly fmt`) because the config uses
+  unstable options: `edition = "2024"`, `group_imports = "StdExternalCrate"`
+  (three import groups — std, external crates, then `crate`/`super`/`self`),
+  `imports_granularity = "Module"` (one `use` per module path, not merged trees or
+  one-per-item), and `use_field_init_shorthand`. Match these when writing imports by
+  hand rather than relying on the formatter to fix them.
+- **Indentation is spaces**, width 4 for `*.rs`/`*.py`/`*.sh` and 2 for
+  `*.json`/`*.toml`/`*.yml`/`*.yaml` (Markdown is unconstrained). Files are UTF-8,
+  LF line endings, with a trailing newline and no trailing whitespace (except
+  Markdown). Enforced by `just editorconfig`.
+
+#### Doc comments (`///`, `//!`)
+
+- **Mood & structure**: Write item docs in the third-person present indicative, as
+  rustdoc convention dictates — "Creates a new `Votor` instance.", "Returns the slot
+  this vote is for.", "`Votor` implements the decision process…". Not imperative
+  ("Create…"), not "This function…". The first line is a single-sentence summary;
+  if more is needed, add a blank `///` line, then the details.
+- **Intra-doc links**: Reference other items with rustdoc link syntax
+  ``[`Name`]`` — e.g. ``[`ValidatedVote`]``, ``[`All2All`]``,
+  ``[`super::Pool::finalized_slot`]`` — not plain backticked text. This is enforced
+  in spirit by `just doc` (rustdoc runs with `-D warnings`), so broken links fail CI.
+- **Fallible fns get an `# Errors` section** describing which error variant is
+  returned when; see `ValidatedVote::try_new`. Public getters that would be misused
+  if ignored are marked `#[must_use]`.
+- Every source file starts with the two-line copyright + SPDX header (checked by
+  `just license`) and, for modules, a `//!` module doc comment.
+
+#### Non-doc comments (`//`)
+
+- **Tag callout comments with an uppercase prefix + colon**, matching
+  existing usage: `// NOTE:` (non-obvious invariant or subtlety), `// PERF:`
+  (a deliberate performance choice), `// SAFETY:` (justifies an `unsafe` block or a
+  panic-avoidance guard), `// TODO:` (deferred work), `// HACK:` (known-ugly
+  workaround). Plain explanatory comments need no tag.
+- Comments explain *why*, not *what* the code already says.
+
+#### Error handling
+
+- **`thiserror` for library errors, `anyhow` for binaries/glue.** Public/library
+  fallible APIs return a typed `pub enum XxxError` deriving `thiserror::Error`.
+  Binaries (`src/bin/*`) and top-level orchestration (`consensus.rs`) use `anyhow`
+  where a typed error buys nothing.
+- **Error message style**: `#[error("…")]` messages are lowercase and have no
+  trailing period ("`signer is not a validator in the current epoch`"). Name the
+  enum `<Thing>Error` or `<Thing>ValidationError`; give each variant a `///` doc
+  line in addition to its `#[error]` message.
+- **`Validated*` newtype pattern**: To make "this value passed verification" a
+  type-level invariant, wrap the raw type in a `Validated*` newtype whose only
+  constructor is a fallible `try_new(...) -> Result<Self, XxxValidationError>` that
+  runs the checks. Downstream code takes the `Validated*` type and can assume it is
+  well-formed. Examples: `ValidatedVote`, `ValidatedCert`, `ValidatedShred`.
+- **Panic policy**: Never panic on untrusted input (peer messages, network bytes,
+  byzantine data) — reject it with a `Result` instead. `try_new`-style validators
+  guard *before* any indexing/slicing that could panic on adversarial input (see
+  the `UnknownSigner` bounds check in `ValidatedVote::try_new`). Reserve
+  `expect()`/`unwrap()` (prefer `expect()`, with a message documenting the
+  invariant) for genuine *local* invariants that cannot fail.
 
 ### Common Gotchas
 
