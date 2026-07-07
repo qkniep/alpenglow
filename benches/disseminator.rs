@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#![expect(clippy::unwrap_used, reason = "panicking is acceptable in benchmark code")]
+#![expect(clippy::unwrap_used, reason = "benchmarks panic on setup failure")]
 
 use std::sync::Arc;
 

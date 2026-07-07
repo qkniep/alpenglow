@@ -1,31 +1,34 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#![expect(clippy::unwrap_used, reason = "panicking is acceptable in benchmark code")]
+#![expect(clippy::unwrap_used, reason = "benchmarks panic on setup failure")]
 
 //! Microbenchmarks for the `UdpNetwork` socket path.
 //!
-//! These exist as the Phase 0 baseline for the `sendmmsg`/`recvmmsg` work: they
-//! measure per-call cost on the egress and ingress paths so before/after numbers
-//! for any batched-syscall rewrite are unambiguous.
+//! These measure per-call cost on the egress and ingress paths,
+//! giving socket-layer changes unambiguous before/after numbers.
+//! The egress fanout path now batches via `sendmmsg` on Linux
+//! (see `UdpNetwork::send_to_many`);
+//! the ingress path is still one `recvfrom` per call —
+//! the natural next target for a `recvmmsg` batch.
 //!
 //! Two dimensions are swept:
 //!
-//! - **Payload size** (`Msg32` … `Msg1400`): shows the decomposition between
-//!   fixed per-packet syscall/waker cost and variable kernel memcpy cost.
+//! - **Payload size** (`Msg32` … `Msg1400`): splits fixed per-packet
+//!   syscall/waker cost from variable kernel memcpy cost.
 //!   1400 B is near-MTU and approximates a serialized shred.
 //! - **Fanout K** (1, 4, 16, 64): how `send_to_many` scales when broadcasting.
 //!
 //! Notes on what is being measured:
 //!
-//! - All sockets are on the loopback interface. Loopback does not exercise the
-//!   NIC driver, GSO/GRO, or any hardware offloads — absolute pps numbers here
-//!   are higher than what real hardware delivers. The point of this bench is
-//!   the *relative* improvement from removing per-packet syscalls and waker
-//!   round-trips, not the absolute ceiling.
-//! - Send-side receivers are bound but not drained. UDP drops at `SO_RCVBUF`
-//!   overflow without backpressuring the sender, so the send-side benches are
-//!   not distorted by recv-side work.
+//! - All sockets are on the loopback interface.
+//!   Loopback skips the NIC driver, GSO/GRO, and hardware offloads,
+//!   so absolute pps numbers run higher than real hardware delivers.
+//!   The point is the *relative* gain from dropping per-packet syscalls
+//!   and waker round-trips, not the absolute ceiling.
+//! - Send-side receivers are bound but not drained.
+//!   UDP drops at `SO_RCVBUF` overflow without backpressuring the sender,
+//!   so the send-side benches aren't distorted by recv-side work.
 //! - For the receive bench, a background tokio task pumps packets continuously;
 //!   the bench iteration measures one `receive()` call.
 //!
@@ -115,8 +118,9 @@ fn send_one<M: BenchMsg>(bencher: divan::Bencher) {
 
 /// Fanout via `send_to_many` at a realistic shred-sized payload, varying K.
 ///
-/// This is the path that today does `join_all` over `K` `sendto`s and is the
-/// primary target of the sendmmsg work. Reported items/sec is packets/sec
+/// On Linux this exercises the batched `sendmmsg` path;
+/// elsewhere it falls back to a sequential `try_send_to` loop.
+/// Reported items/sec is packets/sec
 /// (one iteration emits `K` packets of `Msg1400::BYTES` each).
 #[divan::bench(consts = [1, 4, 16, 64])]
 fn send_to_many_fanout<const K: usize>(bencher: divan::Bencher) {
@@ -149,8 +153,8 @@ fn send_to_many_fanout<const K: usize>(bencher: divan::Bencher) {
 
 /// Fanout via `send_to_many` at fixed K=16, varying payload size.
 ///
-/// Shows whether per-packet cost in the fanout path is dominated by syscall
-/// overhead (flat across sizes) or by kernel memcpy (grows with size).
+/// Shows whether per-packet cost in the fanout path is dominated by
+/// syscall overhead (flat across sizes) or kernel memcpy (grows with size).
 #[divan::bench(types = [Msg32, Msg256, Msg1024, Msg1400])]
 fn send_to_many_sized<M: BenchMsg>(bencher: divan::Bencher) {
     const K: usize = 16;

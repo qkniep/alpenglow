@@ -6,9 +6,8 @@
 //! This module provides an implementation of the [`Network`] trait for UDP sockets.
 //! It is essentially a wrapper around [`tokio::net::UdpSocket`].
 //!
-//! On Linux, `send_to_many` uses the `sendmmsg(2)` syscall to emit a fanout
-//! batch with a single kernel transition; other platforms fall back to issuing
-//! one `sendto` per destination.
+//! On Linux, `send_to_many` batches a fanout into one `sendmmsg(2)` syscall.
+//! Other platforms fall back to one `sendto` per destination.
 
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -33,12 +32,13 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 /// Kernel-side send/receive buffer size requested per socket.
 ///
 /// The Linux default of ~200 KB (~133 MTU packets) is small enough that
-/// high-fanout broadcasts fill the send buffer mid-`sendmmsg`, forcing EAGAIN
-/// round-trips that erase the syscall amortization. 8 MB holds ~5400 MTU
-/// packets — enough headroom for fanout to thousands of peers without
-/// backpressuring on the sender. The kernel silently clamps the request to
-/// `net.core.{rmem,wmem}_max` (Linux) instead of erroring, so `new` reads the
-/// granted size back and warns if it comes up materially short.
+/// high-fanout broadcasts fill the send buffer mid-`sendmmsg`,
+/// forcing EAGAIN round-trips that erase the syscall amortization.
+/// 8 MB holds ~5400 MTU packets — enough headroom to fan out
+/// to thousands of peers without backpressuring the sender.
+/// The kernel silently clamps an oversized request to `net.core.{rmem,wmem}_max`
+/// instead of erroring, so `new` reads the granted size back
+/// and warns if it falls materially short.
 const SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 /// Implementation of network abstraction over a simple UDP socket.
@@ -100,15 +100,16 @@ impl<S, R> UdpNetwork<S, R> {
     }
 }
 
-/// Warns if the kernel granted a socket buffer materially smaller than the
-/// requested [`SOCKET_BUFFER_BYTES`], naming the `sysctl` to raise.
+/// Warns if the kernel granted a socket buffer materially smaller than
+/// [`SOCKET_BUFFER_BYTES`], naming the `sysctl` to raise.
 ///
-/// `setsockopt` silently clamps oversized requests instead of failing, so a
-/// host with a low `net.core.{r,w}mem_max` quietly loses the large-buffer
-/// headroom that keeps high-fanout `sendmmsg` off the EAGAIN path. Reading the
-/// value back surfaces that misconfiguration rather than hiding it. Linux
-/// reports back roughly double the effective size, so only a real shortfall —
-/// which still lands far below the request when capped — trips the warning.
+/// `setsockopt` silently clamps an oversized request instead of failing,
+/// so a low `net.core.{r,w}mem_max` quietly costs the headroom
+/// that keeps high-fanout `sendmmsg` off the EAGAIN path.
+/// Reading the granted size back surfaces that misconfiguration.
+/// Linux reports back roughly double the effective size,
+/// so only a real shortfall — still far below the request when capped —
+/// trips the warning.
 fn warn_if_buffer_capped(kind: &str, sysctl: &str, granted: std::io::Result<usize>) {
     match granted {
         Ok(size) if size < SOCKET_BUFFER_BYTES => warn!(
@@ -195,10 +196,10 @@ where
 /// Linux-only `sendmmsg(2)` fast path for fanout sends.
 ///
 /// Issues one `sendmmsg` syscall per chunk of up to `UIO_MAXIOV` destinations,
-/// with every entry's `iovec` pointing at the same serialized payload — so the
-/// kernel reads from one userspace buffer and emits N independent UDP packets.
-/// This replaces N `sendto` syscalls (and N tokio wakers) with one syscall per
-/// 1024-packet chunk.
+/// every entry's `iovec` pointing at the same serialized payload —
+/// so the kernel reads one userspace buffer and emits N independent UDP packets.
+/// This replaces N `sendto` syscalls (and N tokio wakers)
+/// with one syscall per 1024-packet chunk.
 #[cfg(target_os = "linux")]
 mod sendmmsg {
     use std::io;
@@ -209,8 +210,9 @@ mod sendmmsg {
     use tokio::io::Interest;
     use tokio::net::UdpSocket;
 
-    /// Maximum messages per `sendmmsg` syscall. Linux caps `vlen` at `UIO_MAXIOV`
-    /// (1024); larger fanouts are chunked across multiple syscalls.
+    /// Maximum messages per `sendmmsg` syscall.
+    /// Linux caps `vlen` at `UIO_MAXIOV` (1024);
+    /// larger fanouts are chunked across multiple syscalls.
     const MAX_BATCH: usize = 1024;
 
     pub(super) async fn send_to_many_linux(
