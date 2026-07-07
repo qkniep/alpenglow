@@ -448,8 +448,8 @@ impl SlotState {
 
     /// Checks whether the given vote constitutes a slashable offence.
     ///
-    /// This has to be called before dismissing potential duplicates, as
-    /// according to `should_ignore_vote()`.
+    /// This has to be called before dismissing potential duplicates,
+    /// as according to `should_ignore_vote()`.
     // NOTE: Some benign vote combinations, that are provably non-honest,
     // are intentionally not slashable, see also `should_ignore_vote`.
     // They is surfaced via a log instead (see `add_vote` in `pool.rs`).

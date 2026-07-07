@@ -491,18 +491,15 @@ impl Pool for PoolImpl {
         if let Some(offence) = slot_state.check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
         } else if let Some(reason) = slot_state.should_ignore_vote(&vote) {
-            // A cross-type overlap is not slashable, but provably non-honest
-            // (an honest node never casts both). The vote is still dropped as a
-            // duplicate; we only log it to aid post-hoc analysis.
             match reason {
                 IgnoreReason::Duplicate => {}
                 IgnoreReason::SkipSkipFallback => {
-                    debug!("validator {voter} cast both skip and skip-fallback on slot {slot}");
+                    debug!("validator {voter} cast both skip and skip-fallback in slot {slot}");
                 }
                 IgnoreReason::NotarNotarFallback => {
                     debug!(
                         "validator {voter} cast both notar and notar-fallback \
-                         for the same block on slot {slot}"
+                         for the same block in slot {slot}"
                     );
                 }
             }
