@@ -644,4 +644,43 @@ mod tests {
             _ => panic!(),
         }
     }
+
+    fn assert_conflicting_slice_is_equivocation(index: usize, is_last: bool) {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = Slot::new(123);
+
+        // declare slice 2 as the block's last slice
+        let base = create_random_block(slot, 3);
+        let mut block_data = BlockData::new(slot);
+        let (_, res) = handle_slice(&mut block_data, base[2].clone(), &sk);
+        res.expect("valid last slice should be accepted");
+        assert_eq!(block_data.last_slice, Some(SliceIndex::new_for_test(2)));
+
+        // construct a conflicting slice with valid payload
+        let mut conflicting = base[1].clone();
+        conflicting.slice_index = SliceIndex::new_for_test(index);
+        conflicting.is_last = is_last;
+        let (_, res) = handle_slice(&mut block_data, conflicting, &sk);
+        assert_eq!(res, Err(AddShredError::Equivocation));
+    }
+
+    #[test]
+    fn second_last_slice_before_declared_last_is_equivocation() {
+        assert_conflicting_slice_is_equivocation(1, true);
+    }
+
+    #[test]
+    fn second_last_slice_after_declared_last_is_equivocation() {
+        assert_conflicting_slice_is_equivocation(3, true);
+    }
+
+    #[test]
+    fn non_last_slice_with_same_index_is_equivocation() {
+        assert_conflicting_slice_is_equivocation(2, false);
+    }
+
+    #[test]
+    fn non_last_slice_beyond_declared_last_is_equivocation() {
+        assert_conflicting_slice_is_equivocation(3, false);
+    }
 }
