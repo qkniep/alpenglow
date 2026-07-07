@@ -23,7 +23,7 @@ use tokio::sync::{RwLock, oneshot};
 
 use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
-use self::slot_state::SlotState;
+use self::slot_state::{IgnoreReason, SlotState};
 use super::{Cert, ValidatorEpochInfo, Vote};
 use crate::consensus::cert::NotarCert;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
@@ -490,12 +490,21 @@ impl Pool for PoolImpl {
         let slot_state = self.slot_state(slot);
         if let Some(offence) = slot_state.check_slashable_offence(&vote) {
             return Err(AddVoteError::Slashable(offence));
-        } else if slot_state.should_ignore_vote(&vote) {
-            // Not slashable, but a validator casting both skip and skip-fallback
-            // is provably non-honest. The vote is still dropped as a duplicate;
-            // we only log it to aid post-hoc analysis.
-            if slot_state.is_skip_skip_fallback_conflict(&vote) {
-                debug!("validator {voter} cast both skip and skip-fallback on slot {slot}");
+        } else if let Some(reason) = slot_state.should_ignore_vote(&vote) {
+            // A cross-type overlap is not slashable, but provably non-honest
+            // (an honest node never casts both). The vote is still dropped as a
+            // duplicate; we only log it to aid post-hoc analysis.
+            match reason {
+                IgnoreReason::Duplicate => {}
+                IgnoreReason::SkipSkipFallback => {
+                    debug!("validator {voter} cast both skip and skip-fallback on slot {slot}");
+                }
+                IgnoreReason::NotarNotarFallback => {
+                    debug!(
+                        "validator {voter} cast both notar and notar-fallback \
+                         for the same block on slot {slot}"
+                    );
+                }
             }
             return Err(AddVoteError::Duplicate);
         }
