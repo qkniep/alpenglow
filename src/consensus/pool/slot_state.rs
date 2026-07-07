@@ -1047,6 +1047,19 @@ mod tests {
         );
         // and the skip-fallback vote should NOT be slashable
         assert_eq!(slot_state.check_slashable_offence(&skip_fallback), None);
+
+        // the conflict is symmetric
+        let mut slot_state = SlotState::new(slot, epoch_info);
+        slot_state.add_vote(skip_fallback.clone(), voter_stake);
+        assert_eq!(
+            slot_state.should_ignore_vote(&skip),
+            Some(IgnoreReason::SkipSkipFallback)
+        );
+        assert_eq!(
+            slot_state.should_ignore_vote(&skip_fallback),
+            Some(IgnoreReason::Duplicate)
+        );
+        assert_eq!(slot_state.check_slashable_offence(&skip), None);
     }
 
     #[test]
@@ -1086,10 +1099,15 @@ mod tests {
 
         // the conflict is symmetric
         let mut slot_state = SlotState::new(slot, epoch_info);
-        slot_state.add_vote(notar_fallback, voter_stake);
+        slot_state.add_vote(notar_fallback.clone(), voter_stake);
         assert_eq!(
             slot_state.should_ignore_vote(&notar),
             Some(IgnoreReason::NotarNotarFallback)
         );
+        assert_eq!(
+            slot_state.should_ignore_vote(&notar_fallback),
+            Some(IgnoreReason::Duplicate)
+        );
+        assert_eq!(slot_state.check_slashable_offence(&notar), None);
     }
 }
