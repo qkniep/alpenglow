@@ -710,7 +710,7 @@ mod tests {
                 .collect();
             let ff_cert =
                 FastFinalCert::try_new(&votes, self.epoch_info.epoch_info().validators()).unwrap();
-            assert_eq!(self.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
+            assert_eq!(self.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
         }
     }
 
@@ -1209,7 +1209,7 @@ mod tests {
                 .collect();
             let ff_cert =
                 FastFinalCert::try_new(&votes, ctx.epoch_info.epoch_info().validators()).unwrap();
-            assert_eq!(ctx.pool.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
+            assert_eq!(ctx.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
         }
         assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
