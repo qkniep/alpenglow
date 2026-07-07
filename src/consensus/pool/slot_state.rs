@@ -452,7 +452,7 @@ impl SlotState {
     /// as according to `should_ignore_vote()`.
     // NOTE: Some benign vote combinations, that are provably non-honest,
     // are intentionally not slashable, see also `should_ignore_vote`.
-    // They is surfaced via a log instead (see `add_vote` in `pool.rs`).
+    // They are surfaced via a log instead (see `add_vote` in `pool.rs`).
     pub(super) fn check_slashable_offence(&self, vote: &Vote) -> Option<SlashableOffence> {
         let slot = vote.slot();
         let voter = vote.signer();
