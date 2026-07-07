@@ -218,9 +218,18 @@ impl MerkleRoot for DoubleMerkleRoot {
 }
 
 impl DoubleMerkleRoot {
-    /// Returns a short hex string of the first 4 bytes, for use in logging.
-    pub fn short_hex(&self) -> String {
-        hex::encode(&self.0.as_ref()[..4])
+    /// Returns a short hex representation of the first 4 bytes, for use in logging.
+    ///
+    /// The returned value implements [`Display`](std::fmt::Display)
+    /// and formats without allocating, unlike a `String`.
+    pub fn short_hex(&self) -> impl std::fmt::Display + '_ {
+        struct ShortHex<'a>(&'a [u8]);
+        impl std::fmt::Display for ShortHex<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.iter().try_for_each(|b| write!(f, "{b:02x}"))
+            }
+        }
+        ShortHex(&self.0.as_ref()[..4])
     }
 }
 
