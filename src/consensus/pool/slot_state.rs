@@ -223,9 +223,9 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
-    pub(super) fn notify_parent_known(&mut self, hash: BlockHash) {
+    pub(super) fn notify_parent_known(&mut self, hash: &BlockHash) {
         self.parents
-            .get_or_insert_with(&hash, || ParentStatus::Known);
+            .get_or_insert_with(hash, || ParentStatus::Known);
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.
@@ -359,7 +359,7 @@ impl SlotState {
             *counter += stake;
             *counter
         };
-        let notar_stake = *self
+        let notar_stake = self
             .voted_stakes
             .notar
             .get(block_hash)
@@ -744,7 +744,7 @@ mod tests {
         let mut state = SlotState::new(slot, epoch_info);
 
         // mark parent as notarized(-fallback)
-        state.notify_parent_known(hash.clone());
+        state.notify_parent_known(&hash);
         state.notify_parent_certified(hash.clone());
 
         // 33% notar alone has no effect

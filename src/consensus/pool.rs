@@ -148,7 +148,7 @@ pub fn bench_replay_votes(
 ) -> usize {
     let mut state = SlotState::new(slot, epoch_info);
     for hash in parents_certified {
-        state.notify_parent_known(hash.clone());
+        state.notify_parent_known(hash);
         let _ = state.notify_parent_certified(hash.clone());
     }
     let mut produced = 0;
@@ -555,8 +555,7 @@ impl Pool for PoolImpl {
             .handle_finalization(finalization_event);
         self.send_parent_ready_events(new_parents_ready).await;
 
-        self.slot_state(*slot)
-            .notify_parent_known(block_hash.clone());
+        self.slot_state(*slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(parent_slot)
             && parent_state.is_notar_fallback(parent_hash)
             && let Some(output) = self
