@@ -371,9 +371,7 @@ where
 
         if let Some(e) = first_err {
             warn!(
-                "failed to disseminate {failed}/{TOTAL_SHREDS} shreds for slice \
-                 {slice_index} in slot {slot}: {e}; slice is recorded locally, \
-                 relying on repair"
+                "failed to disseminate {failed}/{TOTAL_SHREDS} shreds for slice {slice_index} in slot {slot}: {e}"
             );
         }
 
