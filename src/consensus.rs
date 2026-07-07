@@ -334,10 +334,8 @@ where
     async fn handle_all2all_message(&self, msg: ConsensusMessage) {
         trace!("received all2all msg: {msg:?}");
 
-        // Verify signatures (plus signer/threshold sanity) *before* taking the
-        // pool lock, mirroring the `ValidatedShred` pattern on the shred path.
-        // This keeps the expensive BLS work off the critical section, so that
-        // `Pool::add_vote`/`add_cert` only have to merge into per-slot state.
+        // verify signatures BEFORE taking the pool lock,
+        // mirroring the `ValidatedShred` pattern on the shred path
         let epoch_info = self.epoch_info.epoch_info();
         match msg {
             ConsensusMessage::Vote(v) => {

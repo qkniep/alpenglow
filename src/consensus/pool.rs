@@ -85,8 +85,8 @@ pub enum AddVoteError {
 
 /// Errors the Pool may return when adding a certificate.
 ///
-/// Signature validity and the stake threshold are checked up front by
-/// [`ValidatedCert`], so they are not represented here.
+/// Signature validity and stake threshold are checked up front by [`ValidatedCert`],
+/// so they are not represented here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum AddCertError {
     #[error("slot is either too old or too far in the future")]
@@ -421,10 +421,6 @@ impl PoolImpl {
 #[async_trait]
 impl Pool for PoolImpl {
     /// Adds a new certificate to the pool.
-    ///
-    /// The certificate's stake threshold and signature have already been
-    /// verified by [`ValidatedCert`], so this only checks the slot bounds and
-    /// rejects duplicates before merging into per-slot state.
     #[hotpath::measure]
     async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
@@ -458,10 +454,6 @@ impl Pool for PoolImpl {
     }
 
     /// Adds a new vote to the pool.
-    ///
-    /// The vote's signer and signature have already been verified by
-    /// [`ValidatedVote`], so this only checks the slot bounds, screens for
-    /// slashable offences and duplicates, then merges into per-slot state.
     #[hotpath::measure]
     async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
@@ -474,11 +466,9 @@ impl Pool for PoolImpl {
 
         let vote = vote.into_vote();
 
-        // `ValidatedVote` already guaranteed the signer is in the epoch's
-        // validator set (against the same shared `EpochInfo`), so this indexing
-        // cannot panic.
         // check if vote is valid and should be counted
         let voter = vote.signer();
+        // NOTE: `ValidatedVote` already checked the signer and signature
         let voter_stake = self.epoch_info.epoch_info().validator(voter).stake;
         let slot_state = self.slot_state(slot);
         if let Some(offence) = slot_state.check_slashable_offence(&vote) {
@@ -639,20 +629,16 @@ mod tests {
 
     impl TestContext {
         /// Verifies `vote` into a [`ValidatedVote`] and adds it to the pool.
-        ///
-        /// Panics if the vote fails signature verification; signature-rejection
-        /// behaviour is covered by the [`ValidatedVote`] tests instead.
         async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
+            // NOTE: signature-rejection is covered by the [`ValidatedVote`] tests
             let vote = ValidatedVote::try_new(vote, self.epoch_info.epoch_info())
                 .expect("test vote should pass verification");
             self.pool.add_vote(vote).await
         }
 
         /// Verifies `cert` into a [`ValidatedCert`] and adds it to the pool.
-        ///
-        /// Panics if the cert fails verification; verification-rejection
-        /// behaviour is covered by the [`ValidatedCert`] tests instead.
         async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
+            // NOTE: certificate rejection is covered by the [`ValidatedCert`] tests
             let cert = ValidatedCert::try_new(cert, self.epoch_info.epoch_info())
                 .expect("test cert should pass verification");
             self.pool.add_cert(cert).await
