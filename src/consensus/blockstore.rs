@@ -243,8 +243,7 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_dissemination(
@@ -280,8 +279,7 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to last slice, deletes later slices and their shreds.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
@@ -312,10 +310,11 @@ impl Blockstore for BlockstoreImpl {
 
     /// Ingests a locally produced slice (leader fast path); see trait docs.
     ///
-    /// No shredder is checked out and no decoding happens: the shreds are stored
-    /// as-is and the slice is rebuilt from them. Emits the same
-    /// [`BlockstoreEvent`]s as the dissemination path and returns the
-    /// [`BlockInfo`] on completion.
+    /// No shredder is checked out and no decoding happens.
+    /// The shreds are stored as-is and the slice is rebuilt from the `payload`.
+    /// Emits the same [`BlockstoreEvent`]s as the dissemination path.
+    ///
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_own_slice(
@@ -478,8 +477,6 @@ mod tests {
         }
     }
 
-    /// Shreds `slice` the way the leader does, returning the exact inputs the
-    /// block producer hands to [`Blockstore::add_own_slice`].
     fn shred_as_leader(
         slice: Slice,
         sk: &SecretKey,
@@ -834,28 +831,22 @@ mod tests {
         Ok(())
     }
 
-    /// A multi-slice block through the leader fast path.
-    #[tokio::test]
-    async fn add_own_slice_matches_dissemination_multi_slice() -> Result<()> {
-        check_own_slice_matches_dissemination(3).await
-    }
-
-    /// A single-slice block, where the first slice is also the last: one
-    /// `add_own_slice` call must both emit `FirstShred` and complete the block.
     #[tokio::test]
     async fn add_own_slice_matches_dissemination_single_slice() -> Result<()> {
         check_own_slice_matches_dissemination(1).await
     }
 
-    /// The leader fast path must reconstruct the exact same block as the
-    /// dissemination path: a hash mismatch would mean the leader's own blocks
-    /// never get notarized/finalized by followers.
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_multi_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(3).await
+    }
+
     async fn check_own_slice_matches_dissemination(num_slices: usize) -> Result<()> {
         let sk = SecretKey::new(&mut rand::rng());
         let slot = Slot::genesis().next();
         let slices = create_random_block(slot, num_slices);
 
-        // Reference: reconstruct the block via the dissemination path.
+        // reference: reconstruct the block via the dissemination path
         let (dissem_tx, _dissem_rx) = mpsc::channel(1000);
         let mut dissem = BlockstoreImpl::new(dissem_tx);
         for slice in &slices {
@@ -868,7 +859,7 @@ mod tests {
         }
         let expected_hash = dissem.disseminated_block_hash(slot).unwrap().clone();
 
-        // Fast path: feed the same slices through the real `add_own_slice`.
+        // fast path: feed the same slices through `add_own_slice`
         let (own_tx, mut own_rx) = mpsc::channel(1000);
         let mut own = BlockstoreImpl::new(own_tx);
         let mut completed = None;
@@ -876,21 +867,21 @@ mod tests {
             let is_last = slice.is_last;
             let (payload, shreds) = shred_as_leader(slice, &sk);
             let block_info = own.add_own_slice(payload, Box::new(shreds)).await;
-            // Only the last slice completes the block.
+            // only the last slice completes the block
             assert_eq!(block_info.is_some(), is_last);
             if let Some(info) = block_info {
                 completed = Some(info);
             }
         }
 
-        // Fast path agrees with dissemination on the block hash, and records the
-        // block under that hash.
+        // fast path agrees with dissemination on the block hash,
+        // and records the block under that hash
         let completed = completed.expect("last slice should complete the block");
         assert_eq!(completed.hash, expected_hash);
         assert_eq!(own.disseminated_block_hash(slot), Some(&expected_hash));
         assert!(own.get_block(&(slot, expected_hash.clone())).is_some());
 
-        // Emits exactly one FirstShred (first slice) and one Block (completion).
+        // emits exactly one FirstShred and one Block event
         let mut first_shreds = 0;
         let mut blocks = 0;
         while let Ok(event) = own_rx.try_recv() {

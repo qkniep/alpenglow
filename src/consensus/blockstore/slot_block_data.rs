@@ -210,7 +210,7 @@ impl BlockData {
         let is_last = header.is_last;
 
         // first shred for a slice populates the commitment cache;
-        // a later shred with a different valid commitment means the leader equivocated.
+        // a later shred with a different valid commitment proves leader equivocation
         match self.commitment_cache.entry(slice_index) {
             Entry::Occupied(entry) if entry.get() != &shred.commitment() => {
                 return Err(AddShredError::Equivocation);
@@ -221,17 +221,13 @@ impl BlockData {
             }
         }
 
-        match (is_last, self.last_slice) {
-            (true, None) => self.mark_last_slice(slice_index),
-            (true, Some(l)) => {
-                if slice_index != l {
-                    return Err(AddShredError::InvalidShred);
-                }
-            }
-            (false, None) => (),
-            (false, Some(l)) => {
-                if slice_index >= l {
-                    return Err(AddShredError::InvalidShred);
+        match self.last_slice {
+            None if is_last => self.mark_last_slice(slice_index),
+            None => {}
+            Some(l) => {
+                let consistent = (slice_index < l && !is_last) || (slice_index == l && is_last);
+                if !consistent {
+                    return Err(AddShredError::Equivocation);
                 }
             }
         }
@@ -269,7 +265,7 @@ impl BlockData {
         }
     }
 
-    /// Marks `slice_index` as the block's last slice and prunes anything cached beyond it.
+    /// Marks `slice_index` as the block's last slice and prunes anything after it.
     fn mark_last_slice(&mut self, slice_index: SliceIndex) {
         debug_assert!(self.last_slice.is_none());
         self.last_slice = Some(slice_index);
@@ -285,36 +281,37 @@ impl BlockData {
     ) -> (bool, Option<BlockInfo>) {
         let slot = self.slot;
         let any_shred = &shreds[0];
+        let slice_index = any_shred.payload().header.slice_index;
         let commitment = any_shred.commitment();
         // check consistency of the shreds
         debug_assert!(
             shreds.iter().all(|s| s.commitment() == commitment),
-            "own shreds for slice in slot {slot} disagree on header or slice root",
+            "own shreds inconsistent for slice {slice_index} in slot {slot}",
         );
         // build the slice from the shreds so the two can't disagree
         let slice =
             ReconstructedSlice::from_shreds(payload, any_shred, any_shred.slice_root().clone());
         debug_assert_eq!(slice.slot, slot);
-        let slice_index = slice.slice_index;
         let is_first = self.shreds.is_empty();
 
-        // Commitment is trusted: we built and signed these shreds ourselves,
-        // and each slice is produced exactly once, so the entry is always vacant.
+        // commitment is trusted: we built and signed these shreds ourselves
+        debug_assert!(
+            !self.commitment_cache.contains_key(&slice_index),
+            "own slice {slice_index} added twice in slot {slot}"
+        );
         self.commitment_cache.insert(slice_index, commitment);
 
-        // The leader produces each slice once, in order, and stops after the
-        // last, so a last slice must never already be set. This subsumes the
-        // dissemination path's per-arm last-slice checks (no re-marking, nothing
-        // at or after the last slice).
+        // leader produces each slice once, in order, and stops after the last,
+        // so the `last_slice` index must never already be set
         assert!(
             self.last_slice.is_none(),
-            "own slice {slice_index:?} added after the last slice in slot {slot}",
+            "own slice {slice_index} added after the last slice in slot {slot}",
         );
         if slice.is_last {
             self.mark_last_slice(slice_index);
         }
 
-        // store everything directly — no `deshred()` / RS decode
+        // store everything directly
         self.shreds.insert(slice_index, shreds.map(Some));
         self.slices.insert(slice_index, slice);
 
@@ -322,12 +319,7 @@ impl BlockData {
             ReconstructBlockResult::NoAction => None,
             ReconstructBlockResult::Complete(block_info) => Some(block_info),
             ReconstructBlockResult::Error => {
-                // Our own block, built from data we serialized and signed, must
-                // reconstruct. Reaching here means a producer-side logic bug,
-                // not adversarial input, so there is no graceful recovery.
-                unreachable!(
-                    "leader produced a block that failed reconstruction: slot {slot}, slice {slice_index:?}",
-                );
+                unreachable!("own block failed reconstruction: slot {slot}, slice {slice_index}",);
             }
         };
         (is_first, block_info)
