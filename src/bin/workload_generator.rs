@@ -6,12 +6,12 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alpenglow::{Transaction, logging};
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use log::info;
 use rand::prelude::*;
 
-/// Worklaod generator for benchmarks.
+/// Workload generator for benchmarks.
 #[derive(Debug, Clone, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -30,9 +30,6 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     logging::enable_logforth();
 
     // parse args
@@ -60,7 +57,7 @@ fn main() -> Result<()> {
         rng.fill_bytes(&mut buf);
         let tx = Transaction(buf.clone());
         let msg_bytes = wincode::serialize(&tx)?;
-        socket.send_to(&msg_bytes, validator_addr).unwrap();
+        socket.send_to(&msg_bytes, validator_addr)?;
         txs_sent += 1;
 
         let elapsed = start_time.elapsed().as_secs_f64();

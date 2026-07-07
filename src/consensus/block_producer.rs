@@ -6,21 +6,21 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use either::Either;
 use fastrace::Span;
 use log::{debug, info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{Blockstore, Pool, ValidatorEpochInfo};
+use crate::consensus::{SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
-use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder};
+use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, ShredderPool, TOTAL_SHREDS};
 use crate::types::{Slice, SliceHeader, SliceIndex, SlicePayload, Slot};
 use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 
@@ -38,14 +38,19 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    pool: SharedPool,
 
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
     /// Network connection to receive transactions from clients.
     txs_receiver: T,
+
+    /// Pool of shredders for shredding produced slices.
+    ///
+    /// Reused across slices to avoid reallocating Reed-Solomon working memory.
+    shredders: ShredderPool<RegularShredder>,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -63,14 +68,14 @@ where
     D: Disseminator,
     T: TransactionNetwork,
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn new(
         secret_key: signature::SecretKey,
         epoch_info: Arc<ValidatorEpochInfo>,
         disseminator: Arc<D>,
         txs_receiver: T,
-        blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
-        pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+        blockstore: SharedBlockstore,
+        pool: SharedPool,
         cancel_token: CancellationToken,
         delta_block: Duration,
         delta_first_slice: Duration,
@@ -83,6 +88,8 @@ where
             pool,
             disseminator,
             txs_receiver,
+            // block production is sequential, so a single shredder is enough
+            shredders: ShredderPool::with_size(1),
             cancel_token,
             delta_block,
             delta_first_slice,
@@ -165,7 +172,7 @@ where
 
     /// Produces a block in the situation where we have not yet seen the `ParentReady` event.
     ///
-    /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actualy parent of the block.
+    /// The `parent_block_id` refers to the block of the previous slot which may end up not being the actually parent of the block.
     #[hotpath::measure]
     pub(super) async fn produce_block_parent_not_ready(
         &self,
@@ -224,46 +231,21 @@ where
                         // It's a NOP if we have been using the same parent as before.
 
                         let start = Instant::now();
-                        let (new_slot, new_hash) = res.unwrap();
                         let (mut payload, _maybe_duration) = produce_slice_future.await;
-                        if new_hash == *parent_hash {
-                            debug!("parent is ready, continuing with same parent");
-                        } else {
-                            assert_ne!(new_slot, *parent_slot);
-                            debug!(
-                                "changed parent from {} in slot {} to {} in slot {}",
-                                parent_hash.short_hex(),
-                                parent_slot,
-                                new_hash.short_hex(),
-                                new_slot
-                            );
-                            payload.parent = Some((new_slot, new_hash));
-                        }
+                        apply_parent_ready(&mut payload, res, &parent_block_id);
                         // ParentReady was seen, start the DELTA_BLOCK timer
                         // account for the time it took to finish producing the slice
                         debug!("starting blocktime timer");
                         let duration = self.delta_block.saturating_sub(start.elapsed());
                         (payload, duration)
-                  }
+                    }
                 }
             };
 
             let is_last = slice_index.is_max() || new_duration_left.is_zero();
             if is_last && !parent_ready_receiver.is_terminated() {
-                let (new_slot, new_hash) = (&mut parent_ready_receiver).await.unwrap();
-                if new_hash != *parent_hash {
-                    assert_ne!(new_slot, *parent_slot);
-                    debug!(
-                        "changed parent from {} in slot {} to {} in slot {}",
-                        parent_hash.short_hex(),
-                        parent_slot,
-                        new_hash.short_hex(),
-                        new_slot
-                    );
-                    payload.parent = Some((new_slot, new_hash));
-                } else {
-                    debug!("parent is ready, continuing with same parent");
-                }
+                let received = (&mut parent_ready_receiver).await;
+                apply_parent_ready(&mut payload, received, &parent_block_id);
             }
             let header = SliceHeader {
                 slot,
@@ -311,7 +293,7 @@ where
                     time_for_slice,
                 )
                 .await;
-                let elapsed = self.delta_first_slice - slice_duration_left;
+                let elapsed = self.delta_first_slice.saturating_sub(slice_duration_left);
                 let left = duration_left.saturating_sub(elapsed);
 
                 (payload, left)
@@ -346,39 +328,97 @@ where
         payload: SlicePayload,
     ) -> Result<Option<BlockHash>> {
         let slot = header.slot;
+        let slice_index = header.slice_index;
         let is_last = header.is_last;
-        let slice = Slice::from_parts(header, payload);
-        let mut maybe_block_hash = None;
-        // PERF: new shredder every time!
-        let shreds = RegularShredder::default()
-            .shred(slice, &self.secret_key)
-            .expect("shredding of valid slice should never fail");
-        for s in shreds {
-            self.disseminator.send(&s).await?;
-            // PERF: move expensive add_shred() call out of block production
-            let block = self
-                .blockstore
-                .write()
-                .await
-                .add_own_shred_as_leader(s)
-                .await;
-            if let Ok(Some(block_info)) = block {
-                assert!(maybe_block_hash.is_none());
-                maybe_block_hash = Some(block_info.hash.clone());
+        // Keep the payload so we can hand a ready-made slice to the blockstore,
+        // instead of making it Reed-Solomon-decode our own data back out.
+        let slice = Slice::from_parts(header, payload.clone());
+        // Box the shreds so the large array lives on the heap instead of bloating
+        // this future across the dissemination and `add_own_slice` awaits below.
+        let shreds = Box::new(
+            self.shredders
+                .checkout()
+                .expect("pool always has a shredder, block production is sequential")
+                .shred(slice, &self.secret_key)
+                .expect("shredding of valid slice should never fail"),
+        );
+
+        // Disseminate every shred. Dissemination is best-effort: a send failure
+        // is usually transient (e.g. a full socket buffer), so we try every
+        // shred rather than bailing on the first, and we never propagate the
+        // error. The slice is recorded locally below regardless, so any shred
+        // that didn't make it out is recoverable by peers via repair — aborting
+        // block production over a transient send error would needlessly stall
+        // this leader.
+        let mut failed = 0;
+        let mut first_err = None;
+        for s in shreds.iter() {
+            if let Err(e) = self.disseminator.send(s.as_shred()).await {
+                failed += 1;
+                first_err.get_or_insert(e);
+            }
+        }
+
+        // Fast path: we already have every shred and the decoded payload, so the
+        // blockstore can skip RS-decode, Merkle verification and the per-shred
+        // lock churn. The completed block hands back (slot, hash).
+        let block_info = self
+            .blockstore
+            .write()
+            .await
+            .add_own_slice(payload, shreds)
+            .await;
+
+        if let Some(e) = first_err {
+            warn!(
+                "failed to disseminate {failed}/{TOTAL_SHREDS} shreds for slice {slice_index} in slot {slot}: {e}"
+            );
+        }
+
+        match block_info {
+            Some(block_info) => {
+                // Trusted local data: a violation here is our own producer bug,
+                // and the only alternative is proposing a truncated block that
+                // followers can never reconstruct. Crash loudly instead.
+                assert!(is_last, "block completed before its last slice");
                 let block_id = (slot, block_info.hash.clone());
                 self.pool
                     .write()
                     .await
                     .add_block(block_id, block_info.parent)
                     .await;
+                Ok(Some(block_info.hash))
+            }
+            None => {
+                assert!(!is_last, "last slice did not complete the block");
+                Ok(None)
             }
         }
-        if is_last {
-            Ok(Some(maybe_block_hash.unwrap()))
-        } else {
-            assert!(maybe_block_hash.is_none());
-            Ok(None)
-        }
+    }
+}
+
+/// Unwraps a received `ParentReady` event and applies its parent to `payload`.
+///
+/// A no-op if the ready parent matches the one we were already building on.
+fn apply_parent_ready(
+    payload: &mut SlicePayload,
+    received: Result<BlockId, oneshot::error::RecvError>,
+    parent_block_id: &BlockId,
+) {
+    let (new_slot, new_hash) = received.expect("ParentReady sender should not be dropped");
+    let (parent_slot, parent_hash) = parent_block_id;
+    if &new_hash == parent_hash {
+        debug!("parent is ready, continuing with same parent");
+    } else {
+        assert_ne!(&new_slot, parent_slot);
+        debug!(
+            "changed parent from {} in slot {} to {} in slot {}",
+            parent_hash.short_hex(),
+            parent_slot,
+            new_hash.short_hex(),
+            new_slot
+        );
+        payload.parent = Some((new_slot, new_hash));
     }
 }
 
@@ -405,7 +445,9 @@ where
 
     // reserve space for: parent info, and
     // 8 bytes for SlicePayload::data length
-    let parent_encoded_len = wincode::serialized_size(&parent).unwrap() as usize;
+    let parent_encoded_len = wincode::serialized_size(&parent)
+        .expect("computing serialized size of parent should not fail")
+        as usize;
     let buffer_space = MAX_DATA_PER_SLICE - parent_encoded_len - 8;
     let mut buffer = Vec::<u8>::with_capacity(buffer_space);
     let mut tx_count = 0u64;
@@ -422,7 +464,8 @@ where
         };
         let tx = res.expect("receiving tx");
         tx_count += 1;
-        wincode::serialize_into(&mut buffer, &tx).unwrap();
+        wincode::serialize_into(&mut buffer, &tx)
+            .expect("serializing transaction into buffer should not fail");
 
         // if there is not enough space for another tx, break
         // +8 for the transaction length overhead
@@ -455,8 +498,8 @@ enum SlotReady {
 ///
 /// See [`SlotReady`] for what is returned.
 async fn wait_for_first_slot(
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    pool: SharedPool,
+    blockstore: SharedBlockstore,
     first_slot_in_window: Slot,
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
@@ -505,7 +548,7 @@ async fn wait_for_first_slot(
         } => {
             match res {
                 None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash.clone()), rx),
+                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
             }
         }
     }
@@ -516,6 +559,7 @@ mod tests {
     use std::time::Duration;
 
     use mockall::{Sequence, predicate};
+    use tokio::sync::RwLock;
 
     use super::*;
     use crate::consensus::blockstore::MockBlockstore;
@@ -524,9 +568,8 @@ mod tests {
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
-    use crate::shredder::TOTAL_SHREDS;
-    use crate::test_utils::generate_validators;
-    use crate::{Transaction, ValidatorId};
+    use crate::test_utils::{generate_validators, random_block_id};
+    use crate::{Transaction, ValidatorIndex};
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -579,10 +622,8 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_genesis() {
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(MockPool::new());
-        let pool = Arc::new(RwLock::new(pool));
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let pool: SharedPool = Arc::new(RwLock::new(MockPool::new()));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
 
         let status = wait_for_first_slot(pool, blockstore, Slot::genesis()).await;
         assert!(matches!(status, SlotReady::Ready(_)));
@@ -590,8 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_already_ready() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
 
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
@@ -601,8 +641,7 @@ mod tests {
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
             .return_once(move |_slot| Either::Left(p));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
 
         let status = wait_for_first_slot(pool, blockstore, slot).await;
         match status {
@@ -613,8 +652,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_ready_later() {
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(MockBlockstore::new());
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
 
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
@@ -625,8 +663,7 @@ mod tests {
         pool.expect_wait_for_parent_ready()
             .with(predicate::eq(slot))
             .return_once(move |_slot| Either::Right(rx));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
 
         let status = wait_for_first_slot(pool, blockstore, slot).await;
         match status {
@@ -645,11 +682,9 @@ mod tests {
     ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
-        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorId::new(0), epoch_info));
-        let blockstore: Box<dyn Blockstore + Send + Sync> = Box::new(blockstore);
-        let blockstore = Arc::new(RwLock::new(blockstore));
-        let pool: Box<dyn Pool + Send + Sync> = Box::new(pool);
-        let pool = Arc::new(RwLock::new(pool));
+        let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(blockstore));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
         let disseminator = Arc::new(disseminator);
         let txs_receiver = UdpNetwork::new_with_any_port();
         let cancel_token = CancellationToken::new();
@@ -677,24 +712,16 @@ mod tests {
             parent: (slot.prev(), hash_prev.clone()),
         };
 
-        // Handles TOTAL_SHRED number of calls.
-        // The first TOTAL_SHRED - 1 calls return None.
-        // The last call returns Some.
-        let mut seq = Sequence::new();
+        // The producer ingests its own block one slice at a time via the fast
+        // path; a single-slice block completes on the only `add_own_slice` call.
         let mut blockstore = MockBlockstore::new();
-        blockstore
-            .expect_add_own_shred_as_leader()
-            .times(TOTAL_SHREDS - 1)
-            .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
         let bi = block_info.clone();
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_own_slice()
             .times(1)
-            .in_sequence(&mut seq)
-            .returning(move |_| {
+            .returning(move |_slice, _shreds| {
                 let bi = bi.clone();
-                Box::pin(async move { Ok(Some(bi)) })
+                Box::pin(async move { Some(bi) })
             });
 
         let mut pool = MockPool::new();
@@ -730,8 +757,8 @@ mod tests {
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
         let slot_hash: BlockHash = Hash::random_for_test().into();
-        let old_parent = (slot.prev(), Hash::random_for_test().into());
-        let new_parent = (slot.prev().prev(), Hash::random_for_test().into());
+        let old_parent = random_block_id(slot.prev());
+        let new_parent = random_block_id(slot.prev().prev());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
             parent: old_parent,
@@ -747,43 +774,29 @@ mod tests {
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
 
-        // handle first slice
+        // first slice: signal completion, then wait for the parent-ready event
+        // before the producer moves on to the second slice
         blockstore
-            .expect_add_own_shred_as_leader()
-            .times(TOTAL_SHREDS - 1)
-            .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
-        blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_own_slice()
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(move |_| {
+            .return_once(move |_slice, _shreds| {
                 Box::pin(async move {
-                    // last shred; wait for the parent ready event to be sent before continuing
                     first_slice_finished_tx.send(()).unwrap();
                     let () = start_second_slice_rx.await.unwrap();
-                    Ok(None)
+                    None
                 })
             });
 
-        // handle second slice
-        blockstore
-            .expect_add_own_shred_as_leader()
-            .times(TOTAL_SHREDS - 1)
-            .in_sequence(&mut seq)
-            .returning(move |_| Box::pin(async move { Ok(None) }));
+        // second (last) slice: block is constructed with the new parent
         let nbi = new_block_info.clone();
         blockstore
-            .expect_add_own_shred_as_leader()
+            .expect_add_own_slice()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_| {
+            .returning(move |_slice, _shreds| {
                 let nbi = nbi.clone();
-                Box::pin(async {
-                    // final shred of second slice
-                    // block is constructed with the new parent
-                    Ok(Some(nbi))
-                })
+                Box::pin(async move { Some(nbi) })
             });
 
         let mut pool = MockPool::new();

@@ -136,7 +136,7 @@ impl WeightedShuffle {
                         false
                     }
                 })
-                .unwrap();
+                .expect("search value should be less than total subtree weight");
             // Traverse to the subtree of self.tree[index].
             index = (index << BIT_SHIFT) + offset + 1;
             if self.tree.len() <= index {
@@ -161,7 +161,7 @@ impl WeightedShuffle {
             }
             let index =
                 <usize as SampleUniform>::Sampler::sample_single(0usize, self.zeros.len(), rng)
-                    .unwrap();
+                    .expect("sampling from a non-empty range should succeed");
             Some(self.zeros.swap_remove(index))
         })
     }

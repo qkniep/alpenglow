@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![expect(clippy::unwrap_used, reason = "benchmarks panic on setup failure")]
+
 use alpenglow::crypto::signature::SecretKey;
 use alpenglow::shredder::{
     AontShredder, CodingOnlyShredder, DATA_SHREDS, PetsShredder, RegularShredder, Shredder,
@@ -52,8 +54,8 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
             (shredder, shreds)
         })
         .bench_values(
-            |(mut shredder, shreds): (S, [Option<ValidatedShred>; TOTAL_SHREDS])| {
-                let _ = shredder.deshred(&shreds).unwrap();
+            |(mut shredder, mut shreds): (S, [Option<ValidatedShred>; TOTAL_SHREDS])| {
+                let _ = shredder.deshred(&mut shreds).unwrap();
             },
         );
 }

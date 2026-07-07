@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use alpenglow::{create_test_nodes, logging};
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use fastrace::prelude::*;
 use log::warn;
 
@@ -15,9 +15,6 @@ struct Args {}
 #[tokio::main]
 #[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     Args::parse();
 
     // enable `fastrace` tracing via OpenTelemetry export (only with `telemetry` feature)
@@ -40,7 +37,7 @@ async fn main() -> Result<()> {
             node_tasks.push(tokio::spawn(node.run().in_span(span)));
         }
 
-        tokio::signal::ctrl_c().await.unwrap();
+        tokio::signal::ctrl_c().await?;
         warn!("shutting down all nodes");
         for token in &cancel_tokens {
             token.cancel();

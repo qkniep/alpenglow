@@ -9,7 +9,7 @@
 //! Tests are organized in two tiers:
 //! - **Help tests** (fast, always run): verify the CLI parses and the binary links.
 //! - **Launch tests** (slow, `#[ignore]`): actually start the binary, let it run for
-//!   a few seconds, and verify it makes progress. Run via `./test.sh smoke` or
+//!   a few seconds, and verify it makes progress. Run via `just test-smoke` or
 //!   `cargo nextest run --test smoke_tests --run-ignored=all`.
 
 use std::io::{Read, Write};
@@ -90,7 +90,7 @@ fn node_generate_config_files() {
 /// Launches a 2-node local cluster and verifies it keeps running and finalizes
 /// at least one slot within 15 seconds.
 #[test]
-#[ignore]
+#[ignore = "slow launch test; runs via `just test-smoke`"]
 fn local_cluster_short() {
     // `assert_cmd::Command` doesn't expose `spawn()`, so use `std::process::Command`
     // directly with the Cargo-provided binary path.
@@ -133,7 +133,7 @@ fn local_cluster_short() {
 /// Runs the performance test (11 nodes, simulated network) for 5 seconds and
 /// verifies that nodes actually finalize blocks, not just that the binary exits.
 #[test]
-#[ignore]
+#[ignore = "slow launch test; runs via `just test-smoke`"]
 fn performance_test_short() {
     let output = cargo_bin_cmd!("performance_test")
         .arg("--duration-secs")
@@ -156,4 +156,4 @@ fn performance_test_short() {
 
 // NOTE: `simulations` does not have a launch smoke test.
 // The binary takes many minutes to complete - too long for this test.
-// The help test above verifies the binary compiles adn starts up correctly.
+// The help test above verifies the binary compiles and starts up correctly.

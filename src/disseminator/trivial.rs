@@ -63,7 +63,7 @@ mod tests {
     use crate::network::{UdpNetwork, dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::shredder::{MAX_DATA_PER_SLICE, RegularShredder, Shredder, TOTAL_SHREDS};
     use crate::types::slice::create_slice_with_invalid_txs;
-    use crate::{Stake, ValidatorId};
+    use crate::{Stake, ValidatorIndex};
 
     fn create_disseminator_instances(
         count: u64,
@@ -79,14 +79,14 @@ mod tests {
             sks.push(SecretKey::new(&mut rand::rng()));
             voting_sks.push(aggsig::SecretKey::new(&mut rand::rng()));
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
 
@@ -126,7 +126,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         for shred in shreds {
-            disseminators[0].send(&shred).await.unwrap();
+            disseminators[0].send(shred.as_shred()).await.unwrap();
         }
 
         // forward shreds on the "leader" disseminator instance
@@ -143,10 +143,20 @@ mod tests {
             }
         });
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // poll until all shreds arrive rather than relying on a fixed sleep,
+        // which is racy under CI load; the counter is monotonic so it can't
+        // overshoot the expected total
+        let expected = 19 * TOTAL_SHREDS;
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            while *shreds_received.lock().await < expected {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(received.is_ok(), "not all shreds arrived within timeout");
 
         // non-leaders should have received all shreds via Rotor
-        assert_eq!(*shreds_received.lock().await, 19 * TOTAL_SHREDS);
+        assert_eq!(*shreds_received.lock().await, expected);
         rotor_task_leader.abort();
         for task in tasks {
             task.abort();

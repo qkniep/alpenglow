@@ -1,0 +1,15 @@
+queue_rules:
+  - name: default
+    merge_method: squash
+    batch_size: 3
+    batch_max_wait_time: 5 min
+    checks_timeout: 30 min
+    queue_conditions:
+      - base = main
+      - -draft
+      - -conflict
+      - "label = state: queued"
+
+merge_protections_settings:
+  auto_merge_conditions:
+    - "label = state: queued"

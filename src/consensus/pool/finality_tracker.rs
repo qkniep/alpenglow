@@ -7,12 +7,13 @@
 //!
 //! Keeps track of:
 //! - Direct finalization of blocks,
-//! - resulting indirect finalizations of blocks, AND
-//! - resulting implicit skipping of slots
+//! - resulting indirect finalizations of ancestor blocks, and
+//! - resulting implicit skipping of earlier slots
 //!
 //! It does this based on:
 //! - Notarization of blocks,
-//! - finalization of slots, AND
+//! - finalization of slots,
+//! - fast finalization of blocks, and
 //! - availability of blocks and knowledge of their parents.
 //!
 //! [`PoolImpl`]: crate::consensus::pool::PoolImpl
@@ -32,9 +33,15 @@ pub(super) struct FinalityTracker {
     parents: BTreeMap<BlockId, BlockId>,
     /// The highest finalized slot so far.
     ///
-    /// This means that slot has a fast finalization OR finalization + notarization.
-    /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
+    /// This means that slot has a fast finalization *or* finalization + notarization.
     highest_finalized_slot: Slot,
+    /// The lowest slot whose state has not yet been pruned.
+    ///
+    /// Everything below this is a contiguous prefix of decided
+    /// (finalized or implicitly skipped) slots that has been dropped.
+    /// This can lag behind [`Self::highest_finalized_slot`]
+    /// (e.g. a slot may be finalized before the parent-chain is fully resolved).
+    first_unpruned_slot: Slot,
 }
 
 /// Possible states a slot can be in regarding finality.
@@ -55,13 +62,31 @@ pub(super) enum FinalizationStatus {
 /// Information about newly finalized slots.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct FinalizationEvent {
-    // TODO: instead use `Option<FinalizationEvent>`?
     /// Directly finalized block, if any.
     pub(super) finalized: Option<BlockId>,
     /// Any implicitly finalized blocks.
     pub(super) implicitly_finalized: Vec<BlockId>,
     /// Any implicitly skipped slots.
     pub(super) implicitly_skipped: Vec<Slot>,
+}
+
+impl Default for FinalityTracker {
+    /// Creates a new empty tracker.
+    ///
+    /// Initially, only the genesis block is considered (directly) finalized.
+    fn default() -> Self {
+        let mut status = BTreeMap::new();
+        status.insert(
+            Slot::genesis(),
+            FinalizationStatus::Notarized(GENESIS_BLOCK_HASH),
+        );
+        Self {
+            status,
+            parents: BTreeMap::new(),
+            highest_finalized_slot: Slot::genesis(),
+            first_unpruned_slot: Slot::genesis(),
+        }
+    }
 }
 
 impl FinalityTracker {
@@ -72,6 +97,10 @@ impl FinalityTracker {
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub(super) fn add_parent(&mut self, block: BlockId, parent: BlockId) -> FinalizationEvent {
         assert!(block.0 > parent.0);
+        // NOTE: This can genuinely happen if we see a finalization before the block.
+        if block.0 < self.first_unpruned_slot {
+            return FinalizationEvent::default();
+        }
         match self.parents.entry(block.clone()) {
             Entry::Occupied(e) => {
                 assert!(e.get() == &parent);
@@ -90,7 +119,8 @@ impl FinalityTracker {
             FinalizationStatus::Finalized(hash) | FinalizationStatus::ImplicitlyFinalized(hash) => {
                 let mut event = FinalizationEvent::default();
                 if &block_hash == hash {
-                    self.handle_implicitly_finalized(block.0, parent, &mut event);
+                    self.handle_implicitly_finalized(slot, parent, &mut event);
+                    self.prune();
                 }
                 event
             }
@@ -105,31 +135,33 @@ impl FinalityTracker {
     /// If the block was newly finalized, handles resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub(super) fn mark_fast_finalized(
-        &mut self,
-        slot: Slot,
-        block_hash: BlockHash,
-    ) -> FinalizationEvent {
+    pub(super) fn mark_fast_finalized(&mut self, block: BlockId) -> FinalizationEvent {
+        let (slot, block_hash) = &block;
+        debug_assert!(*slot >= self.first_unpruned_slot);
+        if *slot < self.first_unpruned_slot {
+            return FinalizationEvent::default();
+        }
+
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
+            .insert(*slot, FinalizationStatus::Finalized(block_hash.clone()));
         if let Some(status) = old {
             match status {
                 FinalizationStatus::Finalized(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                    assert_eq!(hash, block_hash, "consensus safety violation");
+                    assert_eq!(&hash, block_hash, "consensus safety violation");
                     return FinalizationEvent::default();
                 }
                 FinalizationStatus::Notarized(hash) => {
-                    assert_eq!(hash, block_hash, "consensus safety violation");
+                    assert_eq!(&hash, block_hash, "consensus safety violation");
                 }
                 FinalizationStatus::FinalPendingNotar => {}
-                FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
+                FinalizationStatus::ImplicitlySkipped => panic!("consensus safety violation"),
             }
         }
 
         let mut event = FinalizationEvent::default();
-        self.handle_finalized_block((slot, block_hash), &mut event);
+        self.handle_finalized_block(block, &mut event);
         event
     }
 
@@ -139,14 +171,15 @@ impl FinalityTracker {
     /// Further, also handles any possibly resulting implicit finalizations.
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
-    pub(super) fn mark_notarized(
-        &mut self,
-        slot: Slot,
-        block_hash: BlockHash,
-    ) -> FinalizationEvent {
+    pub(super) fn mark_notarized(&mut self, block: BlockId) -> FinalizationEvent {
+        let (slot, block_hash) = &block;
+        debug_assert!(*slot >= self.first_unpruned_slot);
+        if *slot < self.first_unpruned_slot {
+            return FinalizationEvent::default();
+        }
         let old = self
             .status
-            .insert(slot, FinalizationStatus::Notarized(block_hash.clone()));
+            .insert(*slot, FinalizationStatus::Notarized(block_hash.clone()));
         let Some(status) = old else {
             return FinalizationEvent::default();
         };
@@ -155,15 +188,15 @@ impl FinalityTracker {
             FinalizationStatus::Notarized(hash)
             | FinalizationStatus::Finalized(hash)
             | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                assert_eq!(hash, block_hash, "consensus safety violation");
+                assert_eq!(&hash, block_hash, "consensus safety violation");
                 FinalizationEvent::default()
             }
             FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
             FinalizationStatus::FinalPendingNotar => {
                 let mut event = FinalizationEvent::default();
                 self.status
-                    .insert(slot, FinalizationStatus::Finalized(block_hash.clone()));
-                self.handle_finalized_block((slot, block_hash), &mut event);
+                    .insert(*slot, FinalizationStatus::Finalized(block_hash.clone()));
+                self.handle_finalized_block(block, &mut event);
                 event
             }
         }
@@ -176,6 +209,10 @@ impl FinalityTracker {
     ///
     /// Returns a [`FinalizationEvent`] that contains information about newly finalized slots.
     pub(super) fn mark_finalized(&mut self, slot: Slot) -> FinalizationEvent {
+        debug_assert!(slot >= self.first_unpruned_slot);
+        if slot < self.first_unpruned_slot {
+            return FinalizationEvent::default();
+        }
         let old = self
             .status
             .insert(slot, FinalizationStatus::FinalPendingNotar);
@@ -194,25 +231,35 @@ impl FinalityTracker {
                 self.handle_finalized_block((slot, block_hash), &mut event);
                 event
             }
-            FinalizationStatus::ImplicitlySkipped => unreachable!("consensus safety violation"),
+            FinalizationStatus::ImplicitlySkipped => panic!("consensus safety violation"),
         }
     }
 
     /// Returns the highest finalized slot.
     ///
-    /// This means that slot has a fast finalization OR finalization + notarization.
-    /// Also, all prior slots are finalized (directly or implicitly) OR implicitly skipped.
+    /// This means that slot has a fast finalization *or* finalization + notarization.
+    /// Note that some slots before this may still be undecided
+    /// (e.g. because of unresolved parent relations).
     pub(super) fn highest_finalized_slot(&self) -> Slot {
         self.highest_finalized_slot
+    }
+
+    /// Returns the first slot whose state has not yet been pruned.
+    ///
+    /// All slots below this are decided and no longer tracked,
+    /// so certificates and votes for them can be safely ignored.
+    pub(super) fn first_unpruned_slot(&self) -> Slot {
+        self.first_unpruned_slot
     }
 
     /// Handles the direct finalization of the given block.
     ///
     /// Recurses through ancestors, potentially implicitly finalizing them.
+    /// Prunes the newly decided prefix if necessary.
     ///
     /// Updates the `event` all along the way with:
     /// - The finalized block,
-    /// - any potentially implicitly finalized blocks, AND
+    /// - any potentially implicitly finalized blocks, and
     /// - any implicitly skipped slots.
     fn handle_finalized_block(&mut self, finalized: BlockId, event: &mut FinalizationEvent) {
         let (slot, _) = finalized;
@@ -222,6 +269,7 @@ impl FinalityTracker {
         if let Some(parent) = self.parents.get(&finalized).cloned() {
             self.handle_implicitly_finalized(slot, parent, event);
         }
+        self.prune();
     }
 
     /// Handles the indirect finalization of the given block.
@@ -229,7 +277,7 @@ impl FinalityTracker {
     /// Recurses through ancestors, potentially implicitly finalizing them as well.
     ///
     /// Updates the `event` all along the way with:
-    /// - Any potentially implicitly finalized blocks, AND
+    /// - Any potentially implicitly finalized blocks, and
     /// - any implicitly skipped slots.
     fn handle_implicitly_finalized(
         &mut self,
@@ -238,6 +286,11 @@ impl FinalityTracker {
         event: &mut FinalizationEvent,
     ) {
         assert!(source_slot > implicitly_finalized.0);
+        // parent slot may already be decided and pruned;
+        // consider a call to `add_parent` for the `first_unpruned_slot`
+        if implicitly_finalized.0 < self.first_unpruned_slot {
+            return;
+        }
 
         // implicitly skip slots in between
         for slot in implicitly_finalized.0.future_slots() {
@@ -256,7 +309,7 @@ impl FinalityTracker {
                     FinalizationStatus::FinalPendingNotar
                     | FinalizationStatus::Finalized(_)
                     | FinalizationStatus::ImplicitlyFinalized(_) => {
-                        unreachable!("consensus safety violation")
+                        panic!("consensus safety violation")
                     }
                 }
             }
@@ -273,13 +326,16 @@ impl FinalityTracker {
             match &status {
                 FinalizationStatus::Finalized(hash)
                 | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                    assert_eq!(*hash, block_hash, "consensus safety violation");
+                    assert_eq!(hash, &block_hash, "consensus safety violation");
                     self.status.insert(slot, status);
                     return;
                 }
-                FinalizationStatus::Notarized(_) | FinalizationStatus::FinalPendingNotar => {}
+                FinalizationStatus::Notarized(hash) => {
+                    assert_eq!(hash, &block_hash, "consensus safety violation");
+                }
+                FinalizationStatus::FinalPendingNotar => {}
                 FinalizationStatus::ImplicitlySkipped => {
-                    unreachable!("consensus safety violation")
+                    panic!("consensus safety violation")
                 }
             }
         }
@@ -292,39 +348,42 @@ impl FinalityTracker {
             self.handle_implicitly_finalized(implicitly_finalized.0, parent, event);
         }
     }
-}
 
-impl Default for FinalityTracker {
-    /// Creates a new empty tracker.
+    /// Clears all state that is no longer needed.
     ///
-    /// Initially, only the genesis block is considered (directly) finalized.
-    fn default() -> Self {
-        let mut status = BTreeMap::new();
-        status.insert(
-            Slot::genesis(),
-            FinalizationStatus::Notarized(GENESIS_BLOCK_HASH),
-        );
-        Self {
-            status,
-            parents: BTreeMap::new(),
-            highest_finalized_slot: Slot::genesis(),
+    /// Advances [`Self::first_unpruned_slot`] to the end of the prefix of decided slots.
+    /// Then, drops all state corresponding to (decided) slots before it.
+    fn prune(&mut self) {
+        let mut next = self.first_unpruned_slot.next();
+        while self.status.get(&next).is_some_and(|status| {
+            matches!(
+                status,
+                FinalizationStatus::Finalized(_)
+                    | FinalizationStatus::ImplicitlyFinalized(_)
+                    | FinalizationStatus::ImplicitlySkipped
+            )
+        }) {
+            self.first_unpruned_slot = next;
+            next = next.next();
         }
+        let root = self.first_unpruned_slot;
+        self.status = self.status.split_off(&root);
+        self.parents.retain(|(slot, _), _| *slot >= root);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Hash;
+    use crate::test_utils::{genesis_block_id, random_block_id};
 
     #[test]
     fn basic() {
         let mut tracker = FinalityTracker::default();
 
         // slow finalize a block
-        let slot1 = Slot::genesis().next();
-        let hash1: BlockHash = Hash::random_for_test().into();
-        let event = tracker.mark_notarized(slot1, hash1.clone());
+        let (slot1, hash1) = random_block_id(Slot::genesis().next());
+        let event = tracker.mark_notarized((slot1, hash1.clone()));
         assert_eq!(event, FinalizationEvent::default());
         let event = tracker.mark_finalized(slot1);
         assert_eq!(event.finalized, Some((slot1, hash1)));
@@ -332,37 +391,30 @@ mod tests {
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // fast finalize a block
-        let slot2 = slot1.next();
-        let hash2: BlockHash = Hash::random_for_test().into();
-        let event = tracker.mark_fast_finalized(slot2, hash2.clone());
+        let (slot2, hash2) = random_block_id(slot1.next());
+        let event = tracker.mark_fast_finalized((slot2, hash2.clone()));
         assert_eq!(event.finalized, Some((slot2, hash2)));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITHOUT skips
-        let slot4 = slot2.next().next();
-        let hash3: BlockHash = Hash::random_for_test().into();
-        let hash4: BlockHash = Hash::random_for_test().into();
-        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
+        let (slot3, hash3) = random_block_id(slot2.next());
+        let (slot4, hash4) = random_block_id(slot3.next());
+        let event = tracker.add_parent((slot4, hash4.clone()), (slot3, hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot4, hash4.clone());
+        let event = tracker.mark_fast_finalized((slot4, hash4.clone()));
         assert_eq!(event.finalized, Some((slot4, hash4)));
-        assert_eq!(event.implicitly_finalized, vec![(slot4.prev(), hash3)]);
+        assert_eq!(event.implicitly_finalized, vec![(slot3, hash3)]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITH skips
-        let slot7 = slot4.next().next().next();
-        let hash5: BlockHash = Hash::random_for_test().into();
-        let hash7: BlockHash = Hash::random_for_test().into();
-        let event =
-            tracker.add_parent((slot7, hash7.clone()), (slot7.prev().prev(), hash5.clone()));
+        let (slot7, hash7) = random_block_id(slot4.next().next().next());
+        let (slot5, hash5) = random_block_id(slot7.prev().prev());
+        let event = tracker.add_parent((slot7, hash7.clone()), (slot5, hash5.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot7, hash7.clone());
-        assert_eq!(event.finalized, Some((slot7, hash7.clone())));
-        assert_eq!(
-            event.implicitly_finalized,
-            vec![(slot7.prev().prev(), hash5)]
-        );
+        let event = tracker.mark_fast_finalized((slot7, hash7.clone()));
+        assert_eq!(event.finalized, Some((slot7, hash7)));
+        assert_eq!(event.implicitly_finalized, vec![(slot5, hash5)]);
         assert_eq!(event.implicitly_skipped, vec![slot7.prev()]);
     }
 
@@ -371,43 +423,139 @@ mod tests {
         let mut tracker = FinalityTracker::default();
 
         // slow finalize + fast finalize a block
-        let slot1 = Slot::genesis().next();
-        let hash1: BlockHash = Hash::random_for_test().into();
+        let (slot1, hash1) = random_block_id(Slot::genesis().next());
         let event = tracker.mark_finalized(slot1);
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_notarized(slot1, hash1.clone());
+        let event = tracker.mark_notarized((slot1, hash1.clone()));
         assert_eq!(event.finalized, Some((slot1, hash1.clone())));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
-        let event = tracker.mark_fast_finalized(slot1, hash1.clone());
+        let event = tracker.mark_fast_finalized((slot1, hash1.clone()));
         assert_eq!(event, FinalizationEvent::default());
 
         // do NOT implicitly finalize parent, that is already directly finalized
-        let slot2 = slot1.next();
-        let hash2: BlockHash = Hash::random_for_test().into();
-        let event = tracker.add_parent((slot2, hash2.clone()), (slot2.prev(), hash1.clone()));
+        let (slot2, hash2) = random_block_id(slot1.next());
+        let event = tracker.add_parent((slot2, hash2.clone()), (slot2.prev(), hash1));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot2, hash2.clone());
-        assert_eq!(event.finalized, Some((slot2, hash2.clone())));
+        let event = tracker.mark_fast_finalized((slot2, hash2.clone()));
+        assert_eq!(event.finalized, Some((slot2, hash2)));
         assert_eq!(event.implicitly_finalized, vec![]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // implicitly finalize a block WITHOUT skips
-        let slot4 = slot2.next().next();
-        let hash3: BlockHash = Hash::random_for_test().into();
-        let hash4: BlockHash = Hash::random_for_test().into();
-        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
+        let (slot4, hash4) = random_block_id(slot2.next().next());
+        let (slot3, hash3) = random_block_id(slot4.prev());
+        let event = tracker.add_parent((slot4, hash4.clone()), (slot3, hash3.clone()));
         assert_eq!(event, FinalizationEvent::default());
-        let event = tracker.mark_fast_finalized(slot4, hash4.clone());
+        let event = tracker.mark_fast_finalized((slot4, hash4.clone()));
         assert_eq!(event.finalized, Some((slot4, hash4.clone())));
-        assert_eq!(
-            event.implicitly_finalized,
-            vec![(slot4.prev(), hash3.clone())]
-        );
+        assert_eq!(event.implicitly_finalized, vec![(slot3, hash3.clone())]);
         assert_eq!(event.implicitly_skipped, vec![]);
 
         // do NOT implicitly finalize parent again when adding parent again
-        let event = tracker.add_parent((slot4, hash4.clone()), (slot4.prev(), hash3.clone()));
+        let event = tracker.add_parent((slot4, hash4), (slot3, hash3));
+        assert_eq!(event, FinalizationEvent::default());
+    }
+
+    #[test]
+    fn prune() {
+        let mut tracker = FinalityTracker::default();
+
+        // notarize and connect (with parent relation) a chain of blocks
+        let mut prev = genesis_block_id();
+        for s in 1..=6u64 {
+            let block = random_block_id(Slot::new(s));
+            tracker.mark_notarized(block.clone());
+            tracker.add_parent(block.clone(), prev.clone());
+            prev = block;
+        }
+
+        // finalize slot 5, implicitly finalizing its ancestors
+        let root = Slot::new(5);
+        tracker.mark_finalized(root);
+        // this moves the watermark to slot 5
+        assert_eq!(tracker.first_unpruned_slot(), root);
+
+        // only slots at or above the watermark remain
+        assert!(tracker.status.keys().all(|s| *s >= root));
+        assert!(tracker.parents.keys().all(|(s, _)| *s >= root));
+        assert!(tracker.status.contains_key(&root));
+        assert!(!tracker.status.contains_key(&Slot::new(4)));
+    }
+
+    #[test]
+    fn prune_keeps_unresolved_gap() {
+        let mut tracker = FinalityTracker::default();
+        let (slot1, hash1) = random_block_id(Slot::genesis().next());
+        let (slot2, hash2) = random_block_id(slot1.next());
+
+        // finality cert for slot 1 without block hash
+        assert_eq!(tracker.mark_finalized(slot1), FinalizationEvent::default());
+
+        // slot 2 receives full finalization (final + notar)
+        tracker.mark_notarized((slot2, hash2.clone()));
+        let event = tracker.mark_finalized(slot2);
+        assert_eq!(event.finalized, Some((slot2, hash2)));
+        // cannot prune slot 1 yet
+        // we can't have emitted a `FinalizationEvent` for it yet
+        assert_eq!(tracker.highest_finalized_slot(), slot2);
+        assert_eq!(tracker.first_unpruned_slot(), Slot::genesis());
+        assert!(tracker.status.contains_key(&slot1));
+
+        // can catch up once continuous chain is fully finalized
+        tracker.add_parent((slot1, hash1.clone()), genesis_block_id());
+        let event = tracker.mark_notarized((slot1, hash1.clone()));
+        assert_eq!(event.finalized, Some((slot1, hash1)));
+        assert_eq!(tracker.first_unpruned_slot(), slot2);
+    }
+
+    #[test]
+    fn ignores_add_parent_below_watermark() {
+        let mut tracker = FinalityTracker::default();
+
+        // build and finalize a chain up to slot 5 to advance the watermark
+        let mut prev = genesis_block_id();
+        for s in 1..=5u64 {
+            let block = random_block_id(Slot::new(s));
+            tracker.mark_notarized(block.clone());
+            tracker.add_parent(block.clone(), prev.clone());
+            prev = block;
+        }
+        tracker.mark_finalized(Slot::new(5));
+        assert_eq!(tracker.first_unpruned_slot(), Slot::new(5));
+
+        // a late block for an already-pruned slot is ignored, leaving no trace
+        let stale = random_block_id(Slot::new(2));
+        let block1 = random_block_id(Slot::new(1));
+        let event = tracker.add_parent(stale.clone(), block1);
+        assert_eq!(event, FinalizationEvent::default());
+        assert!(!tracker.parents.contains_key(&stale));
+    }
+
+    #[test]
+    fn no_reemit_when_parent_pruned_late() {
+        let mut tracker = FinalityTracker::default();
+        let (slot0, hash0) = genesis_block_id();
+        let (slot1, hash1) = random_block_id(slot0.next());
+        let (slot2, hash2) = random_block_id(slot1.next());
+
+        // finalize slot 1 (with its parent chain)
+        tracker.add_parent((slot1, hash1.clone()), (slot0, hash0));
+        tracker.mark_notarized((slot1, hash1.clone()));
+        let event = tracker.mark_finalized(slot1);
+        assert_eq!(event.finalized, Some((slot1, hash1.clone())));
+        // keeps the watermark at slot 1
+        assert_eq!(tracker.first_unpruned_slot(), slot1);
+
+        // finalize slot 2 before its parent edge is known
+        tracker.mark_notarized((slot2, hash2.clone()));
+        let event = tracker.mark_finalized(slot2);
+        assert_eq!(event.finalized, Some((slot2, hash2.clone())));
+        // this prunes slot 1
+        assert_eq!(tracker.first_unpruned_slot(), slot2);
+
+        // late parent edge must NOT re-finalize (already-pruned) slot 1
+        let event = tracker.add_parent((slot2, hash2), (slot1, hash1));
         assert_eq!(event, FinalizationEvent::default());
     }
 }

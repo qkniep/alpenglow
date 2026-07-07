@@ -1,5 +1,28 @@
+.env
+.DS_Store
+.vscode/
+.claude/
+*.log
+*.tmp
+*.temp
+*.swp
+*.bak
+*.cache
+
 /target
 /data/pings-2020-07-19-2020-07-20.csv
 /data/output
 flamegraph.svg
 tarpaulin-report.html
+
+# === Claude Code ===
+# ignore everything under .claude/, then allow-list shared config
+.claude/*
+
+# shared/team config (commit these):
+!.claude/settings.json
+!.claude/commands/
+!.claude/agents/
+!.claude/skills/
+!.claude/hooks/
+!.claude/output-styles/

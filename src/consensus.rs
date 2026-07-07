@@ -22,6 +22,8 @@ mod blockstore;
 mod cert;
 mod epoch_info;
 mod pool;
+mod validated_cert;
+mod validated_vote;
 mod vote;
 mod votor;
 
@@ -30,7 +32,7 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::Result;
+use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
@@ -39,17 +41,23 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::blockstore::{BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl};
+pub use self::blockstore::{
+    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
+};
 pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
-pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl};
+#[cfg(feature = "test-utils")]
+pub use self::pool::bench_replay_votes;
+pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
+pub use self::validated_cert::{CertValidationError, ValidatedCert};
+pub use self::validated_vote::{ValidatedVote, VoteValidationError};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
 pub use self::votor::Votor;
 use crate::consensus::block_producer::BlockProducer;
 use crate::crypto::{aggsig, signature};
-use crate::network::{RepairNetwork, RepairRequestNetwork, TransactionNetwork};
+use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, TransactionNetwork};
 use crate::repair::{Repair, RepairRequestHandler};
-use crate::shredder::Shred;
+use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
 use crate::{All2All, Disseminator, Slot, ValidatorInfo};
 
@@ -105,9 +113,9 @@ where
     epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
-    blockstore: Arc<RwLock<Box<dyn Blockstore + Send + Sync>>>,
+    blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
-    pool: Arc<RwLock<Box<dyn Pool + Send + Sync>>>,
+    pool: SharedPool,
 
     /// Block production (i.e. leader side) component of the consensus protocol.
     block_producer: Arc<BlockProducer<D, T>>,
@@ -123,6 +131,21 @@ where
     votor_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Interprets a joined task result during shutdown.
+///
+/// On shutdown the loops are aborted.
+/// So a [`JoinError`] from cancellation is the expected outcome and maps to `Ok(())`.
+/// A panic still propagates, as does any error the task itself returned.
+///
+/// [`JoinError`]: tokio::task::JoinError
+fn join_for_shutdown(res: Result<Result<()>, tokio::task::JoinError>) -> Result<()> {
+    match res {
+        Ok(inner) => inner,
+        Err(err) if err.is_cancelled() => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 impl<A, D, T> Alpenglow<A, D, T>
 where
     A: All2All + Send + Sync + 'static,
@@ -131,23 +154,23 @@ where
 {
     /// Creates a new Alpenglow consensus node.
     ///
-    /// `repair_network` - [`RepairNetwork`] for sending requests and receiving responses.
-    /// `repair_request_network` - [`RepairRequestNetwork`] for answering incoming requests.
+    /// `repair_requester_network` - [`RepairRequesterNetwork`] for sending requests and receiving responses.
+    /// `repair_responder_network` - [`RepairResponderNetwork`] for answering incoming requests.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new<RN, RR>(
+    #[expect(clippy::too_many_arguments)]
+    pub fn new<RQ, RP>(
         secret_key: signature::SecretKey,
         voting_secret_key: aggsig::SecretKey,
         all2all: A,
         disseminator: D,
-        repair_network: RN,
-        repair_request_network: RR,
+        repair_requester_network: RQ,
+        repair_responder_network: RP,
         epoch_info: Arc<ValidatorEpochInfo>,
         txs_receiver: T,
     ) -> Self
     where
-        RR: RepairRequestNetwork + 'static,
-        RN: RepairNetwork + 'static,
+        RQ: RepairRequesterNetwork + 'static,
+        RP: RepairResponderNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
@@ -155,18 +178,19 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore: Box<dyn Blockstore + Send + Sync> =
-            Box::new(BlockstoreImpl::new(epoch_info.clone(), blockstore_tx));
-        let blockstore = Arc::new(RwLock::new(blockstore));
+        let blockstore: SharedBlockstore =
+            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
 
-        let pool: Box<dyn Pool + Send + Sync> =
-            Box::new(PoolImpl::new(epoch_info.clone(), pool_tx, repair_tx));
-        let pool = Arc::new(RwLock::new(pool));
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
+            epoch_info.clone(),
+            pool_tx,
+            repair_tx,
+        )));
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
             blockstore.clone(),
-            repair_request_network,
+            repair_responder_network,
         );
         let _repair_request_handler =
             tokio::spawn(async move { repair_request_handler.run().await });
@@ -174,7 +198,7 @@ where
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
             Arc::clone(&pool),
-            repair_network,
+            repair_requester_network,
             epoch_info.clone(),
         );
 
@@ -191,7 +215,7 @@ where
             all2all.clone(),
         );
         let votor_handle = tokio::spawn(
-            async move { votor.voting_loop().await.unwrap() }
+            async move { votor.voting_loop().await }
                 .in_span(Span::enter_with_local_parent("voting loop")),
         );
 
@@ -252,8 +276,8 @@ where
         prod_loop.abort();
 
         let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
-        msg_res??;
-        prod_res??;
+        join_for_shutdown(msg_res)?;
+        join_for_shutdown(prod_res)?;
         Ok(())
     }
 
@@ -263,7 +287,7 @@ where
             .validator(self.epoch_info.own_id())
     }
 
-    pub fn get_pool(&self) -> Arc<RwLock<Box<dyn Pool + Send + Sync>>> {
+    pub fn get_pool(&self) -> SharedPool {
         Arc::clone(&self.pool)
     }
 
@@ -311,29 +335,65 @@ where
     #[fastrace::trace(short_name = true)]
     async fn handle_all2all_message(&self, msg: ConsensusMessage) {
         trace!("received all2all msg: {msg:?}");
+
+        // verify signatures BEFORE taking the pool lock,
+        // mirroring the `ValidatedShred` pattern on the shred path
+        let epoch_info = self.epoch_info.epoch_info();
         match msg {
-            ConsensusMessage::Vote(v) => match self.pool.write().await.add_vote(v).await {
-                Ok(()) => {}
-                Err(AddVoteError::Slashable(offence)) => {
-                    warn!("slashable offence detected: {offence}");
+            ConsensusMessage::Vote(v) => {
+                let vote = match ValidatedVote::try_new(v, epoch_info) {
+                    Ok(vote) => vote,
+                    Err(err) => {
+                        trace!("ignoring invalid vote: {err}");
+                        return;
+                    }
+                };
+                match self.pool.write().await.add_vote(vote).await {
+                    Ok(()) => {}
+                    Err(AddVoteError::Slashable(offence)) => {
+                        warn!("slashable offence detected: {offence}");
+                    }
+                    Err(err) => trace!("ignoring invalid vote: {err}"),
                 }
-                Err(err) => trace!("ignoring invalid vote: {err}"),
-            },
-            ConsensusMessage::Cert(c) => match self.pool.write().await.add_cert(c).await {
-                Ok(()) => {}
-                Err(err) => trace!("ignoring invalid cert: {err}"),
-            },
+            }
+            ConsensusMessage::Cert(c) => {
+                let cert = match ValidatedCert::try_new(c, epoch_info) {
+                    Ok(cert) => cert,
+                    Err(err) => {
+                        trace!("ignoring invalid cert: {err}");
+                        return;
+                    }
+                };
+                match self.pool.write().await.add_cert(cert).await {
+                    Ok(()) => {}
+                    Err(err) => trace!("ignoring invalid cert: {err}"),
+                }
+            }
         }
     }
 
     #[fastrace::trace(short_name = true)]
     #[hotpath::measure]
     async fn handle_disseminator_shred(&self, shred: Shred) -> std::io::Result<()> {
+        // validate shred before forwarding or inserting
+        let slot = shred.payload().header.slot;
+        let slice_index = shred.payload().header.slice_index;
+        let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
+        // use cached commitment, if we have it, to skip signature verification
+        let cached = self
+            .blockstore
+            .read()
+            .await
+            .cached_commitment(slot, slice_index);
+        let validated = match ValidatedShred::try_new(shred, cached.as_ref(), &leader_pk) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+
         // potentially forward shred
-        self.disseminator.forward(&shred).await?;
+        self.disseminator.forward(validated.as_shred()).await?;
 
         // if we are the leader, we already have the shred
-        let slot = shred.payload().header.slot;
         if self.epoch_info.epoch_info().leader(slot).id == self.epoch_info.own_id() {
             return Ok(());
         }
@@ -343,12 +403,15 @@ where
             .blockstore
             .write()
             .await
-            .add_shred_from_disseminator(shred)
+            .add_shred_from_dissemination(validated)
             .await;
         if let Ok(Some(block_info)) = res {
-            let mut guard = self.pool.write().await;
             let block_id = (slot, block_info.hash);
-            guard.add_block(block_id, block_info.parent).await;
+            self.pool
+                .write()
+                .await
+                .add_block(block_id, block_info.parent)
+                .await;
         }
         Ok(())
     }

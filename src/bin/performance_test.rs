@@ -1,7 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,9 +14,9 @@ use alpenglow::network::simulated::SimulatedNetworkCore;
 use alpenglow::network::{SimulatedNetwork, UdpNetwork, localhost_ip_sockaddr};
 use alpenglow::shredder::Shred;
 use alpenglow::types::Slot;
-use alpenglow::{Alpenglow, Stake, Transaction, ValidatorId, ValidatorInfo, logging};
+use alpenglow::{Alpenglow, Stake, Transaction, ValidatorIndex, ValidatorInfo, logging};
+use anyhow::Result;
 use clap::Parser;
-use color_eyre::Result;
 use log::info;
 
 /// Alpenglow performance test with simulated network.
@@ -32,9 +31,6 @@ struct Args {
 #[tokio::main]
 #[hotpath::main]
 async fn main() -> Result<()> {
-    // enable fancy `color_eyre` error messages
-    color_eyre::install()?;
-
     let args = Args::parse();
     logging::enable_logforth();
 
@@ -50,64 +46,60 @@ type TestNode = Alpenglow<
 >;
 
 async fn create_test_nodes(count: u64) -> Vec<TestNode> {
-    // open sockets with arbitrary ports
-    let mut tx_receivers = (0..count)
-        .map(|_| UdpNetwork::new_with_any_port())
-        .collect::<VecDeque<_>>();
-    let mut repair_networks = (0..count)
-        .map(|_| UdpNetwork::new_with_any_port())
-        .collect::<VecDeque<_>>();
-    let mut repair_request_networks = (0..count)
-        .map(|_| UdpNetwork::new_with_any_port())
-        .collect::<VecDeque<_>>();
-
-    // first `count` networks are for all2all and the next `count` networks are for disseminator
+    // open one set of networks per validator:
+    // (all2all, disseminator, repair_requester, repair_responder, txs_receiver)
     let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
-    let mut all2all_networks = VecDeque::new();
-    let mut disseminator_networks = VecDeque::new();
+    let mut networks = Vec::with_capacity(count as usize);
     for i in 0..count {
-        all2all_networks.push_back(core.join_unlimited(ValidatorId::new(i)).await);
-        disseminator_networks.push_back(core.join_unlimited(ValidatorId::new(i + count)).await);
+        let all2all = core.join_unlimited(ValidatorIndex::new(i)).await;
+        let disseminator = core.join_unlimited(ValidatorIndex::new(i + count)).await;
+        networks.push((
+            all2all,
+            disseminator,
+            UdpNetwork::new_with_any_port(),
+            UdpNetwork::new_with_any_port(),
+            UdpNetwork::new_with_any_port(),
+        ));
     }
 
     for a in 0..count {
         for b in 0..count {
             if a < 6 && b < 6 {
                 core.set_latency(
-                    ValidatorId::new(a),
-                    ValidatorId::new(b),
+                    ValidatorIndex::new(a),
+                    ValidatorIndex::new(b),
                     Duration::from_millis(20),
                 )
                 .await;
                 core.set_latency(
-                    ValidatorId::new(a + count),
-                    ValidatorId::new(b + count),
+                    ValidatorIndex::new(a + count),
+                    ValidatorIndex::new(b + count),
                     Duration::from_millis(20),
                 )
                 .await;
             } else if (6..10).contains(&a) && (6..10).contains(&b) {
                 core.set_latency(
-                    ValidatorId::new(a),
-                    ValidatorId::new(b),
+                    ValidatorIndex::new(a),
+                    ValidatorIndex::new(b),
                     Duration::from_millis(60),
                 )
                 .await;
                 core.set_latency(
-                    ValidatorId::new(a + count),
-                    ValidatorId::new(b + count),
+                    ValidatorIndex::new(a + count),
+                    ValidatorIndex::new(b + count),
                     Duration::from_millis(60),
                 )
                 .await;
             } else {
                 core.set_latency(
-                    ValidatorId::new(a),
-                    ValidatorId::new(b),
+                    ValidatorIndex::new(a),
+                    ValidatorIndex::new(b),
                     Duration::from_millis(100),
                 )
                 .await;
                 core.set_latency(
-                    ValidatorId::new(a + count),
-                    ValidatorId::new(b + count),
+                    ValidatorIndex::new(a + count),
+                    ValidatorIndex::new(b + count),
                     Duration::from_millis(100),
                 )
                 .await;
@@ -123,19 +115,25 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     for id in 0..count {
         sks.push(SecretKey::new(&mut rng));
         voting_sks.push(aggsig::SecretKey::new(&mut rng));
-        let all2all_address = localhost_ip_sockaddr((id).try_into().unwrap());
-        let disseminator_address = localhost_ip_sockaddr((id + count).try_into().unwrap());
-        let repair_request_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
-        let repair_response_address = localhost_ip_sockaddr(repair_networks[id as usize].port());
+        let all2all_address =
+            localhost_ip_sockaddr((id).try_into().expect("node count fits in u16 port range"));
+        let disseminator_address = localhost_ip_sockaddr(
+            (id + count)
+                .try_into()
+                .expect("node count fits in u16 port range"),
+        );
+        let (_, _, repair_req, repair_res, _) = &networks[id as usize];
+        let repair_requester_address = localhost_ip_sockaddr(repair_req.port());
+        let repair_responder_address = localhost_ip_sockaddr(repair_res.port());
         validators.push(ValidatorInfo {
-            id: ValidatorId::new(id),
+            id: ValidatorIndex::new(id),
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
             all2all_address,
             disseminator_address,
-            repair_request_address,
-            repair_response_address,
+            repair_requester_address,
+            repair_responder_address,
         });
     }
 
@@ -143,24 +141,20 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     let shared_epoch = EpochInfo::new(validators.clone());
     validators
         .iter()
-        .map(|v| {
+        .zip(networks)
+        .map(|(v, networks)| {
+            let (all2all, disseminator, repair_requester, repair_responder, txs_receiver) =
+                networks;
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v.id, shared_epoch.clone()));
-            let all2all =
-                TrivialAll2All::new(validators.clone(), all2all_networks.pop_front().unwrap());
-            let disseminator = Rotor::new(
-                disseminator_networks.pop_front().unwrap(),
-                epoch_info.clone(),
-            );
-            let repair_network = repair_networks.pop_front().unwrap();
-            let repair_request_network = repair_request_networks.pop_front().unwrap();
-            let txs_receiver = tx_receivers.pop_front().unwrap();
+            let all2all = TrivialAll2All::new(validators.clone(), all2all);
+            let disseminator = Rotor::new(disseminator, epoch_info.clone());
             Alpenglow::new(
-                sks[v.id.as_index()].clone(),
-                voting_sks[v.id.as_index()].clone(),
+                sks[v.id.as_usize()].clone(),
+                voting_sks[v.id.as_usize()].clone(),
                 all2all,
                 disseminator,
-                repair_network,
-                repair_request_network,
+                repair_requester,
+                repair_responder,
                 epoch_info,
                 txs_receiver,
             )
