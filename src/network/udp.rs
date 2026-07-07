@@ -22,6 +22,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::{MTU_BYTES, NetworkMessageConfig};
 use crate::network::Network;
+use crate::serialize;
 
 /// Number of bytes used as buffer for any incoming packet.
 ///
@@ -35,8 +36,9 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 /// high-fanout broadcasts fill the send buffer mid-`sendmmsg`, forcing EAGAIN
 /// round-trips that erase the syscall amortization. 8 MB holds ~5400 MTU
 /// packets — enough headroom for fanout to thousands of peers without
-/// backpressuring on the sender. The kernel may cap below this (Linux clamps
-/// to `net.core.{rmem,wmem}_max`); we accept whatever we get.
+/// backpressuring on the sender. The kernel silently clamps the request to
+/// `net.core.{rmem,wmem}_max` (Linux) instead of erroring, so `new` reads the
+/// granted size back and warns if it comes up materially short.
 const SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 /// Implementation of network abstraction over a simple UDP socket.
@@ -58,11 +60,14 @@ impl<S, R> UdpNetwork<S, R> {
         let socket = futures::executor::block_on(UdpSocket::bind(addr))
             .expect("binding UDP socket should succeed; is the port already in use?");
         let sock_ref = SockRef::from(&socket);
-        // The kernel silently caps requests above the system maximum
-        // (`net.core.{rmem,wmem}_max` on Linux); failure here would mean
-        // setsockopt itself errored, which only happens for invalid fds.
-        sock_ref.set_send_buffer_size(SOCKET_BUFFER_BYTES).unwrap();
-        sock_ref.set_recv_buffer_size(SOCKET_BUFFER_BYTES).unwrap();
+        sock_ref
+            .set_send_buffer_size(SOCKET_BUFFER_BYTES)
+            .expect("setting send buffer size should succeed on a freshly bound socket");
+        sock_ref
+            .set_recv_buffer_size(SOCKET_BUFFER_BYTES)
+            .expect("setting recv buffer size should succeed on a freshly bound socket");
+        warn_if_buffer_capped("send", "net.core.wmem_max", sock_ref.send_buffer_size());
+        warn_if_buffer_capped("recv", "net.core.rmem_max", sock_ref.recv_buffer_size());
         // `port` might be 0 above, which has the OS assign a free one
         let port = socket
             .local_addr()
@@ -95,6 +100,26 @@ impl<S, R> UdpNetwork<S, R> {
     }
 }
 
+/// Warns if the kernel granted a socket buffer materially smaller than the
+/// requested [`SOCKET_BUFFER_BYTES`], naming the `sysctl` to raise.
+///
+/// `setsockopt` silently clamps oversized requests instead of failing, so a
+/// host with a low `net.core.{r,w}mem_max` quietly loses the large-buffer
+/// headroom that keeps high-fanout `sendmmsg` off the EAGAIN path. Reading the
+/// value back surfaces that misconfiguration rather than hiding it. Linux
+/// reports back roughly double the effective size, so only a real shortfall —
+/// which still lands far below the request when capped — trips the warning.
+fn warn_if_buffer_capped(kind: &str, sysctl: &str, granted: std::io::Result<usize>) {
+    match granted {
+        Ok(size) if size < SOCKET_BUFFER_BYTES => warn!(
+            "UDP {kind} buffer capped at {size} B, below the requested \
+             {SOCKET_BUFFER_BYTES} B; raise {sysctl} to avoid sendmmsg backpressure"
+        ),
+        Ok(_) => {}
+        Err(err) => warn!("could not read back UDP {kind} buffer size: {err}"),
+    }
+}
+
 #[async_trait]
 impl<S, R> Network for UdpNetwork<S, R>
 where
@@ -109,7 +134,7 @@ where
         msg: &S,
         addrs: impl Iterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = wincode::serialize(msg).unwrap();
+        let bytes = serialize(msg);
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         let addrs: Vec<SocketAddr> = addrs.collect();
 
@@ -147,7 +172,7 @@ where
     }
 
     async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = &crate::serialize(msg);
+        let bytes = &serialize(msg);
         self.send_serialized(bytes, addr).await
     }
 
@@ -231,7 +256,10 @@ mod sendmmsg {
                         msg_hdr.msg_namelen = sa.len();
                         msg_hdr.msg_iov = iov_ptr;
                         msg_hdr.msg_iovlen = 1;
-                        libc::mmsghdr { msg_hdr, msg_len: 0 }
+                        libc::mmsghdr {
+                            msg_hdr,
+                            msg_len: 0,
+                        }
                     })
                     .collect();
 
@@ -241,14 +269,8 @@ mod sendmmsg {
                 // `sockaddrs` (alive for the outer function) and `msg_iov` points
                 // at `shared_iov` (alive on this stack frame). The kernel only
                 // reads from these pointers during the syscall.
-                let r = unsafe {
-                    libc::sendmmsg(
-                        fd,
-                        msgs.as_mut_ptr(),
-                        msgs.len() as libc::c_uint,
-                        0,
-                    )
-                };
+                let r =
+                    unsafe { libc::sendmmsg(fd, msgs.as_mut_ptr(), msgs.len() as libc::c_uint, 0) };
                 if r < 0 {
                     Err(io::Error::last_os_error())
                 } else {

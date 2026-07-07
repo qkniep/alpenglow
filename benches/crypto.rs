@@ -1,7 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#![expect(clippy::unwrap_used, reason = "benchmarks panic on setup failure")]
+#![expect(clippy::unwrap_used, reason = "panicking is acceptable in benchmark code")]
 
 use alpenglow::crypto::merkle::{SliceMerkleTree, SliceProof};
 use alpenglow::crypto::{IndividualSignature, Signature, aggsig, hash, signature};

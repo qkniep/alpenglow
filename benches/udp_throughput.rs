@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![expect(clippy::unwrap_used, reason = "panicking is acceptable in benchmark code")]
+
 //! Microbenchmarks for the `UdpNetwork` socket path.
 //!
 //! These exist as the Phase 0 baseline for the `sendmmsg`/`recvmmsg` work: they
