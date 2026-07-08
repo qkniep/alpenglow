@@ -482,9 +482,7 @@ where
                 break;
             }
         }
-        self.network
-            .send_to_many(&request, to_all.into_iter())
-            .await?;
+        self.network.send_to_many(&request, to_all).await?;
         Ok(())
     }
 

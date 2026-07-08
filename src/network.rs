@@ -83,7 +83,7 @@ pub trait Network: Send + Sync {
     async fn send_to_many(
         &self,
         message: &Self::Send,
-        addrs: impl Iterator<Item = SocketAddr> + Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()>;
 
     /// Sends the `message` to `addr`.

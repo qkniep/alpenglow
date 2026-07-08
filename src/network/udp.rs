@@ -60,12 +60,12 @@ impl<S, R> UdpNetwork<S, R> {
         let socket = futures::executor::block_on(UdpSocket::bind(addr))
             .expect("binding UDP socket should succeed; is the port already in use?");
         let sock_ref = SockRef::from(&socket);
-        sock_ref
-            .set_send_buffer_size(SOCKET_BUFFER_BYTES)
-            .expect("setting send buffer size should succeed on a freshly bound socket");
-        sock_ref
-            .set_recv_buffer_size(SOCKET_BUFFER_BYTES)
-            .expect("setting recv buffer size should succeed on a freshly bound socket");
+        if let Err(e) = sock_ref.set_send_buffer_size(SOCKET_BUFFER_BYTES) {
+            warn!("could not enlarge UDP send buffer: {e}; using the OS default");
+        }
+        if let Err(e) = sock_ref.set_recv_buffer_size(SOCKET_BUFFER_BYTES) {
+            warn!("could not enlarge UDP recv buffer: {e}; using the OS default");
+        }
         warn_if_buffer_capped("send", "net.core.wmem_max", sock_ref.send_buffer_size());
         warn_if_buffer_capped("recv", "net.core.rmem_max", sock_ref.recv_buffer_size());
         // `port` might be 0 above, which has the OS assign a free one
@@ -100,23 +100,40 @@ impl<S, R> UdpNetwork<S, R> {
     }
 }
 
-/// Warns if the kernel granted a socket buffer materially smaller than
+/// Normalizes a raw socket-buffer `getsockopt` readback to its effective size.
+///
+/// Linux reports back twice the granted size — the extra half is kernel
+/// `sk_buff` bookkeeping — so halve it there.
+/// Other platforms report the effective size directly.
+fn effective_buffer_size(raw: usize) -> usize {
+    if cfg!(target_os = "linux") {
+        raw / 2
+    } else {
+        raw
+    }
+}
+
+/// Warns if the kernel granted a socket buffer smaller than
 /// [`SOCKET_BUFFER_BYTES`], naming the `sysctl` to raise.
 ///
 /// `setsockopt` silently clamps an oversized request instead of failing,
 /// so a low `net.core.{r,w}mem_max` quietly costs the headroom
 /// that keeps high-fanout `sendmmsg` off the EAGAIN path.
 /// Reading the granted size back surfaces that misconfiguration.
-/// Linux reports back roughly double the effective size,
-/// so only a real shortfall — still far below the request when capped —
-/// trips the warning.
+/// The readback is normalized first (see [`effective_buffer_size`]):
+/// Linux doubles it, so a cap at half the request would otherwise report
+/// back the full request and slip past the check.
 fn warn_if_buffer_capped(kind: &str, sysctl: &str, granted: std::io::Result<usize>) {
     match granted {
-        Ok(size) if size < SOCKET_BUFFER_BYTES => warn!(
-            "UDP {kind} buffer capped at {size} B, below the requested \
-             {SOCKET_BUFFER_BYTES} B; raise {sysctl} to avoid sendmmsg backpressure"
-        ),
-        Ok(_) => {}
+        Ok(raw) => {
+            let effective = effective_buffer_size(raw);
+            if effective < SOCKET_BUFFER_BYTES {
+                warn!(
+                    "UDP {kind} buffer capped at {effective} B, below the requested \
+                     {SOCKET_BUFFER_BYTES} B; raise {sysctl} to avoid sendmmsg backpressure"
+                );
+            }
+        }
         Err(err) => warn!("could not read back UDP {kind} buffer size: {err}"),
     }
 }
@@ -133,11 +150,15 @@ where
     async fn send_to_many(
         &self,
         msg: &S,
-        addrs: impl Iterator<Item = SocketAddr> + Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
+        let addrs: Vec<SocketAddr> = addrs.into_iter().collect();
+        if addrs.is_empty() {
+            return Ok(());
+        }
+
         let bytes = serialize(msg);
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
-        let addrs: Vec<SocketAddr> = addrs.collect();
 
         // Single-destination short-circuit: `sendmmsg(vlen=1)` carries
         // mmsghdr setup overhead `sendto` doesn't pay, and the fallback
@@ -294,6 +315,10 @@ mod sendmmsg {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio::time::timeout;
+
     use super::*;
     use crate::network::localhost_ip_sockaddr;
     use crate::test_utils::{Ping, Pong};
@@ -304,7 +329,6 @@ mod tests {
         let socket2: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
         let addr1 = localhost_ip_sockaddr(socket1.port());
 
-        // regular send()
         socket2.send(&Ping::default(), addr1).await.unwrap();
         let msg = socket1.receive().await.unwrap();
         assert_eq!(msg.0, Ping::default().0);
@@ -325,8 +349,15 @@ mod tests {
         assert_eq!(msg.0, Ping::default().0);
     }
 
-    /// `send_to_many` with a single destination must short-circuit to the
-    /// single-packet `sendto` path and still deliver.
+    #[tokio::test]
+    async fn send_to_many_empty_skips_serialization() {
+        // construct a message that's larger than MTU (serialization would fail)
+        let sender: UdpNetwork<Vec<u8>, Vec<u8>> = UdpNetwork::new_with_any_port();
+        let oversized = vec![0u8; MTU_BYTES + 100];
+        // this should skip serialization and not panic
+        sender.send_to_many(&oversized, []).await.unwrap();
+    }
+
     #[tokio::test]
     async fn send_to_many_single_addr() {
         let sender: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
@@ -339,16 +370,14 @@ mod tests {
             .await
             .unwrap();
 
-        let got = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.receive())
+        // message should arrive
+        let got = timeout(Duration::from_secs(2), receiver.receive())
             .await
             .expect("receiver should get a packet")
             .unwrap();
         assert_eq!(got.0, payload.0);
     }
 
-    /// `send_to_many` must deliver the payload to every destination.
-    ///
-    /// Exercises the Linux `sendmmsg` fast path and the portable fallback.
     #[tokio::test]
     async fn send_to_many_fanout() {
         const N: usize = 32;
@@ -368,8 +397,9 @@ mod tests {
             .await
             .unwrap();
 
+        // all messages should arrive
         for r in &receivers {
-            let got = tokio::time::timeout(std::time::Duration::from_secs(2), r.receive())
+            let got = timeout(Duration::from_secs(2), r.receive())
                 .await
                 .expect("receiver should get a packet")
                 .unwrap();

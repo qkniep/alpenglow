@@ -82,10 +82,10 @@ where
     async fn send_to_many(
         &self,
         msg: &S,
-        addrs: impl Iterator<Item = SocketAddr> + Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
         let bytes = crate::serialize(msg);
-        let tasks = addrs.map(|addr| {
+        let tasks = addrs.into_iter().map(|addr| {
             let bytes = bytes.clone();
             async move { self.send_serialized(bytes, addr).await }
         });
