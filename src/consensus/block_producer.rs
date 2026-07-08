@@ -184,7 +184,7 @@ where
         let optimistic = parent_ready_rx.is_some();
         let (parent_slot, parent_hash) = &parent_block_id;
         if optimistic {
-            assert_eq!(*parent_slot, slot.prev());
+            assert_eq!(parent_slot, &slot.prev());
             assert!(slot.is_start_of_window());
         }
         info!(
