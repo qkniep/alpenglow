@@ -1011,7 +1011,7 @@ mod tests {
         // Nothing should be shredded, disseminated, or added: the abort fires on the optimistic
         // race for the first slice, before any slice is produced.
         let mut blockstore = MockBlockstore::new();
-        blockstore.expect_add_shred_from_dissemination().never();
+        blockstore.expect_add_own_slice().never();
         let mut pool = MockPool::new();
         pool.expect_add_block().never();
         let mut disseminator = MockDisseminator::new();
