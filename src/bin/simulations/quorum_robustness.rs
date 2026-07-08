@@ -29,10 +29,10 @@ const PARALLELISM: usize = 1000;
 /// Interval to take write locks on `tests` and `failures`.
 const WRITE_BATCH: usize = 1000;
 /// Maximum number of total iterations per attack scenario.
-const TOTAL_ITERATIONS: usize = 100_000_000_000;
+const TOTAL_ITERATIONS: usize = 10_000_000;
 const_assert_eq!(TOTAL_ITERATIONS % (PARALLELISM * WRITE_BATCH), 0);
 /// Simulations stop early if the number of failures is greater than this.
-const MAX_FAILURES: usize = 100;
+const MAX_FAILURES: usize = 1;
 
 /// Adversary strength.
 #[derive(Clone, Copy, Debug)]

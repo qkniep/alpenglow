@@ -17,8 +17,10 @@ pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, SliceCommitment, ValidatedShred};
-use crate::types::SliceIndex;
+use crate::shredder::{
+    RegularShredder, ShredIndex, ShredderPool, SliceCommitment, TOTAL_SHREDS, ValidatedShred,
+};
+use crate::types::{SliceIndex, SlicePayload};
 use crate::{Block, BlockId, Slot};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
@@ -74,8 +76,16 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
+    async fn add_own_slice(
+        &mut self,
+        payload: SlicePayload,
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
+    ) -> Option<BlockInfo>;
     async fn flag_leader_misbehavior(&mut self, slot: Slot);
-    #[expect(clippy::needless_lifetimes)]
+    #[expect(
+        clippy::needless_lifetimes,
+        reason = "explicit lifetime is required by mockall::automock"
+    )]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
@@ -233,8 +243,7 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_dissemination(
@@ -270,8 +279,7 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to last slice, deletes later slices and their shreds.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
@@ -297,6 +305,35 @@ impl Blockstore for BlockstoreImpl {
         match result? {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
+        }
+    }
+
+    /// Ingests a locally produced slice (leader fast path); see trait docs.
+    ///
+    /// No shredder is checked out and no decoding happens.
+    /// The shreds are stored as-is and the slice is rebuilt from the `payload`.
+    /// Emits the same [`BlockstoreEvent`]s as the dissemination path.
+    ///
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
+    #[hotpath::measure]
+    #[fastrace::trace(short_name = true)]
+    async fn add_own_slice(
+        &mut self,
+        payload: SlicePayload,
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
+    ) -> Option<BlockInfo> {
+        let slot = shreds[0].payload().header.slot;
+        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(payload, *shreds);
+        if first_shred {
+            self.send_blockstore_event(BlockstoreEvent::FirstShred(slot))
+                .await;
+        }
+        match completed {
+            Some(block_info) => {
+                self.send_blockstore_event(BlockstoreEvent::Block { slot, block_info })
+                    .await
+            }
+            None => None,
         }
     }
 
@@ -408,9 +445,9 @@ mod tests {
     use super::*;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
-    use crate::test_utils::create_random_shredded_block;
-    use crate::types::SliceIndex;
+    use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::test_utils::{create_random_block, create_random_shredded_block};
+    use crate::types::{Slice, SliceIndex, SlicePayload};
 
     struct TestContext {
         sk: SecretKey,
@@ -438,6 +475,15 @@ mod tests {
             Err(AddShredError::Duplicate) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    fn shred_as_leader(
+        slice: Slice,
+        sk: &SecretKey,
+    ) -> (SlicePayload, [ValidatedShred; TOTAL_SHREDS]) {
+        let payload = slice.clone().deconstruct().1;
+        let shreds = RegularShredder::default().shred(slice, sk).unwrap();
+        (payload, shreds)
     }
 
     #[tokio::test]
@@ -781,6 +827,82 @@ mod tests {
             })
             .sum::<usize>();
         assert_eq!(shred_count, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_single_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(1).await
+    }
+
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_multi_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(3).await
+    }
+
+    async fn check_own_slice_matches_dissemination(num_slices: usize) -> Result<()> {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = Slot::genesis().next();
+        let slices = create_random_block(slot, num_slices);
+
+        // reference: reconstruct the block via the dissemination path
+        let (dissem_tx, _dissem_rx) = mpsc::channel(1000);
+        let mut dissem = BlockstoreImpl::new(dissem_tx);
+        for slice in &slices {
+            let shreds = RegularShredder::default()
+                .shred(slice.clone(), &sk)
+                .unwrap();
+            for shred in shreds {
+                add_shred_ignore_duplicate(&mut dissem, shred).await?;
+            }
+        }
+        let expected_hash = dissem.disseminated_block_hash(slot).unwrap().clone();
+
+        // fast path: feed the same slices through `add_own_slice`
+        let (own_tx, mut own_rx) = mpsc::channel(1000);
+        let mut own = BlockstoreImpl::new(own_tx);
+        let mut completed = None;
+        for slice in slices {
+            let is_last = slice.is_last;
+            let (payload, shreds) = shred_as_leader(slice, &sk);
+            let block_info = own.add_own_slice(payload, Box::new(shreds)).await;
+            // only the last slice completes the block
+            assert_eq!(block_info.is_some(), is_last);
+            if let Some(info) = block_info {
+                completed = Some(info);
+            }
+        }
+
+        // fast path agrees with dissemination on the block hash,
+        // and records the block under that hash
+        let completed = completed.expect("last slice should complete the block");
+        assert_eq!(completed.hash, expected_hash);
+        assert_eq!(own.disseminated_block_hash(slot), Some(&expected_hash));
+        assert!(own.get_block(&(slot, expected_hash.clone())).is_some());
+
+        // emits exactly one FirstShred and one Block event
+        let mut first_shreds = 0;
+        let mut blocks = 0;
+        while let Ok(event) = own_rx.try_recv() {
+            match event {
+                BlockstoreEvent::FirstShred(s) => {
+                    assert_eq!(s, slot);
+                    first_shreds += 1;
+                }
+                BlockstoreEvent::Block {
+                    slot: s,
+                    block_info,
+                } => {
+                    assert_eq!(s, slot);
+                    assert_eq!(block_info.hash, expected_hash);
+                    blocks += 1;
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert_eq!(first_shreds, 1, "expected exactly one FirstShred event");
+        assert_eq!(blocks, 1, "expected exactly one Block event");
 
         Ok(())
     }

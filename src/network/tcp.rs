@@ -103,10 +103,12 @@ where
     async fn send_to_many(
         &self,
         msg: &S,
-        addrs: impl Iterator<Item = SocketAddr> + Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
         let bytes = &crate::serialize(msg);
-        let tasks = addrs.map(async move |addr| self.send_serialized(bytes, addr).await);
+        let tasks = addrs
+            .into_iter()
+            .map(async move |addr| self.send_serialized(bytes, addr).await);
         for res in join_all(tasks).await {
             let () = res?;
         }

@@ -9,6 +9,7 @@
 //! Each repair response is accompanied by a Merkle proof and can thus be
 //! individually verified.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -238,7 +239,8 @@ pub struct Repair<N: Network> {
     pool: SharedPool,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
-    request_timeouts: BinaryHeap<(Instant, Hash)>,
+    /// Expiry times of outstanding requests, earliest first (min-heap via [`Reverse`]).
+    request_timeouts: BinaryHeap<Reverse<(Instant, Hash)>>,
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
@@ -278,7 +280,7 @@ where
     /// Initiates the corresponding repair process and handles ongoing repairs.
     pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
         loop {
-            let next_timeout = self.request_timeouts.peek().map(|(t, _)| t);
+            let next_timeout = self.request_timeouts.peek().map(|Reverse((t, _))| t);
             let sleep_duration = match next_timeout {
                 None => std::time::Duration::MAX,
                 Some(t) => t.duration_since(Instant::now()),
@@ -295,7 +297,7 @@ where
                 }
                 // handle next request timeout
                 () = tokio::time::sleep(sleep_duration) => {
-                    let Some((_, hash)) = self.request_timeouts.pop() else {
+                    let Some(Reverse((_, hash))) = self.request_timeouts.pop() else {
                         continue;
                     };
                     if let Some(request) = self.outstanding_requests.remove(&hash) {
@@ -312,13 +314,15 @@ where
     /// Starts repair process for the block specified by `slot` and `block_hash`.
     pub async fn repair_block(&mut self, block_id: BlockId) {
         let (slot, block_hash) = &block_id;
-        let h = block_hash.short_hex();
         if self.blockstore.read().await.get_block(&block_id).is_some() {
-            trace!("ignoring repair for block {h} in slot {slot}, already have the block");
+            trace!(
+                "ignoring repair for block {} in slot {slot}, already have the block",
+                block_hash.short_hex()
+            );
             return;
         }
 
-        debug!("repairing block {h} in slot {slot}");
+        debug!("repairing block {} in slot {slot}", block_hash.short_hex());
         let req = RepairRequestType::LastSliceRoot(block_id);
         if let Err(err) = self.send_request(req).await {
             warn!("sending initial repair request failed: {err}");
@@ -463,8 +467,8 @@ where
         let expiry = Instant::now() + REPAIR_TIMEOUT;
         self.outstanding_requests
             .insert(hash.clone(), req_type.clone());
-        self.request_timeouts.retain(|(_, h)| h != &hash);
-        self.request_timeouts.push((expiry, hash));
+        self.request_timeouts.retain(|Reverse((_, h))| h != &hash);
+        self.request_timeouts.push(Reverse((expiry, hash)));
 
         let request = RepairRequest {
             sender: self.epoch_info.own_id(),
@@ -478,9 +482,7 @@ where
                 break;
             }
         }
-        self.network
-            .send_to_many(&request, to_all.into_iter())
-            .await?;
+        self.network.send_to_many(&request, to_all).await?;
         Ok(())
     }
 
@@ -509,7 +511,7 @@ mod tests {
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
     use crate::shredder::TOTAL_SHREDS;
-    use crate::test_utils::{create_random_shredded_block, generate_validators};
+    use crate::test_utils::{create_random_shredded_block, generate_validators, random_block_id};
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 
@@ -637,7 +639,7 @@ mod tests {
 
         // expect SliceRoot requests next
         let mut slice_roots_requested = BTreeSet::new();
-        for _ in 0..num_slices {
+        while slice_roots_requested.len() < num_slices {
             let msg = ctx.v0_request_net.receive().await.unwrap();
 
             for slice in SliceIndex::all().take(num_slices) {
@@ -660,7 +662,7 @@ mod tests {
 
             // expect Shred requests for this slice next
             let mut shreds_requested = BTreeSet::new();
-            for _ in ShredIndex::all() {
+            while shreds_requested.len() < TOTAL_SHREDS {
                 let msg = ctx.v0_request_net.receive().await.unwrap();
                 for shred_index in ShredIndex::all() {
                     let req_type =
@@ -684,15 +686,43 @@ mod tests {
             }
         }
 
-        // after some time block should be repaired
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(
-            ctx.blockstore
+        // block should be repaired shortly; poll until it lands rather than
+        // relying on a fixed sleep, which is racy under CI load
+        let repaired = tokio::time::timeout(Duration::from_secs(10), async {
+            while ctx
+                .blockstore
                 .read()
                 .await
                 .get_block(&block_to_repair)
-                .is_some()
-        );
+                .is_none()
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(repaired.is_ok(), "block was not repaired within timeout");
+    }
+
+    #[tokio::test]
+    async fn oldest_timed_out_request_retried_first() {
+        let ctx = setup().await;
+
+        // ask to repair two different blocks, then never answer any requests
+        let block_a = random_block_id(Slot::genesis().next());
+        let block_b = random_block_id(Slot::genesis().next().next());
+        ctx.repair_tx.send(block_a.clone()).await.unwrap();
+        ctx.repair_tx.send(block_b.clone()).await.unwrap();
+
+        // consume the two initial requests
+        let msg = ctx.v0_request_net.receive().await.unwrap();
+        let req_type_a = RepairRequestType::LastSliceRoot(block_a);
+        assert_eq!(msg.req_type, req_type_a);
+        let msg = ctx.v0_request_net.receive().await.unwrap();
+        assert_eq!(msg.req_type, RepairRequestType::LastSliceRoot(block_b));
+
+        // both requests time out, the one sent first must be retried first
+        let msg = ctx.v0_request_net.receive().await.unwrap();
+        assert_eq!(msg.req_type, req_type_a);
     }
 
     #[tokio::test]

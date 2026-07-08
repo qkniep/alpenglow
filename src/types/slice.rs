@@ -74,15 +74,6 @@ impl Slice {
             SlicePayload { parent, data },
         )
     }
-
-    /// Extracts the [`SliceHeader`] from a [`Slice`].
-    pub(crate) fn to_header(&self) -> SliceHeader {
-        SliceHeader {
-            slot: self.slot,
-            slice_index: self.slice_index,
-            is_last: self.is_last,
-        }
-    }
 }
 
 /// A slice recovered after deshredding.
@@ -145,7 +136,7 @@ pub(crate) struct SliceHeader {
 ///
 /// This is what actually gets "shredded" into different shreds.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
-pub(crate) struct SlicePayload {
+pub struct SlicePayload {
     /// Same as [`Slice::parent`].
     pub(crate) parent: Option<BlockId>,
     /// Same as [`Slice::data`].
@@ -172,7 +163,7 @@ impl From<SlicePayload> for Vec<u8> {
 
 /// Errors that may occur while deserializing a [`SlicePayload`] from bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-pub(crate) enum SlicePayloadError {
+pub enum SlicePayloadError {
     /// The serialized payload is larger than a slice is allowed to hold.
     #[error("payload of {len} bytes exceeds the {MAX_DATA_PER_SLICE} byte slice limit")]
     TooLarge { len: usize },
