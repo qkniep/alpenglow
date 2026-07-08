@@ -352,8 +352,14 @@ impl Default for CodingOnlyShredder {
 /// reconstructed (via Reed-Solomon) once [`DATA_SHREDS`] shreds are available, so
 /// any smaller set of shreds reveals nothing about the plaintext.
 ///
-/// NOTE: This realizes the "withhold the key share" idea; it is not the
-/// polynomial-based scheme of <https://arxiv.org/abs/2502.02774>.
+/// NOTE: This realizes the "withhold the key share" idea, not the faithful
+/// polynomial scheme of "Optimal Computational Secret Sharing"
+/// (<https://arxiv.org/abs/2502.02774>). That scheme rides the ciphertext blocks
+/// as the coefficients of a degree-`(DATA_SHREDS - 1)` polynomial whose constant
+/// term is the key, dispersing the key across all shreds at
+/// `KEY_BYTES / DATA_SHREDS` bytes each. We instead confine the whole key to the
+/// single withheld shred, trading a bespoke `GF` interpolation on the hot path
+/// for the same bandwidth and essentially the same space.
 pub struct PetsShredder(ReedSolomonCoder);
 
 impl Shredder for PetsShredder {
