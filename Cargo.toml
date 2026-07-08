@@ -28,7 +28,7 @@ fastrace = "0.7"
 fastrace-opentelemetry = { version = "0.18", optional = true }
 futures = "0.3"
 hex-literal = "1"
-hotpath = "0.19"
+hotpath = "0.21"
 log = "0.4"
 logforth = { version = "0.30", features = ["append-fastrace", "bridge-log", "filter-rustlog"] }
 quick_cache = "0.7"
