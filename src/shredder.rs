@@ -294,7 +294,7 @@ impl Shredder for RegularShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let (payload_bytes, raw_shreds) = self.0.deshred(shreds)?;
+        let (payload_bytes, raw_shreds) = self.0.deshred(shreds.received())?;
         let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         finalize_deshred(raw_shreds, shreds, payload)
     }
@@ -329,7 +329,7 @@ impl Shredder for CodingOnlyShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds)?;
+        let (payload_bytes, mut raw_shreds) = self.0.deshred(shreds.received())?;
         let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
         // this shredder outputs no data shreds
         raw_shreds.data = vec![];
@@ -384,7 +384,7 @@ impl Shredder for PetsShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let mut raw_shreds = self.0.reconstruct_data(shreds)?;
+        let mut raw_shreds = self.0.reconstruct_data(shreds.received())?;
         // the PETS key is stored directly in the last shred's tail
         let payload = aont_decode(&raw_shreds, |key, _ciphertext| key)?;
         // withhold the last shred again to match the leader's Merkle tree
@@ -431,7 +431,7 @@ impl Shredder for AontShredder {
         &mut self,
         shreds: ValidatedShreds,
     ) -> Result<(ReconstructedSlice, [ValidatedShred; TOTAL_SHREDS]), DeshredError> {
-        let raw_shreds = self.0.reconstruct_data(shreds)?;
+        let raw_shreds = self.0.reconstruct_data(shreds.received())?;
         // inverting `cd = key XOR H(ciphertext)` recovers the key (XOR is its own inverse)
         let payload = aont_decode(&raw_shreds, aont_difference_value)?;
         finalize_deshred(raw_shreds, shreds, payload)
@@ -983,7 +983,7 @@ mod tests {
         )
         .unwrap();
         let mut coder = ReedSolomonCoder::new(PetsShredder::CODING_OUTPUT_SHREDS);
-        let raw = coder.reconstruct_data(validated).unwrap();
+        let raw = coder.reconstruct_data(validated.received()).unwrap();
 
         // the buffer laid out across the data shreds is [ ciphertext | key | len ]
         let shred_bytes = raw.data[0].len();

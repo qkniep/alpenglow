@@ -12,7 +12,6 @@ use thiserror::Error;
 
 use super::{DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING, TOTAL_SHREDS};
 use crate::shredder::MAX_DATA_PER_SHRED;
-use crate::shredder::validated_shreds::ValidatedShreds;
 
 /// Errors that may be returned by [`ReedSolomonCoder::shred`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -38,6 +37,21 @@ pub(super) struct RawShreds {
     pub(super) data: Vec<Vec<u8>>,
     /// A list of coding shreds.
     pub(super) coding: Vec<Vec<u8>>,
+}
+
+/// Byte-level input to [`ReedSolomonCoder::reconstruct_data`].
+///
+/// This is the erasure layer's view of a received shred set: just indices and
+/// payload bytes, with none of the wire/Merkle machinery of a
+/// [`ValidatedShreds`](super::validated_shreds::ValidatedShreds). The shredder
+/// layer builds it via `ValidatedShreds::received`.
+pub(super) struct ReceivedShreds<'a> {
+    /// Present data shreds as `(global shred index, payload bytes)`.
+    pub(super) data: Vec<(usize, &'a [u8])>,
+    /// Present coding shreds as `(coding-relative index, payload bytes)`.
+    pub(super) coding: Vec<(usize, &'a [u8])>,
+    /// Size in bytes of every present shred (the constructor enforces equality).
+    pub(super) shred_bytes: usize,
 }
 
 /// Reed-Solomon coder for shreds.
@@ -138,7 +152,7 @@ impl ReedSolomonCoder {
     /// If the restored payload is larger than [`MAX_DATA_PER_SLICE_AFTER_PADDING`] then returns [`ReedSolomonDeshredError::TooMuchData`].
     pub(super) fn deshred(
         &mut self,
-        shreds: ValidatedShreds,
+        shreds: ReceivedShreds<'_>,
     ) -> Result<(Vec<u8>, RawShreds), ReedSolomonDeshredError> {
         let raw_shreds = self.reconstruct_data(shreds)?;
 
@@ -174,25 +188,25 @@ impl ReedSolomonCoder {
     /// [`DATA_SHREDS`] elements of `shreds` are present.
     pub(super) fn reconstruct_data(
         &mut self,
-        shreds: ValidatedShreds,
+        shreds: ReceivedShreds<'_>,
     ) -> Result<RawShreds, ReedSolomonDeshredError> {
-        if shreds.shred_count() < DATA_SHREDS {
+        if shreds.data.len() + shreds.coding.len() < DATA_SHREDS {
             return Err(ReedSolomonDeshredError::NotEnoughShreds);
         }
 
         // configure decoder for shred size
-        let shred_bytes = shreds.any_shred().payload().data.len();
+        let shred_bytes = shreds.shred_bytes;
         self.decoder
             .reset(DATA_SHREDS, self.num_coding, shred_bytes)
             .expect("size of validated shred should be supported");
 
-        let data_refs = shreds.data_shred_payloads();
+        let data_refs = shreds.data;
         for &(i, d) in &data_refs {
             self.decoder
                 .add_original_shard(i, d)
                 .expect("validated shred should have correct index and size");
         }
-        for (i, c) in shreds.coding_shred_payloads() {
+        for (i, c) in shreds.coding {
             self.decoder
                 .add_recovery_shard(i, c)
                 .expect("validated shred should have correct index and size");
@@ -250,6 +264,7 @@ mod tests {
     use super::*;
     use crate::Slot;
     use crate::crypto::signature::SecretKey;
+    use crate::shredder::validated_shreds::ValidatedShreds;
     use crate::shredder::{ValidatedShred, data_and_coding_to_output_shreds};
     use crate::types::slice::create_slice_with_invalid_txs;
     use crate::types::{SliceHeader, SliceIndex};
@@ -309,7 +324,7 @@ mod tests {
         }
         let validated_shreds =
             ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).unwrap();
-        let res = rs.deshred(validated_shreds);
+        let res = rs.deshred(validated_shreds.received());
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
     }
@@ -320,7 +335,7 @@ mod tests {
         let shreds = take_and_map_enough_shreds(header, shreds);
         let validated_shreds =
             ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).unwrap();
-        let (restored, _raw_shreds) = rs.deshred(validated_shreds).unwrap();
+        let (restored, _raw_shreds) = rs.deshred(validated_shreds.received()).unwrap();
         assert_eq!(restored, payload);
     }
 
