@@ -77,8 +77,7 @@ macro_rules! declare_msg {
 declare_msg!(Msg32, 32);
 declare_msg!(Msg256, 256);
 declare_msg!(Msg1024, 1024);
-// 1400 B leaves headroom under MTU (1500) for wincode framing and below the
-// kernel UDP+IP header budget — approximates a real shred-sized packet.
+// 1400 B leaves headroom under MTU (1500) for wincode framing and headers
 declare_msg!(Msg1400, 1400);
 
 fn main() {
@@ -98,8 +97,8 @@ type FanoutSetup<M> = (UdpNetwork<M, M>, Vec<SocketAddr>, Vec<UdpNetwork<M, M>>)
 
 /// Builds a sender and `k` bound-but-undrained receivers on loopback.
 ///
-/// Returns the sender, the receiver addresses, and the receivers themselves —
-/// the caller must keep the latter alive so their ports stay bound for the run.
+/// Returns the sender, the receiver addresses, and the receivers themselves.
+/// The caller must keep the latter alive so their ports stay bound for the run.
 /// Must be called within a tokio runtime context, as `UdpNetwork` binds eagerly.
 fn setup_fanout<M: BenchMsg>(k: usize) -> FanoutSetup<M> {
     let sender: UdpNetwork<M, M> = UdpNetwork::new_with_any_port();
