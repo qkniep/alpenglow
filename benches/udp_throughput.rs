@@ -93,6 +93,26 @@ fn multi_thread_runtime() -> Runtime {
         .unwrap()
 }
 
+/// A sender, its receivers' addresses, and the receivers themselves.
+type FanoutSetup<M> = (UdpNetwork<M, M>, Vec<SocketAddr>, Vec<UdpNetwork<M, M>>);
+
+/// Builds a sender and `k` bound-but-undrained receivers on loopback.
+///
+/// Returns the sender, the receiver addresses, and the receivers themselves —
+/// the caller must keep the latter alive so their ports stay bound for the run.
+/// Must be called within a tokio runtime context, as `UdpNetwork` binds eagerly.
+fn setup_fanout<M: BenchMsg>(k: usize) -> FanoutSetup<M> {
+    let sender: UdpNetwork<M, M> = UdpNetwork::new_with_any_port();
+    let mut receivers: Vec<UdpNetwork<M, M>> = Vec::with_capacity(k);
+    let mut addrs: Vec<SocketAddr> = Vec::with_capacity(k);
+    for _ in 0..k {
+        let r: UdpNetwork<M, M> = UdpNetwork::new_with_any_port();
+        addrs.push(localhost_ip_sockaddr(r.port()));
+        receivers.push(r);
+    }
+    (sender, addrs, receivers)
+}
+
 /// One sender, one receiver, single-packet `send` per iteration.
 ///
 /// Baseline cost of one `sendto` plus tokio scheduling, across payload sizes.
@@ -125,17 +145,7 @@ fn send_one<M: BenchMsg>(bencher: divan::Bencher) {
 #[divan::bench(consts = [1, 4, 16, 64])]
 fn send_to_many_fanout<const K: usize>(bencher: divan::Bencher) {
     let rt = multi_thread_runtime();
-    let (sender, addrs, _receivers) = rt.block_on(async {
-        let sender: UdpNetwork<Msg1400, Msg1400> = UdpNetwork::new_with_any_port();
-        let mut receivers: Vec<UdpNetwork<Msg1400, Msg1400>> = Vec::with_capacity(K);
-        let mut addrs: Vec<SocketAddr> = Vec::with_capacity(K);
-        for _ in 0..K {
-            let r: UdpNetwork<Msg1400, Msg1400> = UdpNetwork::new_with_any_port();
-            addrs.push(localhost_ip_sockaddr(r.port()));
-            receivers.push(r);
-        }
-        (sender, addrs, receivers)
-    });
+    let (sender, addrs, _receivers) = rt.block_on(async { setup_fanout::<Msg1400>(K) });
     let msg = Msg1400::default();
 
     bencher
@@ -159,17 +169,7 @@ fn send_to_many_fanout<const K: usize>(bencher: divan::Bencher) {
 fn send_to_many_sized<M: BenchMsg>(bencher: divan::Bencher) {
     const K: usize = 16;
     let rt = multi_thread_runtime();
-    let (sender, addrs, _receivers) = rt.block_on(async {
-        let sender: UdpNetwork<M, M> = UdpNetwork::new_with_any_port();
-        let mut receivers: Vec<UdpNetwork<M, M>> = Vec::with_capacity(K);
-        let mut addrs: Vec<SocketAddr> = Vec::with_capacity(K);
-        for _ in 0..K {
-            let r: UdpNetwork<M, M> = UdpNetwork::new_with_any_port();
-            addrs.push(localhost_ip_sockaddr(r.port()));
-            receivers.push(r);
-        }
-        (sender, addrs, receivers)
-    });
+    let (sender, addrs, _receivers) = rt.block_on(async { setup_fanout::<M>(K) });
     let msg = M::default();
 
     bencher

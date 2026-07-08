@@ -9,6 +9,7 @@
 //! On Linux, `send_to_many` batches a fanout into one `sendmmsg(2)` syscall.
 //! Other platforms fall back to one `sendto` per destination.
 
+use std::io;
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
@@ -31,14 +32,12 @@ const RECEIVE_BUFFER_SIZE: usize = MTU_BYTES;
 
 /// Kernel-side send/receive buffer size requested per socket.
 ///
-/// The Linux default of ~200 KB (~133 MTU packets) is small enough that
-/// high-fanout broadcasts fill the send buffer mid-`sendmmsg`,
-/// forcing EAGAIN round-trips that erase the syscall amortization.
-/// 8 MB holds ~5400 MTU packets — enough headroom to fan out
-/// to thousands of peers without backpressuring the sender.
-/// The kernel silently clamps an oversized request to `net.core.{rmem,wmem}_max`
-/// instead of erroring, so `new` reads the granted size back
-/// and warns if it falls materially short.
+/// The Linux default of ~200 KB is too small to hold even one full broadcast,
+/// so a high-fanout `send_to_many` fills the send buffer mid-`sendmmsg`,
+/// forcing `EAGAIN` round-trips that erase the syscall amortization.
+/// An all2all fanout tops out at 2048 packets (the protocol's max validator count),
+/// ~3 MB at MTU; per-`skb` kernel bookkeeping roughly doubles the accounted footprint,
+/// so 8 MB queues a whole broadcast with headroom.
 const SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 /// Implementation of network abstraction over a simple UDP socket.
@@ -60,6 +59,14 @@ impl<S, R> UdpNetwork<S, R> {
         let socket = futures::executor::block_on(UdpSocket::bind(addr))
             .expect("binding UDP socket should succeed; is the port already in use?");
         let sock_ref = SockRef::from(&socket);
+
+        // `port` might be 0 above, which has the OS assign a free one
+        let port = socket
+            .local_addr()
+            .expect("bound socket should have a local address")
+            .port();
+
+        // try to enlarge the kernel-side send/receive buffer
         if let Err(e) = sock_ref.set_send_buffer_size(SOCKET_BUFFER_BYTES) {
             warn!("could not enlarge UDP send buffer: {e}; using the OS default");
         }
@@ -68,11 +75,7 @@ impl<S, R> UdpNetwork<S, R> {
         }
         warn_if_buffer_capped("send", "net.core.wmem_max", sock_ref.send_buffer_size());
         warn_if_buffer_capped("recv", "net.core.rmem_max", sock_ref.recv_buffer_size());
-        // `port` might be 0 above, which has the OS assign a free one
-        let port = socket
-            .local_addr()
-            .expect("bound socket should have a local address")
-            .port();
+
         Self {
             socket,
             port,
@@ -81,6 +84,7 @@ impl<S, R> UdpNetwork<S, R> {
     }
 
     /// Creates a new `UdpNetwork` instance bound to an arbitrary port.
+    ///
     /// The port is assigned by the OS.
     #[must_use]
     pub fn new_with_any_port() -> Self {
@@ -92,49 +96,11 @@ impl<S, R> UdpNetwork<S, R> {
         self.port
     }
 
-    async fn send_serialized(&self, bytes: &[u8], addr: SocketAddr) -> std::io::Result<()> {
+    async fn send_serialized(&self, bytes: &[u8], addr: SocketAddr) -> io::Result<()> {
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
         let bytes_sent = self.socket.send_to(bytes, addr).await?;
         assert_eq!(bytes.len(), bytes_sent);
         Ok(())
-    }
-}
-
-/// Normalizes a raw socket-buffer `getsockopt` readback to its effective size.
-///
-/// Linux reports back twice the granted size — the extra half is kernel
-/// `sk_buff` bookkeeping — so halve it there.
-/// Other platforms report the effective size directly.
-fn effective_buffer_size(raw: usize) -> usize {
-    if cfg!(target_os = "linux") {
-        raw / 2
-    } else {
-        raw
-    }
-}
-
-/// Warns if the kernel granted a socket buffer smaller than
-/// [`SOCKET_BUFFER_BYTES`], naming the `sysctl` to raise.
-///
-/// `setsockopt` silently clamps an oversized request instead of failing,
-/// so a low `net.core.{r,w}mem_max` quietly costs the headroom
-/// that keeps high-fanout `sendmmsg` off the EAGAIN path.
-/// Reading the granted size back surfaces that misconfiguration.
-/// The readback is normalized first (see [`effective_buffer_size`]):
-/// Linux doubles it, so a cap at half the request would otherwise report
-/// back the full request and slip past the check.
-fn warn_if_buffer_capped(kind: &str, sysctl: &str, granted: std::io::Result<usize>) {
-    match granted {
-        Ok(raw) => {
-            let effective = effective_buffer_size(raw);
-            if effective < SOCKET_BUFFER_BYTES {
-                warn!(
-                    "UDP {kind} buffer capped at {effective} B, below the requested \
-                     {SOCKET_BUFFER_BYTES} B; raise {sysctl} to avoid sendmmsg backpressure"
-                );
-            }
-        }
-        Err(err) => warn!("could not read back UDP {kind} buffer size: {err}"),
     }
 }
 
@@ -151,7 +117,7 @@ where
         &self,
         msg: &S,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
         let addrs: Vec<SocketAddr> = addrs.into_iter().collect();
         if addrs.is_empty() {
             return Ok(());
@@ -160,9 +126,8 @@ where
         let bytes = serialize(msg);
         assert!(bytes.len() <= MTU_BYTES, "each message should fit in MTU");
 
-        // Single-destination short-circuit: `sendmmsg(vlen=1)` carries
-        // mmsghdr setup overhead `sendto` doesn't pay, and the fallback
-        // loop has nothing to amortize across.
+        // single-destination shortcut
+        // `sendmmsg(vlen=1)` would have `mmsghdr` setup overhead `sendto` doesn't pay
         if let [addr] = addrs.as_slice() {
             return self.send_serialized(&bytes, *addr).await;
         }
@@ -172,17 +137,16 @@ where
             sendmmsg::send_to_many_linux(&self.socket, &bytes, &addrs).await
         }
 
-        // Sequential `try_send_to` loop, one shared `writable().await` per
-        // EAGAIN. Saves N future allocations and N waker round-trips vs the
-        // previous `join_all`-of-sendtos; UDP sends on one socket are serial
-        // in the kernel anyway, so concurrent polling bought nothing.
+        // Sequential `try_send_to`, one shared `writable().await` per EAGAIN.
+        // The kernel serializes UDP sends on one socket, so the old
+        // `join_all`-of-sendtos only added N futures and N waker round-trips.
         #[cfg(not(target_os = "linux"))]
         {
             for addr in addrs {
                 loop {
                     match self.socket.try_send_to(&bytes, addr) {
                         Ok(_) => break,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             self.socket.writable().await?;
                         }
                         Err(e) => return Err(e),
@@ -193,19 +157,19 @@ where
         }
     }
 
-    async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> std::io::Result<()> {
+    async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> io::Result<()> {
         let bytes = &serialize(msg);
         self.send_serialized(bytes, addr).await
     }
 
-    async fn receive(&self) -> std::io::Result<R> {
+    async fn receive(&self) -> io::Result<R> {
         let mut buf = [0; RECEIVE_BUFFER_SIZE];
         loop {
             let bytes_recved = self.socket.recv(&mut buf).await?;
             let msg = match crate::network::deserialize(&buf[..bytes_recved]) {
                 Ok(r) => r,
                 Err(err) => {
-                    warn!("deserializing failed with {err:?}");
+                    warn!("deserializing failed with {err}");
                     continue;
                 }
             };
@@ -214,13 +178,43 @@ where
     }
 }
 
+/// Normalizes a raw socket-buffer `getsockopt` readback to its effective size.
+///
+/// Linux reports back twice the granted size,
+/// where the extra half is kernel `sk_buff` bookkeeping.
+/// Other platforms report the effective size directly.
+fn effective_buffer_size(raw: usize) -> usize {
+    if cfg!(target_os = "linux") {
+        raw / 2
+    } else {
+        raw
+    }
+}
+
+/// Warns if the kernel granted a socket buffer smaller than [`SOCKET_BUFFER_BYTES`].
+///
+/// The size is normalized via [`effective_buffer_size`] first.
+fn warn_if_buffer_capped(kind: &str, sysctl: &str, granted: io::Result<usize>) {
+    match granted {
+        Ok(raw) => {
+            let effective = effective_buffer_size(raw);
+            if effective < SOCKET_BUFFER_BYTES {
+                warn!(
+                    "UDP {kind} buffer capped at {effective} B (want {SOCKET_BUFFER_BYTES} B); raise {sysctl} to avoid sendmmsg backpressure"
+                );
+            }
+        }
+        Err(err) => warn!("could not read back UDP {kind} buffer size: {err}"),
+    }
+}
+
 /// Linux-only `sendmmsg(2)` fast path for fanout sends.
 ///
 /// Issues one `sendmmsg` syscall per chunk of up to `UIO_MAXIOV` destinations,
-/// every entry's `iovec` pointing at the same serialized payload —
-/// so the kernel reads one userspace buffer and emits N independent UDP packets.
+/// every entry's `iovec` pointing at the same serialized payload.
+/// So the kernel reads one userspace buffer and emits N independent UDP packets.
 /// This replaces N `sendto` syscalls (and N tokio wakers)
-/// with one syscall per 1024-packet chunk.
+/// with just one `sendmmsg` syscall per 1024-packet chunk.
 #[cfg(target_os = "linux")]
 mod sendmmsg {
     use std::io;
@@ -232,10 +226,15 @@ mod sendmmsg {
     use tokio::net::UdpSocket;
 
     /// Maximum messages per `sendmmsg` syscall.
-    /// Linux caps `vlen` at `UIO_MAXIOV` (1024);
+    ///
+    /// This matches how Linux caps `vlen` at `UIO_MAXIOV` (1024);
     /// larger fanouts are chunked across multiple syscalls.
-    const MAX_BATCH: usize = 1024;
+    const MAX_BATCH: usize = libc::UIO_MAXIOV as usize;
 
+    /// Sends `payload` to every address in `addrs`, returning once all are queued.
+    ///
+    /// Empty `addrs` is a no-op; short writes and `EINTR` are retried internally.
+    /// Assumes `payload` fits in one MTU (the caller needs to check this).
     pub(super) async fn send_to_many_linux(
         socket: &UdpSocket,
         payload: &[u8],
@@ -245,10 +244,10 @@ mod sendmmsg {
             return Ok(());
         }
 
-        // socket2 builds a correctly-laid-out sockaddr_storage + length for v4/v6.
-        // `SockAddr` is `Send`, so it's safe to hold across awaits; the raw-pointer
-        // `iovec`/`mmsghdr` arrays are not, so they get built inside the syscall
-        // closure on each call.
+        // `SockAddr` is `Send`, so the addresses are converted once here and held
+        // across the `writable().await` below; socket2 lays out the `sockaddr_storage`
+        // and length correctly for v4/v6. The raw-pointer `iovec`/`mmsghdr` arrays
+        // aren't `Send`, so they're rebuilt inside the syscall closure on each call.
         let sockaddrs: Vec<SockAddr> = addrs.iter().map(|a| SockAddr::from(*a)).collect();
         let n = sockaddrs.len();
         let fd = socket.as_raw_fd();
@@ -260,7 +259,7 @@ mod sendmmsg {
 
             let res = socket.try_io(Interest::WRITABLE, || {
                 // All `mmsghdr` entries share a single `iovec` pointing at the
-                // serialized payload: the kernel only reads it, so aliasing is
+                // serialized payload: The kernel only reads it, so aliasing is
                 // sound and we save N*sizeof(iovec) of setup work per call.
                 let mut shared_iov = libc::iovec {
                     iov_base: payload.as_ptr() as *mut libc::c_void,
@@ -271,9 +270,8 @@ mod sendmmsg {
                 let mut msgs: Vec<libc::mmsghdr> = (0..chunk_len)
                     .map(|i| {
                         let sa = &sockaddrs[sent + i];
-                        // SAFETY: `msghdr` is plain POD; zeroing leaves all
-                        // optional fields (msg_control, msg_flags, ...) in their
-                        // documented "absent" state.
+                        // SAFETY: `msghdr` is plain POD; zeroing leaves all optional fields
+                        // (msg_control, msg_flags, ...) in their documented "absent" state.
                         let mut msg_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
                         msg_hdr.msg_name = sa.as_ptr() as *mut libc::c_void;
                         msg_hdr.msg_namelen = sa.len();
@@ -286,12 +284,10 @@ mod sendmmsg {
                     })
                     .collect();
 
-                // SAFETY: `fd` is owned by `socket` and live for the duration of
-                // this call. `msgs.as_mut_ptr()` is a valid pointer to a slice of
-                // initialized `mmsghdr`s; each entry's `msg_name` points into
-                // `sockaddrs` (alive for the outer function) and `msg_iov` points
-                // at `shared_iov` (alive on this stack frame). The kernel only
-                // reads from these pointers during the syscall.
+                // SAFETY: `fd` is owned by `socket` and outlives the call. `msgs` is a
+                // uniquely-owned, initialized `mmsghdr` slice the kernel writes each `msg_len`
+                // back into; every entry's `msg_name`/`msg_iov` borrow `sockaddrs` (outer fn)
+                // and `shared_iov` (this frame), alive for the call and only read by the kernel.
                 let r =
                     unsafe { libc::sendmmsg(fd, msgs.as_mut_ptr(), msgs.len() as libc::c_uint, 0) };
                 if r < 0 {
@@ -302,9 +298,9 @@ mod sendmmsg {
             });
             match res {
                 Ok(n_sent) => sent += n_sent,
-                // tokio decided the fd isn't actually writable; go back to wait.
+                // tokio decided the fd isn't actually writable; go back to wait
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                // Interrupted before any messages sent; retry the same chunk.
+                // interrupted before any messages sent; retry the same chunk
                 Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
                 Err(e) => return Err(e),
             }
