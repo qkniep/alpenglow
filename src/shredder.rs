@@ -369,10 +369,10 @@ impl Default for CodingOnlyShredder {
 /// term is the key, dispersing the key across all shreds at
 /// `KEY_BYTES / DATA_SHREDS` bytes each. We instead confine the whole key to the
 /// single withheld shred, trading a bespoke `GF` interpolation on the hot path
-/// for the same bandwidth and essentially the same space. `benches/optimal_pets.rs`
-/// measures that interpolation head: it adds ~40 µs to shred and ~210 µs to
-/// deshred to save 16 bytes per 32 KiB slice, so the optimal variant is a measured
-/// dead end, not worth implementing as a real shredder at these parameters.
+/// for the same bandwidth and essentially the same space. A prototype measured
+/// that interpolation head at ~40 µs added to shred and ~210 µs to deshred, to
+/// save 16 bytes per 32 KiB slice — a measured dead end at these parameters, so
+/// the faithful scheme is deliberately not implemented.
 #[derive(Default)]
 pub struct PetsShredder(WithholdPets);
 
