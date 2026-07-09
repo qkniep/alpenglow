@@ -23,14 +23,40 @@ impl<K, V> Default for SortedVecMap<K, V> {
 }
 
 impl<K: Ord, V> SortedVecMap<K, V> {
-    /// Creates an empty map.
-    pub(super) fn empty() -> Self {
+    /// Creates a new, empty map.
+    pub(super) fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns whether the map contains no entries.
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     /// Returns a reference to the value for `key`, if present.
     pub(super) fn get(&self, key: &K) -> Option<&V> {
         self.search(key).ok().map(|i| &self.0[i].1)
+    }
+
+    /// Returns whether `key` is present in the map.
+    pub(super) fn contains_key(&self, key: &K) -> bool {
+        self.search(key).is_ok()
+    }
+
+    /// Returns an iterator over the values in the map, in key order.
+    pub(super) fn values(&self) -> impl Iterator<Item = &V> {
+        self.0.iter().map(|(_, v)| v)
+    }
+
+    /// Inserts `value` for `key`, returning the previous value if one was present.
+    pub(super) fn insert(&mut self, key: K, value: V) -> Option<V> {
+        match self.search(&key) {
+            Ok(index) => Some(std::mem::replace(&mut self.0[index].1, value)),
+            Err(index) => {
+                self.0.insert(index, (key, value));
+                None
+            }
+        }
     }
 
     /// Returns a mutable reference to the value for `key`, if present.
@@ -75,8 +101,8 @@ impl<T> Default for SortedVecSet<T> {
 }
 
 impl<T: Ord> SortedVecSet<T> {
-    /// Creates an empty set.
-    pub(super) fn empty() -> Self {
+    /// Creates a new, empty set.
+    pub(super) fn new() -> Self {
         Self::default()
     }
 
@@ -123,7 +149,7 @@ mod tests {
 
     #[test]
     fn map_get_or_insert_with() {
-        let mut map: SortedVecMap<u32, u64> = SortedVecMap::empty();
+        let mut map: SortedVecMap<u32, u64> = SortedVecMap::new();
 
         // inserts the default when absent
         *map.get_or_insert_with(&7, || 0) += 5;
@@ -138,8 +164,25 @@ mod tests {
     }
 
     #[test]
+    fn map_insert_contains_is_empty() {
+        let mut map: SortedVecMap<u32, u32> = SortedVecMap::new();
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&7));
+
+        // inserting a fresh key returns no previous value
+        assert_eq!(map.insert(7, 5), None);
+        assert!(!map.is_empty());
+        assert!(map.contains_key(&7));
+        assert_eq!(map.get(&7), Some(&5));
+
+        // inserting an existing key returns and overwrites the previous value
+        assert_eq!(map.insert(7, 8), Some(5));
+        assert_eq!(map.get(&7), Some(&8));
+    }
+
+    #[test]
     fn map_stays_sorted_when_spilling() {
-        let mut map: SortedVecMap<u32, u32> = SortedVecMap::empty();
+        let mut map: SortedVecMap<u32, u32> = SortedVecMap::new();
         for k in [5, 1, 9, 3, 7, 0] {
             map.get_or_insert_with(&k, || k);
         }
@@ -152,7 +195,7 @@ mod tests {
 
     #[test]
     fn set_insert_contains_iter() {
-        let mut set: SortedVecSet<u32> = SortedVecSet::empty();
+        let mut set: SortedVecSet<u32> = SortedVecSet::new();
         assert!(set.insert(3));
         assert!(set.insert(1));
         assert!(set.insert(5));
