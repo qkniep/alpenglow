@@ -37,7 +37,6 @@ use blst::min_sig::{
 use log::warn;
 use rand::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
-use static_assertions::const_assert_eq;
 use wincode::config::Config;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -53,10 +52,7 @@ const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 /// This way signatures are twice as big as if we used compressed signatures.
 /// However, we save the time of uncompressing the signature before verifying.
 const UNCOMPRESSED_SIG_SIZE: usize = 96;
-const_assert_eq!(
-    UNCOMPRESSED_SIG_SIZE,
-    std::mem::size_of::<blst::blst_p1_affine>()
-);
+const _: () = assert!(UNCOMPRESSED_SIG_SIZE == std::mem::size_of::<blst::blst_p1_affine>());
 
 /// Maximum number of signers that can be aggregated into an aggregate signature.
 const MAX_SIGNERS: usize = 2048;
