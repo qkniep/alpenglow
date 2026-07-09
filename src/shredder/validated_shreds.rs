@@ -3,6 +3,7 @@
 
 //! Defines the [`ValidatedShreds`] type.
 
+use super::reed_solomon::ReceivedShreds;
 use super::{ShredPayloadType, TOTAL_SHREDS, ValidatedShred};
 
 /// Validated shreds array type.
@@ -62,11 +63,6 @@ impl<'a> ValidatedShreds<'a> {
         })
     }
 
-    /// Returns the number of present (non-`None`) shreds.
-    pub(super) fn shred_count(self) -> usize {
-        self.shreds.iter().flatten().count()
-    }
-
     /// Returns a reference to any shred in this set.
     pub(super) fn any_shred(self) -> &'a ValidatedShred {
         self.shreds
@@ -104,6 +100,18 @@ impl<'a> ValidatedShreds<'a> {
                 ShredPayloadType::Data(_) => panic!("should be a coding shred"),
             })
         })
+    }
+
+    /// Lowers these shreds to the erasure layer's byte-level [`ReceivedShreds`].
+    ///
+    /// Strips the wire/Merkle machinery, keeping only indices and payload bytes
+    /// so the Reed-Solomon coder never depends on the shredder-layer types.
+    pub(super) fn received(self) -> ReceivedShreds<'a> {
+        ReceivedShreds {
+            data: self.data_shred_payloads(),
+            coding: self.coding_shred_payloads().collect(),
+            shred_bytes: self.any_shred().payload().data.len(),
+        }
     }
 }
 
