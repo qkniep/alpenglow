@@ -28,35 +28,9 @@ impl<K: Ord, V> SortedVecMap<K, V> {
         Self::default()
     }
 
-    /// Returns whether the map contains no entries.
-    pub(super) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     /// Returns a reference to the value for `key`, if present.
     pub(super) fn get(&self, key: &K) -> Option<&V> {
         self.search(key).ok().map(|i| &self.0[i].1)
-    }
-
-    /// Returns whether `key` is present in the map.
-    pub(super) fn contains_key(&self, key: &K) -> bool {
-        self.search(key).is_ok()
-    }
-
-    /// Returns an iterator over the values in the map, in key order.
-    pub(super) fn values(&self) -> impl Iterator<Item = &V> {
-        self.0.iter().map(|(_, v)| v)
-    }
-
-    /// Inserts `value` for `key`, returning the previous value if one was present.
-    pub(super) fn insert(&mut self, key: K, value: V) -> Option<V> {
-        match self.search(&key) {
-            Ok(index) => Some(std::mem::replace(&mut self.0[index].1, value)),
-            Err(index) => {
-                self.0.insert(index, (key, value));
-                None
-            }
-        }
     }
 
     /// Returns a mutable reference to the value for `key`, if present.
@@ -161,23 +135,6 @@ mod tests {
 
         assert_eq!(map.get(&9), None);
         assert_eq!(map.get_mut(&9), None);
-    }
-
-    #[test]
-    fn map_insert_contains_is_empty() {
-        let mut map: SortedVecMap<u32, u32> = SortedVecMap::new();
-        assert!(map.is_empty());
-        assert!(!map.contains_key(&7));
-
-        // inserting a fresh key returns no previous value
-        assert_eq!(map.insert(7, 5), None);
-        assert!(!map.is_empty());
-        assert!(map.contains_key(&7));
-        assert_eq!(map.get(&7), Some(&5));
-
-        // inserting an existing key returns and overwrites the previous value
-        assert_eq!(map.insert(7, 8), Some(5));
-        assert_eq!(map.get(&7), Some(&8));
     }
 
     #[test]

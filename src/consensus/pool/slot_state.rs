@@ -8,6 +8,7 @@
 //! - [`SlotVotedStake`] for all running stake totals in a single slot.
 //! - [`SlotCertificates`] for all certificates in a single slot.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use either::Either;
@@ -47,15 +48,18 @@ pub(super) struct SlotState {
     pub(super) epoch_info: Arc<ValidatorEpochInfo>,
 }
 
-// PERF: each stored vote duplicates `slot`/`signer` (both implied by context);
-// storing only signatures (+ block hash) and collapsing these five vectors into
-// one `Vec<ValidatorVotes>` would improve ingest-path locality. The per-vote
-// saving is modest (~15%, the 96-byte signature dominates), so profile first.
+// PERF: `SlotVotes::new` eagerly allocates five N-length vectors per slot
+// (~700 B/validator), even for a slot that only ever sees a single vote. This
+// dominates per-slot memory and amplifies the far-future-slot allocation vector
+// in `Pool::add_vote` (one signed vote forces a full allocation). The durable fix
+// is sparse/lazy storage — buffer votes until a slot proves live, then promote to
+// this dense layout — which also subsumes the marginal "store only signatures"
+// win (dropping the redundant `slot`/`signer` saves only ~15%, sig dominates).
 pub(super) struct SlotVotes {
     /// Notarization votes for all validators (indexed by `ValidatorIndex`).
     pub(super) notar: Vec<Option<NotarVote>>,
     /// Notar-fallback votes for all validators (indexed by `ValidatorIndex`).
-    pub(super) notar_fallback: Vec<SortedVecMap<BlockHash, NotarFallbackVote>>,
+    pub(super) notar_fallback: Vec<BTreeMap<BlockHash, NotarFallbackVote>>,
     /// Skip votes for all validators (indexed by `ValidatorIndex`).
     pub(super) skip: Vec<Option<SkipVote>>,
     /// Skip-fallback votes for all validators (indexed by `ValidatorIndex`).
@@ -658,7 +662,7 @@ impl SlotVotes {
     pub(super) fn new(num_validators: usize) -> Self {
         Self {
             notar: vec![None; num_validators],
-            notar_fallback: vec![SortedVecMap::new(); num_validators],
+            notar_fallback: vec![BTreeMap::new(); num_validators],
             skip: vec![None; num_validators],
             skip_fallback: vec![None; num_validators],
             finalize: vec![None; num_validators],
