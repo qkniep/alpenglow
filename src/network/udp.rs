@@ -15,10 +15,10 @@ use std::collections::VecDeque;
 use std::io;
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::Mutex;
 
 use async_trait::async_trait;
 use log::warn;
+use parking_lot::Mutex;
 use socket2::SockRef;
 use tokio::net::UdpSocket;
 use wincode::config::DefaultConfig;
@@ -154,10 +154,7 @@ where
                 // `recv_into` is synchronous; the scratch guard is taken only
                 // after the await above and never held across one, keeping this
                 // future `Send` as `async_trait` requires.
-                let mut scratch = self
-                    .recv_scratch
-                    .lock()
-                    .expect("recv_scratch lock poisoned");
+                let mut scratch = self.recv_scratch.lock();
                 let lens = match recvmmsg::recv_into(&self.socket, scratch.as_mut_slice()) {
                     Ok(lens) => lens,
                     // tokio reported readable but the queue drained first; re-arm.
@@ -260,11 +257,7 @@ where
         loop {
             // Fast path: hand out a datagram drained by an earlier batch. The
             // lock is released before the `await` below — never held across it.
-            let queued = self
-                .recv_queue
-                .lock()
-                .expect("recv_queue lock poisoned")
-                .pop_front();
+            let queued = self.recv_queue.lock().pop_front();
             if let Some(msg) = queued {
                 return Ok(msg);
             }
@@ -275,10 +268,7 @@ where
             let mut batch = self.recv_batch().await?;
             if let Some(first) = batch.pop_front() {
                 if !batch.is_empty() {
-                    self.recv_queue
-                        .lock()
-                        .expect("recv_queue lock poisoned")
-                        .append(&mut batch);
+                    self.recv_queue.lock().append(&mut batch);
                 }
                 return Ok(first);
             }
