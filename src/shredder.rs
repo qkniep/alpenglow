@@ -8,8 +8,12 @@
 //! It also provides several shredders implementing this trait:
 //! - [`RegularShredder`] augments data shreds with coding shreds.
 //! - [`CodingOnlyShredder`] only outputs coding shreds.
-//! - [`AontShredder`] uses the RAONT-RS all-or-nothing construction.
-//! - [`PetsShredder`] uses the PETS all-or-nothing construction.
+//! - [`AontShredder`] uses the RAONT-RS all-or-nothing construction. This is the
+//!   recommended shredder when pre-reconstruction confidentiality is wanted: in
+//!   `benches/shredder.rs` it decodes ~25-40% faster than [`PetsShredder`], and
+//!   decode — run by every validator on every slice — dominates the cost.
+//! - [`PetsShredder`] uses the "withhold the key share" PETS construction. Kept
+//!   as a reference/benchmark baseline; prefer [`AontShredder`] in practice.
 //!
 //! Finally, it defines the relevant low-level data type:
 //! - [`Shred`] is a single part of the block that fits into a UDP datagram,
@@ -354,6 +358,10 @@ impl Default for CodingOnlyShredder {
 /// reconstructed (via Reed-Solomon) once [`DATA_SHREDS`] shreds are available, so
 /// any smaller set of shreds reveals nothing about the plaintext.
 ///
+/// Kept as a reference/benchmark baseline: [`AontShredder`] (RAONT-RS) achieves
+/// the same security threshold, decodes faster, and avoids the withheld-shred
+/// bookkeeping, so prefer it in practice.
+///
 /// NOTE: This realizes the "withhold the key share" idea, not the faithful
 /// polynomial scheme of "Optimal Computational Secret Sharing"
 /// (<https://arxiv.org/abs/2502.02774>). That scheme rides the ciphertext blocks
@@ -361,7 +369,10 @@ impl Default for CodingOnlyShredder {
 /// term is the key, dispersing the key across all shreds at
 /// `KEY_BYTES / DATA_SHREDS` bytes each. We instead confine the whole key to the
 /// single withheld shred, trading a bespoke `GF` interpolation on the hot path
-/// for the same bandwidth and essentially the same space.
+/// for the same bandwidth and essentially the same space. `benches/optimal_pets.rs`
+/// measures that interpolation head: it adds ~40 µs to shred and ~210 µs to
+/// deshred to save 16 bytes per 32 KiB slice, so the optimal variant is a measured
+/// dead end, not worth implementing as a real shredder at these parameters.
 #[derive(Default)]
 pub struct PetsShredder(WithholdPets);
 
@@ -398,6 +409,12 @@ impl Shredder for PetsShredder {
 /// are output). To recover the key one needs both `cd` and the entire ciphertext
 /// (to recompute `H(ciphertext)`), so no set of fewer than [`DATA_SHREDS`] shreds
 /// can.
+///
+/// This is the preferred all-or-nothing shredder. Despite the extra hash pass, it
+/// decodes ~25-40% faster than [`PetsShredder`] (see `benches/shredder.rs`) — the
+/// withhold variant's shred layout makes its reconstruct/re-encode path costlier —
+/// and it is structurally simpler, with no withheld shred to track. Decode runs on
+/// every validator per slice, so it is the cost that matters.
 ///
 /// See also: <https://eprint.iacr.org/2016/1014>
 #[derive(Default)]

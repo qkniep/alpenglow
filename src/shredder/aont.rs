@@ -204,7 +204,7 @@ fn aont_encode(
 
     let data: Vec<Vec<u8>> = buffer.chunks(shred_bytes).map(<[u8]>::to_vec).collect();
     debug_assert_eq!(data.len(), DATA_SHREDS);
-    Ok(coder.encode_coding_from_data(&data))
+    Ok(coder.encode_coding_from_data(data))
 }
 
 /// Recovers the plaintext bytes from an all-or-nothing layout.
