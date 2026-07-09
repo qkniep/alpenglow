@@ -47,7 +47,6 @@ pub struct Turbine<N: Network> {
 #[derive(Clone, Debug)]
 pub(crate) struct TurbineTree {
     root: ValidatorIndex,
-    #[allow(dead_code)]
     parent: Option<ValidatorIndex>,
     children: Vec<ValidatorIndex>,
 }
@@ -170,7 +169,10 @@ impl TurbineTree {
         ]
         .concat();
         assert_eq!(seed.len(), 32);
-        let mut rng = StdRng::from_seed(seed.try_into().unwrap());
+        let mut rng = StdRng::from_seed(
+            seed.try_into()
+                .expect("turbine seed should be exactly 32 bytes"),
+        );
 
         // stake-weighted shuffle
         let mut weighted_shuffle = WeightedShuffle::new(validators.iter().map(|v| v.stake));
@@ -182,7 +184,10 @@ impl TurbineTree {
 
         // find root & parent
         let root = validator_indices[0];
-        let own_pos = validator_indices.iter().position(|v| *v == own_id).unwrap();
+        let own_pos = validator_indices
+            .iter()
+            .position(|v| *v == own_id)
+            .expect("own validator id should be in the validator set");
         let parent_pos = match own_pos {
             0 => None,
             _ => Some((own_pos - 1) / fanout),
@@ -211,7 +216,7 @@ impl TurbineTree {
 
     /// Gives the parent of this validator in the Turbine tree.
     /// Returns `None` iff this validator is the root of the tree.
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code))]
     const fn get_parent(&self) -> Option<ValidatorIndex> {
         self.parent
     }
@@ -386,12 +391,20 @@ mod tests {
             }
         });
 
-        // wait for shreds to arrive
-        // needs to be longer than the latency of the simulated network
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // poll until all shreds arrive rather than relying on a fixed sleep,
+        // which is racy under CI load; the counter is monotonic so it can't
+        // overshoot the expected total
+        let expected = 9 * TOTAL_SHREDS;
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            while *shreds_received.lock().await < expected {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(received.is_ok(), "not all shreds arrived within timeout");
 
         // non-leaders should have received all shreds via Turbine
-        assert_eq!(*shreds_received.lock().await, 9 * TOTAL_SHREDS);
+        assert_eq!(*shreds_received.lock().await, expected);
         task_leader.abort();
         for task in tasks {
             task.abort();

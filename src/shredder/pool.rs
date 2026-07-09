@@ -23,7 +23,9 @@
 //! ```
 
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use super::Shredder;
 
@@ -46,14 +48,10 @@ impl<S: Shredder> ShredderPool<S> {
     ///
     /// Returns [`None`] iff the pool is empty.
     pub fn checkout(&self) -> Option<ShredderGuard<S>> {
-        self.shredders
-            .lock()
-            .unwrap()
-            .pop()
-            .map(|shredder| ShredderGuard {
-                pool: Arc::clone(&self.shredders),
-                shredder: Some(shredder),
-            })
+        self.shredders.lock().pop().map(|shredder| ShredderGuard {
+            pool: Arc::clone(&self.shredders),
+            shredder: Some(shredder),
+        })
     }
 }
 
@@ -90,7 +88,7 @@ impl<S: Shredder> DerefMut for ShredderGuard<S> {
 impl<S: Shredder> Drop for ShredderGuard<S> {
     fn drop(&mut self) {
         let shredder = self.shredder.take().expect("should exist until dropping");
-        self.pool.lock().unwrap().push(shredder);
+        self.pool.lock().push(shredder);
     }
 }
 

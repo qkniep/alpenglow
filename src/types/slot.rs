@@ -23,17 +23,17 @@ pub struct Slot(u64);
 
 impl Slot {
     /// Creates a new slot with the given number.
-    pub fn new(slot: u64) -> Self {
+    pub const fn new(slot: u64) -> Self {
         Self(slot)
     }
 
     /// Returns the genesis slot.
-    pub fn genesis() -> Self {
+    pub const fn genesis() -> Self {
         Self(0)
     }
 
     /// Returns the inner `u64`.
-    pub fn inner(self) -> u64 {
+    pub const fn inner(self) -> u64 {
         self.0
     }
 
@@ -54,41 +54,57 @@ impl Slot {
     }
 
     /// Returns the first slot in the window this slot belongs to.
-    pub fn first_slot_in_window(&self) -> Slot {
+    pub const fn first_slot_in_window(&self) -> Slot {
         let window = self.0 / SLOTS_PER_WINDOW;
         Self(window * SLOTS_PER_WINDOW)
     }
 
     /// Returns the last slow in the window this slot belongs to.
-    pub fn last_slot_in_window(&self) -> Slot {
+    pub const fn last_slot_in_window(&self) -> Slot {
         let window = self.0 / SLOTS_PER_WINDOW;
         let next_window = window + 1;
         Self(next_window * SLOTS_PER_WINDOW - 1)
     }
 
     /// Returns true if `self` is the first slot in the window.
-    pub fn is_start_of_window(&self) -> bool {
+    pub const fn is_start_of_window(&self) -> bool {
         self.0.is_multiple_of(SLOTS_PER_WINDOW)
     }
 
     /// Returns the next slot after `self`.
-    pub fn next(&self) -> Self {
-        Self(self.0 + 1)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is the maximum slot.
+    pub const fn next(&self) -> Self {
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("next() should not be called on the maximum slot"),
+        )
     }
 
     /// Returns the previous slot before `self`.
-    pub fn prev(&self) -> Self {
-        Self(self.0.checked_sub(1).unwrap())
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is the genesis slot.
+    pub const fn prev(&self) -> Self {
+        Self(
+            self.0
+                .checked_sub(1)
+                .expect("prev() should not be called on the genesis slot"),
+        )
     }
 
     /// Returns `true` iff this slot is part of the genesis window.
-    pub fn is_genesis_window(&self) -> bool {
+    pub const fn is_genesis_window(&self) -> bool {
         let window = self.0 / SLOTS_PER_WINDOW;
         window == 0
     }
 
     /// Returns `true` iff this slot is the genesis slot.
-    pub fn is_genesis(&self) -> bool {
+    pub const fn is_genesis(&self) -> bool {
         self.0 == 0
     }
 }

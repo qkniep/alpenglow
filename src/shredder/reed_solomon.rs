@@ -33,7 +33,7 @@ pub(super) enum ReedSolomonDeshredError {
 }
 
 /// The data and coding shreds returned from [`ReedSolomonCoder::shred`] on success.
-pub(super) struct RawShreds {
+pub struct RawShreds {
     /// A list of data shreds.
     pub(super) data: Vec<Vec<u8>>,
     /// A list of coding shreds.
@@ -62,8 +62,10 @@ impl ReedSolomonCoder {
 
         assert!(num_coding <= TOTAL_SHREDS);
 
-        let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
-        let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
+        let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED)
+            .expect("Reed-Solomon dimensions should be valid");
+        let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED)
+            .expect("Reed-Solomon dimensions should be valid");
 
         ReedSolomonCoder {
             num_coding,
@@ -199,18 +201,18 @@ impl ReedSolomonCoder {
         restored_payload.truncate(restored_payload.len().saturating_sub(padding_bytes));
         drop(restored);
 
-        let raw_shreds = self.encode_coding_from_data(&raw_data_shreds);
+        let raw_shreds = self.encode_coding_from_data(raw_data_shreds);
         Ok((restored_payload, raw_shreds))
     }
 
     /// Produces coding shreds from pre-split data shreds.
-    fn encode_coding_from_data(&mut self, data_shreds: &[Vec<u8>]) -> RawShreds {
+    fn encode_coding_from_data(&mut self, data_shreds: Vec<Vec<u8>>) -> RawShreds {
         assert_eq!(data_shreds.len(), DATA_SHREDS);
         let shred_bytes = data_shreds[0].len();
         self.encoder
             .reset(DATA_SHREDS, self.num_coding, shred_bytes)
             .expect("shred size should be supported");
-        for shred in data_shreds {
+        for shred in &data_shreds {
             self.encoder
                 .add_original_shard(shred)
                 .expect("adding correct number of shreds of correct size");
@@ -221,7 +223,7 @@ impl ReedSolomonCoder {
             .expect("we just added enough data shreds");
         let coding = result.recovery_iter().map(<[u8]>::to_vec).collect();
         RawShreds {
-            data: data_shreds.to_vec(),
+            data: data_shreds,
             coding,
         }
     }

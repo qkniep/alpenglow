@@ -127,9 +127,9 @@ pub(crate) fn run_pyjama_robustness_test(total_shreds: u64) -> Result<()> {
         .join(filename)
         .with_extension("csv");
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        std::fs::create_dir_all(parent)?;
     }
-    let file = File::create(path).unwrap();
+    let file = File::create(path)?;
     let mut csv_file = csv::Writer::from_writer(file);
 
     test.run(adversary_strength, &mut csv_file)

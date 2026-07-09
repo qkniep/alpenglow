@@ -9,7 +9,7 @@ use crate::{All2All, Alpenglow, Disseminator, Transaction};
 ///
 /// Consists of a consensus protocol instance and an execution engine.
 /// Participates in consensus and executes transactions.
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct Validator<A, D, T, E>
 where
     A: All2All,
