@@ -92,7 +92,7 @@ pub struct ReconstructedSlice {
 impl ReconstructedSlice {
     /// Creates a [`ReconstructedSlice`] from its component parts.
     #[must_use]
-    pub(crate) fn from_shreds(
+    pub(crate) fn from_parts(
         payload: SlicePayload,
         any_shred: &ValidatedShred,
         slice_root: SliceRoot,

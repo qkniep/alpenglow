@@ -303,7 +303,7 @@ pub trait Shredder: Default {
         let tree = check_merkle_tree(&raw_shreds, &slice_root)?;
 
         let payload = SlicePayload::try_from(payload_bytes.as_slice())?;
-        let slice = ReconstructedSlice::from_shreds(payload, any_shred, slice_root);
+        let slice = ReconstructedSlice::from_parts(payload, any_shred, slice_root);
 
         // reconstruct missing output shreds (with root, path, sig) in place
         fill_missing_shreds(shreds, header, raw_shreds, &tree, slice_sig);
