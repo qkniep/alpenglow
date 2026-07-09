@@ -38,7 +38,7 @@ pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
 use super::Network;
 use crate::ValidatorIndex;
-use crate::network::MTU_BYTES;
+use crate::network::{MTU_BYTES, NetworkMessageConfig};
 
 /// A simulated network interface for local testing and simulations.
 pub struct SimulatedNetwork<S, R> {
@@ -74,7 +74,7 @@ impl<S, R> SimulatedNetwork<S, R> {
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
-    R: for<'de> SchemaRead<'de, DefaultConfig, Dst = R> + Send + Sync,
+    R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
     type Recv = R;
     type Send = S;
@@ -82,10 +82,10 @@ where
     async fn send_to_many(
         &self,
         msg: &S,
-        addrs: impl Iterator<Item = SocketAddr> + Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()> {
-        let bytes = wincode::serialize(msg).unwrap();
-        let tasks = addrs.map(|addr| {
+        let bytes = crate::serialize(msg);
+        let tasks = addrs.into_iter().map(|addr| {
             let bytes = bytes.clone();
             async move { self.send_serialized(bytes, addr).await }
         });
@@ -96,7 +96,7 @@ where
     }
 
     async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = wincode::serialize(msg).unwrap();
+        let bytes = crate::serialize(msg);
         self.send_serialized(bytes, addr).await
     }
 
@@ -105,7 +105,7 @@ where
             let Some(buf) = self.receiver.lock().await.recv().await else {
                 return Err(std::io::Error::other("channel closed"));
             };
-            let msg = match wincode::deserialize(&buf) {
+            let msg = match crate::network::deserialize(&buf) {
                 Ok(r) => r,
                 Err(err) => {
                     warn!("deserializing failed with {err:?}");
@@ -173,7 +173,7 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(1);
+        let final_slice_index = SliceIndex::new_for_test(1);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; runs as part of `just test-slow`"]
     async fn high_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(
@@ -237,7 +237,7 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(1023);
+        let final_slice_index = SliceIndex::new_for_test(1023);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; runs as part of `just test-slow`"]
     async fn unlimited_bandwidth() {
         // set up network with two nodes
         let core = Arc::new(
@@ -299,7 +299,7 @@ mod tests {
         let mut rng = rand::rng();
         let sk = SecretKey::new(&mut rng);
         let mut shreds = Vec::new();
-        let final_slice_index = SliceIndex::new_unchecked(1023);
+        let final_slice_index = SliceIndex::new_for_test(1023);
         for slice_index in final_slice_index.until() {
             let payload = create_slice_payload_with_invalid_txs(None, MAX_DATA_PER_SLICE);
             let header = SliceHeader {

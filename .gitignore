@@ -14,3 +14,15 @@
 /data/output
 flamegraph.svg
 tarpaulin-report.html
+
+# === Claude Code ===
+# ignore everything under .claude/, then allow-list shared config
+.claude/*
+
+# shared/team config (commit these):
+!.claude/settings.json
+!.claude/commands/
+!.claude/agents/
+!.claude/skills/
+!.claude/hooks/
+!.claude/output-styles/

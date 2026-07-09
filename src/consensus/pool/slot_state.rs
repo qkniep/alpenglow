@@ -8,13 +8,13 @@
 //! - [`SlotVotedStake`] for all running stake totals in a single slot.
 //! - [`SlotCertificates`] for all certificates in a single slot.
 
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use either::Either;
 use smallvec::SmallVec;
 
+use super::sorted_vec::{SortedVecMap, SortedVecSet};
 use super::{PoolEvent, SlashableOffence};
 use crate::consensus::cert::{FastFinalCert, FinalCert, NotarCert, NotarFallbackCert, SkipCert};
 use crate::consensus::{
@@ -33,12 +33,12 @@ pub(super) struct SlotState {
     /// Certificates for this slot, contains all certificate types and validators.
     pub(super) certificates: SlotCertificates,
     /// Indicates blocks for which we already know their parents.
-    parents: BTreeMap<BlockHash, ParentStatus>,
+    parents: SortedVecMap<BlockHash, ParentStatus>,
     /// Hashes of blocks that have reached the necessary votes for safe-to-notar
     /// and are only waiting for our only vote to arrive.
-    pending_safe_to_notar: BTreeSet<BlockHash>,
+    pending_safe_to_notar: SortedVecSet<BlockHash>,
     /// Hashes of blocks for which safe-to-notar has already been reached.
-    sent_safe_to_notar: BTreeSet<BlockHash>,
+    sent_safe_to_notar: SortedVecSet<BlockHash>,
     /// Indicates if safe-to-skip has already been sent for this slot.
     sent_safe_to_skip: bool,
 
@@ -65,9 +65,9 @@ pub(super) struct SlotVotes {
 #[derive(Default)]
 pub(super) struct SlotVotedStake {
     /// Amount of stake for each block has for which we have a notarization vote.
-    pub(super) notar: BTreeMap<BlockHash, Stake>,
+    pub(super) notar: SortedVecMap<BlockHash, Stake>,
     /// Amount of stake for each block hash for which we have a notar-fallback vote.
-    pub(super) notar_fallback: BTreeMap<BlockHash, Stake>,
+    pub(super) notar_fallback: SortedVecMap<BlockHash, Stake>,
     /// Amount of stake for which we have a skip vote.
     pub(super) skip: Stake,
     /// Amount of stake for which we have a skip-fallback vote.
@@ -108,6 +108,19 @@ pub(super) enum SafeToNotarStatus {
     AwaitingVotes,
 }
 
+/// Why an incoming vote is dropped without being counted.
+///
+/// Returned by [`SlotState::should_ignore_vote`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum IgnoreReason {
+    /// A plain duplicate of a vote already counted for this validator.
+    Duplicate,
+    /// A skip and a skip-fallback from the same validator.
+    SkipSkipFallback,
+    /// A notar and a notar-fallback for the same block from the same validator.
+    NotarNotarFallback,
+}
+
 type SlotStateOutputs = (
     SmallVec<[Cert; 2]>,
     SmallVec<[PoolEvent; 2]>,
@@ -123,9 +136,9 @@ impl SlotState {
             votes: SlotVotes::new(epoch_info.epoch_info().validators().len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
-            parents: BTreeMap::new(),
-            pending_safe_to_notar: BTreeSet::new(),
-            sent_safe_to_notar: BTreeSet::new(),
+            parents: SortedVecMap::empty(),
+            pending_safe_to_notar: SortedVecSet::empty(),
+            sent_safe_to_notar: SortedVecSet::empty(),
             sent_safe_to_skip: false,
 
             slot,
@@ -207,8 +220,9 @@ impl SlotState {
     }
 
     /// Mark the parent of the block given by `hash` as known (in Blokstor).
-    pub(super) fn notify_parent_known(&mut self, hash: BlockHash) {
-        self.parents.entry(hash).or_insert(ParentStatus::Known);
+    pub(super) fn notify_parent_known(&mut self, hash: &BlockHash) {
+        self.parents
+            .get_or_insert_with(hash, || ParentStatus::Known);
     }
 
     /// Mark the parent of the block given by `hash` as notarized-fallback.
@@ -253,14 +267,15 @@ impl SlotState {
         let mut blocks_to_repair = SmallVec::new();
 
         // increment stake
-        let notar_stake = self
-            .voted_stakes
-            .notar
-            .entry(block_hash.clone())
-            .or_default();
-        *notar_stake += stake;
+        let notar_stake = {
+            let counter = self
+                .voted_stakes
+                .notar
+                .get_or_insert_with(block_hash, Stake::default);
+            *counter += stake;
+            *counter
+        };
         self.voted_stakes.notar_or_skip += stake;
-        let notar_stake = *notar_stake;
         self.voted_stakes.top_notar = notar_stake.max(self.voted_stakes.top_notar);
 
         // check quorums
@@ -285,11 +300,12 @@ impl SlotState {
             votor_events.push(PoolEvent::SafeToSkip(slot));
             self.sent_safe_to_skip = true;
         }
-        let nf_stake = *self
+        let nf_stake = self
             .voted_stakes
             .notar_fallback
             .get(block_hash)
-            .unwrap_or(&Stake::default());
+            .copied()
+            .unwrap_or_default();
         if self
             .epoch_info
             .epoch_info()
@@ -298,7 +314,7 @@ impl SlotState {
         {
             let notar_votes = self.votes.notar_votes(block_hash);
             let nf_votes = self.votes.notar_fallback_votes(block_hash);
-            let cert = NotarFallbackCert::new_unchecked(
+            let cert = NotarFallbackCert::new(
                 &notar_votes,
                 &nf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -308,15 +324,14 @@ impl SlotState {
         if self.epoch_info.epoch_info().is_quorum(notar_stake) && self.certificates.notar.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert = NotarCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = NotarCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Notar(cert));
         }
         if self.epoch_info.epoch_info().is_strong_quorum(notar_stake)
             && self.certificates.fast_finalize.is_none()
         {
             let votes = self.votes.notar_votes(block_hash);
-            let cert =
-                FastFinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FastFinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::FastFinal(cert));
         }
 
@@ -333,15 +348,20 @@ impl SlotState {
         stake: Stake,
     ) -> SlotStateOutputs {
         let mut new_certs = SmallVec::new();
-        let nf_stakes = &mut self.voted_stakes.notar_fallback;
-        let nf_stake = nf_stakes.entry(block_hash.clone()).or_default();
-        *nf_stake += stake;
-        let nf_stake = *nf_stake;
-        let notar_stake = *self
+        let nf_stake = {
+            let counter = self
+                .voted_stakes
+                .notar_fallback
+                .get_or_insert_with(block_hash, Stake::default);
+            *counter += stake;
+            *counter
+        };
+        let notar_stake = self
             .voted_stakes
             .notar
             .get(block_hash)
-            .unwrap_or(&Stake::default());
+            .copied()
+            .unwrap_or_default();
         if self
             .epoch_info
             .epoch_info()
@@ -350,7 +370,7 @@ impl SlotState {
         {
             let notar_votes = self.votes.notar_votes(block_hash);
             let nf_votes = self.votes.notar_fallback_votes(block_hash);
-            let cert = NotarFallbackCert::new_unchecked(
+            let cert = NotarFallbackCert::new(
                 &notar_votes,
                 &nf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -392,7 +412,7 @@ impl SlotState {
         {
             let skip_votes = self.votes.skip_votes();
             let sf_votes = self.votes.skip_fallback_votes();
-            let cert = SkipCert::new_unchecked(
+            let cert = SkipCert::new(
                 &skip_votes,
                 &sf_votes,
                 self.epoch_info.epoch_info().validators(),
@@ -426,7 +446,7 @@ impl SlotState {
             && self.certificates.finalize.is_none()
         {
             let votes: Vec<_> = self.votes.final_votes();
-            let cert = FinalCert::new_unchecked(&votes, self.epoch_info.epoch_info().validators());
+            let cert = FinalCert::new(&votes, self.epoch_info.epoch_info().validators());
             new_certs.push(Cert::Final(cert));
         }
         (new_certs, SmallVec::new(), SmallVec::new())
@@ -434,8 +454,11 @@ impl SlotState {
 
     /// Checks whether the given vote constitutes a slashable offence.
     ///
-    /// This has to be called before dismissing potential duplicates, as
-    /// according to `should_ignore_vote()`.
+    /// This has to be called before dismissing potential duplicates,
+    /// as according to `should_ignore_vote()`.
+    // NOTE: Some benign vote combinations, that are provably non-honest,
+    // are intentionally not slashable, see also `should_ignore_vote`.
+    // They are surfaced via a log instead (see `add_vote` in `pool.rs`).
     pub(super) fn check_slashable_offence(&self, vote: &Vote) -> Option<SlashableOffence> {
         let slot = vote.slot();
         let voter = vote.signer();
@@ -479,31 +502,73 @@ impl SlotState {
         None
     }
 
-    /// Checks whether the given vote should be ignored as a duplicate.
+    /// Determines whether the given vote should be ignored, and if so, why.
     ///
-    /// Votes for which this returns `true` should never be counted.
-    /// Doing so could lead to double counting.
-    pub(super) fn should_ignore_vote(&self, vote: &Vote) -> bool {
+    /// Returns `None` if the vote is fresh and should be counted.
+    /// Any `Some` value means the vote must never be counted
+    /// (doing so could double-count stake).
+    /// [`IgnoreReason::Duplicate`] means the vote is an exact duplicate.
+    /// The other variants additionally flag a cross-type overlap
+    /// (skip + skip-fallback, or notar + notar-fallback for the same block).
+    /// An honest node never casts either pair, so this is provably non-honest.
+    /// However, it is benign misbehavior (not-slashable),
+    /// because it never leads to the creation of additional certificates.
+    pub(super) fn should_ignore_vote(&self, vote: &Vote) -> Option<IgnoreReason> {
         let v = vote.signer().as_usize();
         match vote {
-            Vote::Notar(_) => self.votes.notar[v].is_some(),
+            Vote::Notar(n_vote) => {
+                if self.votes.notar[v].is_some() {
+                    Some(IgnoreReason::Duplicate)
+                } else if self.votes.notar_fallback[v].contains_key(n_vote.block_hash()) {
+                    Some(IgnoreReason::NotarNotarFallback)
+                } else {
+                    None
+                }
+            }
             Vote::NotarFallback(nf_vote) => {
-                self.votes.notar_fallback[v].contains_key(nf_vote.block_hash())
+                if self.votes.notar_fallback[v].contains_key(nf_vote.block_hash()) {
+                    Some(IgnoreReason::Duplicate)
+                } else if self.votes.notar[v]
+                    .as_ref()
+                    .is_some_and(|existing| existing.block_hash() == nf_vote.block_hash())
+                {
+                    Some(IgnoreReason::NotarNotarFallback)
+                } else {
+                    None
+                }
             }
-            Vote::Skip(_) | Vote::SkipFallback(_) => {
-                self.votes.skip[v].is_some() || self.votes.skip_fallback[v].is_some()
+            Vote::Skip(_) => {
+                if self.votes.skip[v].is_some() {
+                    Some(IgnoreReason::Duplicate)
+                } else if self.votes.skip_fallback[v].is_some() {
+                    Some(IgnoreReason::SkipSkipFallback)
+                } else {
+                    None
+                }
             }
-            Vote::Final(_) => self.votes.finalize[v].is_some(),
+            Vote::SkipFallback(_) => {
+                if self.votes.skip_fallback[v].is_some() {
+                    Some(IgnoreReason::Duplicate)
+                } else if self.votes.skip[v].is_some() {
+                    Some(IgnoreReason::SkipSkipFallback)
+                } else {
+                    None
+                }
+            }
+            Vote::Final(_) => self.votes.finalize[v]
+                .is_some()
+                .then_some(IgnoreReason::Duplicate),
         }
     }
 
     fn check_safe_to_notar(&mut self, block_hash: BlockHash) -> SafeToNotarStatus {
         // check general voted stake conditions
-        let notar_stake = *self
+        let notar_stake = self
             .voted_stakes
             .notar
             .get(&block_hash)
-            .unwrap_or(&Stake::default());
+            .copied()
+            .unwrap_or_default();
         let skip_stake = self.voted_stakes.skip;
         if !self.epoch_info.epoch_info().is_weakest_quorum(notar_stake) {
             return SafeToNotarStatus::AwaitingVotes;
@@ -519,10 +584,10 @@ impl SlotState {
         }
 
         // check parent condition
-        match self.parents.entry(block_hash.clone()) {
-            Entry::Vacant(_) => return SafeToNotarStatus::MissingBlock,
-            Entry::Occupied(entry) => {
-                if entry.get() != &ParentStatus::Certified {
+        match self.parents.get(&block_hash) {
+            None => return SafeToNotarStatus::MissingBlock,
+            Some(status) => {
+                if status != &ParentStatus::Certified {
                     return SafeToNotarStatus::AwaitingVotes;
                 }
             }
@@ -676,7 +741,7 @@ mod tests {
         let mut state = SlotState::new(slot, epoch_info);
 
         // mark parent as notarized(-fallback)
-        state.notify_parent_known(hash.clone());
+        state.notify_parent_known(&hash);
         state.notify_parent_certified(hash.clone());
 
         // 33% notar alone has no effect
@@ -713,7 +778,7 @@ mod tests {
 
         // validator 2 notarizes first, so a later skip is slashable
         let v2 = ValidatorIndex::new(2);
-        add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[2], v2));
+        add(&mut state, Vote::new_notar(slot, hash, &sks[2], v2));
         let skip_vote = Vote::new_skip(slot, &sks[2], v2);
         assert_eq!(
             state.check_slashable_offence(&skip_vote),
@@ -741,7 +806,7 @@ mod tests {
         );
 
         // re-notarizing the same hash is a benign duplicate, not slashable
-        assert!(state.check_slashable_offence(&notar_a).is_none());
+        assert_eq!(state.check_slashable_offence(&notar_a), None);
     }
 
     #[test]
@@ -798,7 +863,7 @@ mod tests {
 
         // notar-fallback first, then finalize is slashable
         let v2 = ValidatorIndex::new(2);
-        let nf_vote_2 = Vote::new_notar_fallback(slot, hash.clone(), &sks[2], v2);
+        let nf_vote_2 = Vote::new_notar_fallback(slot, hash, &sks[2], v2);
         add(&mut state, nf_vote_2);
         assert_eq!(
             state.check_slashable_offence(&Vote::new_final(slot, &sks[2], v2)),
@@ -816,7 +881,7 @@ mod tests {
         let v = ValidatorIndex::new(1);
 
         // no prior votes -> nothing is slashable
-        let notar_vote = Vote::new_notar(slot, hash.clone(), sk, v);
+        let notar_vote = Vote::new_notar(slot, hash, sk, v);
         let skip_vote = Vote::new_skip(slot, sk, v);
         let final_vote = Vote::new_final(slot, sk, v);
         assert!(state.check_slashable_offence(&notar_vote).is_none());
@@ -824,7 +889,7 @@ mod tests {
         assert!(state.check_slashable_offence(&final_vote).is_none());
 
         // notarizing then finalizing the same block is the happy path, not slashable
-        add(&mut state, notar_vote.clone());
+        add(&mut state, notar_vote);
         assert!(state.check_slashable_offence(&final_vote).is_none());
     }
 
@@ -838,31 +903,52 @@ mod tests {
 
         // fresh validator: nothing to ignore
         let v1 = ValidatorIndex::new(1);
-        assert!(!state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)));
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)),
+            None
+        );
 
         // only one notar vote per validator counts, regardless of the hash
         add(&mut state, Vote::new_notar(slot, hash.clone(), &sks[1], v1));
-        assert!(state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)));
-        assert!(state.should_ignore_vote(&Vote::new_notar(slot, other_hash.clone(), &sks[1], v1)));
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_notar(slot, hash.clone(), &sks[1], v1)),
+            Some(IgnoreReason::Duplicate)
+        );
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_notar(slot, other_hash.clone(), &sks[1], v1)),
+            Some(IgnoreReason::Duplicate)
+        );
 
         // should ignore skip and skip-fallback after skip
         let v2 = ValidatorIndex::new(2);
         add(&mut state, Vote::new_skip(slot, &sks[2], v2));
-        assert!(state.should_ignore_vote(&Vote::new_skip(slot, &sks[2], v2)));
-        assert!(state.should_ignore_vote(&Vote::new_skip_fallback(slot, &sks[2], v2)));
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_skip(slot, &sks[2], v2)),
+            Some(IgnoreReason::Duplicate)
+        );
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_skip_fallback(slot, &sks[2], v2)),
+            Some(IgnoreReason::SkipSkipFallback)
+        );
 
         // ignore duplicate finalization votes
         let v3 = ValidatorIndex::new(3);
         add(&mut state, Vote::new_final(slot, &sks[3], v3));
-        assert!(state.should_ignore_vote(&Vote::new_final(slot, &sks[3], v3)));
+        assert_eq!(
+            state.should_ignore_vote(&Vote::new_final(slot, &sks[3], v3)),
+            Some(IgnoreReason::Duplicate)
+        );
 
         // notar-fallback is tracked per (validator, hash)
         let v4 = ValidatorIndex::new(4);
-        let nf_vote_1 = Vote::new_notar_fallback(slot, hash.clone(), &sks[4], v4);
+        let nf_vote_1 = Vote::new_notar_fallback(slot, hash, &sks[4], v4);
         add(&mut state, nf_vote_1.clone());
-        assert!(state.should_ignore_vote(&nf_vote_1));
+        assert_eq!(
+            state.should_ignore_vote(&nf_vote_1),
+            Some(IgnoreReason::Duplicate)
+        );
         let nf_vote_2 = Vote::new_notar_fallback(slot, other_hash, &sks[4], v4);
-        assert!(!state.should_ignore_vote(&nf_vote_2));
+        assert_eq!(state.should_ignore_vote(&nf_vote_2), None);
     }
 
     #[test]
@@ -932,8 +1018,102 @@ mod tests {
 
         // more notar-fallback votes do not emit new cert
         state.add_cert(cert);
-        let nf_vote = Vote::new_notar_fallback(slot, hash.clone(), &sks[5], ValidatorIndex::new(5));
+        let nf_vote = Vote::new_notar_fallback(slot, hash, &sks[5], ValidatorIndex::new(5));
         let (certs, _, _) = add(&mut state, nf_vote);
         assert!(certs.is_empty());
+    }
+
+    #[test]
+    fn skip_skip_fallback_conflict() {
+        let (sks, epoch_info) = generate_validators(3);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let slot = Slot::new(1);
+        let mut slot_state = SlotState::new(slot, epoch_info.clone());
+
+        let v = ValidatorIndex::new(0);
+        let skip = Vote::new_skip(slot, &sks[v.as_usize()], v);
+        let skip_fallback = Vote::new_skip_fallback(slot, &sks[v.as_usize()], v);
+        let voter_stake = epoch_info.epoch_info().validator(v).stake;
+
+        // neither should be ignored before anything is recorded
+        assert_eq!(slot_state.should_ignore_vote(&skip), None);
+        assert_eq!(slot_state.should_ignore_vote(&skip_fallback), None);
+
+        // record the skip vote
+        slot_state.add_vote(skip.clone(), voter_stake);
+        // should now ignore the skip-fallback vote (as conflict)
+        assert_eq!(
+            slot_state.should_ignore_vote(&skip_fallback),
+            Some(IgnoreReason::SkipSkipFallback)
+        );
+        // should now ignore the same skip vote (as duplicate)
+        assert_eq!(
+            slot_state.should_ignore_vote(&skip),
+            Some(IgnoreReason::Duplicate)
+        );
+        // and the skip-fallback vote should NOT be slashable
+        assert_eq!(slot_state.check_slashable_offence(&skip_fallback), None);
+
+        // the conflict is symmetric
+        let mut slot_state = SlotState::new(slot, epoch_info);
+        slot_state.add_vote(skip_fallback.clone(), voter_stake);
+        assert_eq!(
+            slot_state.should_ignore_vote(&skip),
+            Some(IgnoreReason::SkipSkipFallback)
+        );
+        assert_eq!(
+            slot_state.should_ignore_vote(&skip_fallback),
+            Some(IgnoreReason::Duplicate)
+        );
+        assert_eq!(slot_state.check_slashable_offence(&skip), None);
+    }
+
+    #[test]
+    fn notar_notar_fallback_conflict() {
+        let (sks, epoch_info) = generate_validators(3);
+        let epoch_info = wrap_epoch_info(epoch_info);
+        let (slot, hash) = random_block_id(Slot::new(1));
+        let (_, other_hash) = random_block_id(slot);
+        let mut slot_state = SlotState::new(slot, epoch_info.clone());
+
+        let v = ValidatorIndex::new(0);
+        let notar = Vote::new_notar(slot, hash.clone(), &sks[v.as_usize()], v);
+        let notar_fallback = Vote::new_notar_fallback(slot, hash, &sks[v.as_usize()], v);
+        let nf_other = Vote::new_notar_fallback(slot, other_hash, &sks[v.as_usize()], v);
+        let voter_stake = epoch_info.epoch_info().validator(v).stake;
+
+        // neither should be ignored before anything is recorded
+        assert_eq!(slot_state.should_ignore_vote(&notar), None);
+        assert_eq!(slot_state.should_ignore_vote(&notar_fallback), None);
+
+        // record the notar vote
+        slot_state.add_vote(notar.clone(), voter_stake);
+        // should now ignore the notar-fallback vote (as conflict)
+        assert_eq!(
+            slot_state.should_ignore_vote(&notar_fallback),
+            Some(IgnoreReason::NotarNotarFallback)
+        );
+        // should now ignore the same notar vote (as duplicate)
+        assert_eq!(
+            slot_state.should_ignore_vote(&notar),
+            Some(IgnoreReason::Duplicate)
+        );
+        // a notar-fallback for a DIFFERENT block is honest and still counts
+        assert_eq!(slot_state.should_ignore_vote(&nf_other), None);
+        // and the same-block conflict should NOT be slashable
+        assert_eq!(slot_state.check_slashable_offence(&notar_fallback), None);
+
+        // the conflict is symmetric
+        let mut slot_state = SlotState::new(slot, epoch_info);
+        slot_state.add_vote(notar_fallback.clone(), voter_stake);
+        assert_eq!(
+            slot_state.should_ignore_vote(&notar),
+            Some(IgnoreReason::NotarNotarFallback)
+        );
+        assert_eq!(
+            slot_state.should_ignore_vote(&notar_fallback),
+            Some(IgnoreReason::Duplicate)
+        );
+        assert_eq!(slot_state.check_slashable_offence(&notar), None);
     }
 }

@@ -17,8 +17,10 @@ pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
 use crate::consensus::blockstore::slot_block_data::BlockData;
 use crate::crypto::merkle::{BlockHash, DoubleMerkleProof, SliceRoot};
-use crate::shredder::{RegularShredder, ShredIndex, ShredderPool, ValidatedShred};
-use crate::types::SliceIndex;
+use crate::shredder::{
+    RegularShredder, ShredIndex, ShredderPool, SliceCommitment, TOTAL_SHREDS, ValidatedShred,
+};
+use crate::types::{SliceIndex, SlicePayload};
 use crate::{Block, BlockId, Slot};
 
 /// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
@@ -74,15 +76,21 @@ pub trait Blockstore {
         hash: BlockHash,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError>;
-    #[allow(clippy::needless_lifetimes)]
+    async fn add_own_slice(
+        &mut self,
+        payload: SlicePayload,
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
+    ) -> Option<BlockInfo>;
+    async fn flag_leader_misbehavior(&mut self, slot: Slot);
+    #[expect(
+        clippy::needless_lifetimes,
+        reason = "explicit lifetime is required by mockall::automock"
+    )]
     fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
-    #[allow(clippy::needless_lifetimes)]
     fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
     fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    #[allow(clippy::needless_lifetimes)]
-    fn get_slice_root<'a>(&'a self, block_id: &BlockId, slice: SliceIndex)
-    -> Option<&'a SliceRoot>;
-    #[allow(clippy::needless_lifetimes)]
+    fn get_slice_root(&self, block_id: &BlockId, slice: SliceIndex) -> Option<SliceRoot>;
+    fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment>;
     fn get_shred<'a>(
         &'a self,
         block_id: &BlockId,
@@ -131,13 +139,9 @@ impl BlockstoreImpl {
     }
 
     async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => {
-                self.votor_channel.send(event).await.unwrap();
-                None
-            }
+        let block_info = match &event {
+            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => None,
             BlockstoreEvent::Block { slot, block_info } => {
-                let block_info = block_info.clone();
                 debug!(
                     "reconstructed block {} in slot {} with parent {} in slot {}",
                     block_info.hash.short_hex(),
@@ -145,11 +149,14 @@ impl BlockstoreImpl {
                     block_info.parent.1.short_hex(),
                     block_info.parent.0,
                 );
-                self.votor_channel.send(event).await.unwrap();
-
-                Some(block_info)
+                Some(block_info.clone())
             }
-        }
+        };
+        self.votor_channel
+            .send(event)
+            .await
+            .expect("votor should not drop the event receiver");
+        block_info
     }
 
     /// Gives reference to stored block data for the given `block_id`.
@@ -236,8 +243,7 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to the last slice, all later shreds are deleted.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_dissemination(
@@ -255,10 +261,9 @@ impl Blockstore for BlockstoreImpl {
         {
             Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
             Ok(None) => Ok(None),
-            Err(AddShredError::InvalidShred) => {
-                self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
-                    .await;
-                Err(AddShredError::InvalidShred)
+            Err(err @ (AddShredError::Equivocation | AddShredError::InvalidShred)) => {
+                self.flag_leader_misbehavior(slot).await;
+                Err(err)
             }
             Err(e) => Err(e),
         }
@@ -274,8 +279,7 @@ impl Blockstore for BlockstoreImpl {
     /// Reconstructs the corresponding slice and block if possible and necessary.
     /// If the added shred belongs to last slice, deletes later slices and their shreds.
     ///
-    /// Returns `Some(slot, block_info)` if a block was reconstructed, `None` otherwise.
-    /// In the `Some`-case, `block_info` is the [`BlockInfo`] of the reconstructed block.
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
     async fn add_shred_from_repair(
@@ -288,12 +292,58 @@ impl Blockstore for BlockstoreImpl {
             .shredders
             .checkout()
             .expect("should have a shredder because of exclusive access");
-        match self
+
+        let result = self
             .slot_data_mut(slot)
-            .add_shred_from_repair(hash, shred, &mut shredder)?
-        {
+            .add_shred_from_repair(hash, shred, &mut shredder);
+        if matches!(
+            result,
+            Err(AddShredError::Equivocation | AddShredError::InvalidShred)
+        ) {
+            self.flag_leader_misbehavior(slot).await;
+        }
+        match result? {
             Some(event) => Ok(self.send_blockstore_event(event).await),
             None => Ok(None),
+        }
+    }
+
+    /// Ingests a locally produced slice (leader fast path); see trait docs.
+    ///
+    /// No shredder is checked out and no decoding happens.
+    /// The shreds are stored as-is and the slice is rebuilt from the `payload`.
+    /// Emits the same [`BlockstoreEvent`]s as the dissemination path.
+    ///
+    /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
+    #[hotpath::measure]
+    #[fastrace::trace(short_name = true)]
+    async fn add_own_slice(
+        &mut self,
+        payload: SlicePayload,
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
+    ) -> Option<BlockInfo> {
+        let slot = shreds[0].payload().header.slot;
+        let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(payload, *shreds);
+        if first_shred {
+            self.send_blockstore_event(BlockstoreEvent::FirstShred(slot))
+                .await;
+        }
+        match completed {
+            Some(block_info) => {
+                self.send_blockstore_event(BlockstoreEvent::Block { slot, block_info })
+                    .await
+            }
+            None => None,
+        }
+    }
+
+    /// Flags the leader as misbehaving for `slot`, notifying Votor exactly once.
+    ///
+    /// Emits [`BlockstoreEvent::InvalidBlock`] the first time the slot is flagged.
+    async fn flag_leader_misbehavior(&mut self, slot: Slot) {
+        if self.slot_data_mut(slot).mark_leader_misbehaved() {
+            self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
+                .await;
         }
     }
 
@@ -337,13 +387,26 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold any shred for that slice.
-    fn get_slice_root<'a>(
-        &'a self,
-        block_id: &BlockId,
-        slice_index: SliceIndex,
-    ) -> Option<&'a SliceRoot> {
+    fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<SliceRoot> {
         let block_data = self.get_block_data(block_id)?;
-        block_data.merkle_root_cache.get(&slice_index)
+        block_data
+            .shreds
+            .get(&slice_index)?
+            .iter()
+            .find_map(|s| s.as_ref())
+            .map(|s| s.slice_root().clone())
+    }
+
+    /// Cached [`SliceCommitment`] for the slice if we have one.
+    ///
+    /// Lets the dissemination path short-circuit verification for the same slice.
+    /// This is also what allows us to detect leader equivocation.
+    fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment> {
+        self.slot_data(slot)?
+            .disseminated
+            .commitment_cache
+            .get(&slice)
+            .copied()
     }
 
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
@@ -382,9 +445,9 @@ mod tests {
     use super::*;
     use crate::crypto::merkle::DoubleMerkleTree;
     use crate::crypto::signature::SecretKey;
-    use crate::shredder::{DATA_SHREDS, TOTAL_SHREDS};
-    use crate::test_utils::create_random_shredded_block;
-    use crate::types::SliceIndex;
+    use crate::shredder::{DATA_SHREDS, RegularShredder, Shredder, TOTAL_SHREDS};
+    use crate::test_utils::{create_random_block, create_random_shredded_block};
+    use crate::types::{Slice, SliceIndex, SlicePayload};
 
     struct TestContext {
         sk: SecretKey,
@@ -414,6 +477,15 @@ mod tests {
         }
     }
 
+    fn shred_as_leader(
+        slice: Slice,
+        sk: &SecretKey,
+    ) -> (SlicePayload, [ValidatedShred; TOTAL_SHREDS]) {
+        let payload = slice.clone().deconstruct().1;
+        let shreds = RegularShredder::default().shred(slice, sk).unwrap();
+        (payload, shreds)
+    }
+
     #[tokio::test]
     async fn store_one_slice_block() -> Result<()> {
         let mut ctx = setup();
@@ -424,7 +496,7 @@ mod tests {
         let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, &ctx.sk);
         let block_id = (slot, block_hash);
 
-        let slice_hash = shreds[0][0].merkle_root();
+        let slice_hash = shreds[0][0].slice_root();
         for shred in &shreds[0] {
             // store shred
             add_shred_ignore_duplicate(&mut ctx.blockstore, shred.clone()).await?;
@@ -640,6 +712,68 @@ mod tests {
         Ok(())
     }
 
+    fn count_invalid_block_events(rx: &mut mpsc::Receiver<BlockstoreEvent>, slot: Slot) -> usize {
+        let mut count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, BlockstoreEvent::InvalidBlock(s) if s == slot) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    #[tokio::test]
+    async fn dissemination_equivocation() -> Result<()> {
+        let sk = SecretKey::new(&mut rand::rng());
+        let (tx, mut rx) = mpsc::channel(1000);
+        let mut blockstore = BlockstoreImpl::new(tx);
+        let slot = Slot::genesis().next();
+
+        // disseminate two distinct blocks for the same slot
+        let (_h0, _t0, slices0) = create_random_shredded_block(slot, 1, &sk);
+        let (_h1, _t1, slices1) = create_random_shredded_block(slot, 1, &sk);
+        blockstore
+            .add_shred_from_dissemination(slices0[0][0].clone())
+            .await?;
+        let res = blockstore
+            .add_shred_from_dissemination(slices1[0][0].clone())
+            .await;
+
+        // equivocation detected, Votor should be notified
+        assert_eq!(res, Err(AddShredError::Equivocation));
+        assert_eq!(count_invalid_block_events(&mut rx, slot), 1);
+
+        // idempotent: later misbehavior does not re-notify
+        blockstore.flag_leader_misbehavior(slot).await;
+        assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_conflicting_block_not_flagged_as_equivocation() -> Result<()> {
+        let sk = SecretKey::new(&mut rand::rng());
+        let (tx, mut rx) = mpsc::channel(1000);
+        let mut blockstore = BlockstoreImpl::new(tx);
+        let slot = Slot::genesis().next();
+
+        // see different blocks from dissemination and repair
+        let (_h0, _t0, slices0) = create_random_shredded_block(slot, 1, &sk);
+        let (hash, _t1, slices1) = create_random_shredded_block(slot, 1, &sk);
+        blockstore
+            .add_shred_from_dissemination(slices0[0][0].clone())
+            .await?;
+        let res = blockstore
+            .add_shred_from_repair(hash, slices1[0][0].clone())
+            .await;
+
+        // TODO: Detect equivocation across the dissemination and repair spots.
+        assert_eq!(res, Ok(None));
+        assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn pruning() -> Result<()> {
         let mut ctx = setup();
@@ -693,6 +827,82 @@ mod tests {
             })
             .sum::<usize>();
         assert_eq!(shred_count, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_single_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(1).await
+    }
+
+    #[tokio::test]
+    async fn add_own_slice_matches_dissemination_multi_slice() -> Result<()> {
+        check_own_slice_matches_dissemination(3).await
+    }
+
+    async fn check_own_slice_matches_dissemination(num_slices: usize) -> Result<()> {
+        let sk = SecretKey::new(&mut rand::rng());
+        let slot = Slot::genesis().next();
+        let slices = create_random_block(slot, num_slices);
+
+        // reference: reconstruct the block via the dissemination path
+        let (dissem_tx, _dissem_rx) = mpsc::channel(1000);
+        let mut dissem = BlockstoreImpl::new(dissem_tx);
+        for slice in &slices {
+            let shreds = RegularShredder::default()
+                .shred(slice.clone(), &sk)
+                .unwrap();
+            for shred in shreds {
+                add_shred_ignore_duplicate(&mut dissem, shred).await?;
+            }
+        }
+        let expected_hash = dissem.disseminated_block_hash(slot).unwrap().clone();
+
+        // fast path: feed the same slices through `add_own_slice`
+        let (own_tx, mut own_rx) = mpsc::channel(1000);
+        let mut own = BlockstoreImpl::new(own_tx);
+        let mut completed = None;
+        for slice in slices {
+            let is_last = slice.is_last;
+            let (payload, shreds) = shred_as_leader(slice, &sk);
+            let block_info = own.add_own_slice(payload, Box::new(shreds)).await;
+            // only the last slice completes the block
+            assert_eq!(block_info.is_some(), is_last);
+            if let Some(info) = block_info {
+                completed = Some(info);
+            }
+        }
+
+        // fast path agrees with dissemination on the block hash,
+        // and records the block under that hash
+        let completed = completed.expect("last slice should complete the block");
+        assert_eq!(completed.hash, expected_hash);
+        assert_eq!(own.disseminated_block_hash(slot), Some(&expected_hash));
+        assert!(own.get_block(&(slot, expected_hash.clone())).is_some());
+
+        // emits exactly one FirstShred and one Block event
+        let mut first_shreds = 0;
+        let mut blocks = 0;
+        while let Ok(event) = own_rx.try_recv() {
+            match event {
+                BlockstoreEvent::FirstShred(s) => {
+                    assert_eq!(s, slot);
+                    first_shreds += 1;
+                }
+                BlockstoreEvent::Block {
+                    slot: s,
+                    block_info,
+                } => {
+                    assert_eq!(s, slot);
+                    assert_eq!(block_info.hash, expected_hash);
+                    blocks += 1;
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert_eq!(first_shreds, 1, "expected exactly one FirstShred event");
+        assert_eq!(blocks, 1, "expected exactly one Block event");
 
         Ok(())
     }
