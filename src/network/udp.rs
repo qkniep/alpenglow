@@ -238,6 +238,10 @@ where
         // `join_all`-of-sendtos only added N futures and N waker round-trips.
         #[cfg(not(target_os = "linux"))]
         {
+            // Best-effort: a hard error on one address is recorded but doesn't
+            // abort the batch; the first such error is surfaced once every
+            // remaining address has been attempted.
+            let mut first_err = None;
             for addr in addrs {
                 loop {
                     match self.socket.try_send_to(&bytes, addr) {
@@ -245,11 +249,14 @@ where
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             self.socket.writable().await?;
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => {
+                            first_err.get_or_insert(e);
+                            break;
+                        }
                     }
                 }
             }
-            Ok(())
+            first_err.map_or(Ok(()), Err)
         }
     }
 
@@ -368,6 +375,7 @@ mod sendmmsg {
         let fd = socket.as_raw_fd();
 
         let mut sent = 0;
+        let mut first_err = None;
         while sent < n {
             socket.writable().await?;
             let chunk_len = (n - sent).min(MAX_BATCH);
@@ -417,10 +425,17 @@ mod sendmmsg {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 // interrupted before any messages sent; retry the same chunk
                 Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
-                Err(e) => return Err(e),
+                // Best-effort: `sendmmsg` reports an error only when *zero* of the
+                // current chunk went out, so the culprit is exactly `addrs[sent]`.
+                // Record the first such error, skip that destination, and keep
+                // sending the rest of the batch.
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                    sent += 1;
+                }
             }
         }
-        Ok(())
+        first_err.map_or(Ok(()), Err)
     }
 }
 
