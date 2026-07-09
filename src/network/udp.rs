@@ -417,10 +417,10 @@ mod sendmmsg {
 
 /// Linux-only `recvmmsg(2)` fast path for batched receives.
 ///
-/// Drains every datagram currently queued on the socket (up to the number of
-/// `buffers` provided) with a single `recvmmsg` syscall, replacing N `recvfrom`
-/// syscalls (and N tokio wakers) with one. The caller serializes access and
-/// must have observed readability first.
+/// Drains every datagram currently queued on the socket
+/// (up to the number of `buffers` provided) with a single `recvmmsg` syscall,
+/// replacing N `recvfrom` syscalls (and N tokio wakers) with one.
+/// The caller serializes access and must have observed readability first.
 #[cfg(target_os = "linux")]
 mod recvmmsg {
     use std::io;
@@ -431,14 +431,15 @@ mod recvmmsg {
 
     use super::RECEIVE_BUFFER_SIZE;
 
-    /// Drains queued datagrams from `socket` into `buffers`, returning the byte
-    /// length of each datagram received (one entry per packet, arrival order).
+    /// Drains queued datagrams from `socket` into `buffers`.
     ///
-    /// The fd is non-blocking, so `recvmmsg` reads as many datagrams as are
-    /// already queued — up to `buffers.len()` — and returns immediately rather
-    /// than waiting for the batch to fill. If nothing is queued (a spurious
-    /// readiness, or a racing reader drained it) the underlying `EAGAIN`
-    /// surfaces as `WouldBlock` for the caller to re-arm on.
+    /// The fd is non-blocking, so `recvmmsg` reads as many datagrams as are already queued
+    /// (up to `buffers.len()`) and returns immediately rather than waiting for the batch to fill.
+    /// If nothing is queued (a spurious readiness, or a racing reader drained it)
+    /// the underlying `EAGAIN` surfaces as `WouldBlock` for the caller to re-arm on.
+    ///
+    /// Returns the byte length of each datagram received
+    /// (one entry per packet, arrival order).
     pub(super) fn recv_into(
         socket: &UdpSocket,
         buffers: &mut [[u8; RECEIVE_BUFFER_SIZE]],
@@ -447,9 +448,8 @@ mod recvmmsg {
         let fd = socket.as_raw_fd();
 
         socket.try_io(Interest::READABLE, || {
-            // One `iovec` per slot, each pointing at that slot's buffer. The
-            // backing `iovecs` Vec must outlive the syscall: every `mmsghdr`
-            // holds a raw pointer into it.
+            // one `iovec` per slot, each pointing at that slot's buffer
+            // must outlive the syscall: every `mmsghdr` holds a raw pointer into it
             let mut iovecs: Vec<libc::iovec> = buffers
                 .iter_mut()
                 .map(|b| libc::iovec {
