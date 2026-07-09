@@ -33,6 +33,8 @@ mod udp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
+use wincode::config::Configuration;
+use wincode::{ReadResult, SchemaRead};
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::tcp::TcpNetwork;
@@ -44,6 +46,26 @@ use crate::shredder::Shred;
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
+
+/// Configuration for [`wincode`] decoding a single off-the-wire message.
+///
+/// Identical to the [default](wincode::config::DefaultConfig),
+/// except preallocation is capped at [`MTU_BYTES`] instead of wincode's 4 MiB default.
+/// Used by [`deserialize`].
+pub type NetworkMessageConfig = Configuration<true, MTU_BYTES>;
+
+/// Deserializes a single message received off the network.
+///
+/// Every message in our protocols fits in one [`MTU_BYTES`] datagram,
+/// so unlike a plain [`wincode::deserialize`], this:
+/// - caps preallocation at [`MTU_BYTES`] (wincode defaults to 4 MiB), and
+/// - requires the bytes to be fully consumed, rejecting trailing garbage.
+pub fn deserialize<'de, T>(bytes: &'de [u8]) -> ReadResult<T>
+where
+    T: SchemaRead<'de, NetworkMessageConfig, Dst = T>,
+{
+    wincode::config::deserialize_exact(bytes, NetworkMessageConfig::new())
+}
 
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
@@ -61,7 +83,7 @@ pub trait Network: Send + Sync {
     async fn send_to_many(
         &self,
         message: &Self::Send,
-        addrs: impl Iterator<Item = SocketAddr> + Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> std::io::Result<()>;
 
     /// Sends the `message` to `addr`.
@@ -109,4 +131,19 @@ pub fn localhost_ip_sockaddr(port: u16) -> SocketAddr {
 /// This should not be used in production.
 pub fn dontcare_sockaddr() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1234)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_requires_exact() {
+        let bytes = wincode::serialize(&42u64).unwrap();
+        assert_eq!(deserialize::<u64>(&bytes).unwrap(), 42);
+
+        let mut with_trailing = bytes;
+        with_trailing.push(0);
+        assert!(deserialize::<u64>(&with_trailing).is_err());
+    }
 }

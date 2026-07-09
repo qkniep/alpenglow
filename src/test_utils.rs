@@ -11,7 +11,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::all2all::TrivialAll2All;
 use crate::consensus::{ConsensusMessage, EpochInfo};
 use crate::crypto::aggsig::SecretKey;
-use crate::crypto::merkle::{BlockHash, DoubleMerkleTree};
+use crate::crypto::merkle::{BlockHash, DoubleMerkleTree, GENESIS_BLOCK_HASH};
 use crate::crypto::{Hash, signature};
 use crate::network::simulated::SimulatedNetworkCore;
 use crate::network::{SimulatedNetwork, localhost_ip_sockaddr};
@@ -74,7 +74,10 @@ pub async fn generate_all2all_instances(
             .with_packet_loss(0.0),
     );
     for (i, val) in validators.iter_mut().enumerate() {
-        val.all2all_address = localhost_ip_sockaddr(i.try_into().unwrap());
+        val.all2all_address = localhost_ip_sockaddr(
+            i.try_into()
+                .expect("validator count fits in the address type"),
+        );
     }
     let mut all2all = Vec::new();
     for i in 0..validators.len() {
@@ -95,14 +98,29 @@ pub fn create_random_shredded_block(
     let mut shredder = RegularShredder::default();
     let mut shreds = Vec::with_capacity(num_slices);
     for slice in create_random_block(slot, num_slices) {
-        shreds.push(shredder.shred(slice.clone(), sk).unwrap().to_vec());
+        shreds.push(
+            shredder
+                .shred(&slice, sk)
+                .expect("shredding a valid slice cannot fail")
+                .to_vec(),
+        );
     }
-    let merkle_roots = shreds
+    let slice_roots = shreds
         .iter()
-        .map(|slice_shreds| slice_shreds[0].merkle_root());
-    let tree = DoubleMerkleTree::new(merkle_roots);
+        .map(|slice_shreds| slice_shreds[0].slice_root());
+    let tree = DoubleMerkleTree::new(slice_roots);
     let block_hash = tree.get_root();
     (block_hash, tree, shreds)
+}
+
+/// Returns the [`BlockId`] of the genesis block.
+pub const fn genesis_block_id() -> BlockId {
+    (Slot::genesis(), GENESIS_BLOCK_HASH)
+}
+
+/// Returns a [`BlockId`] for `slot` with a fresh random block hash.
+pub fn random_block_id(slot: Slot) -> BlockId {
+    (slot, Hash::random_for_test().into())
 }
 
 /// Creates a random block with the given number of slices.
@@ -111,7 +129,7 @@ pub fn create_random_shredded_block(
 ///
 /// Returns all slices, as [`Slice`].
 pub fn create_random_block(slot: Slot, num_slices: usize) -> Vec<Slice> {
-    let final_slice_index = SliceIndex::new_unchecked(num_slices - 1);
+    let final_slice_index = SliceIndex::new_for_test(num_slices - 1);
     let parent_slot = Slot::genesis();
     assert_ne!(slot, parent_slot);
     let mut slices = Vec::new();
@@ -141,11 +159,11 @@ fn create_random_slice_payload_valid_txs(parent: Option<BlockId>) -> SlicePayloa
     let mut data = vec![0; MAX_TRANSACTION_SIZE];
     rand::rng().fill_bytes(&mut data);
     let tx = Transaction(data);
-    let tx = wincode::serialize(&tx).expect("serialization should not panic");
+    let tx = crate::serialize(&tx);
     let txs = vec![tx; NUM_TXS_PER_SLICE];
-    let txs = wincode::serialize(&txs).expect("serialization should not panic");
+    let txs = crate::serialize(&txs);
     let payload = SlicePayload::new(parent, txs);
     let payload: Vec<u8> = payload.into();
     assert!(payload.len() <= MAX_DATA_PER_SLICE);
-    SlicePayload::from(payload.as_slice())
+    SlicePayload::try_from(payload.as_slice()).expect("payload should deserialize")
 }

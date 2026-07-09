@@ -16,7 +16,7 @@ pub mod logging;
 pub mod network;
 pub mod repair;
 pub mod shredder;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 pub mod types;
 pub mod validator;
@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use static_assertions::const_assert_eq;
+use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::all2all::All2All;
@@ -48,6 +49,18 @@ use crate::shredder::Shred;
 // NOTE: In many places we assume that `usize` is 64 bits wide.
 // So, for now, we only support 64-bit architectures.
 const_assert_eq!(std::mem::size_of::<usize>(), 8);
+
+/// Serializes an in-memory value with [`wincode`].
+///
+/// Panics on encoder failure,
+/// which can't happen with a `Vec` writer:
+/// wincode only fails on writer I/O errors, and a `Vec` never errors.
+pub(crate) fn serialize<T>(value: &T) -> Vec<u8>
+where
+    T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
+{
+    wincode::serialize(value).expect("serializing an in-memory value should not fail")
+}
 
 /// Block identifier type.
 pub type BlockId = (Slot, BlockHash);

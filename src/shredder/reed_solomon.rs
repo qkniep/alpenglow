@@ -33,7 +33,7 @@ pub(super) enum ReedSolomonDeshredError {
 }
 
 /// The data and coding shreds returned from [`ReedSolomonCoder::shred`] on success.
-pub(super) struct RawShreds {
+pub struct RawShreds {
     /// A list of data shreds.
     pub(super) data: Vec<Vec<u8>>,
     /// A list of coding shreds.
@@ -62,8 +62,10 @@ impl ReedSolomonCoder {
 
         assert!(num_coding <= TOTAL_SHREDS);
 
-        let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
-        let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED).unwrap();
+        let encoder = ReedSolomonEncoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED)
+            .expect("Reed-Solomon dimensions should be valid");
+        let decoder = ReedSolomonDecoder::new(DATA_SHREDS, num_coding, MAX_DATA_PER_SHRED)
+            .expect("Reed-Solomon dimensions should be valid");
 
         ReedSolomonCoder {
             num_coding,
@@ -193,24 +195,27 @@ impl ReedSolomonCoder {
             .take_while(|b| **b == 0)
             .count()
             + 1;
-        if restored_payload[restored_payload.len() - padding_bytes] != 0x80 {
+        let Some(marker_idx) = restored_payload.len().checked_sub(padding_bytes) else {
+            return Err(ReedSolomonDeshredError::InvalidPadding);
+        };
+        if restored_payload[marker_idx] != 0x80 {
             return Err(ReedSolomonDeshredError::InvalidPadding);
         }
-        restored_payload.truncate(restored_payload.len().saturating_sub(padding_bytes));
+        restored_payload.truncate(marker_idx);
         drop(restored);
 
-        let raw_shreds = self.encode_coding_from_data(&raw_data_shreds);
+        let raw_shreds = self.encode_coding_from_data(raw_data_shreds);
         Ok((restored_payload, raw_shreds))
     }
 
     /// Produces coding shreds from pre-split data shreds.
-    fn encode_coding_from_data(&mut self, data_shreds: &[Vec<u8>]) -> RawShreds {
+    fn encode_coding_from_data(&mut self, data_shreds: Vec<Vec<u8>>) -> RawShreds {
         assert_eq!(data_shreds.len(), DATA_SHREDS);
         let shred_bytes = data_shreds[0].len();
         self.encoder
             .reset(DATA_SHREDS, self.num_coding, shred_bytes)
             .expect("shred size should be supported");
-        for shred in data_shreds {
+        for shred in &data_shreds {
             self.encoder
                 .add_original_shard(shred)
                 .expect("adding correct number of shreds of correct size");
@@ -221,7 +226,7 @@ impl ReedSolomonCoder {
             .expect("we just added enough data shreds");
         let coding = result.recovery_iter().map(<[u8]>::to_vec).collect();
         RawShreds {
-            data: data_shreds.to_vec(),
+            data: data_shreds,
             coding,
         }
     }
@@ -296,6 +301,51 @@ mod tests {
         let res = rs.deshred(validated_shreds);
         assert!(res.is_err());
         assert_eq!(res.err().unwrap(), ReedSolomonDeshredError::NotEnoughShreds);
+    }
+
+    #[test]
+    fn deshred_all_zero_payload_rejected() {
+        let header = SliceHeader {
+            slot: Slot::new(0),
+            slice_index: SliceIndex::first(),
+            is_last: true,
+        };
+        // all-zero payload has no valid padding marker
+        let raw = RawShreds {
+            data: vec![vec![0u8; MAX_DATA_PER_SHRED]; DATA_SHREDS],
+            coding: vec![vec![0u8; MAX_DATA_PER_SHRED]; TOTAL_SHREDS - DATA_SHREDS],
+        };
+        let sk = SecretKey::new(&mut rand::rng());
+        let mut shreds = data_and_coding_to_output_shreds(header, raw, &sk).map(Some);
+        for shred in shreds.iter_mut().skip(DATA_SHREDS) {
+            *shred = None;
+        }
+        let validated =
+            ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).unwrap();
+        let mut rs = ReedSolomonCoder::new(TOTAL_SHREDS - DATA_SHREDS);
+        assert_eq!(
+            rs.deshred(validated).err(),
+            Some(ReedSolomonDeshredError::InvalidPadding)
+        );
+    }
+
+    #[test]
+    fn validated_shreds_rejects_odd_sized_shreds() {
+        let header = SliceHeader {
+            slot: Slot::new(0),
+            slice_index: SliceIndex::first(),
+            is_last: true,
+        };
+        // odd-sized shreds would fail RS decoding
+        let raw = RawShreds {
+            data: vec![vec![0u8; MAX_DATA_PER_SHRED - 1]; DATA_SHREDS],
+            coding: vec![vec![0u8; MAX_DATA_PER_SHRED - 1]; TOTAL_SHREDS - DATA_SHREDS],
+        };
+        let sk = SecretKey::new(&mut rand::rng());
+        let shreds = data_and_coding_to_output_shreds(header, raw, &sk).map(Some);
+        assert!(
+            ValidatedShreds::try_new(&shreds, DATA_SHREDS, TOTAL_SHREDS - DATA_SHREDS).is_none()
+        );
     }
 
     fn shred_deshred_restore(header: SliceHeader, payload: Vec<u8>) {
