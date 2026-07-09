@@ -36,7 +36,6 @@ use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
-use static_assertions::const_assert;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
@@ -67,7 +66,7 @@ pub const DELTA: Duration = Duration::from_millis(250);
 const DELTA_BLOCK: Duration = Duration::from_millis(400);
 /// Time the leader has for producing and sending the first slice.
 const DELTA_FIRST_SLICE: Duration = Duration::from_millis(10);
-const_assert!(DELTA_FIRST_SLICE.as_nanos() <= DELTA_BLOCK.as_nanos());
+const _: () = assert!(DELTA_FIRST_SLICE.as_nanos() <= DELTA_BLOCK.as_nanos());
 /// Base timeout for when leader's first slice should arrive if they sent it immediately.
 const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
 /// Timeout for standstill detection mechanism.

@@ -20,7 +20,6 @@ use std::marker::PhantomData;
 use derive_more::{From, Into};
 use hex_literal::hex;
 use smallvec::SmallVec;
-use static_assertions::const_assert;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::Hash;
@@ -36,9 +35,9 @@ pub const MAX_MERKLE_TREE_HEIGHT: usize = 32;
 /// Maximum number of leaf nodes in the Merkle trees currently supported.
 pub const MAX_MERKLE_TREE_LEAVES: usize = 1 << MAX_MERKLE_TREE_HEIGHT;
 // need to be able to build Merkle tree for each slice
-const_assert!(TOTAL_SHREDS <= MAX_MERKLE_TREE_LEAVES);
+const _: () = assert!(TOTAL_SHREDS <= MAX_MERKLE_TREE_LEAVES);
 // need to be able to build double-Merkle tree for each block
-const_assert!(MAX_SLICES_PER_BLOCK <= MAX_MERKLE_TREE_LEAVES);
+const _: () = assert!(MAX_SLICES_PER_BLOCK <= MAX_MERKLE_TREE_LEAVES);
 
 const LEAF_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEAF-NODE";
 const LEFT_LABEL: [u8; 32] = *b"ALPENGLOW-MERKLE-TREE  LEFT-NODE";
