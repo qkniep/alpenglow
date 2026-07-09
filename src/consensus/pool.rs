@@ -525,7 +525,7 @@ impl Pool for PoolImpl {
 
         self.slot_state(*slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(parent_slot)
-            && parent_state.is_notarized_or_fallback(parent_hash)
+            && parent_state.is_notar_fallback_or_stronger(parent_hash)
             && let Some(output) = self
                 .slot_state(*slot)
                 .notify_parent_certified(block_hash.clone())
@@ -1436,7 +1436,7 @@ mod tests {
     fn drained_safe_to_notar(ctx: &mut TestContext, slot: Slot, hash: &BlockHash) -> bool {
         let mut seen = false;
         while let Ok(event) = ctx.votor_rx.try_recv() {
-            if let PoolEvent::SafeToNotar(s, h) = event
+            if let PoolEvent::SafeToNotar((s, h)) = event
                 && s == slot
                 && &h == hash
             {
@@ -1462,7 +1462,7 @@ mod tests {
         // Parent (slot1) is notarized only via a received notar cert: this
         // populates `certificates.notar` but no notar-fallback cert.
         let cert = notar_cert(&ctx, slot1, &hash1, 7);
-        ctx.pool.add_cert(Cert::Notar(cert)).await.unwrap();
+        ctx.add_cert(Cert::Notar(cert)).await.unwrap();
 
         // Register the child block; its parent is the cert-notarized slot1 block.
         ctx.pool
@@ -1494,7 +1494,7 @@ mod tests {
         // Parent (slot1) is fast-finalized only via a received cert: this
         // populates `certificates.fast_finalize` but no notar(-fallback) cert.
         let cert = fast_final_cert(&ctx, slot1, &hash1, 9);
-        ctx.pool.add_cert(Cert::FastFinal(cert)).await.unwrap();
+        ctx.add_cert(Cert::FastFinal(cert)).await.unwrap();
 
         ctx.pool
             .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
