@@ -147,22 +147,18 @@ where
         #[cfg(target_os = "linux")]
         {
             loop {
-                // Wait for readiness with no lock held, so the (potentially
-                // long) wait never blocks a concurrent drain of the queue.
+                // wait for readiness with no lock held
                 self.socket.readable().await?;
 
-                // `recv_into` is synchronous; the scratch guard is taken only
-                // after the await above and never held across one, keeping this
-                // future `Send` as `async_trait` requires.
                 let mut scratch = self.recv_scratch.lock();
                 let lens = match recvmmsg::recv_into(&self.socket, scratch.as_mut_slice()) {
                     Ok(lens) => lens,
-                    // tokio reported readable but the queue drained first; re-arm.
+                    // tokio reported readable but the queue drained first; re-arm
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         drop(scratch);
                         continue;
                     }
-                    // Interrupted before any datagram was read; retry the wait.
+                    // interrupted before any datagram was read; retry the wait
                     Err(e) if e.raw_os_error() == Some(libc::EINTR) => {
                         drop(scratch);
                         continue;
@@ -253,18 +249,30 @@ where
         self.send_serialized(bytes, addr).await
     }
 
+    /// Receives the next message.
+    ///
+    /// Uses `recvmmsg` on Linux to batch receive from the socket.
+    /// Drains any datagrams from a prior batch before reading a fresh batch.
+    ///
+    /// # Concurrency
+    ///
+    /// Assumes a single receiving task per instance.
+    /// Concurrent *sends* are fine (and are how the protocols use this),
+    /// but two tasks calling `receive` on the same socket at once can race:
+    /// Both may find `recv_queue` empty and enter `recv_batch`,
+    /// and once one drains the socket and stashes its surplus,
+    /// the other can be left parked until the next datagram arrives.
     async fn receive(&self) -> io::Result<R> {
         loop {
-            // Fast path: hand out a datagram drained by an earlier batch. The
-            // lock is released before the `await` below — never held across it.
+            // fast path: hand out a datagram drained by an earlier batch
+            // the lock is released before the `await` below
             let queued = self.recv_queue.lock().pop_front();
             if let Some(msg) = queued {
                 return Ok(msg);
             }
 
-            // Queue empty: pull a fresh batch from the socket, return its first
-            // message, and stash the rest for subsequent calls. An empty batch
-            // (spurious wakeup or all-malformed) just loops back to wait again.
+            // queue empty: pull a fresh batch from the socket
+            // return its first message, and stash the rest for subsequent calls
             let mut batch = self.recv_batch().await?;
             if let Some(first) = batch.pop_front() {
                 if !batch.is_empty() {
