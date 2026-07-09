@@ -339,12 +339,9 @@ impl Shredder for RegularShredder {
         slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
+        let header = slice.header();
         let raw_shreds = self.0.shred(&slice.payload_bytes())?;
-        Ok(data_and_coding_to_output_shreds(
-            slice.header(),
-            raw_shreds,
-            sk,
-        ))
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(
@@ -374,13 +371,10 @@ impl Shredder for CodingOnlyShredder {
         slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
+        let header = slice.header();
         let mut raw_shreds = self.0.shred(&slice.payload_bytes())?;
         raw_shreds.data = vec![];
-        Ok(data_and_coding_to_output_shreds(
-            slice.header(),
-            raw_shreds,
-            sk,
-        ))
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(
@@ -419,6 +413,7 @@ impl Shredder for PetsShredder {
         slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
+        let header = slice.header();
         let mut payload = slice.payload_bytes();
 
         let key = cipher::encrypt_with_random_key(&mut payload);
@@ -428,11 +423,7 @@ impl Shredder for PetsShredder {
         // delete data shred containing key
         raw_shreds.data.pop();
 
-        Ok(data_and_coding_to_output_shreds(
-            slice.header(),
-            raw_shreds,
-            sk,
-        ))
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(
@@ -473,6 +464,7 @@ impl Shredder for AontShredder {
         slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
+        let header = slice.header();
         let mut payload = slice.payload_bytes();
 
         let key = cipher::encrypt_with_random_key(&mut payload);
@@ -481,11 +473,7 @@ impl Shredder for AontShredder {
         payload.extend(key.iter().zip(hash.as_ref()).map(|(k, h)| k ^ h));
 
         let raw_shreds = self.0.shred(&payload)?;
-        Ok(data_and_coding_to_output_shreds(
-            slice.header(),
-            raw_shreds,
-            sk,
-        ))
+        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
     }
 
     fn deshred_validated_shreds(

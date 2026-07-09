@@ -482,7 +482,7 @@ mod tests {
         sk: &SecretKey,
     ) -> (SlicePayload, [ValidatedShred; TOTAL_SHREDS]) {
         let shreds = RegularShredder::default().shred(&slice, sk).unwrap();
-        let payload = slice.deconstruct().1;
+        let (_header, payload) = slice.deconstruct();
         (payload, shreds)
     }
 

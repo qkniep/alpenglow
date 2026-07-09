@@ -67,16 +67,15 @@ impl Slice {
 
     /// Serializes this slice's payload (its `parent` and `data`) into bytes.
     ///
-    /// Produces exactly the same bytes as [`SlicePayload::to_bytes`] for the
-    /// equivalent payload, but reads straight from the slice's fields so no
-    /// owned [`SlicePayload`] (and hence no copy of `data`) has to be
-    /// materialized first. Used by shredders, which only need the serialized
-    /// payload and never the owned [`Slice`].
+    /// Produces exactly the same bytes as [`SlicePayload::to_bytes`].
+    /// However, it reads straight from the slice's fields without owned [`SlicePayload`].
+    /// Used by shredders, which only need the serialized payload.
     pub(crate) fn payload_bytes(&self) -> Vec<u8> {
-        // A wincode struct is the concatenation of its fields with no framing,
-        // so serializing `parent` then `data` matches `SlicePayload`'s layout.
-        // Guarded by the `payload_bytes_matches_slice_payload` test below.
-        let mut buf = Vec::new();
+        let parent_len = wincode::serialized_size(&self.parent)
+            .expect("computing serialized size of parent should not fail")
+            as usize;
+        // parent + 8-byte `data` length prefix (wincode fixint) + data
+        let mut buf = Vec::with_capacity(parent_len + 8 + self.data.len());
         wincode::serialize_into(&mut buf, &self.parent)
             .expect("serializing slice parent should not fail");
         wincode::serialize_into(&mut buf, &self.data)
@@ -263,6 +262,7 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
 
     #[test]
     fn payload_roundtrip() {
@@ -273,15 +273,14 @@ mod tests {
 
     #[test]
     fn payload_bytes_matches_slice_payload() {
-        // `Slice::payload_bytes` must be byte-identical to serializing the
-        // equivalent `SlicePayload`, for both `parent` variants.
+        // `Slice::payload_bytes` must be identical to the equivalent `SlicePayload::to_bytes`
         let header = SliceHeader {
             slot: Slot::new(7),
             slice_index: SliceIndex::first(),
             is_last: true,
         };
-        let genesis = crate::crypto::merkle::GENESIS_BLOCK_HASH;
-        for parent in [None, Some((Slot::new(6), genesis))] {
+        // check with and without parent
+        for parent in [None, Some((Slot::new(6), GENESIS_BLOCK_HASH))] {
             let payload = SlicePayload::new(parent, vec![1, 2, 3, 4, 5]);
             let slice = Slice::from_parts(header, payload.clone());
             assert_eq!(slice.payload_bytes(), payload.to_bytes());
