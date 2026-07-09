@@ -7,9 +7,9 @@
 //! It is essentially a wrapper around [`tokio::net::UdpSocket`].
 //!
 //! On Linux, `send_to_many` batches a fanout into one `sendmmsg(2)` syscall,
-//! and `receive` uses `recvmmsg(2)` to drain a batch of queued datagrams per
-//! syscall (buffering the surplus for later calls). Other platforms fall back
-//! to one `sendto`/`recv` per packet.
+//! and `receive` uses `recvmmsg(2)` to drain a batch of queued datagrams per syscall
+//! (buffering the surplus for later calls).
+//! Other platforms fall back to one `sendto`/`recv` per packet.
 
 use std::collections::VecDeque;
 use std::io;
@@ -47,10 +47,10 @@ const SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 /// Number of datagrams drained per `recvmmsg(2)` syscall on Linux.
 ///
 /// `receive` reads up to this many queued datagrams in one kernel transition,
-/// hands out the first, and buffers the rest — so a burst of `RECV_BATCH`
-/// packets costs one syscall instead of one per packet. The scratch buffers
-/// backing this are ~`RECV_BATCH * MTU_BYTES` (here ~48 KB) per socket,
-/// allocated once at construction.
+/// hands out the first, and buffers the rest.
+/// So a burst of `RECV_BATCH` packets costs one syscall instead of one per packet.
+/// The scratch buffers backing this are ~`RECV_BATCH * MTU_BYTES` (here ~48 KB)
+/// per socket, allocated once at construction.
 #[cfg(target_os = "linux")]
 const RECV_BATCH: usize = 32;
 
@@ -58,8 +58,8 @@ const RECV_BATCH: usize = 32;
 pub struct UdpNetwork<S, R> {
     socket: UdpSocket,
     port: u16,
-    /// Datagrams drained by an earlier `recvmmsg` batch but not yet handed out
-    /// by `receive`. Filled in arrival order and popped from the front.
+    /// Buffer of previously drained datagrams from an earlier `recvmmsg` batch.
+    /// Filled in arrival order (first is the oldest) and popped from the front.
     recv_queue: Mutex<VecDeque<R>>,
     /// Reusable per-slot receive buffers for the Linux `recvmmsg` fast path.
     /// Allocated once so a batch drain never re-zeroes ~`RECV_BATCH` MTUs of
@@ -496,6 +496,7 @@ mod recvmmsg {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::time::Duration;
 
     use tokio::time::timeout;
@@ -588,29 +589,28 @@ mod tests {
         }
     }
 
-    /// `receive` must deliver every datagram when many arrive back-to-back,
-    /// regardless of how they were chunked across syscalls.
-    ///
-    /// `N > RECV_BATCH` so the Linux `recvmmsg` path needs more than one batch
-    /// to drain the burst, exercising the internal queue across refills; other
-    /// platforms exercise the single-`recv` fallback. Each datagram carries a
-    /// distinct id so we can confirm none are dropped or duplicated.
     #[tokio::test]
     async fn receive_many_batched() {
+        // `N > RECV_BATCH` so the Linux `recvmmsg` path needs more than one batch
         const N: usize = 100;
+        #[cfg(target_os = "linux")]
+        const _: () = assert!(N > RECV_BATCH);
         let receiver: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
         let recv_addr = localhost_ip_sockaddr(receiver.port());
         let sender: UdpNetwork<Ping, Ping> = UdpNetwork::new_with_any_port();
 
+        // send datagrams carrying unique IDs
         for i in 0..N {
             let mut payload = [0u8; 32];
             payload[0] = i as u8;
             sender.send(&Ping(payload), recv_addr).await.unwrap();
         }
 
-        let mut seen = std::collections::HashSet::new();
+        // `receive` must deliver every datagram when many arrive back-to-back,
+        // regardless of how they were chunked across syscalls.
+        let mut seen = HashSet::new();
         for _ in 0..N {
-            let got = tokio::time::timeout(std::time::Duration::from_secs(5), receiver.receive())
+            let got = timeout(Duration::from_secs(5), receiver.receive())
                 .await
                 .expect("receiver should get every packet")
                 .unwrap();
