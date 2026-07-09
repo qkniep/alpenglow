@@ -41,10 +41,8 @@ impl<'a> ValidatedShreds<'a> {
         // check all shred sizes match (also rejects an empty input)
         let any_shred = shreds.iter().flatten().next()?;
         let shred_size = any_shred.payload().data.len();
-        // Erasure decoding requires every shard to be non-empty and an even
-        // number of bytes. A malicious leader can sign odd- or zero-sized shreds
-        // that pass Merkle verification, so reject them here rather than
-        // panicking in the Reed-Solomon decoder during reconstruction.
+        // RS decoding requires every shard to be non-empty and an even number of bytes
+        // reject them here to prevent panicking in the decoder during reconstruction
         if shred_size == 0 || !shred_size.is_multiple_of(2) {
             return None;
         }

@@ -195,10 +195,6 @@ impl ReedSolomonCoder {
             .take_while(|b| **b == 0)
             .count()
             + 1;
-        // A malicious leader can produce a reconstructed payload with no `0x80`
-        // marker (e.g. all zeros), making `padding_bytes` exceed the payload
-        // length. The Merkle root commits to the shred bytes but not to
-        // well-formed padding, so reject this instead of indexing out of bounds.
         let Some(marker_idx) = restored_payload.len().checked_sub(padding_bytes) else {
             return Err(ReedSolomonDeshredError::InvalidPadding);
         };
@@ -309,14 +305,12 @@ mod tests {
 
     #[test]
     fn deshred_all_zero_payload_rejected() {
-        // A malicious leader can commit (via a signed Merkle root) to shreds
-        // whose reconstructed payload is entirely zero, i.e. has no `0x80`
-        // padding marker. Deshreding must reject this instead of panicking.
         let header = SliceHeader {
             slot: Slot::new(0),
             slice_index: SliceIndex::first(),
             is_last: true,
         };
+        // all-zero payload has no valid padding marker
         let raw = RawShreds {
             data: vec![vec![0u8; MAX_DATA_PER_SHRED]; DATA_SHREDS],
             coding: vec![vec![0u8; MAX_DATA_PER_SHRED]; TOTAL_SHREDS - DATA_SHREDS],
@@ -337,13 +331,12 @@ mod tests {
 
     #[test]
     fn validated_shreds_rejects_odd_sized_shreds() {
-        // The RS decoder requires non-zero, even shard sizes; a malicious leader
-        // can sign odd-sized shreds, so they must be rejected before decoding.
         let header = SliceHeader {
             slot: Slot::new(0),
             slice_index: SliceIndex::first(),
             is_last: true,
         };
+        // odd-sized shreds would fail RS decoding
         let raw = RawShreds {
             data: vec![vec![0u8; MAX_DATA_PER_SHRED - 1]; DATA_SHREDS],
             coding: vec![vec![0u8; MAX_DATA_PER_SHRED - 1]; TOTAL_SHREDS - DATA_SHREDS],
