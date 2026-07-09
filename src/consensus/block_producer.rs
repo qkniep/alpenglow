@@ -162,7 +162,7 @@ where
 
     /// Produces a block for the given slot.
     ///
-    /// If `parent_ready_rx` is `None`, the parent is already confirmed and the `DELTA_BLOCK`
+    /// If `parent_ready_rx` is `None`, the parent is already confirmed and the [`super::DELTA_BLOCK`]
     /// timer starts immediately. Otherwise production begins optimistically on the guessed
     /// parent and the timer starts once the `ParentReady` event arrives (see [`SliceProducer`],
     /// which owns all of the optimistic-handover and timing state).
@@ -221,9 +221,10 @@ where
                 slice_index,
                 is_last,
             };
-            match self.shred_and_disseminate(header, payload).await? {
-                Some(block_hash) => return Ok(Some((slot, block_hash))),
-                None => debug_assert!(!is_last, "the final slice must complete the block"),
+            // A block completes (`Some`) only on its last slice; the `is_last` invariant is
+            // owned and asserted (both directions) inside `shred_and_disseminate`.
+            if let Some(block_hash) = self.shred_and_disseminate(header, payload).await? {
+                return Ok(Some((slot, block_hash)));
             }
         }
         unreachable!()
@@ -400,7 +401,7 @@ enum SliceOutcome {
 }
 
 /// Drives production of the slices of one block, owning the optimistic `ParentReady` handover
-/// and the `DELTA_BLOCK` timing.
+/// and the [`super::DELTA_BLOCK`] timing.
 ///
 /// Each slice's parent is decided *before* the slice is produced: the first slice carries the
 /// (possibly guessed) parent; if `ParentReady` later confirms a *different* parent, the first
@@ -416,7 +417,7 @@ struct SliceProducer {
     /// Set once `ParentReady` confirmed a parent that differs from our guess and that has not
     /// yet been written onto a slice. The next slice produced carries it, exactly once.
     override_pending: bool,
-    /// Absolute end of the `DELTA_BLOCK` budget, set once the parent is confirmed; `None` while
+    /// Absolute end of the [`super::DELTA_BLOCK`] budget, set once the parent is confirmed; `None` while
     /// still producing optimistically (the timer has not started yet).
     deadline: Option<Instant>,
     delta_block: Duration,
@@ -488,8 +489,28 @@ impl SliceProducer {
             produce_slice_payload(txs_receiver, parent, slice_deadline).await
         };
 
-        let is_last = is_max || self.deadline.is_some_and(|d| Instant::now() >= d);
+        let is_last = self.is_last_slice(is_max);
         SliceOutcome::Produced { payload, is_last }
+    }
+
+    /// Whether the slice just produced completes the block.
+    ///
+    /// True once the block-time budget is spent (or the max slice index is reached) — but
+    /// *never* while a parent override is still owed. A mid-slice `ParentReady` handover confirms
+    /// the override *after* this slice's parent was already fixed (see [`Self::next_slice`] and
+    /// [`Self::parent_for_slice`]), so the correction can only ride a *later* slice. Ending the
+    /// block here would strand it, leaving followers to reconstruct on the stale guessed parent
+    /// and orphan the slot.
+    fn is_last_slice(&self, is_max: bool) -> bool {
+        // A pending override never coincides with the max slice: there the handover is applied
+        // *before* the parent is chosen (see [`Self::next_slice`]), so the override is written
+        // onto this slice rather than deferred. Forcing `false` below therefore always leaves a
+        // (non-max) next slice index to carry the deferred correction.
+        debug_assert!(!(is_max && self.override_pending));
+        if self.override_pending {
+            return false;
+        }
+        is_max || self.deadline.is_some_and(|d| Instant::now() >= d)
     }
 
     /// The parent this slice carries: the first slice always carries the current best parent;
@@ -590,8 +611,14 @@ async fn wait_for_first_slot(
     // - notification that a later slot was finalized.
     tokio::select! {
         res = &mut rx => {
-            let parent = res.expect("sender dropped channel");
-            SlotReady::Ready(parent)
+            match res {
+                Ok(parent) => SlotReady::Ready(parent),
+                // The Pool pruned this slot's `ParentReady` state (finalization advanced past
+                // the window), dropping the sender. The window is moot, so skip it — the same
+                // outcome the finalization-poll branch below yields, and mirroring the
+                // `SliceOutcome::Aborted` path in `produce_block`.
+                Err(_) => SlotReady::Skip,
+            }
         }
 
         res = async {
@@ -636,6 +663,13 @@ mod tests {
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::test_utils::{generate_validators, random_block_id};
     use crate::{Transaction, ValidatorIndex};
+
+    /// An [`Instant`] one second in the past, i.e. a block-time budget that is already spent.
+    fn spent_deadline() -> Instant {
+        Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("monotonic clock is more than 1s past its epoch")
+    }
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -746,6 +780,57 @@ mod tests {
         assert_eq!(producer.parent_for_slice(false), None);
     }
 
+    /// A slice must never be marked as the block's last while a confirmed parent override is
+    /// still owed: the correction can only ride a later slice, so ending the block here would
+    /// strand it and leave followers reconstructing on the stale guessed parent.
+    #[test]
+    fn slice_producer_defers_last_slice_while_override_pending() {
+        let delta = Duration::from_millis(400);
+        let slot = Slot::windows().nth(10).unwrap();
+        let guess = random_block_id(slot.prev());
+        let confirmed = random_block_id(slot.prev().prev());
+
+        let (_tx, rx) = oneshot::channel();
+        let mut producer = SliceProducer::new(guess, Some(rx), delta, delta);
+
+        // A mid-slice handover confirms a different parent and queues the override; force the
+        // block-time budget to be already spent so, without the guard, this slice would be last.
+        assert_eq!(
+            producer.apply_parent_ready(Ok(confirmed.clone())),
+            ControlFlow::Continue(())
+        );
+        producer.deadline = Some(spent_deadline());
+        assert!(producer.override_pending);
+
+        // The budget is spent, yet the owed override forbids ending the block on this slice.
+        assert!(!producer.is_last_slice(false));
+
+        // The next slice writes the override (clearing it); only now may the block end.
+        assert_eq!(producer.parent_for_slice(false), Some(confirmed));
+        assert!(!producer.override_pending);
+        assert!(producer.is_last_slice(false));
+    }
+
+    /// With no override owed, a spent block-time budget (or the max slice index) ends the block.
+    #[test]
+    fn slice_producer_last_slice_without_override() {
+        let delta = Duration::from_millis(400);
+        let guess = random_block_id(Slot::windows().nth(10).unwrap().prev());
+        let mut producer = SliceProducer::new(guess, None, delta, delta);
+
+        // Budget not yet spent: not the last slice.
+        producer.deadline = Some(Instant::now() + Duration::from_secs(1));
+        assert!(!producer.is_last_slice(false));
+
+        // Budget spent: last slice.
+        producer.deadline = Some(spent_deadline());
+        assert!(producer.is_last_slice(false));
+
+        // The max slice index always ends the block.
+        producer.deadline = None;
+        assert!(producer.is_last_slice(true));
+    }
+
     /// A handover confirming the *same* parent we guessed writes no override.
     #[test]
     fn slice_producer_no_override_when_parent_unchanged() {
@@ -827,6 +912,29 @@ mod tests {
             SlotReady::Ready(p) => assert_eq!(p, parent),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// A dropped `ParentReady` sender — the Pool pruned the slot after finalization advanced past
+    /// the window — must make `wait_for_first_slot` skip the window rather than panic, mirroring
+    /// the `SliceOutcome::Aborted` handling in `produce_block`.
+    #[tokio::test]
+    async fn wait_for_first_slot_skips_on_dropped_parent_ready() {
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
+
+        let slot = Slot::windows().nth(10).unwrap();
+        // Drop the sender, exactly as `ParentReadyTracker::prune` does when the slot is pruned;
+        // the receiver then resolves to `Err(RecvError)` in the `ParentReady` select branch.
+        let (tx, rx) = oneshot::channel::<BlockId>();
+        drop(tx);
+
+        let mut pool = MockPool::new();
+        pool.expect_wait_for_parent_ready()
+            .with(predicate::eq(slot))
+            .return_once(move |_slot| Either::Right(rx));
+        let pool: SharedPool = Arc::new(RwLock::new(pool));
+
+        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        assert!(matches!(status, SlotReady::Skip), "unexpected {status:?}");
     }
 
     /// A bunch of boilerplate to initialize and return a [`BlockProducer`].
@@ -911,6 +1019,10 @@ mod tests {
         assert_eq!(block_info.hash, ret.1);
     }
 
+    /// When an optimistic `ParentReady` lands *after* the first slice but confirms a *different*
+    /// parent than we guessed, the correction must reach the wire even if the handover arrives on
+    /// what would otherwise be the block's last slice: it rides one extra slice rather than being
+    /// silently dropped (which would orphan the slot on the stale guessed parent).
     #[tokio::test]
     async fn verify_produce_block_parent_not_ready() {
         let slot = Slot::windows().nth(10).unwrap();
@@ -919,7 +1031,7 @@ mod tests {
         let new_parent = random_block_id(slot.prev().prev());
         let old_block_info = BlockInfo {
             hash: slot_hash.clone(),
-            parent: old_parent,
+            parent: old_parent.clone(),
         };
         let new_block_info = BlockInfo {
             hash: slot_hash,
@@ -929,16 +1041,22 @@ mod tests {
         let (first_slice_finished_tx, first_slice_finished_rx) = oneshot::channel();
         let (start_second_slice_tx, start_second_slice_rx) = oneshot::channel();
 
+        // Records the parent each produced slice carries on the wire, so we can assert the
+        // override actually landed rather than trusting the mock's return value.
+        let wire_parents: Arc<std::sync::Mutex<Vec<Option<BlockId>>>> = Arc::default();
+
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
 
-        // first slice: signal completion, then wait for the parent-ready event
-        // before the producer moves on to the second slice
+        // First slice: record its parent, signal completion, then block until the parent-ready
+        // event has been delivered so the handover deterministically lands on a later slice.
+        let rec = wire_parents.clone();
         blockstore
             .expect_add_own_slice()
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(move |_slice, _shreds| {
+            .return_once(move |payload, _shreds| {
+                rec.lock().unwrap().push(payload.parent);
                 Box::pin(async move {
                     first_slice_finished_tx.send(()).unwrap();
                     let () = start_second_slice_rx.await.unwrap();
@@ -946,15 +1064,18 @@ mod tests {
                 })
             });
 
-        // second (last) slice: block is constructed with the new parent
+        // Later slices: record each parent and complete the block on whichever slice the producer
+        // marks as last (read from the slice header replicated into every shred), not on a fixed
+        // slice count — the override rides an extra slice, so the block ends one slice later.
+        let rec = wire_parents.clone();
         let nbi = new_block_info.clone();
         blockstore
             .expect_add_own_slice()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(move |_slice, _shreds| {
+            .returning(move |payload, shreds| {
+                rec.lock().unwrap().push(payload.parent);
+                let is_last = shreds[0].payload().header.is_last;
                 let nbi = nbi.clone();
-                Box::pin(async move { Some(nbi) })
+                Box::pin(async move { is_last.then_some(nbi) })
             });
 
         let mut pool = MockPool::new();
@@ -970,11 +1091,14 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
+        // A non-zero `delta_block` keeps later-slice tx-gathering pending, so the already-delivered
+        // parent-ready wins the optimistic race deterministically (rather than racing an
+        // immediately-ready empty slice); the first slice still completes promptly.
         let block_producer = setup(
             blockstore,
             pool,
             disseminator,
-            Duration::from_micros(0),
+            Duration::from_millis(10),
             Duration::from_millis(0),
         );
 
@@ -995,7 +1119,13 @@ mod tests {
 
         assert_eq!(slot, ret.0);
         assert_eq!(new_block_info.hash, ret.1);
-        assert_eq!(new_block_info.parent, new_parent);
+
+        // The wire proves it: the first slice carries the guessed parent, and exactly one later
+        // slice carries the confirmed one — the deferred override, never dropped.
+        let wire_parents = std::mem::take(&mut *wire_parents.lock().unwrap());
+        assert_eq!(wire_parents.first(), Some(&Some(old_parent)));
+        let overrides: Vec<&BlockId> = wire_parents[1..].iter().flatten().collect();
+        assert_eq!(overrides, vec![&new_parent]);
     }
 
     /// If the `ParentReady` sender is dropped while we are optimistically producing (the Pool
