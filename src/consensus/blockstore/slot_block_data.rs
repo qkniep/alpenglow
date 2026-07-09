@@ -290,7 +290,7 @@ impl BlockData {
         );
         // build the slice from the shreds so the two can't disagree
         let slice =
-            ReconstructedSlice::from_shreds(payload, any_shred, any_shred.slice_root().clone());
+            ReconstructedSlice::from_parts(payload, any_shred, any_shred.slice_root().clone());
         debug_assert_eq!(slice.slot, slot);
         let is_first = self.shreds.is_empty();
 
