@@ -100,7 +100,7 @@ pub fn create_random_shredded_block(
     for slice in create_random_block(slot, num_slices) {
         shreds.push(
             shredder
-                .shred(slice.clone(), sk)
+                .shred(&slice, sk)
                 .expect("shredding a valid slice cannot fail")
                 .to_vec(),
         );

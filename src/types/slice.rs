@@ -56,6 +56,33 @@ impl Slice {
         }
     }
 
+    /// Returns the [`SliceHeader`] describing this slice.
+    pub(crate) fn header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
+
+    /// Serializes this slice's payload (its `parent` and `data`) into bytes.
+    ///
+    /// Produces exactly the same bytes as [`SlicePayload::to_bytes`].
+    /// However, it reads straight from the slice's fields without owned [`SlicePayload`].
+    /// Used by shredders, which only need the serialized payload.
+    pub(crate) fn payload_bytes(&self) -> Vec<u8> {
+        let parent_len = wincode::serialized_size(&self.parent)
+            .expect("computing serialized size of parent should not fail")
+            as usize;
+        // parent + 8-byte `data` length prefix (wincode fixint) + data
+        let mut buf = Vec::with_capacity(parent_len + 8 + self.data.len());
+        wincode::serialize_into(&mut buf, &self.parent)
+            .expect("serializing slice parent should not fail");
+        wincode::serialize_into(&mut buf, &self.data)
+            .expect("serializing slice data should not fail");
+        buf
+    }
+
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
     pub(crate) fn deconstruct(self) -> (SliceHeader, SlicePayload) {
         let Slice {
@@ -235,12 +262,29 @@ pub fn create_slice_with_invalid_txs(desired_size: usize) -> Slice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
 
     #[test]
     fn payload_roundtrip() {
         let payload = SlicePayload::new(None, vec![1, 2, 3, 4]);
         let bytes = payload.to_bytes();
         assert_eq!(SlicePayload::try_from(bytes.as_slice()).unwrap(), payload);
+    }
+
+    #[test]
+    fn payload_bytes_matches_slice_payload() {
+        // `Slice::payload_bytes` must be identical to the equivalent `SlicePayload::to_bytes`
+        let header = SliceHeader {
+            slot: Slot::new(7),
+            slice_index: SliceIndex::first(),
+            is_last: true,
+        };
+        // check with and without parent
+        for parent in [None, Some((Slot::new(6), GENESIS_BLOCK_HASH))] {
+            let payload = SlicePayload::new(parent, vec![1, 2, 3, 4, 5]);
+            let slice = Slice::from_parts(header, payload.clone());
+            assert_eq!(slice.payload_bytes(), payload.to_bytes());
+        }
     }
 
     #[test]

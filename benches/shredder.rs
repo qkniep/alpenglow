@@ -30,7 +30,7 @@ fn shred<S: Shredder>(bencher: divan::Bencher) {
             (shredder, slice, sk)
         })
         .bench_values(|(mut shredder, slice, sk): (S, Slice, SecretKey)| {
-            let _ = shredder.shred(slice, &sk).unwrap();
+            let _ = shredder.shred(&slice, &sk).unwrap();
         });
 }
 
@@ -45,7 +45,7 @@ fn deshred<S: Shredder>(bencher: divan::Bencher) {
             let mut rng = rand::rng();
             let sk = SecretKey::new(&mut rng);
             let mut shredder = S::default();
-            let mut shreds = shredder.shred(slice, &sk).unwrap().map(Some);
+            let mut shreds = shredder.shred(&slice, &sk).unwrap().map(Some);
             // need at least DATA_SHREDS to reconstruct and want to include as many coding shreds as possible which should be at the end of the array
             // so mark the first TOTAL_SHREDS - DATA_SHREDS as None
             for shred in shreds.iter_mut().take(TOTAL_SHREDS - DATA_SHREDS) {
