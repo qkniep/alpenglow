@@ -11,6 +11,7 @@ use super::{ShredPayloadType, TOTAL_SHREDS, ValidatedShred};
 /// - Shreds are in the correct order.
 /// - Shred indices match expected shred type.
 /// - Shreds are all the same size.
+/// - Shred size is non-zero and even (required by the erasure decoder).
 #[derive(Clone, Copy)]
 pub struct ValidatedShreds<'a> {
     shreds: &'a [Option<ValidatedShred>; TOTAL_SHREDS],
@@ -20,10 +21,11 @@ pub struct ValidatedShreds<'a> {
 impl<'a> ValidatedShreds<'a> {
     /// Creates a new [`ValidatedShreds`].
     ///
-    /// Returns `None` if the input array:
-    /// - contains no shreds at all,
-    /// - contains a shred with the wrong type for its index, or
-    /// - contains shreds of different sizes.
+    /// Returns `None` if the input array contains:
+    /// - no shreds at all,
+    /// - a shred with the wrong type for the index,
+    /// - shreds of different sizes, or
+    /// - shreds with a zero or odd payload size.
     ///
     /// # Panics
     ///
@@ -39,6 +41,11 @@ impl<'a> ValidatedShreds<'a> {
         // check all shred sizes match (also rejects an empty input)
         let any_shred = shreds.iter().flatten().next()?;
         let shred_size = any_shred.payload().data.len();
+        // RS decoding requires every shard to be non-empty and an even number of bytes
+        // reject them here to prevent panicking in the decoder during reconstruction
+        if shred_size == 0 || !shred_size.is_multiple_of(2) {
+            return None;
+        }
         for s in shreds.iter().flatten() {
             if s.payload().data.len() != shred_size {
                 return None;

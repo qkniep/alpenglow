@@ -168,9 +168,8 @@ where
 
                 let mut batch = VecDeque::with_capacity(lens.len());
                 for (i, &len) in lens.iter().enumerate() {
-                    match crate::network::deserialize(&scratch[i][..len]) {
-                        Ok(msg) => batch.push_back(msg),
-                        Err(err) => warn!("deserializing failed with {err}"),
+                    if let Some(msg) = Self::decode(&scratch[i][..len]) {
+                        batch.push_back(msg);
                     }
                 }
                 return Ok(batch);
@@ -182,11 +181,21 @@ where
             let mut buf = [0; RECEIVE_BUFFER_SIZE];
             let len = self.socket.recv(&mut buf).await?;
             let mut batch = VecDeque::new();
-            match crate::network::deserialize(&buf[..len]) {
-                Ok(msg) => batch.push_back(msg),
-                Err(err) => warn!("deserializing failed with {err}"),
+            if let Some(msg) = Self::decode(&buf[..len]) {
+                batch.push_back(msg);
             }
             Ok(batch)
+        }
+    }
+
+    /// Deserializes one datagram into an `R`, logging and dropping malformed input.
+    fn decode(bytes: &[u8]) -> Option<R> {
+        match crate::network::deserialize(bytes) {
+            Ok(msg) => Some(msg),
+            Err(err) => {
+                warn!("deserializing failed with {err}");
+                None
+            }
         }
     }
 }
