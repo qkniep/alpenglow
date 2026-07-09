@@ -75,9 +75,14 @@ pub trait Network: Send + Sync {
 
     /// Sends the `message` to all the addresses in `addrs`, best-effort.
     ///
-    /// Every address is attempted even if some sends fail; if any fail, one of the
-    /// errors is returned once all addresses have been tried. The function is not
+    /// Every address is attempted even if some sends fail. The function is not
     /// atomic: on error, some messages may still have been sent (and others not).
+    ///
+    /// # Errors
+    ///
+    /// Returns the *first* [`std::io::Error`] encountered, surfaced only after
+    /// every address has been attempted. Errors at later addresses are dropped;
+    /// implementors must preserve this first-error ordering.
     //
     // NOTE: Consider returning a `Vec<Result<()>>` or a structured error to report
     // per-address failures instead of collapsing to a single one.

@@ -353,10 +353,17 @@ mod sendmmsg {
     /// larger fanouts are chunked across multiple syscalls.
     const MAX_BATCH: usize = libc::UIO_MAXIOV as usize;
 
-    /// Sends `payload` to every address in `addrs`, returning once all are queued.
+    /// Sends `payload` to every address in `addrs`, best-effort.
     ///
-    /// Empty `addrs` is a no-op; short writes and `EINTR` are retried internally.
-    /// Assumes `payload` fits in one MTU (the caller needs to check this).
+    /// Every address is attempted; short writes and `EINTR` are retried
+    /// internally, but a destination whose `sendmmsg` fails is skipped rather
+    /// than retried. Empty `addrs` is a no-op. Assumes `payload` fits in one MTU
+    /// (the caller needs to check this).
+    ///
+    /// # Errors
+    ///
+    /// Returns the *first* [`io::Error`] encountered, surfaced only after every
+    /// address has been attempted; errors at later addresses are dropped.
     pub(super) async fn send_to_many_linux(
         socket: &UdpSocket,
         payload: &[u8],
