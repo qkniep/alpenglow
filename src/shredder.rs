@@ -259,7 +259,7 @@ pub trait Shredder: Default {
     ///   too big, i.e., more than [`Shredder::MAX_DATA_SIZE`] bytes.
     fn shred(
         &mut self,
-        slice: Slice,
+        slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError>;
 
@@ -336,12 +336,15 @@ impl Shredder for RegularShredder {
 
     fn shred(
         &mut self,
-        slice: Slice,
+        slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
-        let (header, payload) = slice.deconstruct();
-        let raw_shreds = self.0.shred(&payload.to_bytes())?;
-        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
+        let raw_shreds = self.0.shred(&slice.payload_bytes())?;
+        Ok(data_and_coding_to_output_shreds(
+            slice.header(),
+            raw_shreds,
+            sk,
+        ))
     }
 
     fn deshred_validated_shreds(
@@ -368,13 +371,16 @@ impl Shredder for CodingOnlyShredder {
 
     fn shred(
         &mut self,
-        slice: Slice,
+        slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
-        let (header, payload) = slice.deconstruct();
-        let mut raw_shreds = self.0.shred(&payload.to_bytes())?;
+        let mut raw_shreds = self.0.shred(&slice.payload_bytes())?;
         raw_shreds.data = vec![];
-        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
+        Ok(data_and_coding_to_output_shreds(
+            slice.header(),
+            raw_shreds,
+            sk,
+        ))
     }
 
     fn deshred_validated_shreds(
@@ -410,11 +416,10 @@ impl Shredder for PetsShredder {
 
     fn shred(
         &mut self,
-        slice: Slice,
+        slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
-        let (header, payload) = slice.deconstruct();
-        let mut payload: Vec<u8> = payload.into();
+        let mut payload = slice.payload_bytes();
 
         let key = cipher::encrypt_with_random_key(&mut payload);
         payload.extend_from_slice(&key);
@@ -423,7 +428,11 @@ impl Shredder for PetsShredder {
         // delete data shred containing key
         raw_shreds.data.pop();
 
-        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
+        Ok(data_and_coding_to_output_shreds(
+            slice.header(),
+            raw_shreds,
+            sk,
+        ))
     }
 
     fn deshred_validated_shreds(
@@ -461,11 +470,10 @@ impl Shredder for AontShredder {
 
     fn shred(
         &mut self,
-        slice: Slice,
+        slice: &Slice,
         sk: &SecretKey,
     ) -> Result<[ValidatedShred; TOTAL_SHREDS], ShredError> {
-        let (header, payload) = slice.deconstruct();
-        let mut payload: Vec<u8> = payload.into();
+        let mut payload = slice.payload_bytes();
 
         let key = cipher::encrypt_with_random_key(&mut payload);
         // append the key XORed with the hash of the ciphertext
@@ -473,7 +481,11 @@ impl Shredder for AontShredder {
         payload.extend(key.iter().zip(hash.as_ref()).map(|(k, h)| k ^ h));
 
         let raw_shreds = self.0.shred(&payload)?;
-        Ok(data_and_coding_to_output_shreds(header, raw_shreds, sk))
+        Ok(data_and_coding_to_output_shreds(
+            slice.header(),
+            raw_shreds,
+            sk,
+        ))
     }
 
     fn deshred_validated_shreds(
@@ -656,7 +668,7 @@ mod tests {
         let mut shredder = S::default();
         let sk = SecretKey::new(&mut rand::rng());
         let slice = create_slice_with_invalid_txs(S::MAX_DATA_SIZE);
-        let shreds = shredder.shred(slice.clone(), &sk)?;
+        let shreds = shredder.shred(&slice, &sk)?;
         assert_eq!(shreds.len(), TOTAL_SHREDS);
 
         // restore from all shreds
@@ -710,7 +722,7 @@ mod tests {
         let mut shredder = RegularShredder::default();
         let sk = SecretKey::new(&mut rand::rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = shredder.shred(slice, &sk)?;
+        let shreds = shredder.shred(&slice, &sk)?;
 
         // restore in place from only the data shreds
         let mut input = into_array(&shreds[..DATA_SHREDS]);
@@ -787,7 +799,7 @@ mod tests {
     fn deshred_rejects_wrong_shred_type_layout() {
         let sk = SecretKey::new(&mut rand::rng());
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
-        let shreds = CodingOnlyShredder::default().shred(slice, &sk).unwrap();
+        let shreds = CodingOnlyShredder::default().shred(&slice, &sk).unwrap();
 
         // `CodingOnlyShredder` outputs only coding shreds, but `RegularShredder`
         // expects data shreds in the first `DATA_SHREDS` positions
@@ -825,7 +837,7 @@ mod tests {
         let sk = SecretKey::new(&mut rand::rng());
         // one byte more than fits into this shredder's slice
         let slice = create_slice_with_invalid_txs(S::MAX_DATA_SIZE + 1);
-        let result = S::default().shred(slice, &sk);
+        let result = S::default().shred(&slice, &sk);
         assert_eq!(result.err(), Some(ShredError::TooMuchData));
     }
 

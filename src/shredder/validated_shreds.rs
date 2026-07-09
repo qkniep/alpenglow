@@ -130,16 +130,16 @@ mod tests {
         let slice = create_slice_with_invalid_txs(MAX_DATA_PER_SLICE);
 
         // there are data shreds in coding shred positions in the array
-        let shreds = shredder.shred(slice.clone(), &sk).unwrap().map(Some);
+        let shreds = shredder.shred(&slice, &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, 1, TOTAL_SHREDS - 1).is_none());
 
         // there are coding shreds in data shred positions in the array
-        let shreds = shredder.shred(slice, &sk).unwrap().map(Some);
+        let shreds = shredder.shred(&slice, &sk).unwrap().map(Some);
         assert!(ValidatedShreds::try_new(&shreds, TOTAL_SHREDS - 1, 1).is_none());
 
         // mixing shreds of different sizes
         let small_slice = create_slice_with_invalid_txs(100);
-        let small_shreds = shredder.shred(small_slice, &sk).unwrap().map(Some);
+        let small_shreds = shredder.shred(&small_slice, &sk).unwrap().map(Some);
         let mut shreds = shreds;
         shreds[0] = small_shreds[0].clone();
         assert!(

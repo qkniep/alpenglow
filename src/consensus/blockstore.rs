@@ -481,8 +481,8 @@ mod tests {
         slice: Slice,
         sk: &SecretKey,
     ) -> (SlicePayload, [ValidatedShred; TOTAL_SHREDS]) {
-        let payload = slice.clone().deconstruct().1;
-        let shreds = RegularShredder::default().shred(slice, sk).unwrap();
+        let shreds = RegularShredder::default().shred(&slice, sk).unwrap();
+        let payload = slice.deconstruct().1;
         (payload, shreds)
     }
 
@@ -850,9 +850,7 @@ mod tests {
         let (dissem_tx, _dissem_rx) = mpsc::channel(1000);
         let mut dissem = BlockstoreImpl::new(dissem_tx);
         for slice in &slices {
-            let shreds = RegularShredder::default()
-                .shred(slice.clone(), &sk)
-                .unwrap();
+            let shreds = RegularShredder::default().shred(slice, &sk).unwrap();
             for shred in shreds {
                 add_shred_ignore_duplicate(&mut dissem, shred).await?;
             }

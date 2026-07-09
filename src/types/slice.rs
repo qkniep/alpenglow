@@ -56,6 +56,34 @@ impl Slice {
         }
     }
 
+    /// Returns the [`SliceHeader`] describing this slice.
+    pub(crate) fn header(&self) -> SliceHeader {
+        SliceHeader {
+            slot: self.slot,
+            slice_index: self.slice_index,
+            is_last: self.is_last,
+        }
+    }
+
+    /// Serializes this slice's payload (its `parent` and `data`) into bytes.
+    ///
+    /// Produces exactly the same bytes as [`SlicePayload::to_bytes`] for the
+    /// equivalent payload, but reads straight from the slice's fields so no
+    /// owned [`SlicePayload`] (and hence no copy of `data`) has to be
+    /// materialized first. Used by shredders, which only need the serialized
+    /// payload and never the owned [`Slice`].
+    pub(crate) fn payload_bytes(&self) -> Vec<u8> {
+        // A wincode struct is the concatenation of its fields with no framing,
+        // so serializing `parent` then `data` matches `SlicePayload`'s layout.
+        // Guarded by the `payload_bytes_matches_slice_payload` test below.
+        let mut buf = Vec::new();
+        wincode::serialize_into(&mut buf, &self.parent)
+            .expect("serializing slice parent should not fail");
+        wincode::serialize_into(&mut buf, &self.data)
+            .expect("serializing slice data should not fail");
+        buf
+    }
+
     /// Deconstructs a [`Slice`] into its components: [`SliceHeader`] and [`SlicePayload`].
     pub(crate) fn deconstruct(self) -> (SliceHeader, SlicePayload) {
         let Slice {
@@ -241,6 +269,23 @@ mod tests {
         let payload = SlicePayload::new(None, vec![1, 2, 3, 4]);
         let bytes = payload.to_bytes();
         assert_eq!(SlicePayload::try_from(bytes.as_slice()).unwrap(), payload);
+    }
+
+    #[test]
+    fn payload_bytes_matches_slice_payload() {
+        // `Slice::payload_bytes` must be byte-identical to serializing the
+        // equivalent `SlicePayload`, for both `parent` variants.
+        let header = SliceHeader {
+            slot: Slot::new(7),
+            slice_index: SliceIndex::first(),
+            is_last: true,
+        };
+        let genesis = crate::crypto::merkle::GENESIS_BLOCK_HASH;
+        for parent in [None, Some((Slot::new(6), genesis))] {
+            let payload = SlicePayload::new(parent, vec![1, 2, 3, 4, 5]);
+            let slice = Slice::from_parts(header, payload.clone());
+            assert_eq!(slice.payload_bytes(), payload.to_bytes());
+        }
     }
 
     #[test]
