@@ -290,7 +290,7 @@ impl BlockData {
         );
         // build the slice from the shreds so the two can't disagree
         let slice =
-            ReconstructedSlice::from_shreds(payload, any_shred, any_shred.slice_root().clone());
+            ReconstructedSlice::from_parts(payload, any_shred, any_shred.slice_root().clone());
         debug_assert_eq!(slice.slot, slot);
         let is_first = self.shreds.is_empty();
 
@@ -468,7 +468,7 @@ mod tests {
         sk: &SecretKey,
     ) -> (Vec<BlockstoreEvent>, Result<(), AddShredError>) {
         let mut shredder = RegularShredder::default();
-        let shreds = shredder.shred(slice, sk).unwrap();
+        let shreds = shredder.shred(&slice, sk).unwrap();
         let mut events = vec![];
         for shred in shreds {
             match block_data.add_shred(shred, &mut shredder) {
@@ -501,7 +501,7 @@ mod tests {
         let slices = create_random_block(slot, 1);
         let mut block_data = BlockData::new(slot);
         let mut shredder = RegularShredder::default();
-        let shreds = shredder.shred(slices[0].clone(), &sk).unwrap();
+        let shreds = shredder.shred(&slices[0], &sk).unwrap();
         let mut events = vec![];
         for shred in shreds.into_iter().skip(TOTAL_SHREDS - DATA_SHREDS) {
             if let Some(event) = block_data.add_shred(shred, &mut shredder).unwrap() {

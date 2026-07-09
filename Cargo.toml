@@ -66,20 +66,26 @@ tempfile = "3"
 toml = "1"
 
 [features]
-# CLI binaries (everything under `src/bin/`). Off by default to keep the
-# library build lean — pass `--features cli` to build them.
+# CLI binaries (everything under `src/bin/`),
+# gated to keep the library build lean; build them with `--features cli`.
 cli = ["dep:clap", "dep:toml"]
+
+# Activates the `#[hotpath::measure]` profiling instrumentation, which otherwise
+# compiles to no-ops. `hotpath-alloc` additionally tracks allocations per scope.
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+
 # Mainnet-derived simulation inputs (`network::simulated::{ping_data,
-# stake_distribution}`) and the `simulations` binary. Pulls in `csv` /
-# `serde_json` for parsing `data/*.{csv,json}` and `rayon` for parallel sims.
+# stake_distribution}`) and the `simulations` binary. Pulls in `csv` / `serde_json`
+# for parsing `data/*.{csv,json}` and `rayon` for parallel sims.
 simulations = ["dep:rayon", "dep:csv", "dep:serde_json", "dep:plotters"]
+
 # Exposes `test_utils` and other test-only methods to out-of-crate test/bench targets.
-# Off by default; enabled implicitly by `cargo test` and explicitly for some benches.
+# Enabled implicitly by `cargo test`, and explicitly for some benches.
 test-utils = []
+
 # Enables `fastrace` span collection and OpenTelemetry (OTLP) export.
-# Off by default: Without it, `fastrace` instrumentation compiles to no-ops and
+# Without it, `fastrace` instrumentation compiles to no-ops and
 # the gRPC/OTLP dependency stack is dropped entirely.
 telemetry = [
     "fastrace/enable",

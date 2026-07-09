@@ -241,18 +241,21 @@ where
         let slot = header.slot;
         let slice_index = header.slice_index;
         let is_last = header.is_last;
-        // Keep the payload so we can hand a ready-made slice to the blockstore,
-        // instead of making it Reed-Solomon-decode our own data back out.
-        let slice = Slice::from_parts(header, payload.clone());
+        // Build the slice by moving the payload in, then shred it by reference.
+        // Shredding only reads the payload, so we can reclaim it afterwards and
+        // hand a ready-made slice to the blockstore, instead of making it
+        // Reed-Solomon-decode our own data back out.
+        let slice = Slice::from_parts(header, payload);
         // Box the shreds so the large array lives on the heap instead of bloating
         // this future across the dissemination and `add_own_slice` awaits below.
         let shreds = Box::new(
             self.shredders
                 .checkout()
-                .expect("pool always has a shredder available for sequential block production")
-                .shred(slice, &self.secret_key)
+                .expect("pool always has a shredder, block production is sequential")
+                .shred(&slice, &self.secret_key)
                 .expect("shredding of valid slice should never fail"),
         );
+        let (_header, payload) = slice.deconstruct();
 
         // Disseminate every shred. Dissemination is best-effort: a send failure
         // is usually transient (e.g. a full socket buffer), so we try every
