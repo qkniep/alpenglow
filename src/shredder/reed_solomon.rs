@@ -7,7 +7,6 @@
 //! It is mostly a wrapper around the [`reed_solomon_simd`] crate.
 
 use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
-use static_assertions::const_assert;
 use thiserror::Error;
 
 use super::{DATA_SHREDS, MAX_DATA_PER_SLICE, MAX_DATA_PER_SLICE_AFTER_PADDING, TOTAL_SHREDS};
@@ -58,7 +57,7 @@ impl ReedSolomonCoder {
     /// It is also initialized for up to [`MAX_DATA_PER_SHRED`] bytes per fragment.
     pub(super) fn new(num_coding: usize) -> ReedSolomonCoder {
         // max shreds supported by RS field
-        const_assert!(DATA_SHREDS + TOTAL_SHREDS <= 65536);
+        const _: () = assert!(DATA_SHREDS + TOTAL_SHREDS <= 65536);
 
         assert!(num_coding <= TOTAL_SHREDS);
 
@@ -234,7 +233,6 @@ impl ReedSolomonCoder {
 
 #[cfg(test)]
 mod tests {
-    use static_assertions::const_assert;
 
     use super::*;
     use crate::Slot;
@@ -268,7 +266,7 @@ mod tests {
 
     #[test]
     fn restore_various() {
-        const_assert!(MAX_DATA_PER_SLICE >= 2 * DATA_SHREDS);
+        const _: () = assert!(MAX_DATA_PER_SLICE >= 2 * DATA_SHREDS);
         let slice_bytes = MAX_DATA_PER_SLICE / 2;
         for offset in 0..DATA_SHREDS {
             let (header, payload) =

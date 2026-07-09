@@ -25,7 +25,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use static_assertions::const_assert_eq;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -48,7 +47,7 @@ use crate::shredder::Shred;
 
 // NOTE: In many places we assume that `usize` is 64 bits wide.
 // So, for now, we only support 64-bit architectures.
-const_assert_eq!(std::mem::size_of::<usize>(), 8);
+const _: () = assert!(std::mem::size_of::<usize>() == 8);
 
 /// Serializes an in-memory value with [`wincode`].
 ///

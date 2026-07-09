@@ -10,7 +10,6 @@ use anyhow::Result;
 use either::Either;
 use fastrace::Span;
 use log::{debug, info, warn};
-use static_assertions::const_assert;
 use tokio::pin;
 use tokio::sync::oneshot;
 use tokio::time::sleep;
@@ -444,7 +443,7 @@ where
 
     // each slice should be able hold at least 1 transaction
     // +8 to encode number of txs, +8 to encode tx payload length
-    const_assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
+    const _: () = assert!(MAX_DATA_PER_SLICE >= MAX_TRANSACTION_SIZE + 8 + 8);
 
     // reserve space for: parent info, and
     // 8 bytes for SlicePayload::data length

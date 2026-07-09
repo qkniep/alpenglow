@@ -22,7 +22,6 @@ use log::debug;
 use parking_lot::RwLock;
 use rand::prelude::*;
 use rayon::prelude::*;
-use static_assertions::const_assert_eq;
 
 /// Parallelism level for rayon.
 const PARALLELISM: usize = 1000;
@@ -30,7 +29,7 @@ const PARALLELISM: usize = 1000;
 const WRITE_BATCH: usize = 1000;
 /// Maximum number of total iterations per attack scenario.
 const TOTAL_ITERATIONS: usize = 10_000_000;
-const_assert_eq!(TOTAL_ITERATIONS % (PARALLELISM * WRITE_BATCH), 0);
+const _: () = assert!(TOTAL_ITERATIONS.is_multiple_of(PARALLELISM * WRITE_BATCH));
 /// Simulations stop early if the number of failures is greater than this.
 const MAX_FAILURES: usize = 1;
 
