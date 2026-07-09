@@ -143,37 +143,27 @@ impl EventForwarder {
         }
     }
 
-    /// Forwards buffered blockstore events to Votor with a blocking send.
-    ///
-    /// A closed channel (Votor shutting down) is logged and the remaining events
-    /// dropped, rather than panicking.
-    pub(crate) async fn forward_blockstore_events(&self, events: Vec<BlockstoreEvent>) {
-        for event in events {
-            if self.blockstore_events.send(event).await.is_err() {
-                debug!("Votor event channel closed, dropping blockstore events");
-                break;
+    /// Forwards `items` to `sender` with blocking sends, stopping early if the
+    /// channel has closed (the consumer shut down). A closed channel is logged
+    /// (using `what` to name it) and the remaining items dropped, not panicked on.
+    async fn forward_all<T>(sender: &mpsc::Sender<T>, items: Vec<T>, what: &str) {
+        for item in items {
+            if sender.send(item).await.is_err() {
+                debug!("{what} channel closed, dropping remaining events");
+                return;
             }
         }
     }
 
-    /// Forwards a drained [`PoolOutbox`] (Votor events, then repair requests) with
-    /// blocking sends.
-    ///
-    /// A closed channel (Votor or the repair loop shutting down) is logged and the
-    /// remaining items dropped, rather than panicking.
+    /// Forwards buffered blockstore events to Votor.
+    pub(crate) async fn forward_blockstore_events(&self, events: Vec<BlockstoreEvent>) {
+        Self::forward_all(&self.blockstore_events, events, "Votor blockstore-event").await;
+    }
+
+    /// Forwards a drained [`PoolOutbox`]: Votor events first, then repair requests.
     pub(crate) async fn forward_pool_outbox(&self, outbox: PoolOutbox) {
-        for event in outbox.votor_events {
-            if self.pool_events.send(event).await.is_err() {
-                debug!("Votor event channel closed, dropping pool events");
-                break;
-            }
-        }
-        for block in outbox.repairs {
-            if self.repairs.send(block).await.is_err() {
-                debug!("repair channel closed, dropping repair requests");
-                break;
-            }
-        }
+        Self::forward_all(&self.pool_events, outbox.votor_events, "Votor pool-event").await;
+        Self::forward_all(&self.repairs, outbox.repairs, "repair").await;
     }
 }
 

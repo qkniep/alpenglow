@@ -118,11 +118,8 @@ pub struct BlockstoreImpl {
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-    /// Buffer of events to be delivered to Votor, drained via [`Blockstore::take_events`].
-    ///
-    /// Events are buffered here (under whatever lock guards the blockstore) rather
-    /// than sent directly, so the caller can forward them to Votor *after* dropping
-    /// the write lock. See `BlockstoreImpl::emit` for the rationale.
+    /// Events buffered for Votor, drained via [`Blockstore::take_events`].
+    /// See [`Self::emit`] for why they are buffered rather than sent.
     events: Vec<BlockstoreEvent>,
 }
 
@@ -157,15 +154,10 @@ impl BlockstoreImpl {
     /// Records a [`BlockstoreEvent`] in the outbox, returning the [`BlockInfo`] of a
     /// newly reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
     ///
-    /// The event is buffered rather than sent on purpose: the shred-ingest path
-    /// holds the blockstore write lock while adding a shred (see
-    /// [`super::Alpenglow::handle_disseminator_shred`]), so a *blocking* send here
-    /// would let a slow or stalled Votor apply back-pressure that jams every other
-    /// task waiting on that lock. Instead the caller drains the outbox via
-    /// [`Blockstore::take_events`] and forwards it to Votor *after* dropping the
-    /// lock, where a blocking send is safe: it back-pressures the ingest task only,
-    /// never dropping the event. Losing a reconstructed-block event would otherwise
-    /// silently cost this node its vote for that block, with no retry path.
+    /// Events are buffered rather than sent so the caller can forward them off the
+    /// write lock (see [`super::EventForwarder`]). This matters most for the `Block`
+    /// event: dropping it would silently cost this node its vote for that block,
+    /// with no retry path.
     fn emit(&mut self, event: BlockstoreEvent) -> Option<BlockInfo> {
         let block_info = if let BlockstoreEvent::Block { slot, block_info } = &event {
             debug!(

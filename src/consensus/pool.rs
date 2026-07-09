@@ -70,12 +70,9 @@ impl PoolEvent {
 }
 
 /// Side-effects the Pool produces while processing under its write lock, to be
-/// drained via [`Pool::take_outbox`] and forwarded once the lock is released.
-///
-/// The Pool buffers these here instead of sending them under the lock: a blocking
-/// send would let a slow Votor or repair loop jam every task contending for the
-/// Pool lock, while a non-blocking send would have to drop events. See
-/// `PoolImpl::enqueue_votor_event` for the rationale.
+/// drained via [`Pool::take_outbox`] and forwarded to Votor and the repair loop
+/// once the lock is released (a blocking send under the lock would jam every task
+/// contending for it).
 #[derive(Debug, Default)]
 pub struct PoolOutbox {
     /// Events destined for Votor.
@@ -420,13 +417,9 @@ impl PoolImpl {
 
     /// Records an event for Votor in the outbox.
     ///
-    /// The event is buffered rather than sent on purpose: the vote/cert ingest path
-    /// holds the Pool write lock while adding to the pool (see
-    /// [`super::Alpenglow::handle_all2all_message`]), so a *blocking* send under the
-    /// lock would let a slow or stalled Votor jam every other task waiting on that
-    /// lock. The caller drains the outbox via [`Pool::take_outbox`] and forwards it
-    /// to Votor *after* dropping the lock, where a blocking send is safe: it
-    /// back-pressures the ingest task rather than dropping the event.
+    /// Buffered rather than sent so the caller can forward it off the write lock
+    /// (see [`super::EventForwarder`]); a blocking send under the lock would jam
+    /// every task contending for it.
     fn enqueue_votor_event(&mut self, event: PoolEvent) {
         self.outbox.votor_events.push(event);
     }
@@ -590,7 +583,7 @@ impl Pool for PoolImpl {
         // return to the caller for (off-lock) forwarding to Votor
         PoolOutbox {
             votor_events: vec![event],
-            repairs: Vec::new(),
+            ..Default::default()
         }
     }
 
