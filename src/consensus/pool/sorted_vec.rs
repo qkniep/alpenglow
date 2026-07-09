@@ -23,8 +23,9 @@ impl<K, V> Default for SortedVecMap<K, V> {
 }
 
 impl<K: Ord, V> SortedVecMap<K, V> {
-    /// Creates an empty map.
-    pub(super) fn empty() -> Self {
+    /// Creates a new, empty map.
+    #[must_use]
+    pub(super) fn new() -> Self {
         Self::default()
     }
 
@@ -75,8 +76,9 @@ impl<T> Default for SortedVecSet<T> {
 }
 
 impl<T: Ord> SortedVecSet<T> {
-    /// Creates an empty set.
-    pub(super) fn empty() -> Self {
+    /// Creates a new, empty set.
+    #[must_use]
+    pub(super) fn new() -> Self {
         Self::default()
     }
 
@@ -123,7 +125,7 @@ mod tests {
 
     #[test]
     fn map_get_or_insert_with() {
-        let mut map: SortedVecMap<u32, u64> = SortedVecMap::empty();
+        let mut map: SortedVecMap<u32, u64> = SortedVecMap::new();
 
         // inserts the default when absent
         *map.get_or_insert_with(&7, || 0) += 5;
@@ -139,7 +141,7 @@ mod tests {
 
     #[test]
     fn map_stays_sorted_when_spilling() {
-        let mut map: SortedVecMap<u32, u32> = SortedVecMap::empty();
+        let mut map: SortedVecMap<u32, u32> = SortedVecMap::new();
         for k in [5, 1, 9, 3, 7, 0] {
             map.get_or_insert_with(&k, || k);
         }
@@ -152,7 +154,7 @@ mod tests {
 
     #[test]
     fn set_insert_contains_iter() {
-        let mut set: SortedVecSet<u32> = SortedVecSet::empty();
+        let mut set: SortedVecSet<u32> = SortedVecSet::new();
         assert!(set.insert(3));
         assert!(set.insert(1));
         assert!(set.insert(5));

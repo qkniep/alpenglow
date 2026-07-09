@@ -48,7 +48,6 @@ pub(super) struct SlotState {
     pub(super) epoch_info: Arc<ValidatorEpochInfo>,
 }
 
-// PERF: replace storing Votes (50% size overhead) with storing only signatures?
 pub(super) struct SlotVotes {
     /// Notarization votes for all validators (indexed by `ValidatorIndex`).
     pub(super) notar: Vec<Option<NotarVote>>,
@@ -136,9 +135,9 @@ impl SlotState {
             votes: SlotVotes::new(epoch_info.epoch_info().validators().len()),
             voted_stakes: SlotVotedStake::default(),
             certificates: SlotCertificates::default(),
-            parents: SortedVecMap::empty(),
-            pending_safe_to_notar: SortedVecSet::empty(),
-            sent_safe_to_notar: SortedVecSet::empty(),
+            parents: SortedVecMap::new(),
+            pending_safe_to_notar: SortedVecSet::new(),
+            sent_safe_to_notar: SortedVecSet::new(),
             sent_safe_to_skip: false,
 
             slot,
