@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use log::{debug, trace, warn};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{DELTA, EventForwarder, SharedBlockstore, SharedPool, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -244,6 +244,8 @@ pub struct Repair<N: Network> {
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
+    /// Forwards blockstore outbox events to Votor off the write lock.
+    event_forwarder: EventForwarder,
 }
 
 impl<N> Repair<N>
@@ -254,11 +256,12 @@ where
     ///
     /// Given `network` will be used for sending repair requests and receiving repair responses.
     /// Any repaired shreds will be written into the provided `blockstore`.
-    pub fn new(
+    pub(crate) fn new(
         blockstore: SharedBlockstore,
         pool: SharedPool,
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
+        event_forwarder: EventForwarder,
     ) -> Self {
         let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
@@ -271,6 +274,7 @@ where
             network,
             sampler,
             epoch_info,
+            event_forwarder,
         }
     }
 
@@ -436,20 +440,24 @@ where
                     return;
                 };
 
-                // store shred
-                let res = self
-                    .blockstore
-                    .write()
-                    .await
-                    .add_shred_from_repair(block_hash.clone(), validated)
-                    .await;
+                // store shred, then forward buffered events off the write lock
+                let (res, events) = {
+                    let mut blockstore = self.blockstore.write().await;
+                    let res = blockstore
+                        .add_shred_from_repair(block_hash.clone(), validated)
+                        .await;
+                    (res, blockstore.take_events())
+                };
+                self.event_forwarder.forward_blockstore_events(events).await;
                 if let Ok(Some(block_info)) = res {
                     assert_eq!(block_info.hash, *block_hash);
-                    self.pool
-                        .write()
-                        .await
-                        .add_block((*slot, block_info.hash), block_info.parent)
-                        .await;
+                    let outbox = {
+                        let mut pool = self.pool.write().await;
+                        pool.add_block((*slot, block_info.hash), block_info.parent)
+                            .await;
+                        pool.take_outbox()
+                    };
+                    self.event_forwarder.forward_pool_outbox(outbox).await;
                     debug!(
                         "successfully repaired block {} in slot {}",
                         block_hash.short_hex(),
@@ -554,17 +562,14 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
-        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
-            epoch_info.clone(),
-            pool_tx,
-            repair_tx.clone(),
-        )));
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(epoch_info.clone())));
+
+        let event_forwarder = EventForwarder::new(blockstore_tx, pool_tx, repair_tx.clone());
 
         // create and start Repair instance
         let mut repair = Repair::new(
@@ -572,6 +577,7 @@ mod tests {
             pool,
             v1_repair_requester_network,
             epoch_info.clone(),
+            event_forwarder,
         );
         tokio::spawn(async move {
             repair.repair_loop(repair_rx).await;
