@@ -658,6 +658,11 @@ mod tests {
     }
 
     impl TestContext {
+        /// Returns the validator set for the current epoch.
+        fn validators(&self) -> &[ValidatorInfo] {
+            self.epoch_info.epoch_info().validators()
+        }
+
         /// Verifies `vote` into a [`ValidatedVote`] and adds it to the pool.
         async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
             // NOTE: signature-rejection is covered by the [`ValidatedVote`] tests
@@ -674,11 +679,7 @@ mod tests {
             self.pool.add_cert(cert).await
         }
 
-        /// Returns the validator set for the current epoch.
-        fn validators(&self) -> &[ValidatorInfo] {
-            self.epoch_info.epoch_info().validators()
-        }
-
+        /// Adds a notarization [`Vote`] for `hash` in `slot` from each of `validators` to the pool.
         async fn add_notar_votes(
             &mut self,
             slot: Slot,
@@ -691,6 +692,7 @@ mod tests {
             }
         }
 
+        /// Adds a notar-fallback [`Vote`] for `hash` in `slot` from each of `validators` to the pool.
         async fn add_notar_fallback_votes(
             &mut self,
             slot: Slot,
@@ -703,6 +705,7 @@ mod tests {
             }
         }
 
+        /// Adds a skip [`Vote`] for `slot` from each of `validators` to the pool.
         async fn add_skip_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_skip(slot, &self.sks[v.as_usize()], v);
@@ -710,6 +713,7 @@ mod tests {
             }
         }
 
+        /// Adds a finalization [`Vote`] for `slot` from each of `validators` to the pool.
         async fn add_final_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_final(slot, &self.sks[v.as_usize()], v);
@@ -1222,8 +1226,7 @@ mod tests {
         // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         for s in 1..=slot.inner() {
-            let ff_cert = ctx.fast_final_cert(Slot::new(s), &GENESIS_BLOCK_HASH, 11);
-            assert_eq!(ctx.add_cert(Cert::FastFinal(ff_cert)).await, Ok(()));
+            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
         }
         assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
