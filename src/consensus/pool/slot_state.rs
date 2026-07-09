@@ -48,13 +48,6 @@ pub(super) struct SlotState {
     pub(super) epoch_info: Arc<ValidatorEpochInfo>,
 }
 
-// PERF: `SlotVotes::new` eagerly allocates five N-length vectors per slot
-// (~700 B/validator), even for a slot that only ever sees a single vote. This
-// dominates per-slot memory and amplifies the far-future-slot allocation vector
-// in `Pool::add_vote` (one signed vote forces a full allocation). The durable fix
-// is sparse/lazy storage — buffer votes until a slot proves live, then promote to
-// this dense layout — which also subsumes the marginal "store only signatures"
-// win (dropping the redundant `slot`/`signer` saves only ~15%, sig dominates).
 pub(super) struct SlotVotes {
     /// Notarization votes for all validators (indexed by `ValidatorIndex`).
     pub(super) notar: Vec<Option<NotarVote>>,
