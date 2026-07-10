@@ -115,28 +115,24 @@ where
     /// Does nothing if we are not the dedicated relay for this shred.
     #[hotpath::measure]
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
-        let leader = self
-            .epoch_info
-            .epoch_info()
-            .leader(shred.payload().header.slot)
-            .id;
-
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred);
         if self.epoch_info.own_id() != relay {
             return Ok(());
         }
 
+        // exclude the leader
+        let leader = self
+            .epoch_info
+            .epoch_info()
+            .leader(shred.payload().header.slot)
+            .id;
+
         // otherwise, broadcast
-        // NOTE: iterates indices so the closure's argument carries no lifetime;
-        // with a `&ValidatorInfo` argument, the closure is inferred with a fixed
-        // lifetime and proving the (unboxed) `send_to_many` future [`Send`] fails
-        // (<https://github.com/rust-lang/rust/issues/102211>).
         let validators = self.epoch_info.epoch_info().validators();
-        let to = (0..validators.len()).filter_map(move |i| {
-            let v = &validators[i];
-            (v.id != leader && v.id != relay).then_some(v.disseminator_address)
-        });
+        let to = (0..validators.len())
+            .filter(move |i| i != &relay.as_usize() && i != &leader.as_usize())
+            .map(move |i| validators[i].disseminator_address);
         self.network.send_to_many(shred, to).await?;
         Ok(())
     }
