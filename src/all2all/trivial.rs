@@ -7,7 +7,7 @@
 //! After that, the message is forgotten. The protocol is completely stateless.
 //! If the underlying [`Network`] is not reliable, the message might thus be lost.
 
-use async_trait::async_trait;
+use std::net::SocketAddr;
 
 use super::All2All;
 use crate::ValidatorInfo;
@@ -16,7 +16,7 @@ use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the trivial all-to-all broadcast protocol.
 pub struct TrivialAll2All<N: Network> {
-    validators: Vec<ValidatorInfo>,
+    addrs: Vec<SocketAddr>,
     network: N,
 }
 
@@ -25,23 +25,19 @@ impl<N: Network> TrivialAll2All<N> {
     ///
     /// Messages will be broadcast to all `validators` over the provided `network`.
     /// For each, [`ValidatorInfo::all2all_address`] will serve as recipient.
-    pub const fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
-        Self {
-            validators,
-            network,
-        }
+    pub fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
+        let addrs = validators.iter().map(|v| v.all2all_address).collect();
+        Self { addrs, network }
     }
 }
 
-#[async_trait]
 impl<N: Network> All2All for TrivialAll2All<N>
 where
     N: ConsensusNetwork,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
-        self.network
-            .send_to_many(msg, self.validators.iter().map(|v| v.all2all_address))
-            .await?;
+        let addrs = self.addrs.iter().copied();
+        self.network.send_to_many(msg, addrs).await?;
         Ok(())
     }
 

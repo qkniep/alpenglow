@@ -12,7 +12,6 @@ mod weighted_shuffle;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use quick_cache::sync::Cache;
 use rand::prelude::*;
 
@@ -103,10 +102,10 @@ where
     /// Returns an error if the send operation on the underlying network fails.
     pub async fn forward_shred(&self, shred: &Shred) -> std::io::Result<()> {
         let tree = self.get_tree(shred.payload().header.slot, shred.payload().index_in_slot());
-        let addrs = tree.get_children().iter().map(|child| {
+        let addrs = tree.get_children().iter().copied().map(|child| {
             self.epoch_info
                 .epoch_info()
-                .validator(*child)
+                .validator(child)
                 .disseminator_address
         });
         self.network.send_to_many(shred, addrs).await?;
@@ -131,7 +130,6 @@ where
     }
 }
 
-#[async_trait]
 impl<N> Disseminator for Turbine<N>
 where
     N: ShredNetwork,

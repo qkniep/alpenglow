@@ -31,7 +31,6 @@ mod udp;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use async_trait::async_trait;
 use wincode::config::Configuration;
 use wincode::{ReadResult, SchemaRead};
 
@@ -66,7 +65,6 @@ where
 }
 
 /// Abstraction of a network interface for sending and receiving messages.
-#[async_trait]
 pub trait Network: Send + Sync {
     type Send;
     type Recv;
@@ -76,7 +74,11 @@ pub trait Network: Send + Sync {
     /// # Errors
     ///
     /// Returns an [`io::Error`] if the underlying network operation fails.
-    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> io::Result<()>;
+    fn send(
+        &self,
+        message: &Self::Send,
+        addr: SocketAddr,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Sends the `message` to all the addresses in `addrs`, best-effort.
     ///
@@ -88,11 +90,11 @@ pub trait Network: Send + Sync {
     /// # Errors
     ///
     /// Returns only the *first* [`io::Error`] encountered if any.
-    async fn send_to_many(
+    fn send_to_many(
         &self,
         message: &Self::Send,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> io::Result<()>;
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Receives a message from the network.
     ///
@@ -102,7 +104,7 @@ pub trait Network: Send + Sync {
     /// # Errors
     ///
     /// Returns an [`io::Error`] if the underlying network operation fails.
-    async fn receive(&self) -> io::Result<Self::Recv>;
+    fn receive(&self) -> impl Future<Output = io::Result<Self::Recv>> + Send;
 }
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]
