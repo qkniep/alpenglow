@@ -10,7 +10,6 @@
 //!
 //! Specific implementations for different underlying network stacks are provided:
 //! - [`UdpNetwork`] abstracts a simple UDP socket
-//! - [`TcpNetwork`] handles TCP connections under the hood
 //! - [`SimulatedNetwork`] provides a simulated network for local testing
 //!
 //! # Examples
@@ -27,7 +26,6 @@
 //! ```
 
 pub mod simulated;
-mod tcp;
 mod udp;
 
 use std::io;
@@ -38,7 +36,6 @@ use wincode::config::Configuration;
 use wincode::{ReadResult, SchemaRead};
 
 pub use self::simulated::SimulatedNetwork;
-pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
 use crate::Transaction;
 use crate::consensus::ConsensusMessage;

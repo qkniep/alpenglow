@@ -2,7 +2,7 @@
 name = "alpenglow"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.91"
 authors = ["Quentin Kniep <quentin@anza.xyz>"]
 description = "Reference research implementation of the Alpenglow consensus protocol."
 license = "Apache-2.0"
@@ -50,7 +50,7 @@ socket2 = "0.6"
 thiserror = "2"
 time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = "0.7"
 toml = { version = "1", optional = true }
 wincode = { version = "0.5", features = ["derive"] }
 
