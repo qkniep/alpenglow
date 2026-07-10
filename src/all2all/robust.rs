@@ -7,16 +7,17 @@
 //! The message may be retransmitted multiple times.
 
 use std::iter::repeat_n;
+use std::net::SocketAddr;
 
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::{ConsensusNetwork, Network, higher_ranked};
+use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: actually make more robust (retransmits, ...)
 pub struct RobustAll2All<N: Network> {
-    validators: Vec<ValidatorInfo>,
+    addrs: Vec<SocketAddr>,
     network: N,
 }
 
@@ -26,10 +27,8 @@ impl<N: Network> RobustAll2All<N> {
     /// Messages will be broadcast to all `validators` over the provided `network`.
     /// Potential retransmits will be handled automatically, also over the `network`.
     pub fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
-        Self {
-            validators,
-            network,
-        }
+        let addrs = validators.iter().map(|v| v.all2all_address).collect();
+        Self { addrs, network }
     }
 
     pub fn handle_retransmits(&self) {}
@@ -42,11 +41,10 @@ where
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         // HACK: stupidly expensive retransmits
         let addrs = self
-            .validators
+            .addrs
             .iter()
-            .flat_map(higher_ranked(|v: &ValidatorInfo| {
-                repeat_n(v.all2all_address, 1000)
-            }));
+            .copied()
+            .flat_map(|addr| repeat_n(addr, 1000));
         self.network.send_to_many(msg, addrs).await
     }
 

@@ -129,20 +129,6 @@ impl<N> RepairRequesterNetwork for N where N: Network<Recv = RepairResponse, Sen
 pub trait RepairResponderNetwork: Network<Recv = RepairRequest, Send = RepairResponse> {}
 impl<N> RepairResponderNetwork for N where N: Network<Recv = RepairRequest, Send = RepairResponse> {}
 
-/// Identity function that forces a closure to be higher-ranked over its
-/// argument's lifetime.
-///
-/// Address-mapping closures passed to [`Network::send_to_many`] are otherwise
-/// inferred with a fixed lifetime, and proving the returned (unboxed) future
-/// [`Send`] then fails with "implementation of `FnOnce` is not general enough"
-/// (<https://github.com/rust-lang/rust/issues/102211>).
-pub(crate) fn higher_ranked<T: ?Sized, R, F>(f: F) -> F
-where
-    F: for<'a> FnMut(&'a T) -> R,
-{
-    f
-}
-
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
 ///
 /// NOTE: port 0 is generally reserved and used to get the OS to assign a port.

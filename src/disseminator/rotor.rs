@@ -26,9 +26,9 @@ pub use self::sampling_strategy::{
 };
 use super::Disseminator;
 use crate::consensus::ValidatorEpochInfo;
-use crate::network::{Network, ShredNetwork, higher_ranked};
+use crate::network::{Network, ShredNetwork};
 use crate::shredder::{Shred, TOTAL_SHREDS};
-use crate::{Slot, ValidatorIndex, ValidatorInfo};
+use crate::{Slot, ValidatorIndex};
 
 /// Maximum number of per-slice relay committees cached.
 ///
@@ -128,14 +128,15 @@ where
         }
 
         // otherwise, broadcast
-        let to = self
-            .epoch_info
-            .epoch_info()
-            .validators()
-            .iter()
-            .filter_map(higher_ranked(move |v: &ValidatorInfo| {
-                (v.id != leader && v.id != relay).then_some(v.disseminator_address)
-            }));
+        // NOTE: iterates indices so the closure's argument carries no lifetime;
+        // with a `&ValidatorInfo` argument, the closure is inferred with a fixed
+        // lifetime and proving the (unboxed) `send_to_many` future [`Send`] fails
+        // (<https://github.com/rust-lang/rust/issues/102211>).
+        let validators = self.epoch_info.epoch_info().validators();
+        let to = (0..validators.len()).filter_map(move |i| {
+            let v = &validators[i];
+            (v.id != leader && v.id != relay).then_some(v.disseminator_address)
+        });
         self.network.send_to_many(shred, to).await?;
         Ok(())
     }
