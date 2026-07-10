@@ -238,6 +238,8 @@ where
         // `join_all`-of-sendtos only added N futures and N waker round-trips.
         #[cfg(not(target_os = "linux"))]
         {
+            // store first error encountered, but keep sending the rest
+            let mut first_err = None;
             for addr in addrs {
                 loop {
                     match self.socket.try_send_to(&bytes, addr) {
@@ -245,11 +247,14 @@ where
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             self.socket.writable().await?;
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => {
+                            first_err.get_or_insert(e);
+                            break;
+                        }
                     }
                 }
             }
-            Ok(())
+            first_err.map_or(Ok(()), Err)
         }
     }
 
@@ -346,10 +351,16 @@ mod sendmmsg {
     /// larger fanouts are chunked across multiple syscalls.
     const MAX_BATCH: usize = libc::UIO_MAXIOV as usize;
 
-    /// Sends `payload` to every address in `addrs`, returning once all are queued.
+    /// Sends `payload` to every address in `addrs`, best-effort.
     ///
-    /// Empty `addrs` is a no-op; short writes and `EINTR` are retried internally.
+    /// Every address is attempted; short writes and `EINTR` are retried internally,
+    /// but a destination whose `sendmmsg` fails is skipped rather than retried.
+    /// Empty `addrs` is a no-op.
     /// Assumes `payload` fits in one MTU (the caller needs to check this).
+    ///
+    /// # Errors
+    ///
+    /// Returns only the *first* [`io::Error`] encountered if any.
     pub(super) async fn send_to_many_linux(
         socket: &UdpSocket,
         payload: &[u8],
@@ -368,6 +379,7 @@ mod sendmmsg {
         let fd = socket.as_raw_fd();
 
         let mut sent = 0;
+        let mut first_err = None;
         while sent < n {
             socket.writable().await?;
             let chunk_len = (n - sent).min(MAX_BATCH);
@@ -417,10 +429,14 @@ mod sendmmsg {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 // interrupted before any messages sent; retry the same chunk
                 Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
-                Err(e) => return Err(e),
+                // `sendmmsg` failed on the first send; skip that address
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                    sent += 1;
+                }
             }
         }
-        Ok(())
+        first_err.map_or(Ok(()), Err)
     }
 }
 
