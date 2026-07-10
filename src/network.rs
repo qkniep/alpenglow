@@ -78,7 +78,7 @@ pub trait Network: Send + Sync {
         &self,
         message: &Self::Send,
         addr: SocketAddr,
-    ) -> impl Future<Output = std::io::Result<()>> + Send;
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Sends the `message` to all the addresses in `addrs`, best-effort.
     ///
@@ -94,7 +94,7 @@ pub trait Network: Send + Sync {
         &self,
         message: &Self::Send,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> impl Future<Output = std::io::Result<()>> + Send;
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Receives a message from the network.
     ///
@@ -104,7 +104,7 @@ pub trait Network: Send + Sync {
     /// # Errors
     ///
     /// Returns an [`io::Error`] if the underlying network operation fails.
-    fn receive(&self) -> impl Future<Output = std::io::Result<Self::Recv>> + Send;
+    fn receive(&self) -> impl Future<Output = io::Result<Self::Recv>> + Send;
 }
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]
