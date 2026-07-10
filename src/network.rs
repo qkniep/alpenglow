@@ -26,7 +26,7 @@
 //! ```
 
 #[cfg(feature = "quic")]
-mod quic;
+pub mod quic;
 pub mod simulated;
 mod udp;
 

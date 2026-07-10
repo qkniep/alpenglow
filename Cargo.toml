@@ -46,6 +46,7 @@ parking_lot = "0.12"
 plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "ab_glyph", "all_elements", "all_series", "histogram", "line_series"], optional = true }
 rand = "0.10"
 rayon = { version = "1", optional = true }
+rcgen = { version = "0.13", default-features = false, features = ["ring"], optional = true }
 reed-solomon-simd = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
@@ -58,6 +59,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = { version = "1", optional = true }
 wincode = { version = "0.5", features = ["derive"] }
+x509-parser = { version = "0.16", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -82,7 +84,7 @@ hotpath-alloc = ["hotpath/hotpath-alloc"]
 # Authenticated QUIC transport (`network::quic::QuicNetwork`), a draft
 # alternative to the default UDP transport. Gated so the lean UDP build is
 # unaffected; see the `network::quic` module docs.
-quic = ["dep:quinn", "dep:bytes"]
+quic = ["dep:quinn", "dep:bytes", "dep:rcgen", "dep:x509-parser"]
 
 # Mainnet-derived simulation inputs (`network::simulated::{ping_data,
 # stake_distribution}`) and the `simulations` binary. Pulls in `csv` / `serde_json`
