@@ -30,6 +30,7 @@ pub mod simulated;
 mod tcp;
 mod udp;
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_trait::async_trait;
@@ -75,14 +76,13 @@ pub trait Network: Send + Sync {
 
     /// Sends the `message` to all the addresses in `addrs`, best-effort.
     ///
-    /// Every address is attempted even if some sends fail. The function is not
-    /// atomic: on error, some messages may still have been sent (and others not).
+    /// Every address is attempted even if some sends fail.
+    /// Therefore the function is not atomic:
+    /// On error, some messages may still have been sent (and others not).
     ///
     /// # Errors
     ///
-    /// Returns the *first* [`std::io::Error`] encountered, surfaced only after
-    /// every address has been attempted. Errors at later addresses are dropped;
-    /// implementors must preserve this first-error ordering.
+    /// Returns only the *first* [`io::Error`] encountered if any.
     //
     // NOTE: Consider returning a `Vec<Result<()>>` or a structured error to report
     // per-address failures instead of collapsing to a single one.
@@ -90,14 +90,14 @@ pub trait Network: Send + Sync {
         &self,
         message: &Self::Send,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> std::io::Result<()>;
+    ) -> io::Result<()>;
 
     /// Sends the `message` to `addr`.
-    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> std::io::Result<()>;
+    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> io::Result<()>;
 
     // TODO: implement broadcast at `Network` level?
 
-    async fn receive(&self) -> std::io::Result<Self::Recv>;
+    async fn receive(&self) -> io::Result<Self::Recv>;
 }
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]

@@ -238,9 +238,7 @@ where
         // `join_all`-of-sendtos only added N futures and N waker round-trips.
         #[cfg(not(target_os = "linux"))]
         {
-            // Best-effort: a hard error on one address is recorded but doesn't
-            // abort the batch; the first such error is surfaced once every
-            // remaining address has been attempted.
+            // store first error encountered, but keep sending the rest
             let mut first_err = None;
             for addr in addrs {
                 loop {
@@ -355,15 +353,14 @@ mod sendmmsg {
 
     /// Sends `payload` to every address in `addrs`, best-effort.
     ///
-    /// Every address is attempted; short writes and `EINTR` are retried
-    /// internally, but a destination whose `sendmmsg` fails is skipped rather
-    /// than retried. Empty `addrs` is a no-op. Assumes `payload` fits in one MTU
-    /// (the caller needs to check this).
+    /// Every address is attempted; short writes and `EINTR` are retried internally,
+    /// but a destination whose `sendmmsg` fails is skipped rather than retried.
+    /// Empty `addrs` is a no-op.
+    /// Assumes `payload` fits in one MTU (the caller needs to check this).
     ///
     /// # Errors
     ///
-    /// Returns the *first* [`io::Error`] encountered, surfaced only after every
-    /// address has been attempted; errors at later addresses are dropped.
+    /// Returns only the *first* [`io::Error`] encountered if any.
     pub(super) async fn send_to_many_linux(
         socket: &UdpSocket,
         payload: &[u8],
@@ -432,10 +429,7 @@ mod sendmmsg {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 // interrupted before any messages sent; retry the same chunk
                 Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
-                // Best-effort: `sendmmsg` reports an error only when *zero* of the
-                // current chunk went out, so the culprit is exactly `addrs[sent]`.
-                // Record the first such error, skip that destination, and keep
-                // sending the rest of the batch.
+                // `sendmmsg` failed on the first send; skip that address
                 Err(e) => {
                     first_err.get_or_insert(e);
                     sent += 1;
