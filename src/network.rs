@@ -30,7 +30,6 @@ mod udp;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use async_trait::async_trait;
 use wincode::config::Configuration;
 use wincode::{ReadResult, SchemaRead};
 
@@ -65,7 +64,6 @@ where
 }
 
 /// Abstraction of a network interface for sending and receiving messages.
-#[async_trait]
 pub trait Network: Send + Sync {
     type Send;
     type Recv;
@@ -77,18 +75,22 @@ pub trait Network: Send + Sync {
     /// This means that the function is not atomic, if it fails, some messages may still have been sent.
     //
     // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
-    async fn send_to_many(
+    fn send_to_many(
         &self,
         message: &Self::Send,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> std::io::Result<()>;
+    ) -> impl Future<Output = std::io::Result<()>> + Send;
 
     /// Sends the `message` to `addr`.
-    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> std::io::Result<()>;
+    fn send(
+        &self,
+        message: &Self::Send,
+        addr: SocketAddr,
+    ) -> impl Future<Output = std::io::Result<()>> + Send;
 
     // TODO: implement broadcast at `Network` level?
 
-    async fn receive(&self) -> std::io::Result<Self::Recv>;
+    fn receive(&self) -> impl Future<Output = std::io::Result<Self::Recv>> + Send;
 }
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]
@@ -112,6 +114,20 @@ impl<N> RepairRequesterNetwork for N where N: Network<Recv = RepairResponse, Sen
 /// receiving [`RepairRequest`] and sending [`RepairResponse`].
 pub trait RepairResponderNetwork: Network<Recv = RepairRequest, Send = RepairResponse> {}
 impl<N> RepairResponderNetwork for N where N: Network<Recv = RepairRequest, Send = RepairResponse> {}
+
+/// Identity function that forces a closure to be higher-ranked over its
+/// argument's lifetime.
+///
+/// Address-mapping closures passed to [`Network::send_to_many`] are otherwise
+/// inferred with a fixed lifetime, and proving the returned (unboxed) future
+/// [`Send`] then fails with "implementation of `FnOnce` is not general enough"
+/// (<https://github.com/rust-lang/rust/issues/102211>).
+pub(crate) fn higher_ranked<T: ?Sized, R, F>(f: F) -> F
+where
+    F: for<'a> FnMut(&'a T) -> R,
+{
+    f
+}
 
 /// Returns a [`SocketAddr`] bound to the localhost IPv4 and given port.
 ///

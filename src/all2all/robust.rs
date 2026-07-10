@@ -8,12 +8,10 @@
 
 use std::iter::repeat_n;
 
-use async_trait::async_trait;
-
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::{ConsensusNetwork, Network};
+use crate::network::{ConsensusNetwork, Network, higher_ranked};
 
 /// Instance of the robust all-to-all broadcast protocol.
 // TODO: actually make more robust (retransmits, ...)
@@ -37,7 +35,6 @@ impl<N: Network> RobustAll2All<N> {
     pub fn handle_retransmits(&self) {}
 }
 
-#[async_trait]
 impl<N: Network> All2All for RobustAll2All<N>
 where
     N: ConsensusNetwork,
@@ -47,7 +44,9 @@ where
         let addrs = self
             .validators
             .iter()
-            .flat_map(|v| repeat_n(v.all2all_address, 1000));
+            .flat_map(higher_ranked(|v: &ValidatorInfo| {
+                repeat_n(v.all2all_address, 1000)
+            }));
         self.network.send_to_many(msg, addrs).await
     }
 

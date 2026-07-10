@@ -7,12 +7,10 @@
 //! After that, the message is forgotten. The protocol is completely stateless.
 //! If the underlying [`Network`] is not reliable, the message might thus be lost.
 
-use async_trait::async_trait;
-
 use super::All2All;
 use crate::ValidatorInfo;
 use crate::consensus::ConsensusMessage;
-use crate::network::{ConsensusNetwork, Network};
+use crate::network::{ConsensusNetwork, Network, higher_ranked};
 
 /// Instance of the trivial all-to-all broadcast protocol.
 pub struct TrivialAll2All<N: Network> {
@@ -33,15 +31,16 @@ impl<N: Network> TrivialAll2All<N> {
     }
 }
 
-#[async_trait]
 impl<N: Network> All2All for TrivialAll2All<N>
 where
     N: ConsensusNetwork,
 {
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
-        self.network
-            .send_to_many(msg, self.validators.iter().map(|v| v.all2all_address))
-            .await?;
+        let addrs = self
+            .validators
+            .iter()
+            .map(higher_ranked(|v: &ValidatorInfo| v.all2all_address));
+        self.network.send_to_many(msg, addrs).await?;
         Ok(())
     }
 

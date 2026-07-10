@@ -16,7 +16,6 @@ use std::io;
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use async_trait::async_trait;
 use log::warn;
 use parking_lot::Mutex;
 use socket2::SockRef;
@@ -200,7 +199,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S, R> Network for UdpNetwork<S, R>
 where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,

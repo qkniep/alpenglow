@@ -16,7 +16,6 @@ pub mod sampling_strategy;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use quick_cache::sync::Cache;
 use rand::prelude::*;
 
@@ -27,9 +26,9 @@ pub use self::sampling_strategy::{
 };
 use super::Disseminator;
 use crate::consensus::ValidatorEpochInfo;
-use crate::network::{Network, ShredNetwork};
+use crate::network::{Network, ShredNetwork, higher_ranked};
 use crate::shredder::{Shred, TOTAL_SHREDS};
-use crate::{Slot, ValidatorIndex};
+use crate::{Slot, ValidatorIndex, ValidatorInfo};
 
 /// Maximum number of per-slice relay committees cached.
 ///
@@ -134,8 +133,9 @@ where
             .epoch_info()
             .validators()
             .iter()
-            .filter(|v| v.id != leader && v.id != relay)
-            .map(|v| v.disseminator_address);
+            .filter_map(higher_ranked(move |v: &ValidatorInfo| {
+                (v.id != leader && v.id != relay).then_some(v.disseminator_address)
+            }));
         self.network.send_to_many(shred, to).await?;
         Ok(())
     }
@@ -178,7 +178,6 @@ where
     }
 }
 
-#[async_trait]
 impl<N, S: QuorumSamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
     N: ShredNetwork,
