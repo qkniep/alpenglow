@@ -206,8 +206,13 @@ where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
     R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
-    type Recv = R;
     type Send = S;
+    type Recv = R;
+
+    async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> io::Result<()> {
+        let bytes = &serialize(msg);
+        self.send_serialized(bytes, addr).await
+    }
 
     async fn send_to_many(
         &self,
@@ -256,11 +261,6 @@ where
             }
             first_err.map_or(Ok(()), Err)
         }
-    }
-
-    async fn send(&self, msg: &Self::Send, addr: SocketAddr) -> io::Result<()> {
-        let bytes = &serialize(msg);
-        self.send_serialized(bytes, addr).await
     }
 
     /// Receives the next message.
