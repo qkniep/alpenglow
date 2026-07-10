@@ -36,7 +36,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::core::SimulatedNetworkCore;
 use self::token_bucket::TokenBucket;
-use super::Network;
+use super::{Network, Unauthenticated};
 use crate::ValidatorIndex;
 use crate::network::{MTU_BYTES, NetworkMessageConfig};
 
@@ -76,6 +76,7 @@ where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
     R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
+    type Peer = Unauthenticated;
     type Recv = R;
     type Send = S;
 
@@ -100,7 +101,7 @@ where
         self.send_serialized(bytes, addr).await
     }
 
-    async fn receive(&self) -> std::io::Result<R> {
+    async fn receive_from(&self) -> std::io::Result<(Unauthenticated, R)> {
         loop {
             let Some(buf) = self.receiver.lock().await.recv().await else {
                 return Err(std::io::Error::other("channel closed"));
@@ -112,7 +113,7 @@ where
                     continue;
                 }
             };
-            return Ok(msg);
+            return Ok((Unauthenticated, msg));
         }
     }
 }

@@ -36,10 +36,10 @@ use wincode::{ReadResult, SchemaRead};
 
 pub use self::simulated::SimulatedNetwork;
 pub use self::udp::UdpNetwork;
-use crate::Transaction;
 use crate::consensus::ConsensusMessage;
 use crate::repair::{RepairRequest, RepairResponse};
 use crate::shredder::Shred;
+use crate::{Transaction, ValidatorIndex};
 
 /// Maximum payload size of a UDP packet.
 pub const MTU_BYTES: usize = 1500;
@@ -64,11 +64,37 @@ where
     wincode::config::deserialize_exact(bytes, NetworkMessageConfig::new())
 }
 
+/// Identity of the peer a message was received from.
+///
+/// Transports that cryptographically authenticate their peers (e.g. a future
+/// QUIC transport) resolve this to a concrete [`ValidatorIndex`] via
+/// [`validator`](PeerId::validator). Transports that cannot attribute traffic
+/// to an identity (UDP, simulated) report [`Unauthenticated`], for which
+/// [`validator`](PeerId::validator) is always `None`.
+pub trait PeerId: Clone + Send + Sync + 'static {
+    /// Returns the authenticated validator this peer proved itself to be, or
+    /// `None` if the transport does not authenticate its peers.
+    fn validator(&self) -> Option<ValidatorIndex> {
+        None
+    }
+}
+
+/// Peer identity reported by transports that do not authenticate their peers.
+///
+/// Its [`PeerId::validator`] is always `None`, so a message received over such
+/// a transport carries no attributable, spoof-proof origin.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Unauthenticated;
+
+impl PeerId for Unauthenticated {}
+
 /// Abstraction of a network interface for sending and receiving messages.
 #[async_trait]
 pub trait Network: Send + Sync {
     type Send;
     type Recv;
+    /// Identity of the peer a received message came from.
+    type Peer: PeerId;
 
     /// Sends the `message` to all the addresses in `addrs`.
     ///
@@ -88,7 +114,29 @@ pub trait Network: Send + Sync {
 
     // TODO: implement broadcast at `Network` level?
 
-    async fn receive(&self) -> std::io::Result<Self::Recv>;
+    /// Receives the next message together with the identity of the peer that
+    /// sent it.
+    ///
+    /// The peer is [`Unauthenticated`] for transports that do not authenticate
+    /// their peers. Callers that do not need the origin can use
+    /// [`receive`](Network::receive) instead.
+    async fn receive_from(&self) -> std::io::Result<(Self::Peer, Self::Recv)>;
+
+    /// Receives the next message, discarding the sender's identity.
+    ///
+    /// Convenience wrapper over [`receive_from`](Network::receive_from) for the
+    /// common case where the origin is not needed.
+    async fn receive(&self) -> std::io::Result<Self::Recv> {
+        let (_peer, msg) = self.receive_from().await?;
+        Ok(msg)
+    }
+
+    /// Refuses further traffic from `peer`.
+    ///
+    /// Lets the caller shun a peer that provably misbehaved (e.g. sent an
+    /// invalid signature). The default is a no-op for transports that cannot
+    /// attribute or block traffic by identity (UDP, simulated).
+    fn ban(&self, _peer: &Self::Peer) {}
 }
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]

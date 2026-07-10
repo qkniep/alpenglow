@@ -24,7 +24,7 @@ use tokio::net::UdpSocket;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{MTU_BYTES, NetworkMessageConfig};
+use super::{MTU_BYTES, NetworkMessageConfig, Unauthenticated};
 use crate::network::Network;
 use crate::serialize;
 
@@ -206,6 +206,7 @@ where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
     R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
+    type Peer = Unauthenticated;
     type Recv = R;
     type Send = S;
 
@@ -271,13 +272,13 @@ where
     /// Both may find `recv_queue` empty and enter `recv_batch`,
     /// and once one drains the socket and stashes its surplus,
     /// the other can be left parked until the next datagram arrives.
-    async fn receive(&self) -> io::Result<R> {
+    async fn receive_from(&self) -> io::Result<(Unauthenticated, R)> {
         loop {
             // fast path: hand out a datagram drained by an earlier batch
             // the lock is released before the `await` below
             let queued = self.recv_queue.lock().pop_front();
             if let Some(msg) = queued {
-                return Ok(msg);
+                return Ok((Unauthenticated, msg));
             }
 
             // queue empty: pull a fresh batch from the socket
@@ -287,7 +288,7 @@ where
                 if !batch.is_empty() {
                     self.recv_queue.lock().append(&mut batch);
                 }
-                return Ok(first);
+                return Ok((Unauthenticated, first));
             }
         }
     }
