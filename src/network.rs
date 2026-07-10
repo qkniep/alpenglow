@@ -25,6 +25,8 @@
 //! }
 //! ```
 
+#[cfg(feature = "quic")]
+mod quic;
 pub mod simulated;
 mod udp;
 
@@ -34,6 +36,8 @@ use async_trait::async_trait;
 use wincode::config::Configuration;
 use wincode::{ReadResult, SchemaRead};
 
+#[cfg(feature = "quic")]
+pub use self::quic::QuicNetwork;
 pub use self::simulated::SimulatedNetwork;
 pub use self::udp::UdpNetwork;
 use crate::consensus::ConsensusMessage;

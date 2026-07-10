@@ -18,6 +18,7 @@ async-trait = "0.1"
 anyhow = "1"
 bitvec = "1"
 blst = { version = "0.3", features = ["serde", "serde-secret"] }
+bytes = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 csv = { version = "1", optional = true }
 ctr = "0.10"
@@ -33,6 +34,10 @@ libc = "0.2"
 log = "0.4"
 logforth = { version = "0.30", features = ["append-fastrace", "bridge-log", "filter-rustlog"] }
 quick_cache = "0.7"
+# `platform-verifier` (a default feature) is omitted: we authenticate peers with
+# a custom validator-set verifier, not the OS trust store, and it pulls in a
+# CDLA-licensed root-certs crate that `deny.toml` disallows.
+quinn = { version = "0.11", default-features = false, features = ["log", "runtime-tokio", "rustls-ring", "bloom"], optional = true }
 opentelemetry = { version = "0.32", optional = true }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"], optional = true }
 opentelemetry_sdk = { version = "0.32", optional = true }
@@ -73,6 +78,11 @@ cli = ["dep:clap", "dep:toml"]
 # compiles to no-ops. `hotpath-alloc` additionally tracks allocations per scope.
 hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath/hotpath-alloc"]
+
+# Authenticated QUIC transport (`network::quic::QuicNetwork`), a draft
+# alternative to the default UDP transport. Gated so the lean UDP build is
+# unaffected; see the `network::quic` module docs.
+quic = ["dep:quinn", "dep:bytes"]
 
 # Mainnet-derived simulation inputs (`network::simulated::{ping_data,
 # stake_distribution}`) and the `simulations` binary. Pulls in `csv` / `serde_json`
