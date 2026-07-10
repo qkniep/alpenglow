@@ -71,29 +71,37 @@ pub trait Network: Send + Sync {
     type Send;
     type Recv;
 
+    /// Sends the `message` to `addr`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the underlying network operation fails.
+    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> io::Result<()>;
+
     /// Sends the `message` to all the addresses in `addrs`, best-effort.
     ///
     /// Every address is attempted even if some sends fail.
     /// Therefore the function is not atomic:
     /// On error, some messages may still have been sent (and others not).
+    /// A failure of the underlying network itself may abort the remaining sends early.
     ///
     /// # Errors
     ///
     /// Returns only the *first* [`io::Error`] encountered if any.
-    //
-    // NOTE: Consider returning a `Vec<Result<()>>` or a structured error to report
-    // per-address failures instead of collapsing to a single one.
     async fn send_to_many(
         &self,
         message: &Self::Send,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
     ) -> io::Result<()>;
 
-    /// Sends the `message` to `addr`.
-    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> io::Result<()>;
-
-    // TODO: implement broadcast at `Network` level?
-
+    /// Receives a message from the network.
+    ///
+    /// Waits until the next message is received.
+    /// Messages that fail to deserialize are dropped and waiting continues.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the underlying network operation fails.
     async fn receive(&self) -> io::Result<Self::Recv>;
 }
 
