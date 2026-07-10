@@ -836,26 +836,25 @@ dependencies = [
 
 [[package]]
 name = "fastrace"
-version = "0.7.17"
+version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2130caec636d7a1d23b173576674ced1af967228642ceaeb6a1b4705c282b00e"
+checksum = "74539685f6baa3c33251571272eac7939fc3b93dff97c30381d7a6267394e528"
 dependencies = [
  "fastant",
  "fastrace-macro",
  "parking_lot",
  "pin-project",
- "rand 0.9.4",
+ "rand 0.10.2",
  "rtrb",
  "serde",
 ]
 
 [[package]]
 name = "fastrace-macro"
-version = "0.7.17"
+version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b35f67e02527fca6515ff61f922360df781f477daf6a806fff16bd59525dee5"
+checksum = "390d4f754b751905fa9294716c4ead717ffb5fa733a0c2417358b7779fceaeed"
 dependencies = [
- "proc-macro-error2",
  "proc-macro2",
  "quote",
  "syn",
