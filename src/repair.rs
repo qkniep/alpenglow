@@ -37,10 +37,10 @@ const REPAIR_FANOUT: usize = 3;
 
 /// How long to remember an answered request after its first accepted response.
 ///
-/// Each request is fanned out to up to [`REPAIR_FANOUT`] peers and retried on
-/// timeout, so the same request is typically answered more than once. The first
-/// accepted response completes it; remembering the request for this long lets
-/// the later responses be recognised as duplicates instead of mistaken for
+/// Each request is fanned out to up to [`REPAIR_FANOUT`] peers and retried on timeout,
+/// so the same request is typically answered more than once.
+/// The first accepted response completes it; remembering the request
+/// lets the later responses be recognised as duplicates instead of mistaken for
 /// responses we never asked for.
 const COMPLETED_REQUEST_GRACE: Duration = REPAIR_TIMEOUT.saturating_mul(2);
 
@@ -57,22 +57,20 @@ pub enum RepairRequestType {
 
 impl RepairRequestType {
     /// Digests the [`RepairRequestType`] into a [`crate::crypto::Hash`].
+    ///
+    /// The hash serves as a local lookup key identifying the request,
+    /// independently of which [`RepairRequest`] messages carried it.
     fn hash(&self) -> Hash {
-        let repair = RepairRequest {
-            req_type: self.clone(),
-            sender: ValidatorIndex::new(0),
-        };
-        let msg_bytes = crate::serialize(&repair);
-        hash(&msg_bytes)
+        hash(&crate::serialize(self))
     }
 }
 
 /// Request messages for the repair sub-protocol.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct RepairRequest {
-    /// The validator that sent the message.
+    /// The validator that sent this request.
     sender: ValidatorIndex,
-    /// The type of repair message sent.
+    /// The actual request payload.
     req_type: RepairRequestType,
 }
 
@@ -83,7 +81,7 @@ pub struct RepairRequest {
 /// the specific peer it fanned the request out to.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct RepairResponse {
-    /// The validator that produced this response.
+    /// The validator who sent this response.
     responder: ValidatorIndex,
     /// The actual response payload.
     payload: RepairResponsePayload,
