@@ -28,6 +28,7 @@
 pub mod simulated;
 mod udp;
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use wincode::config::Configuration;
@@ -68,28 +69,41 @@ pub trait Network: Send + Sync {
     type Send;
     type Recv;
 
-    /// Sends the `message` to all the addresses in `addrs`.
-    ///
-    /// Note that a possible strategy for the implementers is to send to one address after another.
-    /// In this strategy, it is possible that if sending to one address fails, the implementer gives up sending to the remaining addresses.
-    /// This means that the function is not atomic, if it fails, some messages may still have been sent.
-    //
-    // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
-    fn send_to_many(
-        &self,
-        message: &Self::Send,
-        addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> impl Future<Output = std::io::Result<()>> + Send;
-
     /// Sends the `message` to `addr`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the underlying network operation fails.
     fn send(
         &self,
         message: &Self::Send,
         addr: SocketAddr,
     ) -> impl Future<Output = std::io::Result<()>> + Send;
 
-    // TODO: implement broadcast at `Network` level?
+    /// Sends the `message` to all the addresses in `addrs`, best-effort.
+    ///
+    /// Every address is attempted even if some sends fail.
+    /// Therefore the function is not atomic:
+    /// On error, some messages may still have been sent (and others not).
+    /// A failure of the underlying network itself may abort the remaining sends early.
+    ///
+    /// # Errors
+    ///
+    /// Returns only the *first* [`io::Error`] encountered if any.
+    fn send_to_many(
+        &self,
+        message: &Self::Send,
+        addrs: impl IntoIterator<Item = SocketAddr> + Send,
+    ) -> impl Future<Output = std::io::Result<()>> + Send;
 
+    /// Receives a message from the network.
+    ///
+    /// Waits until the next message is received.
+    /// Messages that fail to deserialize are dropped and waiting continues.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the underlying network operation fails.
     fn receive(&self) -> impl Future<Output = std::io::Result<Self::Recv>> + Send;
 }
 
