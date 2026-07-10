@@ -30,20 +30,19 @@ use crate::{BlockId, ValidatorIndex};
 /// Maximum time to wait for a response to a repair request.
 ///
 /// After a request times out we retry it from another node.
-const REPAIR_TIMEOUT: Duration = DELTA.checked_mul(2).unwrap();
+const REPAIR_TIMEOUT: Duration = DELTA.saturating_mul(2);
 
 /// Number of peers a single repair request is fanned out to in parallel.
 const REPAIR_FANOUT: usize = 3;
 
-/// How long to remember an already-answered request after its first accepted
-/// response.
+/// How long to remember an answered request after its first accepted response.
 ///
 /// Each request is fanned out to up to [`REPAIR_FANOUT`] peers and retried on
 /// timeout, so the same request is typically answered more than once. The first
 /// accepted response completes it; remembering the request for this long lets
 /// the later responses be recognised as duplicates instead of mistaken for
 /// responses we never asked for.
-const COMPLETED_REQUEST_GRACE: Duration = REPAIR_TIMEOUT.checked_mul(2).unwrap();
+const COMPLETED_REQUEST_GRACE: Duration = REPAIR_TIMEOUT.saturating_mul(2);
 
 /// Different types of [`RepairRequest`] messages.
 #[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
@@ -86,7 +85,7 @@ pub struct RepairRequest {
 pub struct RepairResponse {
     /// The validator that produced this response.
     responder: ValidatorIndex,
-    /// The actual response data.
+    /// The actual response payload.
     payload: RepairResponsePayload,
 }
 
