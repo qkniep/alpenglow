@@ -26,6 +26,8 @@ pub(crate) mod core;
 mod driver;
 mod epoch_info;
 mod pool;
+#[cfg(test)]
+mod sim;
 mod validated_cert;
 mod validated_vote;
 mod vote;
