@@ -35,6 +35,7 @@
 
 mod alpenglow;
 mod binomial;
+mod core_latency;
 mod discrete_event_simulator;
 mod plot;
 mod pyjama;
@@ -82,6 +83,9 @@ use crate::ryse::{
 const RUN_BANDWIDTH_TESTS: bool = true;
 const RUN_LATENCY_TESTS: bool = true;
 const RUN_ROTOR_ROBUSTNESS_TESTS: bool = true;
+/// Runs the finalization-latency simulation driven by the real consensus core
+/// (see [`core_latency`]) over the mainnet ping matrix.
+const RUN_CORE_LATENCY_SIM: bool = true;
 const GENERATE_PLOTS: bool = true;
 
 const SAMPLING_STRATEGIES: [&str; 1] = [
@@ -204,6 +208,11 @@ fn run_tests_for_stake_distribution(
         .iter()
         .map(|(v, _)| v.clone())
         .collect();
+
+    // finalization latency measured by driving the real consensus core
+    if RUN_CORE_LATENCY_SIM {
+        core_latency::run(distribution_name, &validators_and_ping_servers);
+    }
 
     // TODO: indicatif progress bar
 

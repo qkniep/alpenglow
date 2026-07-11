@@ -25,6 +25,12 @@ mod cert;
 pub(crate) mod core;
 mod driver;
 mod epoch_info;
+/// Discrete-event finalization-latency simulator driving the real core.
+///
+/// Public under the `simulations` feature (and in tests) so the `simulations`
+/// binary can run the actual protocol to measure latency.
+#[cfg(any(test, feature = "simulations"))]
+pub mod latency_sim;
 mod pool;
 #[cfg(test)]
 mod sim;
