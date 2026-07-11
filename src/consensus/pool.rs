@@ -18,7 +18,6 @@ use std::sync::Arc;
 use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
-use tokio::sync::{RwLock, oneshot};
 
 use self::finality_tracker::FinalityTracker;
 use self::parent_ready_tracker::ParentReadyTracker;
@@ -30,9 +29,7 @@ use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorIndex};
 
-/// Events emitted by [`PoolImpl`] to [`Votor`].
-///
-/// [`Votor`]: crate::consensus::votor::Votor
+/// Events emitted by [`PoolImpl`] to the consensus core (`VotorState`).
 // PERF: Short-lived channel message; boxing the cert isn't worth the allocation.
 #[expect(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
@@ -68,10 +65,9 @@ impl PoolEvent {
     }
 }
 
-/// Side-effects the Pool produces while processing under its write lock, to be
-/// drained via [`Pool::take_outbox`] and forwarded to Votor and the repair loop
-/// once the lock is released (a blocking send under the lock would jam every task
-/// contending for it).
+/// Side-effects the Pool buffers while processing, to be drained via
+/// [`PoolImpl::take_outbox`] and routed to Votor and the repair loop by the
+/// consensus core.
 #[derive(Debug, Default)]
 pub struct PoolOutbox {
     /// Events destined for Votor.
@@ -119,38 +115,12 @@ pub enum SlashableOffence {
     NotarFallbackAndFinalize(ValidatorIndex, Slot),
 }
 
-/// Interface for the Pool.
-///
-/// This is only used for mocking of [`PoolImpl`].
-///
-/// All methods are synchronous: the pool is a pure state machine that performs
-/// no I/O and buffers its side-effects in a [`PoolOutbox`], so no method ever
-/// needs to await (and none may, as callers invoke them under a write lock).
-#[cfg_attr(test, mockall::automock)]
-pub trait Pool {
-    fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError>;
-    fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError>;
-    fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
-    /// Builds the standstill-recovery bundle to re-broadcast; see [`PoolImpl::recover_from_standstill`].
-    fn recover_from_standstill(&self) -> PoolOutbox;
-    /// Drains and returns the side-effects buffered since the last call.
-    ///
-    /// The caller must forward these to Votor and the repair loop *after* releasing
-    /// the Pool lock; see `PoolImpl::enqueue_votor_event`.
-    fn take_outbox(&mut self) -> PoolOutbox;
-    fn finalized_slot(&self) -> Slot;
-    fn parents_ready(&self, slot: Slot) -> &[BlockId];
-    fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>>;
-}
-
-/// Shared, lock-protected handle to a [`Pool`] trait object.
-pub type SharedPool = Arc<RwLock<dyn Pool + Send + Sync>>;
-
 /// Pool is the central consensus data structure.
 ///
 /// It holds votes and certificates for each slot.
 ///
-/// This is the main implementation to use when you require the [`Pool`] trait.
+/// It is a pure, synchronous state machine: it performs no I/O and buffers
+/// its side-effects in a [`PoolOutbox`], drained via [`PoolImpl::take_outbox`].
 pub struct PoolImpl {
     /// State for each slot. Stores all votes and certificates.
     slot_states: BTreeMap<Slot, SlotState>,
@@ -163,8 +133,8 @@ pub struct PoolImpl {
 
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Buffered side-effects (Votor events + repair requests) produced under the
-    /// write lock, drained by the caller via [`Pool::take_outbox`].
+    /// Buffered side-effects (Votor events + repair requests),
+    /// drained by the caller via [`PoolImpl::take_outbox`].
     outbox: PoolOutbox,
 }
 
@@ -172,9 +142,8 @@ impl PoolImpl {
     /// Creates a new empty pool containing no votes or certificates.
     ///
     /// Any events the pool emits are buffered in its [`PoolOutbox`] and must be
-    /// drained by the caller via [`Pool::take_outbox`], then forwarded to Votor and
-    /// the repair loop after the write lock is released; see
-    /// `PoolImpl::enqueue_votor_event`.
+    /// drained by the caller via [`PoolImpl::take_outbox`], then routed to Votor
+    /// and the repair loop; see `PoolImpl::enqueue_votor_event`.
     pub fn new(epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
@@ -419,9 +388,8 @@ impl PoolImpl {
 
     /// Records an event for Votor in the outbox.
     ///
-    /// Buffered rather than sent so the caller can forward it off the write lock
-    /// (see [`super::EventForwarder`]); a blocking send under the lock would jam
-    /// every task contending for it.
+    /// Buffered rather than sent so this state machine stays free of I/O; the
+    /// consensus core drains the outbox and routes the events.
     fn enqueue_votor_event(&mut self, event: PoolEvent) {
         self.outbox.votor_events.push(event);
     }
@@ -435,10 +403,14 @@ impl PoolImpl {
     }
 }
 
-impl Pool for PoolImpl {
+impl PoolImpl {
     /// Adds a new certificate to the pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the certificate's slot is out of bounds or it is a duplicate.
     #[hotpath::measure]
-    fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
+    pub fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
         // TODO: set bounds exactly correctly
@@ -470,8 +442,13 @@ impl Pool for PoolImpl {
     }
 
     /// Adds a new vote to the pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the vote's slot is out of bounds, it is a duplicate,
+    /// or it constitutes a slashable offence.
     #[hotpath::measure]
-    fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
+    pub fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
         // TODO: set bounds exactly correctly
@@ -525,7 +502,7 @@ impl Pool for PoolImpl {
     ///
     /// This should be called once for every valid block (e.g. directly by blockstore).
     /// Ensures that the parent information is available for safe-to-notar checks.
-    fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
+    pub fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
         assert!(block_id.0 > parent_id.0);
         let (slot, block_hash) = &block_id;
         let (parent_slot, parent_hash) = &parent_id;
@@ -560,7 +537,7 @@ impl Pool for PoolImpl {
     /// them as a [`PoolOutbox`] holding a single [`PoolEvent::Standstill`] for the
     /// caller to forward to Votor. Should be called after not seeing any progress
     /// for the standstill duration.
-    fn recover_from_standstill(&self) -> PoolOutbox {
+    pub fn recover_from_standstill(&self) -> PoolOutbox {
         let slot = self.finalized_slot();
         let mut certs = self.get_final_certs(slot);
         assert!(!certs.is_empty(), "no final cert");
@@ -588,22 +565,24 @@ impl Pool for PoolImpl {
         }
     }
 
-    fn take_outbox(&mut self) -> PoolOutbox {
+    /// Drains and returns the side-effects buffered since the last call.
+    ///
+    /// The caller must forward these to Votor and the repair loop;
+    /// see `PoolImpl::enqueue_votor_event`.
+    pub fn take_outbox(&mut self) -> PoolOutbox {
         std::mem::take(&mut self.outbox)
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.
-    fn finalized_slot(&self) -> Slot {
+    #[must_use]
+    pub fn finalized_slot(&self) -> Slot {
         self.finality_tracker.highest_finalized_slot()
     }
 
     /// Returns all possible parents for the given slot that are ready.
-    fn parents_ready(&self, slot: Slot) -> &[BlockId] {
+    #[must_use]
+    pub fn parents_ready(&self, slot: Slot) -> &[BlockId] {
         self.parent_ready_tracker.parents_ready(slot)
-    }
-
-    fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>> {
-        self.parent_ready_tracker.wait_for_parent_ready(slot)
     }
 }
 
@@ -690,10 +669,8 @@ mod tests {
             self.epoch_info.epoch_info().validators()
         }
 
-        /// Forwards the given pool outbox into the test channels, mirroring what
-        /// [`EventForwarder`] does in production after releasing the write lock.
-        ///
-        /// [`EventForwarder`]: crate::consensus::EventForwarder
+        /// Forwards the given pool outbox into the test channels, mirroring how
+        /// the consensus core routes a drained outbox in production.
         fn forward(&mut self, outbox: PoolOutbox) {
             for event in outbox.votor_events {
                 self.votor_tx

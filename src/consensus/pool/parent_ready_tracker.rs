@@ -19,9 +19,7 @@ mod parent_ready_state;
 
 use std::collections::HashMap;
 
-use either::Either;
 use smallvec::SmallVec;
-use tokio::sync::oneshot;
 
 use self::parent_ready_state::ParentReadyState;
 use crate::consensus::pool::finality_tracker::FinalizationEvent;
@@ -178,17 +176,6 @@ impl ParentReadyTracker {
             .map_or(&[], |state| state.ready_block_ids())
     }
 
-    /// Returns a ready parent if available, otherwise returns a oneshot channel.
-    ///
-    /// The oneshot channel will receive the first ready parent once it becomes available.
-    pub(super) fn wait_for_parent_ready(
-        &mut self,
-        slot: Slot,
-    ) -> Either<BlockId, oneshot::Receiver<BlockId>> {
-        let state = self.states.entry(slot).or_default();
-        state.wait_for_parent_ready()
-    }
-
     /// Removes all tracked state for slots strictly below `new_root`.
     ///
     /// After this, only slots `>= new_root` are retained.
@@ -339,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_parent_ready() {
+    fn parents_ready_after_skips() {
         let genesis = genesis_block_id();
         let mut windows = Slot::windows();
         let window1 = windows.next().unwrap();
@@ -355,29 +342,20 @@ mod tests {
             tracker.mark_skipped(slot);
         }
 
-        // genesis should be valid parent for 2nd window
-        let res = tracker.wait_for_parent_ready(window2);
-        let Either::Left((slot, hash)) = res else {
-            panic!("unexpected result {res:?}");
-        };
-        assert_eq!((slot, hash), genesis);
+        // genesis should be valid parent for 2nd window, but not yet for the 3rd
+        assert_eq!(
+            tracker.parents_ready(window2),
+            std::slice::from_ref(&genesis)
+        );
+        assert_eq!(tracker.parents_ready(window3), &[]);
 
-        // parent should not yet be ready
-        let res = tracker.wait_for_parent_ready(window3);
-        let Either::Right(mut rx) = res else {
-            panic!("unexpected result {res:?}");
-        };
-        let Err(oneshot::error::TryRecvError::Empty) = rx.try_recv() else {
-            panic!("parent should not yet be ready");
-        };
-
-        // skip slots in first window
+        // skip slots in second window
         for slot in window2.slots_in_window() {
             tracker.mark_skipped(slot);
         }
 
-        // now we should be notified of genesis as valid parent
-        assert_eq!(rx.try_recv(), Ok(genesis));
+        // now genesis is a valid parent for the 3rd window as well
+        assert_eq!(tracker.parents_ready(window3), &[genesis]);
     }
 
     #[test]

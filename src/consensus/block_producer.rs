@@ -7,16 +7,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use either::Either;
 use fastrace::Span;
 use log::{debug, info, warn};
 use static_assertions::const_assert;
 use tokio::pin;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
-use crate::consensus::{EventForwarder, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::core::Input;
+use crate::consensus::driver::ParentReadyMap;
+use crate::consensus::{SharedBlockstore, ValidatorEpochInfo};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -32,17 +33,19 @@ use crate::{BlockId, Disseminator, MAX_TRANSACTION_SIZE};
 /// Finished blocks are shredded and disseminated via a [`Disseminator`] instance.
 pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Own validator's secret key (used e.g. for block production).
-    /// This is not the same as the voting secret key, which is held by [`super::Votor`].
+    /// This is not the same as the voting secret key, which is held by the consensus core.
     secret_key: signature::SecretKey,
     /// Other validators' info.
     epoch_info: Arc<ValidatorEpochInfo>,
 
     /// Blockstore for storing raw block data.
     blockstore: SharedBlockstore,
-    /// Pool of votes and certificates.
-    pool: SharedPool,
-    /// Forwards blockstore outbox events to Votor off the write lock.
-    event_forwarder: EventForwarder,
+    /// Feeds drained blockstore events to the consensus core.
+    inputs: mpsc::Sender<Input>,
+    /// Observes the first ready parent per window, published by the driver.
+    parent_ready: watch::Receiver<ParentReadyMap>,
+    /// Observes the highest finalized slot, published by the driver.
+    finalized: watch::Receiver<Slot>,
 
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
@@ -77,8 +80,9 @@ where
         disseminator: Arc<D>,
         txs_receiver: T,
         blockstore: SharedBlockstore,
-        pool: SharedPool,
-        event_forwarder: EventForwarder,
+        inputs: mpsc::Sender<Input>,
+        parent_ready: watch::Receiver<ParentReadyMap>,
+        finalized: watch::Receiver<Slot>,
         cancel_token: CancellationToken,
         delta_block: Duration,
         delta_first_slice: Duration,
@@ -88,8 +92,9 @@ where
             secret_key,
             epoch_info,
             blockstore,
-            pool,
-            event_forwarder,
+            inputs,
+            parent_ready,
+            finalized,
             disseminator,
             txs_receiver,
             // block production is sequential, so a single shredder is enough
@@ -124,7 +129,8 @@ where
 
             // wait for ParentReady or block in previous slot
             let slot_ready = wait_for_first_slot(
-                self.pool.clone(),
+                self.parent_ready.clone(),
+                self.finalized.clone(),
                 self.blockstore.clone(),
                 first_slot_in_window,
             )
@@ -368,14 +374,24 @@ where
 
         // Fast path: we already have every shred and the decoded payload, so the
         // blockstore can skip RS-decode, Merkle verification and the per-shred
-        // lock churn. The completed block hands back (slot, hash). Forward the
-        // buffered events to Votor after releasing the write lock.
+        // lock churn. The completed block hands back (slot, hash). Feed the
+        // buffered events to the consensus core after releasing the write lock;
+        // the core registers the completed block with the pool itself.
         let (block_info, events) = {
             let mut blockstore = self.blockstore.write().await;
             let block_info = blockstore.add_own_slice(payload, shreds);
             (block_info, blockstore.take_events())
         };
-        self.event_forwarder.forward_blockstore_events(events).await;
+        for event in events {
+            if self
+                .inputs
+                .send(Input::BlockstoreEvent(event))
+                .await
+                .is_err()
+            {
+                debug!("consensus core inbox closed, dropping input");
+            }
+        }
 
         if let Some(e) = first_err {
             warn!(
@@ -389,13 +405,6 @@ where
                 // and the only alternative is proposing a truncated block that
                 // followers can never reconstruct. Crash loudly instead.
                 assert!(is_last, "block completed before its last slice");
-                let block_id = (slot, block_info.hash.clone());
-                let outbox = {
-                    let mut pool = self.pool.write().await;
-                    pool.add_block(block_id, block_info.parent);
-                    pool.take_outbox()
-                };
-                self.event_forwarder.forward_pool_outbox(outbox).await;
                 Ok(Some(block_info.hash))
             }
             None => {
@@ -502,12 +511,13 @@ enum SlotReady {
 /// Waits for first slot in the given window to become ready for block production.
 ///
 /// Ready here can mean:
-/// - Pool emitted the `ParentReady` event for it, OR
+/// - the driver published a ready parent for it (Pool's `ParentReady`), OR
 /// - the blockstore has stored a block for the previous slot.
 ///
 /// See [`SlotReady`] for what is returned.
 async fn wait_for_first_slot(
-    pool: SharedPool,
+    mut parent_ready: watch::Receiver<ParentReadyMap>,
+    finalized: watch::Receiver<Slot>,
     blockstore: SharedBlockstore,
     first_slot_in_window: Slot,
 ) -> SlotReady {
@@ -516,25 +526,18 @@ async fn wait_for_first_slot(
         return SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH));
     }
 
-    // if already have parent ready, return it, otherwise get a channel to await on
-    let mut rx = {
-        let mut guard = pool.write().await;
-        match guard.wait_for_parent_ready(first_slot_in_window) {
-            Either::Left(parent) => {
-                return SlotReady::Ready(parent);
-            }
-            Either::Right(rx) => rx,
-        }
-    };
-
     // Concurrently wait for:
-    // - `ParentReady` event,
+    // - a ready parent published by the driver,
     // - block reconstruction in blockstore, OR
     // - notification that a later slot was finalized.
+    let watch_for_oneshot = parent_ready.clone();
     tokio::select! {
-        res = &mut rx => {
-            let parent = res.expect("sender dropped channel");
-            SlotReady::Ready(parent)
+        res = parent_ready.wait_for(|map| map.contains_key(&first_slot_in_window)) => {
+            match res {
+                Ok(map) => SlotReady::Ready(map[&first_slot_in_window].clone()),
+                // the driver shut down; the node is going down anyway
+                Err(_) => SlotReady::Skip,
+            }
         }
 
         res = async {
@@ -547,7 +550,7 @@ async fn wait_for_first_slot(
                     {
                         return Some((last_slot_in_prev_window, hash.clone()));
                     }
-                    if pool.read().await.finalized_slot() >= first_slot_in_window {
+                    if *finalized.borrow() >= first_slot_in_window {
                         return None;
                     }
                     sleep(Duration::from_millis(1)).await;
@@ -557,28 +560,59 @@ async fn wait_for_first_slot(
         } => {
             match res {
                 None => SlotReady::Skip,
-                Some((slot, hash)) => SlotReady::ParentReadyNotSeen((slot, hash), rx),
+                Some((slot, hash)) => {
+                    let rx = parent_ready_oneshot(watch_for_oneshot, first_slot_in_window);
+                    SlotReady::ParentReadyNotSeen((slot, hash), rx)
+                }
             }
         }
     }
+}
+
+/// Bridges the parent-ready watch to a oneshot channel for the given `slot`.
+///
+/// The returned receiver resolves with the first ready parent for `slot`,
+/// mirroring the interface [`BlockProducer::produce_block_parent_not_ready`]
+/// selects on while producing optimistically. If the driver shuts down before
+/// a parent is ready, the sender is dropped.
+fn parent_ready_oneshot(
+    mut parent_ready: watch::Receiver<ParentReadyMap>,
+    slot: Slot,
+) -> oneshot::Receiver<BlockId> {
+    let (tx, rx) = oneshot::channel();
+    tokio::spawn(async move {
+        if let Ok(map) = parent_ready.wait_for(|map| map.contains_key(&slot)).await {
+            let _ = tx.send(map[&slot].clone());
+        }
+    });
+    rx
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use mockall::{Sequence, predicate};
+    use mockall::Sequence;
     use tokio::sync::RwLock;
 
     use super::*;
     use crate::consensus::blockstore::MockBlockstore;
-    use crate::consensus::pool::MockPool;
-    use crate::consensus::{BlockInfo, PoolOutbox, ValidatorEpochInfo};
+    use crate::consensus::{BlockInfo, ValidatorEpochInfo};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
     use crate::test_utils::{generate_validators, random_block_id};
     use crate::{Transaction, ValidatorIndex};
+
+    /// Fresh channels standing in for the driver's side of the wiring.
+    ///
+    /// Held (not read) for the duration of a test so the producer never
+    /// sees closed channels.
+    struct DriverStandIn {
+        _input_rx: mpsc::Receiver<Input>,
+        _parent_ready_tx: watch::Sender<ParentReadyMap>,
+        _finalized_tx: watch::Sender<Slot>,
+    }
 
     #[tokio::test]
     async fn produce_slice_empty_slices() {
@@ -631,28 +665,33 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_genesis() {
-        let pool: SharedPool = Arc::new(RwLock::new(MockPool::new()));
         let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
+        let (_parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
+        let (_finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
 
-        let status = wait_for_first_slot(pool, blockstore, Slot::genesis()).await;
+        let status =
+            wait_for_first_slot(parent_ready_rx, finalized_rx, blockstore, Slot::genesis()).await;
         assert!(matches!(status, SlotReady::Ready(_)));
     }
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_already_ready() {
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
+        // the concurrent blockstore poll may run before the ready parent wins
+        let mut mock_blockstore = MockBlockstore::new();
+        mock_blockstore
+            .expect_disseminated_block_hash()
+            .returning(|_| None);
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(mock_blockstore));
+        let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
+        let (_finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
 
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
+        parent_ready_tx.send_modify(|map| {
+            map.insert(slot, parent.clone());
+        });
 
-        let mut pool = MockPool::new();
-        let p = parent.clone();
-        pool.expect_wait_for_parent_ready()
-            .with(predicate::eq(slot))
-            .return_once(move |_slot| Either::Left(p));
-        let pool: SharedPool = Arc::new(RwLock::new(pool));
-
-        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        let status = wait_for_first_slot(parent_ready_rx, finalized_rx, blockstore, slot).await;
         match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
             other => panic!("unexpected {other:?}"),
@@ -661,20 +700,28 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_ready_later() {
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
+        // the blockstore poll runs until the (delayed) parent becomes ready
+        let mut mock_blockstore = MockBlockstore::new();
+        mock_blockstore
+            .expect_disseminated_block_hash()
+            .returning(|_| None);
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(mock_blockstore));
+        let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
+        let (_finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
 
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
-        let (tx, rx) = oneshot::channel();
-        tx.send(parent.clone()).unwrap();
 
-        let mut pool = MockPool::new();
-        pool.expect_wait_for_parent_ready()
-            .with(predicate::eq(slot))
-            .return_once(move |_slot| Either::Right(rx));
-        let pool: SharedPool = Arc::new(RwLock::new(pool));
+        // parent becomes ready only while we are already waiting
+        let p = parent.clone();
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(50)).await;
+            parent_ready_tx.send_modify(|map| {
+                map.insert(slot, p);
+            });
+        });
 
-        let status = wait_for_first_slot(pool, blockstore, slot).await;
+        let status = wait_for_first_slot(parent_ready_rx, finalized_rx, blockstore, slot).await;
         match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
             other => panic!("unexpected {other:?}"),
@@ -684,36 +731,43 @@ mod tests {
     /// A bunch of boilerplate to initialize and return a [`BlockProducer`].
     fn setup(
         blockstore: MockBlockstore,
-        pool: MockPool,
         disseminator: MockDisseminator,
         delta_block: Duration,
         delta_first_slice: Duration,
-    ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
+    ) -> (
+        BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>>,
+        DriverStandIn,
+    ) {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
         let blockstore: SharedBlockstore = Arc::new(RwLock::new(blockstore));
-        let pool: SharedPool = Arc::new(RwLock::new(pool));
         let disseminator = Arc::new(disseminator);
         let txs_receiver = UdpNetwork::new_with_any_port();
         let cancel_token = CancellationToken::new();
-        let (bs_event_tx, _bs_event_rx) = tokio::sync::mpsc::channel(100);
-        let (pool_event_tx, _pool_event_rx) = tokio::sync::mpsc::channel(100);
-        let (repair_tx, _repair_rx) = tokio::sync::mpsc::channel(100);
-        let event_forwarder = EventForwarder::new(bs_event_tx, pool_event_tx, repair_tx);
+        let (input_tx, input_rx) = mpsc::channel(100);
+        let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
+        let (finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
 
-        BlockProducer::new(
+        let producer = BlockProducer::new(
             secret_key,
             epoch_info,
             disseminator,
             txs_receiver,
             blockstore,
-            pool,
-            event_forwarder,
+            input_tx,
+            parent_ready_rx,
+            finalized_rx,
             cancel_token,
             delta_block,
             delta_first_slice,
-        )
+        );
+        let stand_in = DriverStandIn {
+            _input_rx: input_rx,
+            _parent_ready_tx: parent_ready_tx,
+            _finalized_tx: finalized_tx,
+        };
+        (producer, stand_in)
     }
 
     #[tokio::test]
@@ -736,22 +790,12 @@ mod tests {
             .returning(move |_slice, _shreds| Some(bi.clone()));
         blockstore.expect_take_events().returning(Vec::new);
 
-        let mut pool = MockPool::new();
-        let bi = block_info.clone();
-        pool.expect_add_block()
-            .returning(move |ret_block_id, ret_parent_block_id| {
-                assert_eq!(ret_block_id, (slot, bi.hash.clone()));
-                assert_eq!(bi.parent, ret_parent_block_id);
-            });
-        pool.expect_take_outbox().returning(PoolOutbox::default);
-
         let mut disseminator = MockDisseminator::new();
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(
+        let (block_producer, _driver) = setup(
             blockstore,
-            pool,
             disseminator,
             Duration::from_micros(0),
             Duration::from_micros(0),
@@ -810,22 +854,12 @@ mod tests {
             .returning(move |_slice, _shreds| Some(nbi.clone()));
         blockstore.expect_take_events().returning(Vec::new);
 
-        let mut pool = MockPool::new();
-        let nbi = new_block_info.clone();
-        pool.expect_add_block()
-            .returning(move |ret_block_id, ret_parent_block_id| {
-                assert_eq!(ret_block_id, (slot, nbi.hash.clone()));
-                assert_eq!(nbi.parent, ret_parent_block_id);
-            });
-        pool.expect_take_outbox().returning(PoolOutbox::default);
-
         let mut disseminator = MockDisseminator::new();
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(
+        let (block_producer, _driver) = setup(
             blockstore,
-            pool,
             disseminator,
             Duration::from_micros(0),
             Duration::from_millis(0),

@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use log::{debug, trace, warn};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{DELTA, EventForwarder, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::core::Input;
+use crate::consensus::{DELTA, SharedBlockstore, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -236,7 +237,6 @@ where
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
 pub struct Repair<N: Network> {
     blockstore: SharedBlockstore,
-    pool: SharedPool,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
     /// Expiry times of outstanding requests, earliest first (min-heap via [`Reverse`]).
@@ -244,8 +244,8 @@ pub struct Repair<N: Network> {
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Forwards blockstore outbox events to Votor off the write lock.
-    event_forwarder: EventForwarder,
+    /// Feeds drained blockstore events to the consensus core.
+    inputs: tokio::sync::mpsc::Sender<Input>,
 }
 
 impl<N> Repair<N>
@@ -258,23 +258,21 @@ where
     /// Any repaired shreds will be written into the provided `blockstore`.
     pub(crate) fn new(
         blockstore: SharedBlockstore,
-        pool: SharedPool,
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
-        event_forwarder: EventForwarder,
+        inputs: tokio::sync::mpsc::Sender<Input>,
     ) -> Self {
         let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
             blockstore,
-            pool,
             slice_roots: BTreeMap::new(),
             outstanding_requests: BTreeMap::new(),
             request_timeouts: BinaryHeap::new(),
             network,
             sampler,
             epoch_info,
-            event_forwarder,
+            inputs,
         }
     }
 
@@ -440,21 +438,26 @@ where
                     return;
                 };
 
-                // store shred, then forward buffered events off the write lock
+                // Store the shred, then feed the buffered events to the
+                // consensus core off the write lock. The core registers the
+                // completed block with the pool itself.
                 let (res, events) = {
                     let mut blockstore = self.blockstore.write().await;
                     let res = blockstore.add_shred_from_repair(block_hash.clone(), validated);
                     (res, blockstore.take_events())
                 };
-                self.event_forwarder.forward_blockstore_events(events).await;
+                for event in events {
+                    if self
+                        .inputs
+                        .send(Input::BlockstoreEvent(event))
+                        .await
+                        .is_err()
+                    {
+                        debug!("consensus core inbox closed, dropping input");
+                    }
+                }
                 if let Ok(Some(block_info)) = res {
                     assert_eq!(block_info.hash, *block_hash);
-                    let outbox = {
-                        let mut pool = self.pool.write().await;
-                        pool.add_block((*slot, block_info.hash), block_info.parent);
-                        pool.take_outbox()
-                    };
-                    self.event_forwarder.forward_pool_outbox(outbox).await;
                     debug!(
                         "successfully repaired block {} in slot {}",
                         block_hash.short_hex(),
@@ -510,7 +513,7 @@ mod tests {
 
     use super::*;
     use crate::ValidatorIndex;
-    use crate::consensus::{BlockstoreImpl, EpochInfo, PoolImpl};
+    use crate::consensus::{BlockstoreImpl, EpochInfo};
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
@@ -558,29 +561,23 @@ mod tests {
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
 
         // set up blockstore
-        let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
         let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
-        // set up pool
-        let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
+        // set up channels standing in for the driver
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
-        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(epoch_info.clone())));
-
-        let event_forwarder = EventForwarder::new(blockstore_tx, pool_tx, repair_tx.clone());
 
         // create and start Repair instance
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
-            pool,
             v1_repair_requester_network,
             epoch_info.clone(),
-            event_forwarder,
+            input_tx,
         );
         tokio::spawn(async move {
             repair.repair_loop(repair_rx).await;
-            // keep event receivers alive so sends from blockstore/pool don't fail
-            drop(blockstore_rx);
-            drop(pool_rx);
+            // keep the input receiver alive so sends from the repair loop don't fail
+            drop(input_rx);
         });
         let repair_request_handler =
             RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_responder_network);
