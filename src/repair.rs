@@ -443,9 +443,7 @@ where
                 // store shred, then forward buffered events off the write lock
                 let (res, events) = {
                     let mut blockstore = self.blockstore.write().await;
-                    let res = blockstore
-                        .add_shred_from_repair(block_hash.clone(), validated)
-                        .await;
+                    let res = blockstore.add_shred_from_repair(block_hash.clone(), validated);
                     (res, blockstore.take_events())
                 };
                 self.event_forwarder.forward_blockstore_events(events).await;
@@ -453,8 +451,7 @@ where
                     assert_eq!(block_info.hash, *block_hash);
                     let outbox = {
                         let mut pool = self.pool.write().await;
-                        pool.add_block((*slot, block_info.hash), block_info.parent)
-                            .await;
+                        pool.add_block((*slot, block_info.hash), block_info.parent);
                         pool.take_outbox()
                     };
                     self.event_forwarder.forward_pool_outbox(outbox).await;
@@ -774,7 +771,7 @@ mod tests {
         let mut b = ctx.blockstore.write().await;
         for slice_shreds in shreds.clone() {
             for shred in slice_shreds {
-                let _ = b.add_shred_from_dissemination(shred).await;
+                let _ = b.add_shred_from_dissemination(shred);
             }
         }
         drop(b);

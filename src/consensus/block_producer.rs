@@ -372,7 +372,7 @@ where
         // buffered events to Votor after releasing the write lock.
         let (block_info, events) = {
             let mut blockstore = self.blockstore.write().await;
-            let block_info = blockstore.add_own_slice(payload, shreds).await;
+            let block_info = blockstore.add_own_slice(payload, shreds);
             (block_info, blockstore.take_events())
         };
         self.event_forwarder.forward_blockstore_events(events).await;
@@ -392,7 +392,7 @@ where
                 let block_id = (slot, block_info.hash.clone());
                 let outbox = {
                     let mut pool = self.pool.write().await;
-                    pool.add_block(block_id, block_info.parent).await;
+                    pool.add_block(block_id, block_info.parent);
                     pool.take_outbox()
                 };
                 self.event_forwarder.forward_pool_outbox(outbox).await;
@@ -733,10 +733,7 @@ mod tests {
         blockstore
             .expect_add_own_slice()
             .times(1)
-            .returning(move |_slice, _shreds| {
-                let bi = bi.clone();
-                Box::pin(async move { Some(bi) })
-            });
+            .returning(move |_slice, _shreds| Some(bi.clone()));
         blockstore.expect_take_events().returning(Vec::new);
 
         let mut pool = MockPool::new();
@@ -745,7 +742,6 @@ mod tests {
             .returning(move |ret_block_id, ret_parent_block_id| {
                 assert_eq!(ret_block_id, (slot, bi.hash.clone()));
                 assert_eq!(bi.parent, ret_parent_block_id);
-                Box::pin(async {})
             });
         pool.expect_take_outbox().returning(PoolOutbox::default);
 
@@ -784,8 +780,11 @@ mod tests {
             parent: new_parent.clone(),
         };
 
-        let (first_slice_finished_tx, first_slice_finished_rx) = oneshot::channel();
-        let (start_second_slice_tx, start_second_slice_rx) = oneshot::channel();
+        // NOTE: the blockstore is now sync, so the rendezvous blocks on std
+        // channels inside the mock (briefly blocking the runtime thread) and a
+        // plain OS thread plays the coordinator that reacts in between.
+        let (first_slice_finished_tx, first_slice_finished_rx) = std::sync::mpsc::channel();
+        let (start_second_slice_tx, start_second_slice_rx) = std::sync::mpsc::channel();
 
         let mut seq = Sequence::new();
         let mut blockstore = MockBlockstore::new();
@@ -797,11 +796,9 @@ mod tests {
             .times(1)
             .in_sequence(&mut seq)
             .return_once(move |_slice, _shreds| {
-                Box::pin(async move {
-                    first_slice_finished_tx.send(()).unwrap();
-                    let () = start_second_slice_rx.await.unwrap();
-                    None
-                })
+                first_slice_finished_tx.send(()).unwrap();
+                let () = start_second_slice_rx.recv().unwrap();
+                None
             });
 
         // second (last) slice: block is constructed with the new parent
@@ -810,10 +807,7 @@ mod tests {
             .expect_add_own_slice()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(move |_slice, _shreds| {
-                let nbi = nbi.clone();
-                Box::pin(async move { Some(nbi) })
-            });
+            .returning(move |_slice, _shreds| Some(nbi.clone()));
         blockstore.expect_take_events().returning(Vec::new);
 
         let mut pool = MockPool::new();
@@ -822,7 +816,6 @@ mod tests {
             .returning(move |ret_block_id, ret_parent_block_id| {
                 assert_eq!(ret_block_id, (slot, nbi.hash.clone()));
                 assert_eq!(nbi.parent, ret_parent_block_id);
-                Box::pin(async {})
             });
         pool.expect_take_outbox().returning(PoolOutbox::default);
 
@@ -841,8 +834,8 @@ mod tests {
         let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
 
         let np = new_parent.clone();
-        tokio::spawn(async move {
-            let () = first_slice_finished_rx.await.unwrap();
+        std::thread::spawn(move || {
+            let () = first_slice_finished_rx.recv().unwrap();
             parent_ready_tx.send(np).unwrap();
             start_second_slice_tx.send(()).unwrap();
         });

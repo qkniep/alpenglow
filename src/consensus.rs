@@ -423,7 +423,7 @@ where
                 // Add under the lock, then forward the buffered events off the lock.
                 let outbox = {
                     let mut pool = self.pool.write().await;
-                    match pool.add_vote(vote).await {
+                    match pool.add_vote(vote) {
                         Ok(()) => {}
                         Err(AddVoteError::Slashable(offence)) => {
                             warn!("slashable offence detected: {offence}");
@@ -444,7 +444,7 @@ where
                 };
                 let outbox = {
                     let mut pool = self.pool.write().await;
-                    match pool.add_cert(cert).await {
+                    match pool.add_cert(cert) {
                         Ok(()) => {}
                         Err(err) => trace!("ignoring invalid cert: {err}"),
                     }
@@ -485,7 +485,7 @@ where
         // *after* releasing the write lock (see `EventForwarder`).
         let (res, events) = {
             let mut blockstore = self.blockstore.write().await;
-            let res = blockstore.add_shred_from_dissemination(validated).await;
+            let res = blockstore.add_shred_from_dissemination(validated);
             (res, blockstore.take_events())
         };
         self.event_forwarder.forward_blockstore_events(events).await;
@@ -494,7 +494,7 @@ where
             let block_id = (slot, block_info.hash);
             let outbox = {
                 let mut pool = self.pool.write().await;
-                pool.add_block(block_id, block_info.parent).await;
+                pool.add_block(block_id, block_info.parent);
                 pool.take_outbox()
             };
             self.event_forwarder.forward_pool_outbox(outbox).await;

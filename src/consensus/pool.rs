@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
@@ -123,12 +122,15 @@ pub enum SlashableOffence {
 /// Interface for the Pool.
 ///
 /// This is only used for mocking of [`PoolImpl`].
-#[async_trait]
+///
+/// All methods are synchronous: the pool is a pure state machine that performs
+/// no I/O and buffers its side-effects in a [`PoolOutbox`], so no method ever
+/// needs to await (and none may, as callers invoke them under a write lock).
 #[cfg_attr(test, mockall::automock)]
 pub trait Pool {
-    async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError>;
-    async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError>;
-    async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
+    fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError>;
+    fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError>;
+    fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
     /// Builds the standstill-recovery bundle to re-broadcast; see [`PoolImpl::recover_from_standstill`].
     fn recover_from_standstill(&self) -> PoolOutbox;
     /// Drains and returns the side-effects buffered since the last call.
@@ -190,7 +192,7 @@ impl PoolImpl {
     /// - slot is not too old or too far in the future
     /// - signature is valid
     /// - certificate is not a duplicate
-    async fn add_valid_cert(&mut self, cert: Cert) {
+    fn add_valid_cert(&mut self, cert: Cert) {
         let slot = cert.slot();
 
         // actually add certificate
@@ -212,7 +214,7 @@ impl PoolImpl {
                 );
                 if matches!(cert, Cert::Notar(_)) {
                     let finalization_event = self.finality_tracker.mark_notarized(block_id.clone());
-                    self.handle_finalization(finalization_event).await;
+                    self.handle_finalization(finalization_event);
                 }
 
                 // potentially notify child waiting for safe-to-notar
@@ -244,12 +246,12 @@ impl PoolImpl {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash().clone();
                 let finalization_event = self.finality_tracker.mark_fast_finalized((slot, hash));
-                self.handle_finalization(finalization_event).await;
+                self.handle_finalization(finalization_event);
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
                 let finalization_event = self.finality_tracker.mark_finalized(slot);
-                self.handle_finalization(finalization_event).await;
+                self.handle_finalization(finalization_event);
             }
         }
 
@@ -402,7 +404,7 @@ impl PoolImpl {
             .is_some_and(|state| state.certificates.skip.is_some())
     }
 
-    async fn handle_finalization(&mut self, event: FinalizationEvent) {
+    fn handle_finalization(&mut self, event: FinalizationEvent) {
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
         self.send_parent_ready_events(new_parents_ready);
         self.prune();
@@ -433,11 +435,10 @@ impl PoolImpl {
     }
 }
 
-#[async_trait]
 impl Pool for PoolImpl {
     /// Adds a new certificate to the pool.
     #[hotpath::measure]
-    async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
+    fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
         // TODO: set bounds exactly correctly
@@ -464,13 +465,13 @@ impl Pool for PoolImpl {
             return Err(AddCertError::Duplicate);
         }
 
-        self.add_valid_cert(cert).await;
+        self.add_valid_cert(cert);
         Ok(())
     }
 
     /// Adds a new vote to the pool.
     #[hotpath::measure]
-    async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
+    fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
         // TODO: set bounds exactly correctly
@@ -509,7 +510,7 @@ impl Pool for PoolImpl {
 
         // handle any resulting events
         for cert in new_certs {
-            self.add_valid_cert(cert).await;
+            self.add_valid_cert(cert);
         }
         for event in votor_events {
             self.enqueue_votor_event(event);
@@ -524,7 +525,7 @@ impl Pool for PoolImpl {
     ///
     /// This should be called once for every valid block (e.g. directly by blockstore).
     /// Ensures that the parent information is available for safe-to-notar checks.
-    async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
+    fn add_block(&mut self, block_id: BlockId, parent_id: BlockId) {
         assert!(block_id.0 > parent_id.0);
         let (slot, block_hash) = &block_id;
         let (parent_slot, parent_hash) = &parent_id;
@@ -713,27 +714,27 @@ mod tests {
         }
 
         /// Verifies `vote` into a [`ValidatedVote`] and adds it to the pool.
-        async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
+        fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
             // NOTE: signature-rejection is covered by the [`ValidatedVote`] tests
             let vote = ValidatedVote::try_new(vote, self.epoch_info.epoch_info())
                 .expect("test vote should pass verification");
-            let res = self.pool.add_vote(vote).await;
+            let res = self.pool.add_vote(vote);
             self.forward_outbox();
             res
         }
 
         /// Verifies `cert` into a [`ValidatedCert`] and adds it to the pool.
-        async fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
+        fn add_cert(&mut self, cert: Cert) -> Result<(), AddCertError> {
             // NOTE: certificate rejection is covered by the [`ValidatedCert`] tests
             let cert = ValidatedCert::try_new(cert, self.epoch_info.epoch_info())
                 .expect("test cert should pass verification");
-            let res = self.pool.add_cert(cert).await;
+            let res = self.pool.add_cert(cert);
             self.forward_outbox();
             res
         }
 
         /// Adds a notarization [`Vote`] for `hash` in `slot` from each of `validators` to the pool.
-        async fn add_notar_votes(
+        fn add_notar_votes(
             &mut self,
             slot: Slot,
             hash: &BlockHash,
@@ -741,12 +742,12 @@ mod tests {
         ) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_notar(slot, hash.clone(), &self.sks[v.as_usize()], v);
-                assert_eq!(self.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote), Ok(()));
             }
         }
 
         /// Adds a notar-fallback [`Vote`] for `hash` in `slot` from each of `validators` to the pool.
-        async fn add_notar_fallback_votes(
+        fn add_notar_fallback_votes(
             &mut self,
             slot: Slot,
             hash: &BlockHash,
@@ -754,23 +755,23 @@ mod tests {
         ) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_notar_fallback(slot, hash.clone(), &self.sks[v.as_usize()], v);
-                assert_eq!(self.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote), Ok(()));
             }
         }
 
         /// Adds a skip [`Vote`] for `slot` from each of `validators` to the pool.
-        async fn add_skip_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
+        fn add_skip_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_skip(slot, &self.sks[v.as_usize()], v);
-                assert_eq!(self.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote), Ok(()));
             }
         }
 
         /// Adds a finalization [`Vote`] for `slot` from each of `validators` to the pool.
-        async fn add_final_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
+        fn add_final_votes(&mut self, slot: Slot, validators: std::ops::Range<usize>) {
             for v in validators.map(|v| ValidatorIndex::new(v as u64)) {
                 let vote = Vote::new_final(slot, &self.sks[v.as_usize()], v);
-                assert_eq!(self.add_vote(vote).await, Ok(()));
+                assert_eq!(self.add_vote(vote), Ok(()));
             }
         }
 
@@ -799,9 +800,9 @@ mod tests {
         }
 
         /// Fast-finalizes the given block by submitting a unanimous fast-final cert.
-        async fn fast_finalize(&mut self, slot: Slot, hash: &BlockHash) {
+        fn fast_finalize(&mut self, slot: Slot, hash: &BlockHash) {
             let cert = self.fast_final_cert(slot, hash, 11);
-            assert_eq!(self.add_cert(Cert::FastFinal(cert)).await, Ok(()));
+            assert_eq!(self.add_cert(Cert::FastFinal(cert)), Ok(()));
         }
 
         /// Drains all pending votor events and reports whether `SafeToNotar(slot, hash)` was emitted.
@@ -822,8 +823,8 @@ mod tests {
     /// Notarizing a block must record a `CertCreated` event in the pool's outbox
     /// (rather than sending it under the lock), so the caller can forward it to
     /// Votor losslessly after releasing the write lock.
-    #[tokio::test]
-    async fn cert_created_event_is_recorded() {
+    #[test]
+    fn cert_created_event_is_recorded() {
         let mut ctx = setup();
 
         // Notarize genesis directly on the pool, bypassing the test helpers so the
@@ -832,7 +833,7 @@ mod tests {
             let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &ctx.sks[v.as_usize()], v);
             let vote = ValidatedVote::try_new(vote, ctx.epoch_info.epoch_info())
                 .expect("test vote should pass verification");
-            ctx.pool.add_vote(vote).await.unwrap();
+            ctx.pool.add_vote(vote).unwrap();
         }
         assert!(ctx.pool.has_notar_cert(Slot::new(0)));
 
@@ -850,114 +851,108 @@ mod tests {
         assert!(drained.votor_events.is_empty() && drained.repairs.is_empty());
     }
 
-    #[tokio::test]
-    async fn notarize_block() {
+    #[test]
+    fn notarize_block() {
         let mut ctx = setup();
 
         // all nodes notarize block in slot 0
         assert!(!ctx.pool.has_notar_cert(Slot::new(0)));
-        ctx.add_notar_votes(Slot::new(0), &GENESIS_BLOCK_HASH, 0..11)
-            .await;
+        ctx.add_notar_votes(Slot::new(0), &GENESIS_BLOCK_HASH, 0..11);
         assert!(ctx.pool.has_notar_cert(Slot::new(0)));
 
         // just enough nodes notarize block in slot 1
         assert!(!ctx.pool.has_notar_cert(Slot::new(1)));
-        ctx.add_notar_votes(Slot::new(1), &GENESIS_BLOCK_HASH, 0..7)
-            .await;
+        ctx.add_notar_votes(Slot::new(1), &GENESIS_BLOCK_HASH, 0..7);
         assert!(ctx.pool.has_notar_cert(Slot::new(1)));
 
         // just NOT enough nodes notarize block in slot 2
         assert!(!ctx.pool.has_notar_cert(Slot::new(2)));
-        ctx.add_notar_votes(Slot::new(2), &GENESIS_BLOCK_HASH, 0..6)
-            .await;
+        ctx.add_notar_votes(Slot::new(2), &GENESIS_BLOCK_HASH, 0..6);
         assert!(!ctx.pool.has_notar_cert(Slot::new(2)));
     }
 
-    #[tokio::test]
-    async fn skip_block() {
+    #[test]
+    fn skip_block() {
         let mut ctx = setup();
 
         // all nodes vote skip on slot 0
         assert!(!ctx.pool.has_skip_cert(Slot::new(0)));
-        ctx.add_skip_votes(Slot::new(0), 0..11).await;
+        ctx.add_skip_votes(Slot::new(0), 0..11);
         assert!(ctx.pool.has_skip_cert(Slot::new(0)));
 
         // just enough nodes vote skip on slot 1
         assert!(!ctx.pool.has_skip_cert(Slot::new(1)));
-        ctx.add_skip_votes(Slot::new(1), 0..7).await;
+        ctx.add_skip_votes(Slot::new(1), 0..7);
         assert!(ctx.pool.has_skip_cert(Slot::new(1)));
 
         // just NOT enough nodes notarize block in slot 2
         assert!(!ctx.pool.has_skip_cert(Slot::new(2)));
-        ctx.add_skip_votes(Slot::new(2), 0..6).await;
+        ctx.add_skip_votes(Slot::new(2), 0..6);
         assert!(!ctx.pool.has_skip_cert(Slot::new(2)));
     }
 
-    #[tokio::test]
-    async fn finalize_block() {
+    #[test]
+    fn finalize_block() {
         let mut ctx = setup();
 
         // just enough nodes vote notar, this is NOT enough on its own to finalize
         let slot1 = Slot::genesis().next();
         let hash1: BlockHash = Hash::random_for_test().into();
-        ctx.add_notar_votes(slot1, &hash1, 0..7).await;
+        ctx.add_notar_votes(slot1, &hash1, 0..7);
         assert!(!ctx.pool.has_final_cert(slot1));
         assert_eq!(ctx.pool.finalized_slot(), Slot::genesis());
 
         // just enough nodes vote final, NOW slot 1 should be finalized
-        ctx.add_final_votes(slot1, 0..7).await;
+        ctx.add_final_votes(slot1, 0..7);
         assert!(ctx.pool.has_final_cert(slot1));
         assert_eq!(ctx.pool.finalized_slot(), slot1);
 
         // just enough nodes vote final, this is NOT enough on its own to finalize
         let slot2 = slot1.next();
-        ctx.add_final_votes(slot2, 0..7).await;
+        ctx.add_final_votes(slot2, 0..7);
         assert!(ctx.pool.has_final_cert(slot2));
         assert_eq!(ctx.pool.finalized_slot(), slot1);
 
         // just enough nodes vote notar, NOW slot 2 should be finalized
         let hash2: BlockHash = Hash::random_for_test().into();
-        ctx.add_notar_votes(slot2, &hash2, 0..7).await;
+        ctx.add_notar_votes(slot2, &hash2, 0..7);
         assert!(ctx.pool.has_final_cert(slot2));
         assert_eq!(ctx.pool.finalized_slot(), slot2);
 
         // just NOT enough nodes vote notar + final on slot 3
         let slot3 = slot2.next();
         let hash3: BlockHash = Hash::random_for_test().into();
-        ctx.add_notar_votes(slot3, &hash3, 0..6).await;
-        ctx.add_final_votes(slot3, 0..6).await;
+        ctx.add_notar_votes(slot3, &hash3, 0..6);
+        ctx.add_final_votes(slot3, 0..6);
         assert!(!ctx.pool.has_final_cert(slot3));
         assert_eq!(ctx.pool.finalized_slot(), slot2);
     }
 
-    #[tokio::test]
-    async fn fast_finalize_block() {
+    #[test]
+    fn fast_finalize_block() {
         let mut ctx = setup();
 
         // all nodes vote notarize on slot 0
         assert!(!ctx.pool.has_final_cert(Slot::new(0)));
-        ctx.add_notar_votes(Slot::new(0), &GENESIS_BLOCK_HASH, 0..11)
-            .await;
+        ctx.add_notar_votes(Slot::new(0), &GENESIS_BLOCK_HASH, 0..11);
         assert!(ctx.pool.has_final_cert(Slot::new(0)));
         assert_eq!(ctx.pool.finalized_slot(), Slot::new(0));
 
         // just enough nodes to fast finalize slot 1
         assert!(!ctx.pool.has_final_cert(Slot::new(1)));
-        ctx.add_notar_votes(Slot::new(1), &GENESIS_BLOCK_HASH, 0..9)
-            .await;
+        ctx.add_notar_votes(Slot::new(1), &GENESIS_BLOCK_HASH, 0..9);
         assert!(ctx.pool.has_final_cert(Slot::new(1)));
         assert_eq!(ctx.pool.finalized_slot(), Slot::new(1));
 
         // just NOT enough nodes to fast finalize slot 2
         assert!(!ctx.pool.has_final_cert(Slot::new(2)));
-        ctx.add_notar_votes(Slot::new(2), &GENESIS_BLOCK_HASH, 0..8)
-            .await;
+        ctx.add_notar_votes(Slot::new(2), &GENESIS_BLOCK_HASH, 0..8);
         assert!(!ctx.pool.has_final_cert(Slot::new(2)));
         assert_eq!(ctx.pool.finalized_slot(), Slot::new(1));
     }
 
-    #[tokio::test]
-    async fn simple_branch_certified() {
+    #[test]
+    fn simple_branch_certified() {
         let mut ctx = setup();
 
         let window = Slot::genesis().slots_in_window().collect::<Vec<_>>();
@@ -967,7 +962,7 @@ mod tests {
             .collect();
         for slot in window.iter().skip(1) {
             let hash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(*slot, hash, 0..7).await;
+            ctx.add_notar_votes(*slot, hash, 0..7);
         }
         let slot = *window.last().unwrap();
         let next = slot.next();
@@ -977,8 +972,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn branch_certified_notar_fallback() {
+    #[test]
+    fn branch_certified_notar_fallback() {
         let mut ctx = setup();
 
         // receive mixed notar & notar-fallback votes
@@ -993,8 +988,8 @@ mod tests {
                 !ctx.pool
                     .is_parent_ready(slot.next(), &(*slot, hash.clone()))
             );
-            ctx.add_notar_votes(*slot, hash, 0..4).await;
-            ctx.add_notar_fallback_votes(*slot, hash, 4..7).await;
+            ctx.add_notar_votes(*slot, hash, 0..4);
+            ctx.add_notar_fallback_votes(*slot, hash, 4..7);
         }
         let slot = *window.last().unwrap();
         let next = slot.next();
@@ -1002,8 +997,8 @@ mod tests {
         assert!(ctx.pool.is_parent_ready(next, &(slot, hash)));
     }
 
-    #[tokio::test]
-    async fn branch_certified_out_of_order() {
+    #[test]
+    fn branch_certified_out_of_order() {
         let mut ctx = setup();
 
         // first see skip votes for later slots
@@ -1012,7 +1007,7 @@ mod tests {
         window.remove(0);
         window.remove(0);
         for slot in window.iter() {
-            ctx.add_skip_votes(*slot, 0..7).await;
+            ctx.add_skip_votes(*slot, 0..7);
         }
 
         let next = window.last().unwrap().next();
@@ -1022,7 +1017,7 @@ mod tests {
         // then see notarization votes for slot 1
         let slot1 = Slot::new(1);
         let hash1: BlockHash = Hash::random_for_test().into();
-        ctx.add_notar_votes(slot1, &hash1, 0..7).await;
+        ctx.add_notar_votes(slot1, &hash1, 0..7);
 
         // branch can only be certified once we saw votes other slots in window
         assert!(ctx.pool.is_parent_ready(next, &(slot1, hash1)));
@@ -1030,15 +1025,15 @@ mod tests {
         assert_eq!(ctx.pool.parents_ready(next).len(), 1);
     }
 
-    #[tokio::test]
-    async fn branch_certified_late_cert() {
+    #[test]
+    fn branch_certified_late_cert() {
         let mut ctx = setup();
 
         // first see skip votes for later slots
         let window = Slot::genesis().slots_in_window().collect::<Vec<_>>();
         assert!(window.len() > 2);
         for slot in window.iter().skip(2) {
-            ctx.add_skip_votes(*slot, 0..7).await;
+            ctx.add_skip_votes(*slot, 0..7);
         }
 
         // no blocks are valid parents yet
@@ -1049,14 +1044,14 @@ mod tests {
         let slot1 = Slot::new(1);
         let hash1: BlockHash = Hash::random_for_test().into();
         let cert = ctx.notar_cert(slot1, &hash1, 7);
-        ctx.add_cert(Cert::Notar(cert)).await.unwrap();
+        ctx.add_cert(Cert::Notar(cert)).unwrap();
 
         // branch can only be certified once we saw votes for parent
         assert!(ctx.pool.is_parent_ready(next, &(slot1, hash1)));
     }
 
-    #[tokio::test]
-    async fn regular_handover() {
+    #[test]
+    fn regular_handover() {
         let mut ctx = setup();
 
         let hashes: Vec<BlockHash> = (0..SLOTS_PER_WINDOW)
@@ -1066,7 +1061,7 @@ mod tests {
         // notarize all slots of first window
         for slot in (1..SLOTS_PER_WINDOW).map(Slot::new) {
             let hash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(slot, hash, 0..7).await;
+            ctx.add_notar_votes(slot, hash, 0..7);
         }
 
         assert!(ctx.pool.is_parent_ready(
@@ -1078,8 +1073,8 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn one_skip_handover() {
+    #[test]
+    fn one_skip_handover() {
         let mut ctx = setup();
 
         let hashes: Vec<BlockHash> = (0..SLOTS_PER_WINDOW)
@@ -1089,12 +1084,11 @@ mod tests {
         // notarize all slots but last one
         for slot in (1..SLOTS_PER_WINDOW - 1).map(Slot::new) {
             let hash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(slot, hash, 0..7).await;
+            ctx.add_notar_votes(slot, hash, 0..7);
         }
 
         // skip last slot
-        ctx.add_skip_votes(Slot::new(SLOTS_PER_WINDOW - 1), 0..7)
-            .await;
+        ctx.add_skip_votes(Slot::new(SLOTS_PER_WINDOW - 1), 0..7);
 
         assert!(ctx.pool.is_parent_ready(
             Slot::new(SLOTS_PER_WINDOW),
@@ -1105,8 +1099,8 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn two_skip_handover() {
+    #[test]
+    fn two_skip_handover() {
         let mut ctx = setup();
 
         let hashes: Vec<BlockHash> = (0..SLOTS_PER_WINDOW)
@@ -1116,14 +1110,12 @@ mod tests {
         // notarize all slots but last two
         for slot in (1..SLOTS_PER_WINDOW - 2).map(Slot::new) {
             let hash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(slot, hash, 0..7).await;
+            ctx.add_notar_votes(slot, hash, 0..7);
         }
 
         // skip last 2 slots
-        ctx.add_skip_votes(Slot::new(SLOTS_PER_WINDOW - 2), 0..7)
-            .await;
-        ctx.add_skip_votes(Slot::new(SLOTS_PER_WINDOW - 1), 0..7)
-            .await;
+        ctx.add_skip_votes(Slot::new(SLOTS_PER_WINDOW - 2), 0..7);
+        ctx.add_skip_votes(Slot::new(SLOTS_PER_WINDOW - 1), 0..7);
 
         assert!(ctx.pool.is_parent_ready(
             Slot::new(SLOTS_PER_WINDOW),
@@ -1134,8 +1126,8 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn skip_window_handover() {
+    #[test]
+    fn skip_window_handover() {
         let mut ctx = setup();
 
         let hashes: Vec<BlockHash> = (0..SLOTS_PER_WINDOW)
@@ -1145,12 +1137,12 @@ mod tests {
         // notarize all slots in first window
         for slot in (1..SLOTS_PER_WINDOW).map(Slot::new) {
             let hash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(slot, hash, 0..7).await;
+            ctx.add_notar_votes(slot, hash, 0..7);
         }
 
         // skip all slots in second window
         for slot in (SLOTS_PER_WINDOW..2 * SLOTS_PER_WINDOW).map(Slot::new) {
-            ctx.add_skip_votes(slot, 0..7).await;
+            ctx.add_skip_votes(slot, 0..7);
         }
 
         assert!(ctx.pool.is_parent_ready(
@@ -1162,8 +1154,8 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn pruning() {
+    #[test]
+    fn pruning() {
         let mut ctx = setup();
 
         let hashes: Vec<BlockHash> = (0..3 * SLOTS_PER_WINDOW + 10)
@@ -1174,7 +1166,7 @@ mod tests {
         for slot in (1..3 * SLOTS_PER_WINDOW).map(Slot::new) {
             let hash: &BlockHash = &hashes[slot.inner() as usize];
             assert!(!ctx.pool.has_final_cert(slot));
-            ctx.add_notar_votes(slot, hash, 0..11).await;
+            ctx.add_notar_votes(slot, hash, 0..11);
             assert!(ctx.pool.has_final_cert(slot));
         }
         let last_slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
@@ -1190,7 +1182,7 @@ mod tests {
         // NOT enough nodes vote to fast finalize next 10 slots
         for slot in last_slot.future_slots().take(10) {
             let hash: &BlockHash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(slot, hash, 0..8).await;
+            ctx.add_notar_votes(slot, hash, 0..8);
             assert!(!ctx.pool.has_final_cert(slot));
         }
         assert_eq!(ctx.pool.finalized_slot(), last_slot);
@@ -1204,7 +1196,7 @@ mod tests {
         // add one more vote each to finalize next 10 slots
         for slot in last_slot.future_slots().take(10) {
             let hash = &hashes[slot.inner() as usize];
-            ctx.add_notar_votes(slot, hash, 8..9).await;
+            ctx.add_notar_votes(slot, hash, 8..9);
             assert!(ctx.pool.has_final_cert(slot));
         }
         assert_eq!(ctx.pool.finalized_slot().inner(), last_slot.inner() + 10);
@@ -1218,8 +1210,8 @@ mod tests {
         assert!(ctx.pool.slot_states.contains_key(&new_last_slot));
     }
 
-    #[tokio::test]
-    async fn duplicate_votes() {
+    #[test]
+    fn duplicate_votes() {
         let mut ctx = setup();
         let slot = Slot::new(0);
 
@@ -1230,26 +1222,26 @@ mod tests {
             &ctx.sks[0],
             ValidatorIndex::new(0),
         );
-        assert_eq!(ctx.add_vote(vote1.clone()).await, Ok(()));
+        assert_eq!(ctx.add_vote(vote1.clone()), Ok(()));
 
         // insert a skip vote from validator 1
         let vote2 = Vote::new_skip(slot, &ctx.sks[1], ValidatorIndex::new(1));
-        assert_eq!(ctx.add_vote(vote2.clone()).await, Ok(()));
+        assert_eq!(ctx.add_vote(vote2.clone()), Ok(()));
 
         // inserting same votes again should fail
-        assert_eq!(ctx.add_vote(vote1).await, Err(AddVoteError::Duplicate));
-        assert_eq!(ctx.add_vote(vote2).await, Err(AddVoteError::Duplicate));
+        assert_eq!(ctx.add_vote(vote1), Err(AddVoteError::Duplicate));
+        assert_eq!(ctx.add_vote(vote2), Err(AddVoteError::Duplicate));
     }
 
-    #[tokio::test]
-    async fn duplicate_certs() {
+    #[test]
+    fn duplicate_certs() {
         let mut ctx = setup();
 
         // insert a notar cert for first slot
         let first_slot = Slot::genesis().next();
         let hash: BlockHash = Hash::random_for_test().into();
         let notar_cert = ctx.notar_cert(first_slot, &hash, 11);
-        assert_eq!(ctx.add_cert(Cert::Notar(notar_cert.clone())).await, Ok(()));
+        assert_eq!(ctx.add_cert(Cert::Notar(notar_cert.clone())), Ok(()));
 
         // insert a skip cert for slot 1
         let second_slot = first_slot.next();
@@ -1257,28 +1249,27 @@ mod tests {
             .map(|v| SkipVote::new(second_slot, &ctx.sks[v as usize], ValidatorIndex::new(v)))
             .collect();
         let skip_cert = SkipCert::try_new(&skip_votes, &[], ctx.validators()).unwrap();
-        assert_eq!(ctx.add_cert(Cert::Skip(skip_cert.clone())).await, Ok(()));
+        assert_eq!(ctx.add_cert(Cert::Skip(skip_cert.clone())), Ok(()));
 
         // inserting same certs again should fail
         assert_eq!(
-            ctx.add_cert(Cert::Notar(notar_cert)).await,
+            ctx.add_cert(Cert::Notar(notar_cert)),
             Err(AddCertError::Duplicate)
         );
         assert_eq!(
-            ctx.add_cert(Cert::Skip(skip_cert)).await,
+            ctx.add_cert(Cert::Skip(skip_cert)),
             Err(AddCertError::Duplicate)
         );
     }
 
-    #[tokio::test]
-    async fn out_of_bounds_votes() {
+    #[test]
+    fn out_of_bounds_votes() {
         let mut ctx = setup();
 
         // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         for s in 1..=slot.inner() {
-            ctx.add_notar_votes(Slot::new(s), &GENESIS_BLOCK_HASH, 0..11)
-                .await;
+            ctx.add_notar_votes(Slot::new(s), &GENESIS_BLOCK_HASH, 0..11);
         }
         assert_eq!(ctx.pool.finalized_slot(), slot);
         assert_eq!(ctx.pool.first_unpruned_slot(), slot);
@@ -1291,7 +1282,7 @@ mod tests {
                     &ctx.sks[v as usize],
                     ValidatorIndex::new(v),
                 );
-                assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
+                assert_eq!(ctx.add_vote(vote), Err(AddVoteError::SlotOutOfBounds));
             }
         }
 
@@ -1299,18 +1290,18 @@ mod tests {
         let slot = Slot::new(5 * SLOTS_PER_EPOCH);
         for v in 0..11 {
             let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
-            assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
+            assert_eq!(ctx.add_vote(vote), Err(AddVoteError::SlotOutOfBounds));
         }
     }
 
-    #[tokio::test]
-    async fn out_of_bounds_certs() {
+    #[test]
+    fn out_of_bounds_certs() {
         let mut ctx = setup();
 
         // fast-finalize a contiguous run of slots so the pruning watermark advances
         let slot = Slot::new(3 * SLOTS_PER_WINDOW - 1);
         for s in 1..=slot.inner() {
-            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
+            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH);
         }
         assert_eq!(ctx.pool.first_unpruned_slot(), slot);
 
@@ -1327,7 +1318,7 @@ mod tests {
                 .collect();
             let skip_cert = SkipCert::try_new(&skip_votes, &[], ctx.validators()).unwrap();
             assert_eq!(
-                ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
+                ctx.add_cert(Cert::Skip(skip_cert.clone())),
                 Err(AddCertError::SlotOutOfBounds)
             );
         }
@@ -1339,13 +1330,13 @@ mod tests {
             .collect();
         let skip_cert = SkipCert::try_new(&skip_votes, &[], ctx.validators()).unwrap();
         assert_eq!(
-            ctx.add_cert(Cert::Skip(skip_cert.clone())).await,
+            ctx.add_cert(Cert::Skip(skip_cert)),
             Err(AddCertError::SlotOutOfBounds)
         );
     }
 
-    #[tokio::test]
-    async fn slow_finalize_closing_gap_no_double_parent_ready() {
+    #[test]
+    fn slow_finalize_closing_gap_no_double_parent_ready() {
         let mut ctx = setup();
         let next_start = Slot::windows().nth(1).unwrap();
         let gap_slot = next_start.prev();
@@ -1353,25 +1344,25 @@ mod tests {
 
         // fast-finalize every slot below `gap_slot`
         for s in 1..gap_slot.inner() {
-            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH).await;
+            ctx.fast_finalize(Slot::new(s), &GENESIS_BLOCK_HASH);
         }
         // this moves the watermark just below it
         assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
 
         // `gap_slot` gets a final cert but no notarization yet
         let gap_hash: BlockHash = Hash::random_for_test().into();
-        ctx.add_final_votes(gap_slot, 0..7).await;
+        ctx.add_final_votes(gap_slot, 0..7);
         assert!(ctx.pool.has_final_cert(gap_slot));
         assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
 
         // fast-finalize `next_start`, introducing a gap
-        ctx.fast_finalize(next_start, &GENESIS_BLOCK_HASH).await;
+        ctx.fast_finalize(next_start, &GENESIS_BLOCK_HASH);
         assert_eq!(ctx.pool.finalized_slot(), next_start);
         // cannot prune past the gap
         assert_eq!(ctx.pool.first_unpruned_slot(), watermark_slot);
 
         // `gap_slot`'s notarization closes the gap
-        ctx.add_notar_votes(gap_slot, &gap_hash, 0..7).await;
+        ctx.add_notar_votes(gap_slot, &gap_hash, 0..7);
         // jumping the watermark across both slots
         assert_eq!(ctx.pool.first_unpruned_slot(), next_start);
 
@@ -1386,16 +1377,16 @@ mod tests {
         // all nodes vote for first slot (it's fast finalized)
         let slot1 = Slot::genesis().next();
         let hash1: BlockHash = Hash::random_for_test().into();
-        ctx.add_notar_votes(slot1, &hash1, 0..11).await;
+        ctx.add_notar_votes(slot1, &hash1, 0..11);
 
         // we also vote for next slot, see only final votes (it's missing notar)
         let slot2 = slot1.next();
-        ctx.add_final_votes(slot2, 0..7).await;
+        ctx.add_final_votes(slot2, 0..7);
 
         // we also vote for next slot, see no other votes
         let slot3 = slot2.next();
         let hash3: BlockHash = Hash::random_for_test().into();
-        ctx.add_notar_votes(slot3, &hash3, 0..1).await;
+        ctx.add_notar_votes(slot3, &hash3, 0..1);
 
         // initiate standstill
         let outbox = ctx.pool.recover_from_standstill();
@@ -1449,7 +1440,7 @@ mod tests {
         let block0 = random_block_id(slot1.prev());
         let block1 = random_block_id(slot1);
         let block2 = random_block_id(slot1.next());
-        ctx.add_notar_votes(block2.0, &block2.1, 0..11).await;
+        ctx.add_notar_votes(block2.0, &block2.1, 0..11);
 
         // should construct 3 certs (notar-fallback + notar + fast-final)
         for _ in 0..3 {
@@ -1464,8 +1455,8 @@ mod tests {
         );
 
         // add its ancestors
-        ctx.pool.add_block(block2.clone(), block1.clone()).await;
-        ctx.pool.add_block(block1.clone(), block0.clone()).await;
+        ctx.pool.add_block(block2.clone(), block1.clone());
+        ctx.pool.add_block(block1.clone(), block0.clone());
         ctx.forward_outbox();
 
         // should emit ParentReady as a result
@@ -1481,8 +1472,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn safe_to_notar_notar_cert_only() {
+    #[test]
+    fn safe_to_notar_notar_cert_only() {
         let mut ctx = setup();
 
         let slot1 = Slot::genesis().next();
@@ -1492,16 +1483,14 @@ mod tests {
 
         // parent (slot1) is notarized only via a received notar cert
         let cert = ctx.notar_cert(slot1, &hash1, 7);
-        ctx.add_cert(Cert::Notar(cert)).await.unwrap();
+        ctx.add_cert(Cert::Notar(cert)).unwrap();
 
         // register the child block
-        ctx.pool
-            .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
-            .await;
+        ctx.pool.add_block((slot2, hash2.clone()), (slot1, hash1));
 
         // we skip slot2, but 40% of others notarize the child
-        ctx.add_skip_votes(slot2, 0..1).await;
-        ctx.add_notar_votes(slot2, &hash2, 1..6).await;
+        ctx.add_skip_votes(slot2, 0..1);
+        ctx.add_notar_votes(slot2, &hash2, 1..6);
 
         // child should now be safe-to-notar
         assert!(
@@ -1510,8 +1499,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn safe_to_notar_fast_final_cert_only() {
+    #[test]
+    fn safe_to_notar_fast_final_cert_only() {
         let mut ctx = setup();
 
         let slot1 = Slot::genesis().next();
@@ -1521,16 +1510,14 @@ mod tests {
 
         // parent (slot1) is fast-finalized only via a received cert
         let cert = ctx.fast_final_cert(slot1, &hash1, 9);
-        ctx.add_cert(Cert::FastFinal(cert)).await.unwrap();
+        ctx.add_cert(Cert::FastFinal(cert)).unwrap();
 
         // register the child block
-        ctx.pool
-            .add_block((slot2, hash2.clone()), (slot1, hash1.clone()))
-            .await;
+        ctx.pool.add_block((slot2, hash2.clone()), (slot1, hash1));
 
         // we skip slot2, but 40% of others notarize the child
-        ctx.add_skip_votes(slot2, 0..1).await;
-        ctx.add_notar_votes(slot2, &hash2, 1..6).await;
+        ctx.add_skip_votes(slot2, 0..1);
+        ctx.add_notar_votes(slot2, &hash2, 1..6);
 
         // child should now be safe-to-notar
         assert!(
