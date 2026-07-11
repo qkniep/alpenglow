@@ -54,19 +54,42 @@ cargo bench --bench crypto   # Specific bench (crypto, disseminator, network, sh
 ## Architecture Overview
 
 ### Core Components
-- **Alpenglow** (`src/consensus.rs`) — consensus coordinator; async message loops
-  wiring together `All2All`, `Disseminator`, `Blockstore`, `Pool`, `Votor`.
+The consensus logic is a **sans-IO state machine** driven by one async task.
+
+- **Alpenglow** (`src/consensus.rs`) — node coordinator; spawns the ingest tasks
+  (message loop, block producer, repair) and the single `Driver`, wiring them
+  with channels. Owns no consensus state itself.
+- **ConsensusCore** (`src/consensus/core.rs`) — the protocol as one synchronous,
+  I/O-free state machine: `handle(Input, now) -> [Output]`. Owns the Blockstore,
+  Pool, and Votor state outright; performs no I/O, holds no locks, never awaits.
+  Time enters as an `Instant` argument, so it is fully deterministic.
+- **Driver** (`src/consensus/driver.rs`) — the single async task owning the core.
+  Feeds it `Input`s from the ingest tasks, fires an `Input::Tick` at
+  `core.next_timeout()`, and routes each `Output` to its I/O edge (`All2All`
+  broadcast, repair channel, or a `watch` channel).
 - **Validator** (`src/validator.rs`) — pairs an `Alpenglow` instance with an
   `ExecutionEngine` to form a full node.
-- **Blockstore** (`src/consensus/blockstore.rs`) — stores shreds, reconstructs blocks.
-- **Pool** (`src/consensus/pool.rs`) — tracks votes/certs, manages finalization.
-- **Votor** (`src/consensus/votor.rs`) — per-slot voting state machine.
+- **Blockstore / Pool / Votor** (`blockstore.rs`, `pool.rs`, `votor.rs`) — sync
+  sub-machines *owned by* `ConsensusCore`. They mutate on plain method calls and
+  buffer their side-effects (events/broadcasts) for the core to drain and route;
+  they are not lock-shared and hold no channels.
 
 ```
 Leader → Shredder → Disseminator → Network
                                       ↓
-Network → Repair (if needed) → Blockstore → Pool → Votor → All2All → Certificates
+Network / Repair → validate at edge → Input ─┐
+                                             ▼
+                     ┌────────────── ConsensusCore ──────────────┐
+                     │        (Blockstore + Pool + Votor)         │
+                     └── Output ──┬──────────┬───────────┬────────┘
+                          Broadcast    RequestRepair   ParentReady /
+                          (All2All)    (repair loop)   Finalized (watch)
 ```
+
+Crypto verification happens at the *edge* (ingest tasks build `Validated*`
+inputs), never in the core. The one cycle in the task graph — repair loop feeds
+the core, core requests repair — is kept deadlock-free by the Driver parking
+repair requests and flushing them only when the channel has capacity.
 
 ### Networks
 Independent channels, each trait-abstracted (`All2All`, `Disseminator`,
@@ -90,16 +113,24 @@ Each Slice → n data + (k−n) coding = k shreds
   `Shred` is one UDP packet with slice header, Merkle proof, and leader signature.
 
 ### Consensus Flow
-1. **Produce** (`block_producer.rs`) — leader shreds its block and sends via
-   disseminator (`DELTA_BLOCK` 400ms, `DELTA_FIRST_SLICE` 10ms).
-2. **Reconstruct** — validators collect shreds; n-of-k reconstructs the block →
-   `VotorEvent::BlockReconstructed` (via `Blockstore::add_shred_from_disseminator`).
-   `Votor` then decides whether to vote based on parent availability.
-3. **Vote** (`votor.rs`) — per-slot state machine reacts to block/cert/timeout
-   events, emits `Vote`s (Notar/Confirm/Finalize) over `All2All`.
-4. **Certify** (`pool.rs`) — `Pool` aggregates votes; at 2/3+ stake forms a `Cert`
-   (BLS aggregate signature) that drives the next phase and tracks finalization.
-5. **Repair** (`repair.rs`) — see Networks above.
+Everything the core reacts to arrives as an `Input`; everything it wants done
+leaves as an `Output` (`src/consensus/core.rs`).
+1. **Produce** (`block_producer.rs`) — leader shreds its block, sends via
+   disseminator (`DELTA_BLOCK` 400ms, `DELTA_FIRST_SLICE` 10ms), and feeds its
+   own slices to the core as `Input::OwnSlice`.
+2. **Ingest** — validators validate incoming shreds at the edge (message loop /
+   repair loop) and feed `Input::DisseminatedShred` / `Input::RepairedShred`. The
+   core's Blockstore reconstructs the block (n-of-k) and its Votor decides whether
+   to vote based on parent availability.
+3. **Vote** (`votor.rs`) — the `VotorState` sub-machine reacts to block/cert/
+   timeout events and queues `Vote`s (Notar/Confirm/Finalize); the Driver emits
+   them as `Output::Broadcast` over `All2All`.
+4. **Certify** (`pool.rs`) — the `PoolImpl` sub-machine aggregates votes; at 2/3+
+   stake forms a `Cert` (BLS aggregate signature) that drives the next phase and
+   surfaces finalization as `Output::Finalized`.
+5. **Repair** (`repair.rs`) — the Driver routes `Output::RequestRepair` to the
+   repair loop; incoming peer requests are answered through the core via
+   `Input::RepairRequest` (the core owns the blockstore). See Networks above.
 
 ### Dissemination Protocols
 - **Rotor** (`src/disseminator/rotor/`) — primary protocol; a Turbine evolution with
@@ -167,7 +198,15 @@ DELTA_STANDSTILL = 10s     // Standstill detection timeout
 - **Sequential tests**: need `--jobs=1` (run via `just test-sequential`).
 - **Test cluster**: `create_test_nodes(count)` (`src/lib.rs`, helpers in
   `src/test_utils.rs`) returns `Vec<TestNode>` on localhost UDP.
+- **Deterministic core sim** (`src/consensus/sim.rs`) — drives a cluster of
+  `ConsensusCore`s synchronously with no tokio, sockets, or wall-clock: the
+  harness picks message order and advances the `Instant` clock itself. Fast,
+  reproducible multi-node tests (finalize a chain, skip a silent leader) versus
+  the seconds of real time `tests/liveness.rs` needs. This is the payoff of the
+  sans-IO design — the core is testable as the state machine it is.
 - **Mocks**: `mockall` `#[automock]` gives `MockDisseminator`, `MockNetwork`, etc.
+  Pool and Blockstore are no longer trait-mocked — they are owned by
+  `ConsensusCore` and tested directly (as sync state machines) or via the sim.
 
 ## Conventions
 
@@ -202,14 +241,15 @@ DELTA_STANDSTILL = 10s     // Standstill detection timeout
 #### Doc comments (`///`, `//!`)
 
 - **Mood & structure**: Write item docs in the third-person present indicative, as
-  rustdoc convention dictates — "Creates a new `Votor` instance.", "Returns the slot
-  this vote is for.", "`Votor` implements the decision process…". Not imperative
-  ("Create…"), not "This function…". The first line is a single-sentence summary;
-  if more is needed, add a blank `///` line, then the details.
+  rustdoc convention dictates — "Creates a new `VotorState` instance.", "Returns the
+  slot this vote is for.", "`VotorState` implements the decision process…". Not
+  imperative ("Create…"), not "This function…". The first line is a single-sentence
+  summary; if more is needed, add a blank `///` line, then the details.
 - **Intra-doc links**: Reference other items with rustdoc link syntax
   ``[`Name`]`` — e.g. ``[`ValidatedVote`]``, ``[`All2All`]``,
-  ``[`super::Pool::finalized_slot`]`` — not plain backticked text. This is enforced
-  in spirit by `just doc` (rustdoc runs with `-D warnings`), so broken links fail CI.
+  ``[`super::PoolImpl::finalized_slot`]`` — not plain backticked text. This is
+  enforced in spirit by `just doc` (rustdoc runs with `-D warnings`), so broken
+  links fail CI.
 - **Fallible fns get an `# Errors` section** describing which error variant is
   returned when; see `ValidatedVote::try_new`. Public getters that would be misused
   if ignored are marked `#[must_use]`.
@@ -252,9 +292,11 @@ DELTA_STANDSTILL = 10s     // Standstill detection timeout
 - **64-bit assumption**: code assumes `usize == 8 bytes`; 32-bit unsupported.
 - **`--release`**: always use it for realistic performance testing.
 - **Logging**: control levels via the `RUST_LOG` env var (`logforth` crate).
-- **Standstill recovery**: after `DELTA_STANDSTILL` with no progress, the
-  `standstill_loop` in `Alpenglow` calls `Pool::recover_from_standstill()` (repair
-  requests for missing blocks).
+- **Standstill recovery**: after `DELTA_STANDSTILL` with no finalization progress,
+  the core's tick handling calls `PoolImpl::recover_from_standstill()` (re-broadcast
+  bundle + repair requests for missing blocks). The Driver drives this by firing
+  `Input::Tick` at `core.next_timeout()`, which is the earlier of the next Votor
+  timeout and the standstill deadline — there is no separate standstill loop.
 - **Leader schedule**: `EpochInfo::leader(slot)` — deterministic, stake-weighted
   random over slot + validator set (`src/consensus/epoch_info.rs`).
 
