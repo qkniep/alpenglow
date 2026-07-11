@@ -6,10 +6,8 @@
 mod slot_block_data;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use log::debug;
-use tokio::sync::RwLock;
 
 pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
@@ -59,69 +57,17 @@ impl From<&Block> for BlockInfo {
     }
 }
 
-/// Interface for the blockstore.
-///
-/// This is only used for mocking of [`BlockstoreImpl`].
-///
-/// All methods are synchronous: the blockstore is a pure state machine that
-/// performs no I/O and buffers its side-effects as [`BlockstoreEvent`]s, so no
-/// method ever needs to await (and none may, as callers invoke them under a
-/// write lock).
-#[cfg_attr(test, mockall::automock)]
-pub trait Blockstore {
-    fn add_shred_from_dissemination(
-        &mut self,
-        shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError>;
-    fn add_shred_from_repair(
-        &mut self,
-        hash: BlockHash,
-        shred: ValidatedShred,
-    ) -> Result<Option<BlockInfo>, AddShredError>;
-    fn add_own_slice(
-        &mut self,
-        payload: SlicePayload,
-        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
-    ) -> Option<BlockInfo>;
-    fn flag_leader_misbehavior(&mut self, slot: Slot);
-    /// Drains and returns the [`BlockstoreEvent`]s buffered since the last call.
-    ///
-    /// The caller must forward these to Votor *after* releasing the blockstore
-    /// lock, so that a slow Votor back-pressures the ingest task instead of
-    /// jamming the lock. See `BlockstoreImpl::emit` for the rationale.
-    fn take_events(&mut self) -> Vec<BlockstoreEvent>;
-    #[expect(
-        clippy::needless_lifetimes,
-        reason = "explicit lifetime is required by mockall::automock"
-    )]
-    fn disseminated_block_hash<'a>(&'a self, slot: Slot) -> Option<&'a BlockHash>;
-    fn get_block<'a>(&'a self, block_id: &BlockId) -> Option<&'a Block>;
-    fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex>;
-    fn get_slice_root(&self, block_id: &BlockId, slice: SliceIndex) -> Option<SliceRoot>;
-    fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment>;
-    fn get_shred<'a>(
-        &'a self,
-        block_id: &BlockId,
-        slice_index: SliceIndex,
-        shred_index: ShredIndex,
-    ) -> Option<&'a ValidatedShred>;
-    fn create_double_merkle_proof(
-        &self,
-        block_id: &BlockId,
-        slice_index: SliceIndex,
-    ) -> Option<DoubleMerkleProof>;
-}
-
-/// Shared, lock-protected handle to a [`Blockstore`] trait object.
-pub type SharedBlockstore = Arc<RwLock<dyn Blockstore + Send + Sync>>;
-
 /// Blockstore is the fundamental data structure holding block data per slot.
+///
+/// It is a pure, synchronous state machine: it performs no I/O and buffers its
+/// side-effects as [`BlockstoreEvent`]s, drained via
+/// [`BlockstoreImpl::take_events`].
 pub struct BlockstoreImpl {
     /// Data structure holding the actual block data per slot.
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-    /// Events buffered for Votor, drained via [`Blockstore::take_events`].
+    /// Events buffered for the consensus core, drained via [`BlockstoreImpl::take_events`].
     /// See [`Self::emit`] for why they are buffered rather than sent.
     events: Vec<BlockstoreEvent>,
 }
@@ -136,7 +82,7 @@ impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
     /// The blockstore records the following [`BlockstoreEvent`]s into its outbox, to
-    /// be drained by the caller via [`Blockstore::take_events`] and forwarded to Votor:
+    /// be drained by the caller via [`BlockstoreImpl::take_events`] and forwarded to Votor:
     /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
@@ -157,8 +103,8 @@ impl BlockstoreImpl {
     /// Records a [`BlockstoreEvent`] in the outbox, returning the [`BlockInfo`] of a
     /// newly reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
     ///
-    /// Events are buffered rather than sent so the caller can forward them off the
-    /// consensus core off the write lock. This matters most for the `Block`
+    /// Events are buffered rather than sent so the consensus core can route them
+    /// deterministically. This matters most for the `Block`
     /// event: dropping it would silently cost this node its vote for that block,
     /// with no retry path.
     fn emit(&mut self, event: BlockstoreEvent) -> Option<BlockInfo> {
@@ -250,12 +196,12 @@ impl BlockstoreImpl {
     }
 }
 
-impl Blockstore for BlockstoreImpl {
+impl BlockstoreImpl {
     /// Stores a new shred in the blockstore.
     ///
     /// This shred is stored in the default spot without a known block hash.
     /// For shreds obtained through repair,
-    /// [`Blockstore::add_shred_from_repair`] should be used instead.
+    /// [`BlockstoreImpl::add_shred_from_repair`] should be used instead.
     /// Compared to that function, this one checks for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
@@ -264,7 +210,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
-    fn add_shred_from_dissemination(
+    pub fn add_shred_from_dissemination(
         &mut self,
         shred: ValidatedShred,
     ) -> Result<Option<BlockInfo>, AddShredError> {
@@ -291,7 +237,7 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// This shred is stored in a spot associated with the given block`hash`.
     /// For shreds obtained through block dissemination,
-    /// [`Blockstore::add_shred_from_dissemination`] should be used instead.
+    /// [`BlockstoreImpl::add_shred_from_dissemination`] should be used instead.
     /// Compared to that function, this one does not check for leader equivocation.
     ///
     /// Reconstructs the corresponding slice and block if possible and necessary.
@@ -300,7 +246,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
-    fn add_shred_from_repair(
+    pub fn add_shred_from_repair(
         &mut self,
         hash: BlockHash,
         shred: ValidatedShred,
@@ -335,7 +281,7 @@ impl Blockstore for BlockstoreImpl {
     /// Returns the block's [`BlockInfo`] on reconstruction, `None` otherwise.
     #[hotpath::measure]
     #[fastrace::trace(short_name = true)]
-    fn add_own_slice(
+    pub fn add_own_slice(
         &mut self,
         payload: SlicePayload,
         shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
@@ -354,13 +300,13 @@ impl Blockstore for BlockstoreImpl {
     /// Flags the leader as misbehaving for `slot`, notifying Votor exactly once.
     ///
     /// Emits [`BlockstoreEvent::InvalidBlock`] the first time the slot is flagged.
-    fn flag_leader_misbehavior(&mut self, slot: Slot) {
+    pub fn flag_leader_misbehavior(&mut self, slot: Slot) {
         if self.slot_data_mut(slot).mark_leader_misbehaved() {
             self.emit(BlockstoreEvent::InvalidBlock(slot));
         }
     }
 
-    fn take_events(&mut self) -> Vec<BlockstoreEvent> {
+    pub fn take_events(&mut self) -> Vec<BlockstoreEvent> {
         std::mem::take(&mut self.events)
     }
 
@@ -369,7 +315,7 @@ impl Blockstore for BlockstoreImpl {
     /// This refers to the block we received from block dissemination.
     ///
     /// Returns `None` if we have no block or only blocks from repair.
-    fn disseminated_block_hash(&self, slot: Slot) -> Option<&BlockHash> {
+    pub fn disseminated_block_hash(&self, slot: Slot) -> Option<&BlockHash> {
         self.slot_data(slot)?
             .disseminated
             .completed
@@ -383,7 +329,7 @@ impl Blockstore for BlockstoreImpl {
     /// However, the dissminated block can only be considered if it's complete.
     ///
     /// Returns `None` if blockstore does not know a block for that hash.
-    fn get_block(&self, block_id: &BlockId) -> Option<&Block> {
+    pub fn get_block(&self, block_id: &BlockId) -> Option<&Block> {
         let block_data = self.get_block_data(block_id)?;
         if let Some((hash, block)) = block_data.completed.as_ref() {
             debug_assert_eq!(*hash, block_id.1);
@@ -396,7 +342,7 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the last slice index for the given `block_id`.
     ///
     /// Returns `None` if blockstore does not know the last slice yet.
-    fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex> {
+    pub fn get_last_slice_index(&self, block_id: &BlockId) -> Option<SliceIndex> {
         let block_data = self.get_block_data(block_id)?;
         block_data.last_slice
     }
@@ -404,7 +350,7 @@ impl Blockstore for BlockstoreImpl {
     /// Gives the Merkle root for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold any shred for that slice.
-    fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<SliceRoot> {
+    pub fn get_slice_root(&self, block_id: &BlockId, slice_index: SliceIndex) -> Option<SliceRoot> {
         let block_data = self.get_block_data(block_id)?;
         block_data
             .shreds
@@ -418,7 +364,7 @@ impl Blockstore for BlockstoreImpl {
     ///
     /// Lets the dissemination path short-circuit verification for the same slice.
     /// This is also what allows us to detect leader equivocation.
-    fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment> {
+    pub fn cached_commitment(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment> {
         self.slot_data(slot)?
             .disseminated
             .commitment_cache
@@ -429,7 +375,7 @@ impl Blockstore for BlockstoreImpl {
     /// Gives reference to stored shred for given `block_id`, `slice_index` and `shred_index`.
     ///
     /// Returns `None` if blockstore does not hold that shred.
-    fn get_shred(
+    pub fn get_shred(
         &self,
         block_id: &BlockId,
         slice_index: SliceIndex,
@@ -443,7 +389,7 @@ impl Blockstore for BlockstoreImpl {
     /// Generates a Merkle proof for the given `slice_index` of the given `block_id`.
     ///
     /// Returns `None` if blockstore does not hold that block yet.
-    fn create_double_merkle_proof(
+    pub fn create_double_merkle_proof(
         &self,
         block_id: &BlockId,
         slice_index: SliceIndex,
@@ -500,7 +446,7 @@ mod tests {
     /// returns the [`BlockInfo`] of the reconstructed block.
     ///
     /// Reconstruction records `FirstShred` + `Block` events in the blockstore's
-    /// outbox, to be drained via [`Blockstore::take_events`].
+    /// outbox, to be drained via [`BlockstoreImpl::take_events`].
     fn store_full_block(blockstore: &mut BlockstoreImpl, sk: &SecretKey) -> BlockInfo {
         let slot = Slot::genesis().next();
         let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, sk);

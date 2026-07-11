@@ -10,8 +10,9 @@
 //!
 //! - [`Output::Broadcast`] → best-effort [`All2All`] broadcast, inline
 //! - [`Output::RequestRepair`] → the repair loop's channel
-//! - [`Output::ParentReady`] / [`Output::Finalized`] → watch channels observed
-//!   by the block producer and external callers
+//! - [`Output::ParentReady`] / [`Output::Finalized`] / [`Output::BlockDisseminated`]
+//!   → watch channels observed by the block producer and external callers
+//! - [`Output::SliceCommitment`] → the shred-ingest [`CommitmentCache`]
 //!
 //! The repair loop both consumes repair requests from this task *and* feeds
 //! reconstructed blocks back into the inbox, forming the one cycle in the task
@@ -20,7 +21,7 @@
 //! channel has capacity.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use log::warn;
@@ -28,10 +29,49 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::core::{ConsensusCore, Input, Output};
+use crate::crypto::merkle::BlockHash;
+use crate::shredder::SliceCommitment;
+use crate::types::SliceIndex;
 use crate::{All2All, BlockId, Slot};
 
 /// First ready parent per window-start slot, published for the block producer.
 pub(crate) type ParentReadyMap = BTreeMap<Slot, BlockId>;
+
+/// Hash of the disseminated block per slot, published for the block producer.
+pub(crate) type DisseminatedMap = BTreeMap<Slot, BlockHash>;
+
+/// Edge-side cache of per-slice commitments, populated from
+/// [`Output::SliceCommitment`].
+///
+/// The shred-ingest task reads it to skip signature verification for further
+/// shreds of a slice whose commitment the core has already cached. This
+/// mirrors the blockstore's internal commitment cache, which the ingest task
+/// can no longer read directly now that the blockstore lives inside the core.
+///
+/// NOTE: entries are never evicted, matching the blockstore itself (whose
+/// `prune` has no production caller yet). When blockstore pruning is wired up,
+/// this cache should be pruned alongside it.
+#[derive(Clone, Default)]
+pub(crate) struct CommitmentCache {
+    inner: Arc<Mutex<BTreeMap<(Slot, SliceIndex), SliceCommitment>>>,
+}
+
+impl CommitmentCache {
+    /// Returns the cached commitment for `(slot, slice)`, if any.
+    #[must_use]
+    pub(crate) fn get(&self, slot: Slot, slice: SliceIndex) -> Option<SliceCommitment> {
+        self.lock().get(&(slot, slice)).copied()
+    }
+
+    /// Caches `commitment` for `(slot, slice)`.
+    fn insert(&self, slot: Slot, slice: SliceIndex, commitment: SliceCommitment) {
+        self.lock().insert((slot, slice), commitment);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<(Slot, SliceIndex), SliceCommitment>> {
+        self.inner.lock().expect("commitment cache mutex poisoned")
+    }
+}
 
 /// Owns the [`ConsensusCore`] and its I/O edges; see the module docs.
 pub(crate) struct Driver<A: All2All> {
@@ -49,20 +89,27 @@ pub(crate) struct Driver<A: All2All> {
     pending_repairs: BTreeSet<BlockId>,
     /// Publishes the first ready parent per window, keyed by window-start slot.
     parent_ready: watch::Sender<ParentReadyMap>,
+    /// Publishes the disseminated block hash per slot.
+    disseminated: watch::Sender<DisseminatedMap>,
     /// Publishes the highest finalized slot.
     finalized: watch::Sender<Slot>,
+    /// Shared with the shred-ingest task; updated on [`Output::SliceCommitment`].
+    commitments: CommitmentCache,
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
 }
 
 impl<A: All2All> Driver<A> {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         core: ConsensusCore,
         inbox: mpsc::Receiver<Input>,
         all2all: Arc<A>,
         repairs: mpsc::Sender<BlockId>,
         parent_ready: watch::Sender<ParentReadyMap>,
+        disseminated: watch::Sender<DisseminatedMap>,
         finalized: watch::Sender<Slot>,
+        commitments: CommitmentCache,
         cancel_token: CancellationToken,
     ) -> Self {
         Self {
@@ -72,7 +119,9 @@ impl<A: All2All> Driver<A> {
             repairs,
             pending_repairs: BTreeSet::new(),
             parent_ready,
+            disseminated,
             finalized,
+            commitments,
             cancel_token,
         }
     }
@@ -141,12 +190,26 @@ impl<A: All2All> Driver<A> {
                     map.entry(slot).or_insert(parent);
                 });
             }
+            Output::BlockDisseminated { slot, hash } => {
+                self.disseminated.send_modify(|map| {
+                    map.entry(slot).or_insert(hash);
+                });
+            }
+            Output::SliceCommitment {
+                slot,
+                slice,
+                commitment,
+            } => {
+                self.commitments.insert(slot, slice, commitment);
+            }
             Output::Finalized(slot) => {
                 // prune windows at/below the finalized slot's window start;
-                // the block producer no longer needs their parents
+                // the block producer no longer needs their parents or blocks
                 let window_start = slot.first_slot_in_window();
                 self.parent_ready
                     .send_modify(|map| map.retain(|s, _| *s > window_start));
+                self.disseminated
+                    .send_modify(|map| map.retain(|s, _| *s >= window_start));
                 let _ = self.finalized.send(slot);
             }
         }
@@ -188,6 +251,7 @@ mod tests {
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
         let core = ConsensusCore::new(epoch_info, sks[0].clone(), Instant::now());
         let (parent_ready_tx, _) = watch::channel(ParentReadyMap::new());
+        let (disseminated_tx, _) = watch::channel(DisseminatedMap::new());
         let (finalized_tx, _) = watch::channel(Slot::genesis());
         Driver::new(
             core,
@@ -195,7 +259,9 @@ mod tests {
             all2all,
             repairs,
             parent_ready_tx,
+            disseminated_tx,
             finalized_tx,
+            CommitmentCache::default(),
             CancellationToken::new(),
         )
     }

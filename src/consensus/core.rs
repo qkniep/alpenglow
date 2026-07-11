@@ -3,24 +3,26 @@
 
 //! Synchronous consensus core state machine.
 //!
-//! [`ConsensusCore`] combines the [`PoolImpl`] and [`VotorState`] state
-//! machines (plus standstill detection) into a single deterministic transition
-//! function: [`ConsensusCore::handle`] consumes an [`Input`], advances the
-//! state, and appends the resulting [`Output`]s to a buffer. It performs no
-//! I/O, holds no locks and never awaits; all networking happens in the
-//! [`super::driver`] task and the ingest tasks feeding it.
+//! [`ConsensusCore`] combines the [`BlockstoreImpl`], [`PoolImpl`] and
+//! [`VotorState`] state machines (plus standstill detection) into a single
+//! deterministic transition function: [`ConsensusCore::handle`] consumes an
+//! [`Input`], advances the state, and appends the resulting [`Output`]s to a
+//! buffer. It performs no I/O, holds no locks and never awaits; all networking
+//! and crypto verification happens in the [`super::driver`] task and the
+//! ingest tasks feeding it.
 //!
-//! What used to flow through channels between the pool, Votor and the
-//! standstill loop is now plain function calls inside [`ConsensusCore::handle`],
-//! so event ordering is deterministic and the whole consensus logic can be
-//! driven (and tested) without a tokio runtime.
+//! What used to flow through channels between the blockstore, pool, Votor and
+//! the standstill loop is now plain function calls inside
+//! [`ConsensusCore::handle`], so event ordering is deterministic and the whole
+//! consensus logic can be driven (and tested) without a tokio runtime.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use log::{trace, warn};
+use log::{debug, trace, warn};
+use tokio::sync::oneshot;
 
-use super::blockstore::BlockstoreEvent;
+use super::blockstore::{BlockInfo, BlockstoreEvent, BlockstoreImpl};
 use super::pool::{PoolEvent, PoolImpl, PoolOutbox};
 use super::votor::VotorState;
 use super::{
@@ -28,22 +30,50 @@ use super::{
     ValidatorEpochInfo,
 };
 use crate::crypto::aggsig;
+use crate::crypto::merkle::BlockHash;
+use crate::repair::{RepairRequest, RepairResponse};
+use crate::shredder::{SliceCommitment, TOTAL_SHREDS, ValidatedShred};
+use crate::types::{SliceIndex, SlicePayload};
 use crate::{BlockId, Slot};
 
 /// Inputs consumed by [`ConsensusCore::handle`].
 ///
 /// Everything the consensus logic reacts to arrives as one of these,
-/// pre-validated by the ingest tasks (signature checks happen *before* an
-/// input is constructed, so the core never verifies crypto).
+/// pre-validated by the ingest tasks (signature and proof checks happen
+/// *before* an input is constructed, so the core never verifies crypto).
 #[derive(Debug)]
 pub(crate) enum Input {
     /// A verified vote received from another validator.
     Vote(ValidatedVote),
     /// A verified certificate received from another validator.
     Cert(ValidatedCert),
-    /// An event drained from the blockstore by an ingest task
-    /// (dissemination, repair, or own block production).
-    BlockstoreEvent(BlockstoreEvent),
+    /// A verified shred received from the block dissemination protocol.
+    DisseminatedShred(ValidatedShred),
+    /// A verified shred received in a repair response for the given block.
+    RepairedShred {
+        block_hash: BlockHash,
+        shred: ValidatedShred,
+    },
+    /// A slice of our own produced block (leader fast path).
+    ///
+    /// The core replies on `completed` with the reconstructed block's info
+    /// once the last slice arrives (`None` before that); the block producer
+    /// awaits this to pace block production.
+    OwnSlice {
+        payload: SlicePayload,
+        shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
+        completed: oneshot::Sender<Option<BlockInfo>>,
+    },
+    /// A repair request from a validated peer, answered from the blockstore.
+    ///
+    /// The core builds the response synchronously and sends it back on `reply`;
+    /// the responder task then writes it to the requesting peer's socket. This
+    /// mirrors [`Input::OwnSlice`] and keeps the responder socket owned by its
+    /// task rather than split across the driver.
+    RepairRequest {
+        request: RepairRequest,
+        reply: oneshot::Sender<RepairResponse>,
+    },
     /// The clock advanced to [`ConsensusCore::next_timeout`].
     Tick,
 }
@@ -64,13 +94,26 @@ pub(crate) enum Output {
     ParentReady { slot: Slot, parent: BlockId },
     /// A new highest slot was finalized.
     Finalized(Slot),
+    /// A commitment for this slice is now cached; the shred ingest edge can
+    /// skip signature verification for further shreds of the same slice.
+    SliceCommitment {
+        slot: Slot,
+        slice: SliceIndex,
+        commitment: SliceCommitment,
+    },
+    /// The disseminated block for `slot` completed reconstruction.
+    ///
+    /// Observed by the block producer to detect a block in the previous slot.
+    BlockDisseminated { slot: Slot, hash: BlockHash },
 }
 
 /// The consensus protocol as a synchronous state machine.
 ///
-/// Owns the vote/cert pool and the voting logic outright — no locks, no
-/// channels. Mutations enter exclusively through [`Self::handle`].
+/// Owns the blockstore, the vote/cert pool and the voting logic outright —
+/// no locks, no channels. Mutations enter exclusively through [`Self::handle`].
 pub(crate) struct ConsensusCore {
+    /// Blockstore holding shreds and reconstructed blocks.
+    blockstore: BlockstoreImpl,
     /// Pool of votes and certificates.
     pool: PoolImpl,
     /// Voting state machine.
@@ -83,7 +126,8 @@ pub(crate) struct ConsensusCore {
 }
 
 impl ConsensusCore {
-    /// Creates a new consensus core with an empty pool and fresh voting state.
+    /// Creates a new consensus core with an empty blockstore and pool and
+    /// fresh voting state.
     ///
     /// Votor timeouts for the genesis window and the standstill deadline are
     /// scheduled relative to `now`.
@@ -94,6 +138,7 @@ impl ConsensusCore {
     ) -> Self {
         let own_id = epoch_info.own_id();
         Self {
+            blockstore: BlockstoreImpl::new(),
             pool: PoolImpl::new(epoch_info),
             votor: VotorState::new(own_id, voting_key, now),
             finalized_slot: Slot::genesis(),
@@ -121,15 +166,48 @@ impl ConsensusCore {
                 }
                 self.drain_pool(now, out);
             }
-            Input::BlockstoreEvent(event) => {
-                // a completed block is registered with the pool, which needs the
-                // parent info for its parent-ready and safe-to-notar tracking
-                if let BlockstoreEvent::Block { slot, block_info } = &event {
-                    self.pool
-                        .add_block((*slot, block_info.hash.clone()), block_info.parent.clone());
+            Input::DisseminatedShred(shred) => {
+                let slot = shred.payload().header.slot;
+                let slice = shred.payload().header.slice_index;
+                let _ = self.blockstore.add_shred_from_dissemination(shred);
+                // Publish the commitment cached for this slice, if any, so the
+                // ingest edge can skip verifying further shreds of the slice.
+                // PERF: re-published per shred; the edge cache insert is cheap.
+                if let Some(commitment) = self.blockstore.cached_commitment(slot, slice) {
+                    out.push(Output::SliceCommitment {
+                        slot,
+                        slice,
+                        commitment,
+                    });
                 }
-                self.votor.handle_blockstore_event(event);
-                self.drain_pool(now, out);
+                self.drain_blockstore(true, now, out);
+            }
+            Input::RepairedShred { block_hash, shred } => {
+                let res = self
+                    .blockstore
+                    .add_shred_from_repair(block_hash.clone(), shred);
+                if let Ok(Some(block_info)) = &res {
+                    // trusted local invariant: repair stores under the requested hash
+                    assert_eq!(block_info.hash, block_hash);
+                    debug!("successfully repaired block {}", block_hash.short_hex());
+                }
+                self.drain_blockstore(false, now, out);
+            }
+            Input::OwnSlice {
+                payload,
+                shreds,
+                completed,
+            } => {
+                let block_info = self.blockstore.add_own_slice(payload, shreds);
+                // the block producer paces block production on this reply;
+                // it may have shut down already, so a send error is fine
+                let _ = completed.send(block_info);
+                self.drain_blockstore(true, now, out);
+            }
+            Input::RepairRequest { request, reply } => {
+                let response = request.build_response(&self.blockstore);
+                // the responder task may have shut down; a send error is fine
+                let _ = reply.send(response);
             }
             Input::Tick => {
                 self.votor.handle_due_timeouts(now);
@@ -141,6 +219,29 @@ impl ConsensusCore {
                 }
             }
         }
+    }
+
+    /// Drains the blockstore's buffered events, registering completed blocks
+    /// with the pool and feeding all events through Votor.
+    ///
+    /// `disseminated` says whether the triggering input came from the
+    /// dissemination path (including own slices); only then is a completed
+    /// block surfaced as [`Output::BlockDisseminated`].
+    fn drain_blockstore(&mut self, disseminated: bool, now: Instant, out: &mut Vec<Output>) {
+        for event in self.blockstore.take_events() {
+            if let BlockstoreEvent::Block { slot, block_info } = &event {
+                self.pool
+                    .add_block((*slot, block_info.hash.clone()), block_info.parent.clone());
+                if disseminated {
+                    out.push(Output::BlockDisseminated {
+                        slot: *slot,
+                        hash: block_info.hash.clone(),
+                    });
+                }
+            }
+            self.votor.handle_blockstore_event(event);
+        }
+        self.drain_pool(now, out);
     }
 
     /// Returns the deadline at which [`Input::Tick`] must be fed next.
@@ -171,7 +272,12 @@ impl ConsensusCore {
     /// the block producer), then Votor's queued broadcasts are drained.
     fn apply_pool_outbox(&mut self, outbox: PoolOutbox, now: Instant, out: &mut Vec<Output>) {
         for block_id in outbox.repairs {
-            out.push(Output::RequestRepair(block_id));
+            // suppress repair for blocks we have already reconstructed; the
+            // blockstore lives here now, so the repair loop no longer needs to
+            // read it to make this check (as it used to in `repair_block`)
+            if self.blockstore.get_block(&block_id).is_none() {
+                out.push(Output::RequestRepair(block_id));
+            }
         }
         for event in outbox.votor_events {
             if let PoolEvent::ParentReady { slot, parent } = &event {
@@ -194,20 +300,26 @@ impl ConsensusCore {
                 .map(Output::Broadcast),
         );
     }
+
+    /// Read access to the owned blockstore, for tests and repair-serving assertions.
+    #[cfg(test)]
+    pub(crate) fn blockstore(&self) -> &BlockstoreImpl {
+        &self.blockstore
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::super::blockstore::BlockInfo;
     use super::super::{Cert, EpochInfo, Vote};
     use super::*;
     use crate::ValidatorIndex;
-    use crate::crypto::Hash;
     use crate::crypto::aggsig::SecretKey;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
-    use crate::test_utils::generate_validators;
+    use crate::crypto::signature;
+    use crate::repair::RepairRequestType;
+    use crate::test_utils::{create_random_shredded_block, generate_validators};
     use crate::types::Slot;
 
     struct TestContext {
@@ -249,6 +361,50 @@ mod tests {
         }
     }
 
+    /// The blockstore now lives inside the core: feeding a full block's shreds
+    /// via the dissemination path reconstructs it and surfaces the completion
+    /// as an output (with a commitment cached for the ingest edge).
+    #[test]
+    fn disseminated_shreds_reconstruct_block_in_core() {
+        let mut ctx = setup();
+        let leader_sk = signature::SecretKey::new(&mut rand::rng());
+        let slot = Slot::genesis().next();
+        let (block_hash, _tree, shreds) = create_random_shredded_block(slot, 1, &leader_sk);
+
+        let mut outputs = Vec::new();
+        for shred in shreds.into_iter().flatten() {
+            outputs.extend(ctx.handle(Input::DisseminatedShred(shred)));
+        }
+
+        assert!(
+            outputs.iter().any(|o| matches!(
+                o,
+                Output::BlockDisseminated { slot: s, hash } if *s == slot && hash == &block_hash
+            )),
+            "expected a BlockDisseminated output, got {outputs:?}"
+        );
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, Output::SliceCommitment { slot: s, .. } if *s == slot)),
+            "expected a SliceCommitment output, got {outputs:?}"
+        );
+    }
+
+    /// A repair request for a block we do not have is answered with a Nack,
+    /// built from the core's blockstore and returned on the reply channel.
+    #[tokio::test]
+    async fn repair_request_for_unknown_block_nacks() {
+        let mut ctx = setup();
+        let req_type = RepairRequestType::LastSliceRoot((Slot::new(1), GENESIS_BLOCK_HASH));
+        let request = RepairRequest::new_for_test(ValidatorIndex::new(1), req_type.clone());
+        let (reply, reply_rx) = oneshot::channel();
+        ctx.handle(Input::RepairRequest { request, reply });
+
+        let response = reply_rx.await.expect("core should reply to repair request");
+        assert!(matches!(response, RepairResponse::Nack(rt) if rt == req_type));
+    }
+
     /// A notarization quorum produces a cert that is broadcast as an output.
     #[test]
     fn vote_quorum_produces_cert_broadcast() {
@@ -263,29 +419,6 @@ mod tests {
                 .any(|o| matches!(o, Output::Broadcast(ConsensusMessage::Cert(Cert::Notar(_))))),
             "expected a notar cert broadcast, got {outputs:?}"
         );
-    }
-
-    /// A reconstructed block is registered with the pool: once its parent is
-    /// certified, the safe-to-notar machinery can request its repair or notify
-    /// Votor without any external `add_block` call.
-    #[test]
-    fn block_event_registers_block_with_pool() {
-        let mut ctx = setup();
-        let slot = Slot::genesis().next();
-        let block_info = BlockInfo {
-            hash: Hash::random_for_test().into(),
-            parent: (Slot::genesis(), GENESIS_BLOCK_HASH),
-        };
-        let event = BlockstoreEvent::Block { slot, block_info };
-        ctx.handle(Input::BlockstoreEvent(event));
-        assert_eq!(ctx.core.pool.parents_ready(slot), &[]);
-        // the pool saw the block: a notar quorum for it now triggers
-        // finalization tracking through the registered parent link
-        let mut outputs = Vec::new();
-        for v in 0..7 {
-            outputs.extend(ctx.handle(ctx.notar_vote(Slot::genesis(), v)));
-        }
-        assert!(!outputs.is_empty());
     }
 
     /// Without finalization progress, a tick past the standstill deadline
