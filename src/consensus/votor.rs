@@ -197,14 +197,12 @@ impl<A: All2All> Votor<A> {
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
                 self.broadcast(vote).await;
                 self.try_skip_window(slot).await;
-                self.state_mut(slot).bad_window = true;
             }
             PoolEvent::SafeToSkip(slot) => {
                 debug!("voted skip-fallback in slot {slot}");
                 let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_index);
                 self.broadcast(vote).await;
                 self.try_skip_window(slot).await;
-                self.state_mut(slot).bad_window = true;
             }
             PoolEvent::CertCreated(cert) => self.handle_cert_created(cert).await,
             PoolEvent::Standstill(_, certs, votes) => {
@@ -416,16 +414,26 @@ impl<A: All2All> Votor<A> {
     }
 
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
+    ///
+    /// Marks the whole window bad, including slots we already voted on. We only get
+    /// here because the window's leader misbehaved or timed out, and that verdict
+    /// does not depend on how far we happened to get first: a slot notarized before
+    /// we learned of it stays notarized (that vote is already out), but `bad_window`
+    /// stops [`Self::try_final`] from following it with a final vote. Leaving voted
+    /// slots unmarked would instead make this depend on the order blockstore events
+    /// happen to arrive in, which is not guaranteed — they are forwarded off the
+    /// write lock and can be reordered across tasks. Withholding a final vote is
+    /// always safe: it can cost this slot the fast path, never liveness.
     async fn try_skip_window(&mut self, slot: Slot) {
         assert!(slot >= self.first_unpruned_slot());
         trace!("try skip window of slot {slot}");
         for s in slot.slots_in_window() {
-            if self.has_voted(s) {
+            let state = self.state_mut(s);
+            state.bad_window = true;
+            if state.voted {
                 continue;
             }
-            let state = self.state_mut(s);
             state.voted = true;
-            state.bad_window = true;
             let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
             self.broadcast(vote).await;
             debug!("voted skip for slot {s}");
@@ -674,6 +682,55 @@ mod tests {
             }
             m => panic!("other msg: {m:?}"),
         }
+    }
+
+    /// An `InvalidBlock` handled *after* we already voted notar for the slot must
+    /// still taint the window, so the notar cert that follows produces no final vote.
+    ///
+    /// Blockstore events are forwarded off the write lock and can be reordered
+    /// across tasks, so `Block` beating `InvalidBlock` is expected rather than
+    /// exceptional. The notar vote is already out and cannot be recalled; the final
+    /// vote is what must be withheld. The handlers are driven directly, because the
+    /// ordering under test is precisely what `voting_loop`'s `select!` leaves
+    /// unspecified.
+    #[tokio::test]
+    async fn late_invalid_block_suppresses_final_vote() {
+        let (mut votor, ctx) = build_votor().await;
+        let slot = Slot::genesis().next();
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        // vote notar on the block, before learning the leader misbehaved
+        let block_info = BlockInfo {
+            hash: hash.clone(),
+            parent: genesis_block_id(),
+        };
+        votor
+            .handle_blockstore_event(BlockstoreEvent::Block { slot, block_info })
+            .await;
+        assert_eq!(votor.slots[&slot].voted_notar.as_ref(), Some(&hash));
+
+        // only now does the leader's misbehavior surface
+        votor
+            .handle_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
+            .await;
+        assert!(
+            votor.slots[&slot].bad_window,
+            "an invalid block must taint the window even for an already-voted slot"
+        );
+
+        // with the window untainted this cert would make `try_final` cast a final
+        // vote; `retired` is set only by that broadcast, so it proxies for it
+        let vote = Vote::new_notar(slot, hash, &ctx.sks[0], ValidatorIndex::new(0));
+        let Vote::Notar(notar_vote) = vote else {
+            unreachable!()
+        };
+        let cert = Cert::Notar(NotarCert::new(&[notar_vote], ctx.epoch_info.validators()));
+        votor.handle_pool_event(PoolEvent::CertCreated(cert)).await;
+
+        assert!(
+            !votor.slots[&slot].retired,
+            "cast a final vote for a slot whose leader we proved misbehaving"
+        );
     }
 
     #[tokio::test]
