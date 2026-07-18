@@ -3,25 +3,23 @@
 
 //! Main voting logic for the consensus protocol.
 //!
-//! Besides [`super::Pool`], [`VotorState`] is the other main internal component of Alpenglow.
-//! It handles the main voting decisions for the consensus protocol.
-//! As input it receives events from [`super::Pool`] and [`super::Blockstore`],
-//! as well as its own internal timeout events.
+//! Besides [`super::PoolImpl`], [`VotorState`] is the other main internal
+//! component of Alpenglow. It handles the main voting decisions for the
+//! consensus protocol. As input it receives events from [`super::PoolImpl`]
+//! and [`super::Blockstore`], as well as its own internal timeout events.
 //! It keeps its own internal state for each slot based on previous events and votes.
 //!
 //! [`VotorState`] is a pure, synchronous state machine: it performs no I/O,
 //! tracks timeouts as deadlines instead of sleeping, and queues the votes it
-//! decides to cast in an internal outbox. The [`Votor`] task wraps it, feeding
-//! it events from its channels and firing due timeouts, and broadcasts the
-//! queued votes over an [`All2All`] instance.
+//! decides to cast in an internal outbox. It is driven as part of
+//! [`super::core::ConsensusCore`], whose driver task fires due timeouts and
+//! broadcasts the queued votes over the wire.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
-use std::sync::Arc;
 use std::time::Instant;
 
 use log::{debug, trace, warn};
-use tokio::sync::mpsc::Receiver;
 
 use super::blockstore::{BlockInfo, BlockstoreEvent};
 use super::pool::PoolEvent;
@@ -29,123 +27,7 @@ use super::{Cert, ConsensusMessage, DELTA_BLOCK, DELTA_TIMEOUT, Vote};
 use crate::consensus::DELTA_FIRST_SLICE;
 use crate::crypto::aggsig::SecretKey;
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
-use crate::{All2All, BlockId, Slot, ValidatorIndex};
-
-/// Votor task: drives the `VotorState` state machine.
-///
-/// Feeds `VotorState` the events received from [`super::Pool`] and
-/// [`super::Blockstore`] as well as its due timeouts, then broadcasts the
-/// votes and certificates it queued via [`All2All`].
-pub struct Votor<A: All2All> {
-    /// The actual voting state machine.
-    state: VotorState,
-
-    /// Channel for receiving events from Pool.
-    pool_receiver: Receiver<PoolEvent>,
-    /// Channel for receiving events from Blockstore.
-    blockstore_receiver: Receiver<BlockstoreEvent>,
-    /// [`All2All`] instance used to broadcast votes.
-    all2all: Arc<A>,
-}
-
-impl<A: All2All> Votor<A> {
-    /// Creates a new Votor instance with empty state.
-    ///
-    /// On `pool_receiver` and `blockstore_receiver`, it receives events from
-    /// [`super::Pool`] and [`super::Blockstore`] respectively.
-    /// Informed by these events Votor updates its state and generates votes.
-    /// Votes are signed with `voting_key` and broadcast using `all2all`.
-    pub fn new(
-        validator_index: ValidatorIndex,
-        voting_key: SecretKey,
-        pool_receiver: Receiver<PoolEvent>,
-        blockstore_receiver: Receiver<BlockstoreEvent>,
-        all2all: Arc<A>,
-    ) -> Self {
-        Self {
-            state: VotorState::new(validator_index, voting_key, Instant::now()),
-            pool_receiver,
-            blockstore_receiver,
-            all2all,
-        }
-    }
-
-    /// Handles the voting (leader and non-leader) side of consensus protocol.
-    ///
-    /// Checks consensus conditions and broadcasts new votes.
-    /// Returns once either input channel is closed (node shutdown).
-    #[fastrace::trace]
-    pub async fn voting_loop(&mut self) {
-        loop {
-            tokio::select! {
-                event = self.pool_receiver.recv() => match event {
-                    Some(event) => self.handle_pool_event(event).await,
-                    None => break,
-                },
-                event = self.blockstore_receiver.recv() => match event {
-                    Some(event) => self.handle_blockstore_event(event).await,
-                    None => break,
-                },
-                () = sleep_until_next(self.state.next_timeout()) => {
-                    self.handle_due_timeouts().await;
-                }
-            }
-        }
-    }
-
-    /// Feeds a pool event to the state machine and broadcasts resulting votes.
-    async fn handle_pool_event(&mut self, event: PoolEvent) {
-        self.state.handle_pool_event(event, Instant::now());
-        self.flush_broadcasts().await;
-    }
-
-    /// Feeds a blockstore event to the state machine and broadcasts resulting votes.
-    async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
-        self.state.handle_blockstore_event(event);
-        self.flush_broadcasts().await;
-    }
-
-    /// Feeds a timeout event to the state machine and broadcasts resulting votes.
-    #[cfg(test)]
-    async fn handle_timeout_event(&mut self, event: VotorTimeout) {
-        self.state.handle_timeout_event(event);
-        self.flush_broadcasts().await;
-    }
-
-    /// Fires all due timeouts on the state machine and broadcasts resulting votes.
-    async fn handle_due_timeouts(&mut self) {
-        self.state.handle_due_timeouts(Instant::now());
-        self.flush_broadcasts().await;
-    }
-
-    /// Broadcasts all queued consensus messages on a best-effort basis.
-    ///
-    /// A failure of the underlying [`All2All`] network is logged and otherwise
-    /// ignored. Broadcasts are best-effort by contract, and a transient network
-    /// error must not bring down the voting loop, which has to keep running to
-    /// preserve liveness. A dropped vote/cert is re-broadcast later via standstill
-    /// recovery, so a one-off failure self-heals.
-    ///
-    /// NOTE: a *persistent* failure here (e.g. a misconfigured firewall or a full
-    /// partition) means this node silently stops contributing to consensus while
-    /// only logging. Once there is a metrics system, this should also bump a
-    /// failure counter so persistent failures become alertable.
-    async fn flush_broadcasts(&mut self) {
-        for msg in self.state.take_broadcasts() {
-            if let Err(err) = self.all2all.broadcast(&msg).await {
-                warn!("failed to broadcast consensus message: {err}");
-            }
-        }
-    }
-}
-
-/// Sleeps until the given `deadline`, or forever if there is none.
-async fn sleep_until_next(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
-        None => std::future::pending().await,
-    }
-}
+use crate::{BlockId, Slot, ValidatorIndex};
 
 /// Votor's state machine: implements the decision process of which votes to cast.
 ///
@@ -160,7 +42,7 @@ pub(crate) struct VotorState {
     slots: BTreeMap<Slot, SlotState>,
     /// Highest slot for which we have seen a (slow) final or fast-final cert.
     ///
-    /// This is *not* equivalent to e.g. [`super::Pool::finalized_slot`],
+    /// This is *not* equivalent to e.g. [`super::PoolImpl::finalized_slot`],
     /// because we may have seen a (slow) final cert without a matching notar.
     /// We only use it to decide when our own vote for a slot no longer matters,
     /// at which point the per-slot state for earlier leader windows is pruned.
@@ -250,7 +132,7 @@ impl VotorState {
     /// However, this comes with exceptions based on the event type:
     /// - [`PoolEvent::Standstill`] is never ignored.
     ///   It carries a recovery bundle spanning multiple slots.
-    ///   See also [`super::Pool::recover_from_standstill`] for more info.
+    ///   See also [`super::PoolImpl::recover_from_standstill`] for more info.
     ///   Simply gating based on [`Self::highest_final_cert_slot`] would not be correct.
     ///   It can run ahead of Pool's finalized slot (final cert vs. final + notar).
     ///   We could drop a bundle that Pool emitted precisely because it is stuck.
@@ -269,7 +151,7 @@ impl VotorState {
         }
     }
 
-    fn handle_pool_event(&mut self, event: PoolEvent, now: Instant) {
+    pub(crate) fn handle_pool_event(&mut self, event: PoolEvent, now: Instant) {
         let slot = event.slot();
         if self.should_ignore_pool_event(&event) {
             trace!("ignoring pool event for old or retired slot {slot}");
@@ -343,8 +225,8 @@ impl VotorState {
     /// Queues a consensus message for broadcast by the driving task.
     ///
     /// Buffered rather than sent so this state machine stays free of I/O; the
-    /// [`Votor`] task drains the queue via [`Self::take_broadcasts`] and performs
-    /// the actual (best-effort) [`All2All`] broadcast.
+    /// driver drains the queue via [`Self::take_broadcasts`] and performs the
+    /// actual (best-effort) broadcast.
     fn enqueue_broadcast(&mut self, msg: impl Into<ConsensusMessage>) {
         self.broadcasts.push(msg.into());
     }
@@ -354,7 +236,7 @@ impl VotorState {
         std::mem::take(&mut self.broadcasts)
     }
 
-    fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
+    pub(crate) fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
         let slot = event.slot();
         if slot <= self.highest_final_cert_slot || self.is_retired(slot) {
             trace!("ignoring blockstore event for old or retired slot {slot}");
@@ -574,7 +456,7 @@ impl VotorTimeout {
     }
 }
 
-/// Per-slot voting state tracked by [`Votor`].
+/// Per-slot voting state tracked by [`VotorState`].
 #[derive(Default)]
 struct SlotState {
     /// Whether we already voted notar or skip for this slot.
@@ -597,249 +479,157 @@ struct SlotState {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use async_trait::async_trait;
-    use tokio::sync::mpsc;
-
     use super::*;
-    use crate::all2all::TrivialAll2All;
+    use crate::consensus::EpochInfo;
     use crate::consensus::cert::{FinalCert, NotarCert};
-    use crate::consensus::{ConsensusMessage, EpochInfo};
     use crate::crypto::Hash;
-    use crate::network::SimulatedNetwork;
-    use crate::test_utils::{
-        generate_all2all_instances, generate_validators, genesis_block_id, random_block_id,
-    };
+    use crate::test_utils::{generate_validators, genesis_block_id, random_block_id};
     use crate::types::SLOTS_PER_WINDOW;
 
-    type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
-
-    /// An [`All2All`] whose `broadcast` always fails, to exercise Votor's
-    /// best-effort error handling. `receive` never resolves.
-    struct FailingAll2All;
-
-    #[async_trait]
-    impl All2All for FailingAll2All {
-        async fn broadcast(&self, _msg: &ConsensusMessage) -> std::io::Result<()> {
-            Err(std::io::Error::other("simulated broadcast failure"))
-        }
-
-        async fn receive(&self) -> std::io::Result<ConsensusMessage> {
-            std::future::pending().await
-        }
-    }
-
     struct TestContext {
-        other_a2a: A2A,
-        pool_tx: mpsc::Sender<PoolEvent>,
-        blockstore_tx: mpsc::Sender<BlockstoreEvent>,
+        state: VotorState,
+        /// The instant the state machine was constructed at; deadlines for the
+        /// genesis window are relative to this.
+        t0: Instant,
         epoch_info: EpochInfo,
         sks: Vec<SecretKey>,
     }
 
+    fn setup() -> TestContext {
+        let (sks, epoch_info) = generate_validators(2);
+        let t0 = Instant::now();
+        let state = VotorState::new(ValidatorIndex::new(0), sks[0].clone(), t0);
+        TestContext {
+            state,
+            t0,
+            epoch_info,
+            sks,
+        }
+    }
+
+    /// Drains the queued broadcasts and returns just the votes among them.
+    fn drain_votes(state: &mut VotorState) -> Vec<Vote> {
+        state
+            .take_broadcasts()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                ConsensusMessage::Vote(v) => Some(v),
+                ConsensusMessage::Cert(_) => None,
+            })
+            .collect()
+    }
+
     impl TestContext {
-        /// Notifies the votor of a new block and waits for the resulting notar vote.
-        async fn send_block_and_expect_notar(&self, slot: Slot, parent: (Slot, BlockHash)) -> Vote {
-            self.blockstore_tx
-                .send(BlockstoreEvent::FirstShred(slot))
-                .await
-                .unwrap();
+        /// An instant by which every timeout of the genesis window has expired.
+        fn after_genesis_window(&self) -> Instant {
+            self.t0
+                + DELTA_TIMEOUT
+                + DELTA_FIRST_SLICE
+                + DELTA_BLOCK * u32::try_from(SLOTS_PER_WINDOW).unwrap()
+        }
+
+        /// Feeds a reconstructed block and returns the resulting notar vote.
+        fn send_block_and_expect_notar(&mut self, slot: Slot, parent: BlockId) -> Vote {
+            self.state
+                .handle_blockstore_event(BlockstoreEvent::FirstShred(slot));
             let block_info = BlockInfo {
                 hash: Hash::random_for_test().into(),
                 parent,
             };
-            self.blockstore_tx
-                .send(BlockstoreEvent::Block { slot, block_info })
-                .await
-                .unwrap();
-            match self.other_a2a.receive().await.unwrap() {
-                ConsensusMessage::Vote(v) => {
-                    assert!(matches!(v, Vote::Notar(_)));
-                    assert_eq!(v.slot(), slot);
-                    v
-                }
-                m => panic!("other msg: {m:?}"),
-            }
+            self.state
+                .handle_blockstore_event(BlockstoreEvent::Block { slot, block_info });
+            let votes = drain_votes(&mut self.state);
+            assert_eq!(votes.len(), 1, "expected exactly one vote, got {votes:?}");
+            let vote = votes.into_iter().next().unwrap();
+            assert!(matches!(vote, Vote::Notar(_)));
+            assert_eq!(vote.slot(), slot);
+            vote
         }
     }
 
-    /// Creates a fresh fully wired-up [`Votor`] instance.
-    ///
-    /// The returned votor is not running its event loop.
-    /// Callers either run its [`Votor::voting_loop`] (see [`start_votor`])
-    /// or drive its handlers manually.
-    async fn build_votor() -> (Votor<A2A>, TestContext) {
-        let (sks, epoch_info) = generate_validators(2);
-        let mut a2a = generate_all2all_instances(epoch_info.validators().to_vec()).await;
-        let (pool_tx, pool_rx) = mpsc::channel(100);
-        let (blockstore_tx, blockstore_rx) = mpsc::channel(100);
-        let other_a2a = a2a.pop().unwrap();
-        let votor_a2a = a2a.pop().unwrap();
-        let votor = Votor::new(
-            ValidatorIndex::new(0),
-            sks[0].clone(),
-            pool_rx,
-            blockstore_rx,
-            Arc::new(votor_a2a),
-        );
-        let ctx = TestContext {
-            other_a2a,
-            pool_tx,
-            blockstore_tx,
-            epoch_info,
-            sks,
-        };
-        (votor, ctx)
-    }
+    /// Once all genesis-window deadlines expire, every non-genesis slot in the
+    /// window gets a skip vote, in order.
+    #[test]
+    fn timeouts() {
+        let mut ctx = setup();
+        let deadline = ctx.state.next_timeout().expect("timeouts scheduled");
+        assert!(deadline > ctx.t0);
 
-    /// Builds a votor and spawns its [`Votor::voting_loop`].
-    ///
-    /// Returns the votor instance and the test context.
-    async fn start_votor() -> TestContext {
-        let (mut votor, ctx) = build_votor().await;
-        tokio::spawn(async move {
-            votor.voting_loop().await;
-        });
-        ctx
-    }
+        ctx.state.handle_due_timeouts(ctx.after_genesis_window());
+        let votes = drain_votes(&mut ctx.state);
 
-    /// A failing network broadcast must be logged and swallowed, never panic the
-    /// voting loop (which has to keep running to preserve liveness).
-    #[tokio::test]
-    async fn broadcast_failure_does_not_panic() {
-        let (sks, _epoch_info) = generate_validators(2);
-        let (_pool_tx, pool_rx) = mpsc::channel(100);
-        let (_blockstore_tx, blockstore_rx) = mpsc::channel(100);
-        let mut votor = Votor::new(
-            ValidatorIndex::new(0),
-            sks[0].clone(),
-            pool_rx,
-            blockstore_rx,
-            Arc::new(FailingAll2All),
-        );
-
-        // `SafeToSkip` makes Votor broadcast a skip-fallback vote (and, via
-        // `try_skip_window`, skip votes for the window). All broadcasts fail here;
-        // the handler must still return normally rather than unwrap a network error.
-        // Use a non-genesis slot: the genesis slot starts out retired and would be
-        // ignored before any broadcast.
-        votor
-            .handle_pool_event(PoolEvent::SafeToSkip(Slot::new(1)))
-            .await;
-    }
-
-    #[tokio::test]
-    async fn timeouts() {
-        let ctx = start_votor().await;
-
-        // should vote skip for all slots
-        let mut skipped_slots = Vec::new();
+        // should vote skip for all slots except (retired) genesis
         let mut slots = Slot::genesis().slots_in_window().collect::<Vec<_>>();
         slots.remove(0);
-        for _ in slots.clone() {
-            if let Ok(msg) = ctx.other_a2a.receive().await {
-                match msg {
-                    ConsensusMessage::Vote(v) => {
-                        assert!(matches!(v, Vote::Skip(_)));
-                        skipped_slots.push(v.slot());
-                    }
-                    m => panic!("other msg: {m:?}"),
-                }
-            }
-        }
+        assert!(votes.iter().all(|v| matches!(v, Vote::Skip(_))));
+        let skipped_slots = votes.iter().map(Vote::slot).collect::<Vec<_>>();
         assert_eq!(skipped_slots, slots);
     }
 
-    #[tokio::test]
-    async fn notar_and_final() {
-        let ctx = start_votor().await;
+    #[test]
+    fn notar_and_final() {
+        let mut ctx = setup();
         let slot = Slot::genesis().next();
-        let parent = genesis_block_id();
 
         // vote notar after seeing block
-        let vote = ctx.send_block_and_expect_notar(slot, parent).await;
+        let vote = ctx.send_block_and_expect_notar(slot, genesis_block_id());
 
         // vote finalize after seeing branch-certified
         let Vote::Notar(notar_vote) = vote else {
             unreachable!()
         };
         let cert = Cert::Notar(NotarCert::new(&[notar_vote], ctx.epoch_info.validators()));
-        ctx.pool_tx
-            .send(PoolEvent::CertCreated(cert))
-            .await
-            .unwrap();
-        match ctx.other_a2a.receive().await.unwrap() {
-            ConsensusMessage::Vote(v) => {
-                assert!(matches!(v, Vote::Final(_)));
-                assert_eq!(v.slot(), slot);
-            }
-            m => panic!("other msg: {m:?}"),
-        }
+        ctx.state
+            .handle_pool_event(PoolEvent::CertCreated(cert), ctx.t0);
+        let votes = drain_votes(&mut ctx.state);
+        assert!(
+            votes
+                .iter()
+                .any(|v| matches!(v, Vote::Final(_)) && v.slot() == slot),
+            "expected a final vote for slot {slot}, got {votes:?}"
+        );
     }
 
-    #[tokio::test]
-    async fn notar_out_of_order() {
-        let ctx = start_votor().await;
+    #[test]
+    fn notar_out_of_order() {
+        let mut ctx = setup();
         let (slot1, hash1) = (Slot::genesis().next(), Hash::random_for_test());
         let (slot2, hash2) = (slot1.next(), Hash::random_for_test());
 
-        // give later block to votor first
-        ctx.blockstore_tx
-            .send(BlockstoreEvent::FirstShred(slot2))
-            .await
-            .unwrap();
+        // give later block to votor first: no vote yet
+        ctx.state
+            .handle_blockstore_event(BlockstoreEvent::FirstShred(slot2));
         let block_info = BlockInfo {
             hash: hash2.into(),
             parent: (slot1, hash1.clone().into()),
         };
-        ctx.blockstore_tx
-            .send(BlockstoreEvent::Block {
-                slot: slot2,
-                block_info,
-            })
-            .await
-            .unwrap();
+        ctx.state.handle_blockstore_event(BlockstoreEvent::Block {
+            slot: slot2,
+            block_info,
+        });
+        assert!(ctx.state.take_broadcasts().is_empty());
 
-        // should not vote yet
-        assert!(
-            tokio::time::timeout(Duration::from_secs(1), ctx.other_a2a.receive())
-                .await
-                .is_err()
-        );
-
-        // now notify votor of earlier block
-        ctx.blockstore_tx
-            .send(BlockstoreEvent::FirstShred(slot1))
-            .await
-            .unwrap();
+        // now notify votor of earlier block: both blocks get notarized
+        ctx.state
+            .handle_blockstore_event(BlockstoreEvent::FirstShred(slot1));
         let block_info = BlockInfo {
             hash: hash1.into(),
             parent: genesis_block_id(),
         };
-        ctx.blockstore_tx
-            .send(BlockstoreEvent::Block {
-                slot: slot1,
-                block_info,
-            })
-            .await
-            .unwrap();
-
-        // should now see notar votes
-        for _ in 0..2 {
-            match ctx.other_a2a.receive().await.unwrap() {
-                ConsensusMessage::Vote(vote) => {
-                    assert!(matches!(vote, Vote::Notar(_)));
-                    assert!(vote.slot() == slot1 || vote.slot() == slot2);
-                }
-                m => panic!("other msg: {m:?}"),
-            };
-        }
+        ctx.state.handle_blockstore_event(BlockstoreEvent::Block {
+            slot: slot1,
+            block_info,
+        });
+        let votes = drain_votes(&mut ctx.state);
+        assert_eq!(votes.len(), 2, "expected two notar votes, got {votes:?}");
+        assert!(votes.iter().all(|v| matches!(v, Vote::Notar(_))));
+        assert!(votes.iter().any(|v| v.slot() == slot1));
+        assert!(votes.iter().any(|v| v.slot() == slot2));
     }
 
-    #[tokio::test]
-    async fn pending_block_not_notarized_after_skip() {
-        let (mut votor, ctx) = build_votor().await;
+    #[test]
+    fn pending_block_not_notarized_after_skip() {
+        let mut ctx = setup();
 
         // first slot of the second leader window; its parent is not ready yet
         let slot = Slot::new(SLOTS_PER_WINDOW);
@@ -852,28 +642,20 @@ mod tests {
             hash: Hash::random_for_test().into(),
             parent: parent.clone(),
         };
-        let block_event = BlockstoreEvent::Block { slot, block_info };
-        votor.handle_blockstore_event(block_event).await;
+        ctx.state
+            .handle_blockstore_event(BlockstoreEvent::Block { slot, block_info });
 
         // window times out: we vote skip for every slot in the window
-        let timeout_event = VotorTimeout::Timeout(slot);
-        votor.handle_timeout_event(timeout_event).await;
+        ctx.state.handle_timeout_event(VotorTimeout::Timeout(slot));
 
         // parent becomes ready late: re-checks pending blocks
-        let parent_ready_event = PoolEvent::ParentReady { slot, parent };
-        votor.handle_pool_event(parent_ready_event).await;
+        ctx.state
+            .handle_pool_event(PoolEvent::ParentReady { slot, parent }, ctx.t0);
 
-        // collect every vote broadcast for `slot` (network latency is 100ms)
-        let mut votes_for_slot = Vec::new();
-        while let Ok(Ok(msg)) =
-            tokio::time::timeout(Duration::from_millis(500), ctx.other_a2a.receive()).await
-        {
-            if let ConsensusMessage::Vote(v) = msg
-                && v.slot() == slot
-            {
-                votes_for_slot.push(v);
-            }
-        }
+        let votes_for_slot = drain_votes(&mut ctx.state)
+            .into_iter()
+            .filter(|v| v.slot() == slot)
+            .collect::<Vec<_>>();
 
         // must not notarize `slot`, which we already voted skip for
         assert!(
@@ -886,67 +668,48 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn safe_to_notar() {
-        let ctx = start_votor().await;
+    #[test]
+    fn safe_to_notar() {
+        let mut ctx = setup();
         let slot = Slot::genesis().next();
 
-        // wait for skip votes
-        for s in slot.slots_in_window() {
-            if s.is_genesis() {
-                continue;
-            }
-            if let Ok(msg) = ctx.other_a2a.receive().await {
-                match msg {
-                    ConsensusMessage::Vote(v) => assert!(matches!(v, Vote::Skip(_))),
-                    m => panic!("other msg: {m:?}"),
-                }
-            }
-        }
+        // window times out: skip votes for the non-genesis slots
+        ctx.state.handle_due_timeouts(ctx.after_genesis_window());
+        let votes = drain_votes(&mut ctx.state);
+        assert!(votes.iter().all(|v| matches!(v, Vote::Skip(_))));
 
         // vote notar-fallback after safe-to-notar
         let block = random_block_id(slot);
-        ctx.pool_tx
-            .send(PoolEvent::SafeToNotar(block.clone()))
-            .await
-            .unwrap();
-        match ctx.other_a2a.receive().await.unwrap() {
-            ConsensusMessage::Vote(v) => {
-                assert!(matches!(v, Vote::NotarFallback(_)));
-                assert_eq!(v.slot(), block.0);
-                assert_eq!(v.block_hash(), Some(&block.1));
-            }
-            m => panic!("other msg: {m:?}"),
-        }
+        ctx.state
+            .handle_pool_event(PoolEvent::SafeToNotar(block.clone()), ctx.t0);
+        let votes = drain_votes(&mut ctx.state);
+        assert_eq!(votes.len(), 1, "expected one vote, got {votes:?}");
+        assert!(matches!(votes[0], Vote::NotarFallback(_)));
+        assert_eq!(votes[0].slot(), block.0);
+        assert_eq!(votes[0].block_hash(), Some(&block.1));
     }
 
-    #[tokio::test]
-    async fn safe_to_skip() {
-        let ctx = start_votor().await;
+    #[test]
+    fn safe_to_skip() {
+        let mut ctx = setup();
         let slot = Slot::genesis().next();
-        let parent = genesis_block_id();
 
         // vote notar after seeing block
-        ctx.send_block_and_expect_notar(slot, parent).await;
+        ctx.send_block_and_expect_notar(slot, genesis_block_id());
 
         // vote skip-fallback after safe-to-skip
-        ctx.pool_tx.send(PoolEvent::SafeToSkip(slot)).await.unwrap();
-        match ctx.other_a2a.receive().await.unwrap() {
-            ConsensusMessage::Vote(v) => {
-                assert!(matches!(v, Vote::SkipFallback(_)));
-                assert_eq!(v.slot(), slot);
-            }
-            m => panic!("other msg: {m:?}"),
-        }
+        ctx.state
+            .handle_pool_event(PoolEvent::SafeToSkip(slot), ctx.t0);
+        let votes = drain_votes(&mut ctx.state);
+        assert!(
+            matches!(votes[0], Vote::SkipFallback(_)) && votes[0].slot() == slot,
+            "expected a skip-fallback vote for slot {slot}, got {votes:?}"
+        );
     }
 
-    #[tokio::test]
-    async fn prunes_to_finalized_window() {
-        let (mut votor, ctx) = build_votor().await;
-
-        // drain broadcasts so votor's sends never block on the bounded network
-        let other_a2a = ctx.other_a2a;
-        tokio::spawn(async move { while other_a2a.receive().await.is_ok() {} });
+    #[test]
+    fn prunes_to_finalized_window() {
+        let mut ctx = setup();
 
         // finalize a slot that is NOT first in its window and isn't in the genesis window
         let finalized = Slot::new(SLOTS_PER_WINDOW + 1);
@@ -958,9 +721,9 @@ mod tests {
         let highest = Slot::new(2 * SLOTS_PER_WINDOW);
         for i in 1..=highest.inner() {
             let event = BlockstoreEvent::FirstShred(Slot::new(i));
-            votor.handle_blockstore_event(event).await;
+            ctx.state.handle_blockstore_event(event);
         }
-        assert!((0..=highest.inner()).all(|i| votor.state.slots.contains_key(&Slot::new(i))));
+        assert!((0..=highest.inner()).all(|i| ctx.state.slots.contains_key(&Slot::new(i))));
 
         // finalizing a mid-window slot should drop only the slots before its window
         let Vote::Final(final_vote) =
@@ -969,21 +732,21 @@ mod tests {
             unreachable!()
         };
         let cert = Cert::Final(FinalCert::new(&[final_vote], ctx.epoch_info.validators()));
-        let event = PoolEvent::CertCreated(cert);
-        votor.handle_pool_event(event).await;
-        assert_eq!(votor.state.highest_final_cert_slot, finalized);
+        ctx.state
+            .handle_pool_event(PoolEvent::CertCreated(cert), ctx.t0);
+        assert_eq!(ctx.state.highest_final_cert_slot, finalized);
 
         // the whole finalized window is kept
-        assert!(votor.state.slots.keys().all(|s| *s >= window_start));
+        assert!(ctx.state.slots.keys().all(|s| *s >= window_start));
         for slot in window_start.slots_in_window() {
             assert!(
-                votor.state.slots.contains_key(&slot),
+                ctx.state.slots.contains_key(&slot),
                 "slot {slot} in finalized window should be retained",
             );
         }
 
         // earlier windows are dropped
-        assert!(!votor.state.slots.contains_key(&Slot::genesis()));
-        assert!(!votor.state.slots.contains_key(&window_start.prev()));
+        assert!(!ctx.state.slots.contains_key(&Slot::genesis()));
+        assert!(!ctx.state.slots.contains_key(&window_start.prev()));
     }
 }

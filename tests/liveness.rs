@@ -65,24 +65,24 @@ async fn liveness_test_internal(num_nodes: usize, num_crashes: usize, should_suc
     // start `num_nodes` nodes
     let nodes = create_test_nodes(num_nodes as u64);
     let mut node_cancel_tokens = Vec::new();
-    let mut pools = Vec::new();
+    let mut finalized_watches = Vec::new();
     for node in nodes {
-        pools.push(node.get_pool());
+        finalized_watches.push(node.finalized_slot());
         node_cancel_tokens.push(node.get_cancel_token());
         tokio::spawn(node.run());
     }
 
-    // spawn a thread checking pool for progress
+    // spawn a thread checking finalization progress
     let cancel_tokens = node_cancel_tokens.clone();
     let mut liveness_tester = tokio::spawn(async move {
-        let mut finalized = vec![Slot::new(0); pools.len()];
+        let mut finalized = vec![Slot::new(0); finalized_watches.len()];
         for t in 1.. {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            for (i, pool) in pools.iter().enumerate() {
+            for (i, watch) in finalized_watches.iter().enumerate() {
                 if cancel_tokens[i].is_cancelled() {
                     continue;
                 }
-                let new_finalized = pool.read().await.finalized_slot();
+                let new_finalized = *watch.borrow();
                 if new_finalized <= finalized[i] {
                     panic!("no progress on node {} after {} s", i, 10 * t);
                 }

@@ -21,7 +21,7 @@ use crate::shredder::{
 use crate::types::{SliceIndex, SlicePayload};
 use crate::{Block, BlockId, Slot};
 
-/// Events emitted by [`BlockstoreImpl`] to [`super::votor::Votor`].
+/// Events emitted by [`BlockstoreImpl`] to the consensus core (`VotorState`).
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum BlockstoreEvent {
@@ -158,7 +158,7 @@ impl BlockstoreImpl {
     /// newly reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
     ///
     /// Events are buffered rather than sent so the caller can forward them off the
-    /// write lock (see [`super::EventForwarder`]). This matters most for the `Block`
+    /// consensus core off the write lock. This matters most for the `Block`
     /// event: dropping it would silently cost this node its vote for that block,
     /// with no retry path.
     fn emit(&mut self, event: BlockstoreEvent) -> Option<BlockInfo> {
@@ -517,7 +517,7 @@ mod tests {
 
     /// Reconstructing a block must record its `FirstShred` and `Block` events in the
     /// outbox (rather than sending them under the lock), so the caller can forward
-    /// them to Votor losslessly after releasing the write lock.
+    /// them to the consensus core losslessly after releasing the write lock.
     #[test]
     fn reconstruction_events_are_recorded() {
         let mut ctx = setup();
