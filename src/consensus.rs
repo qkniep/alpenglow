@@ -36,7 +36,6 @@ use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{debug, trace, warn};
-use static_assertions::const_assert;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
