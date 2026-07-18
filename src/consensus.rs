@@ -120,14 +120,24 @@ impl From<Cert> for ConsensusMessage {
 ///
 /// Forwarding one drained outbox preserves the order the producing component
 /// buffered its effects in. What the write lock no longer provides is a *global*
-/// order across tasks: two tasks that each mutate the Pool can now interleave
-/// their forwarding, so Votor may see a later task's event before an earlier
-/// one's. That is safe because Votor's handling of these events is order-
-/// insensitive except for its prune gate (`Votor::should_ignore_pool_event`),
-/// and an event losing that race is by definition one for a slot whose vote no
-/// longer matters. Restoring the global order would require holding a second
-/// lock across the send, which reintroduces exactly the lock jam this design
-/// exists to avoid.
+/// order across tasks: two tasks that each mutate the Pool or Blockstore can now
+/// interleave their forwarding, so Votor may see a later task's event before an
+/// earlier one's.
+///
+/// Votor must therefore not depend on the relative order of events from different
+/// tasks, on either channel. For pool events that holds already: handling is
+/// order-insensitive apart from the prune gate
+/// (`Votor::should_ignore_pool_event`), and an event losing that race is by
+/// definition one for a slot whose vote no longer matters. On the blockstore
+/// channel the order-sensitive pair is `InvalidBlock` against `Block` for the same
+/// window, which `Votor::try_skip_window` handles by marking the window bad
+/// regardless of whether the slot was already voted on.
+///
+/// Restoring the global order is not the alternative it looks like: it would take
+/// a second lock held across the send, reintroducing exactly the jam this design
+/// exists to avoid, and it would not even be sufficient — the lock only ever
+/// ordered events already buffered, never the arrival of the inputs that produce
+/// them.
 ///
 /// Cloneable so the message loop, the repair loop and the block producer can each
 /// forward the events they produce.
