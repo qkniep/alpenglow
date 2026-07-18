@@ -15,9 +15,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
+use crate::consensus::ValidatorEpochInfo;
 use crate::consensus::core::Input;
-use crate::consensus::driver::ParentReadyMap;
-use crate::consensus::{SharedBlockstore, ValidatorEpochInfo};
+use crate::consensus::driver::{DisseminatedMap, ParentReadyMap};
 use crate::crypto::merkle::{BlockHash, GENESIS_BLOCK_HASH};
 use crate::crypto::signature;
 use crate::network::{Network, TransactionNetwork};
@@ -38,12 +38,12 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     /// Other validators' info.
     epoch_info: Arc<ValidatorEpochInfo>,
 
-    /// Blockstore for storing raw block data.
-    blockstore: SharedBlockstore,
-    /// Feeds drained blockstore events to the consensus core.
+    /// Feeds our own produced slices (and repaired shreds) to the consensus core.
     inputs: mpsc::Sender<Input>,
     /// Observes the first ready parent per window, published by the driver.
     parent_ready: watch::Receiver<ParentReadyMap>,
+    /// Observes the disseminated block hash per slot, published by the driver.
+    disseminated: watch::Receiver<DisseminatedMap>,
     /// Observes the highest finalized slot, published by the driver.
     finalized: watch::Receiver<Slot>,
 
@@ -79,9 +79,9 @@ where
         epoch_info: Arc<ValidatorEpochInfo>,
         disseminator: Arc<D>,
         txs_receiver: T,
-        blockstore: SharedBlockstore,
         inputs: mpsc::Sender<Input>,
         parent_ready: watch::Receiver<ParentReadyMap>,
+        disseminated: watch::Receiver<DisseminatedMap>,
         finalized: watch::Receiver<Slot>,
         cancel_token: CancellationToken,
         delta_block: Duration,
@@ -91,9 +91,9 @@ where
         Self {
             secret_key,
             epoch_info,
-            blockstore,
             inputs,
             parent_ready,
+            disseminated,
             finalized,
             disseminator,
             txs_receiver,
@@ -130,8 +130,8 @@ where
             // wait for ParentReady or block in previous slot
             let slot_ready = wait_for_first_slot(
                 self.parent_ready.clone(),
+                self.disseminated.clone(),
                 self.finalized.clone(),
-                self.blockstore.clone(),
                 first_slot_in_window,
             )
             .await;
@@ -373,25 +373,23 @@ where
         }
 
         // Fast path: we already have every shred and the decoded payload, so the
-        // blockstore can skip RS-decode, Merkle verification and the per-shred
-        // lock churn. The completed block hands back (slot, hash). Feed the
-        // buffered events to the consensus core after releasing the write lock;
-        // the core registers the completed block with the pool itself.
-        let (block_info, events) = {
-            let mut blockstore = self.blockstore.write().await;
-            let block_info = blockstore.add_own_slice(payload, shreds);
-            (block_info, blockstore.take_events())
+        // blockstore (owned by the consensus core) can skip RS-decode, Merkle
+        // verification and per-shred churn. Hand the slice to the core, which
+        // ingests it, registers any completed block with the pool, and replies
+        // with the reconstructed block's info once the last slice lands.
+        let (completed_tx, completed_rx) = oneshot::channel();
+        let input = Input::OwnSlice {
+            payload,
+            shreds,
+            completed: completed_tx,
         };
-        for event in events {
-            if self
-                .inputs
-                .send(Input::BlockstoreEvent(event))
-                .await
-                .is_err()
-            {
-                debug!("consensus core inbox closed, dropping input");
-            }
+        if self.inputs.send(input).await.is_err() {
+            debug!("consensus core inbox closed, aborting block production");
+            return Ok(None);
         }
+        let block_info = completed_rx
+            .await
+            .expect("consensus core should reply to own slice");
 
         if let Some(e) = first_err {
             warn!(
@@ -512,24 +510,26 @@ enum SlotReady {
 ///
 /// Ready here can mean:
 /// - the driver published a ready parent for it (Pool's `ParentReady`), OR
-/// - the blockstore has stored a block for the previous slot.
+/// - a block was disseminated for the previous slot.
 ///
-/// See [`SlotReady`] for what is returned.
+/// Both are observed on driver-published watch channels. See [`SlotReady`] for
+/// what is returned.
 async fn wait_for_first_slot(
     mut parent_ready: watch::Receiver<ParentReadyMap>,
-    finalized: watch::Receiver<Slot>,
-    blockstore: SharedBlockstore,
+    mut disseminated: watch::Receiver<DisseminatedMap>,
+    mut finalized: watch::Receiver<Slot>,
     first_slot_in_window: Slot,
 ) -> SlotReady {
     assert!(first_slot_in_window.is_start_of_window());
     if first_slot_in_window.is_genesis_window() {
         return SlotReady::Ready((Slot::genesis(), GENESIS_BLOCK_HASH));
     }
+    let last_slot_in_prev_window = first_slot_in_window.prev();
 
     // Concurrently wait for:
     // - a ready parent published by the driver,
-    // - block reconstruction in blockstore, OR
-    // - notification that a later slot was finalized.
+    // - a disseminated block for the previous slot, OR
+    // - notification that a later slot was finalized (skip this window).
     let watch_for_oneshot = parent_ready.clone();
     tokio::select! {
         res = parent_ready.wait_for(|map| map.contains_key(&first_slot_in_window)) => {
@@ -540,31 +540,20 @@ async fn wait_for_first_slot(
             }
         }
 
-        res = async {
-            let handle = tokio::spawn(async move {
-                // PERF: These are burning a CPU. Can we use async here?
-                loop {
-                    let last_slot_in_prev_window = first_slot_in_window.prev();
-                    if let Some(hash) = blockstore.read().await
-                        .disseminated_block_hash(last_slot_in_prev_window)
-                    {
-                        return Some((last_slot_in_prev_window, hash.clone()));
-                    }
-                    if *finalized.borrow() >= first_slot_in_window {
-                        return None;
-                    }
-                    sleep(Duration::from_millis(1)).await;
-                }
-            });
-            handle.await.expect("error in task")
-        } => {
+        res = disseminated.wait_for(|map| map.contains_key(&last_slot_in_prev_window)) => {
             match res {
-                None => SlotReady::Skip,
-                Some((slot, hash)) => {
+                Ok(map) => {
+                    let hash = map[&last_slot_in_prev_window].clone();
+                    let parent = (last_slot_in_prev_window, hash);
                     let rx = parent_ready_oneshot(watch_for_oneshot, first_slot_in_window);
-                    SlotReady::ParentReadyNotSeen((slot, hash), rx)
+                    SlotReady::ParentReadyNotSeen(parent, rx)
                 }
+                Err(_) => SlotReady::Skip,
             }
+        }
+
+        _ = finalized.wait_for(|slot| *slot >= first_slot_in_window) => {
+            SlotReady::Skip
         }
     }
 }
@@ -592,11 +581,7 @@ fn parent_ready_oneshot(
 mod tests {
     use std::time::Duration;
 
-    use mockall::Sequence;
-    use tokio::sync::RwLock;
-
     use super::*;
-    use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::{BlockInfo, ValidatorEpochInfo};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
@@ -604,14 +589,38 @@ mod tests {
     use crate::test_utils::{generate_validators, random_block_id};
     use crate::{Transaction, ValidatorIndex};
 
-    /// Fresh channels standing in for the driver's side of the wiring.
+    /// Channels standing in for the driver's side of the wiring.
     ///
-    /// Held (not read) for the duration of a test so the producer never
-    /// sees closed channels.
+    /// The senders/receiver are held (or driven) by the test so the producer
+    /// never sees closed channels. `input_rx` receives the producer's
+    /// [`Input::OwnSlice`] messages, which a test-supplied responder answers.
     struct DriverStandIn {
-        _input_rx: mpsc::Receiver<Input>,
-        _parent_ready_tx: watch::Sender<ParentReadyMap>,
-        _finalized_tx: watch::Sender<Slot>,
+        input_rx: mpsc::Receiver<Input>,
+        parent_ready_tx: watch::Sender<ParentReadyMap>,
+        disseminated_tx: watch::Sender<DisseminatedMap>,
+        finalized_tx: watch::Sender<Slot>,
+    }
+
+    /// Spawns a task that answers each [`Input::OwnSlice`] with the next block
+    /// info from `responses`, mirroring what the consensus core does on ingest.
+    fn spawn_own_slice_responder(
+        mut input_rx: mpsc::Receiver<Input>,
+        responses: Vec<Option<BlockInfo>>,
+    ) {
+        tokio::spawn(async move {
+            for response in responses {
+                match input_rx
+                    .recv()
+                    .await
+                    .expect("producer should send OwnSlice")
+                {
+                    Input::OwnSlice { completed, .. } => {
+                        completed.send(response).expect("producer awaits the reply");
+                    }
+                    other => panic!("expected OwnSlice, got {other:?}"),
+                }
+            }
+        });
     }
 
     #[tokio::test]
@@ -663,35 +672,59 @@ mod tests {
         assert!(payload.data.len() + MAX_TRANSACTION_SIZE + 8 > max_len);
     }
 
+    /// The driver-published watches [`wait_for_first_slot`] observes.
+    ///
+    /// Every sender is retained: a dropped watch sender makes the corresponding
+    /// `wait_for` resolve to `Err` (which `wait_for_first_slot` treats as
+    /// shutdown → `Skip`), which the live driver never triggers.
+    struct Watches {
+        parent_ready_tx: watch::Sender<ParentReadyMap>,
+        parent_ready_rx: watch::Receiver<ParentReadyMap>,
+        _disseminated_tx: watch::Sender<DisseminatedMap>,
+        disseminated_rx: watch::Receiver<DisseminatedMap>,
+        finalized_tx: watch::Sender<Slot>,
+        finalized_rx: watch::Receiver<Slot>,
+    }
+
+    /// Builds the driver watches with the given initial parent-ready map.
+    ///
+    /// The disseminated map starts empty and the finalized slot at genesis.
+    fn watches(parents: ParentReadyMap) -> Watches {
+        let (parent_ready_tx, parent_ready_rx) = watch::channel(parents);
+        let (_disseminated_tx, disseminated_rx) = watch::channel(DisseminatedMap::new());
+        let (finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
+        Watches {
+            parent_ready_tx,
+            parent_ready_rx,
+            _disseminated_tx,
+            disseminated_rx,
+            finalized_tx,
+            finalized_rx,
+        }
+    }
+
     #[tokio::test]
     async fn wait_for_first_slot_genesis() {
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(MockBlockstore::new()));
-        let (_parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
-        let (_finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
-
-        let status =
-            wait_for_first_slot(parent_ready_rx, finalized_rx, blockstore, Slot::genesis()).await;
+        let w = watches(ParentReadyMap::new());
+        let status = wait_for_first_slot(
+            w.parent_ready_rx,
+            w.disseminated_rx,
+            w.finalized_rx,
+            Slot::genesis(),
+        )
+        .await;
         assert!(matches!(status, SlotReady::Ready(_)));
     }
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_already_ready() {
-        // the concurrent blockstore poll may run before the ready parent wins
-        let mut mock_blockstore = MockBlockstore::new();
-        mock_blockstore
-            .expect_disseminated_block_hash()
-            .returning(|_| None);
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(mock_blockstore));
-        let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
-        let (_finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
-
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
-        parent_ready_tx.send_modify(|map| {
-            map.insert(slot, parent.clone());
-        });
+        let parents = [(slot, parent.clone())].into_iter().collect();
+        let w = watches(parents);
 
-        let status = wait_for_first_slot(parent_ready_rx, finalized_rx, blockstore, slot).await;
+        let status =
+            wait_for_first_slot(w.parent_ready_rx, w.disseminated_rx, w.finalized_rx, slot).await;
         match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
             other => panic!("unexpected {other:?}"),
@@ -700,19 +733,13 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_first_slot_parent_ready_later() {
-        // the blockstore poll runs until the (delayed) parent becomes ready
-        let mut mock_blockstore = MockBlockstore::new();
-        mock_blockstore
-            .expect_disseminated_block_hash()
-            .returning(|_| None);
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(mock_blockstore));
-        let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
-        let (_finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
-
         let slot = Slot::windows().nth(10).unwrap();
         let parent = (slot.prev(), GENESIS_BLOCK_HASH);
+        let w = watches(ParentReadyMap::new());
 
-        // parent becomes ready only while we are already waiting
+        // parent becomes ready only while we are already waiting (move just the
+        // sender into the task so `w` keeps the other watches alive)
+        let parent_ready_tx = w.parent_ready_tx;
         let p = parent.clone();
         tokio::spawn(async move {
             sleep(Duration::from_millis(50)).await;
@@ -721,16 +748,33 @@ mod tests {
             });
         });
 
-        let status = wait_for_first_slot(parent_ready_rx, finalized_rx, blockstore, slot).await;
+        let status =
+            wait_for_first_slot(w.parent_ready_rx, w.disseminated_rx, w.finalized_rx, slot).await;
         match status {
             SlotReady::Ready(p) => assert_eq!(p, parent),
             other => panic!("unexpected {other:?}"),
         }
     }
 
+    #[tokio::test]
+    async fn wait_for_first_slot_skips_on_finalization() {
+        let slot = Slot::windows().nth(10).unwrap();
+        let w = watches(ParentReadyMap::new());
+
+        // a later slot finalizes while we wait: the window is skipped
+        let finalized_tx = w.finalized_tx;
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(50)).await;
+            finalized_tx.send(slot).unwrap();
+        });
+
+        let status =
+            wait_for_first_slot(w.parent_ready_rx, w.disseminated_rx, w.finalized_rx, slot).await;
+        assert!(matches!(status, SlotReady::Skip));
+    }
+
     /// A bunch of boilerplate to initialize and return a [`BlockProducer`].
     fn setup(
-        blockstore: MockBlockstore,
         disseminator: MockDisseminator,
         delta_block: Duration,
         delta_first_slice: Duration,
@@ -741,12 +785,12 @@ mod tests {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(blockstore));
         let disseminator = Arc::new(disseminator);
         let txs_receiver = UdpNetwork::new_with_any_port();
         let cancel_token = CancellationToken::new();
         let (input_tx, input_rx) = mpsc::channel(100);
         let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
+        let (disseminated_tx, disseminated_rx) = watch::channel(DisseminatedMap::new());
         let (finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
 
         let producer = BlockProducer::new(
@@ -754,18 +798,19 @@ mod tests {
             epoch_info,
             disseminator,
             txs_receiver,
-            blockstore,
             input_tx,
             parent_ready_rx,
+            disseminated_rx,
             finalized_rx,
             cancel_token,
             delta_block,
             delta_first_slice,
         );
         let stand_in = DriverStandIn {
-            _input_rx: input_rx,
-            _parent_ready_tx: parent_ready_tx,
-            _finalized_tx: finalized_tx,
+            input_rx,
+            parent_ready_tx,
+            disseminated_tx,
+            finalized_tx,
         };
         (producer, stand_in)
     }
@@ -780,25 +825,25 @@ mod tests {
             parent: (slot.prev(), hash_prev.clone()),
         };
 
-        // The producer ingests its own block one slice at a time via the fast
-        // path; a single-slice block completes on the only `add_own_slice` call.
-        let mut blockstore = MockBlockstore::new();
-        let bi = block_info.clone();
-        blockstore
-            .expect_add_own_slice()
-            .times(1)
-            .returning(move |_slice, _shreds| Some(bi.clone()));
-        blockstore.expect_take_events().returning(Vec::new);
-
         let mut disseminator = MockDisseminator::new();
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let (block_producer, _driver) = setup(
-            blockstore,
+        let (block_producer, driver) = setup(
             disseminator,
             Duration::from_micros(0),
             Duration::from_micros(0),
+        );
+
+        // The producer ingests its own block one slice at a time via the fast
+        // path; a single-slice block completes on the only `OwnSlice` input,
+        // which the core (here, our responder) answers with the block info.
+        spawn_own_slice_responder(driver.input_rx, vec![Some(block_info.clone())]);
+        // keep the driver watches alive for the duration of the test
+        let _watches = (
+            driver.parent_ready_tx,
+            driver.disseminated_tx,
+            driver.finalized_tx,
         );
 
         let ret = block_producer
@@ -824,52 +869,49 @@ mod tests {
             parent: new_parent.clone(),
         };
 
-        // NOTE: the blockstore is now sync, so the rendezvous blocks on std
-        // channels inside the mock (briefly blocking the runtime thread) and a
-        // plain OS thread plays the coordinator that reacts in between.
-        let (first_slice_finished_tx, first_slice_finished_rx) = std::sync::mpsc::channel();
-        let (start_second_slice_tx, start_second_slice_rx) = std::sync::mpsc::channel();
-
-        let mut seq = Sequence::new();
-        let mut blockstore = MockBlockstore::new();
-
-        // first slice: signal completion, then wait for the parent-ready event
-        // before the producer moves on to the second slice
-        blockstore
-            .expect_add_own_slice()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move |_slice, _shreds| {
-                first_slice_finished_tx.send(()).unwrap();
-                let () = start_second_slice_rx.recv().unwrap();
-                None
-            });
-
-        // second (last) slice: block is constructed with the new parent
-        let nbi = new_block_info.clone();
-        blockstore
-            .expect_add_own_slice()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(move |_slice, _shreds| Some(nbi.clone()));
-        blockstore.expect_take_events().returning(Vec::new);
-
         let mut disseminator = MockDisseminator::new();
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let (block_producer, _driver) = setup(
-            blockstore,
+        let (block_producer, driver) = setup(
             disseminator,
             Duration::from_micros(0),
             Duration::from_millis(0),
         );
+        let _watches = (
+            driver.parent_ready_tx,
+            driver.disseminated_tx,
+            driver.finalized_tx,
+        );
 
+        // OwnSlice responder that rendezvouses like the old blocking mock: it
+        // signals when the first slice's input arrives, waits until the parent
+        // becomes ready, then replies `None`; the second (last) slice completes
+        // the block with the new parent.
+        let (first_slice_finished_tx, first_slice_finished_rx) = oneshot::channel();
+        let (start_second_slice_tx, start_second_slice_rx) = oneshot::channel::<()>();
+        let mut input_rx = driver.input_rx;
+        let nbi = new_block_info.clone();
+        tokio::spawn(async move {
+            let Some(Input::OwnSlice { completed, .. }) = input_rx.recv().await else {
+                panic!("expected first OwnSlice");
+            };
+            first_slice_finished_tx.send(()).unwrap();
+            start_second_slice_rx.await.unwrap();
+            completed.send(None).unwrap();
+
+            let Some(Input::OwnSlice { completed, .. }) = input_rx.recv().await else {
+                panic!("expected second OwnSlice");
+            };
+            completed.send(Some(nbi)).unwrap();
+        });
+
+        // Coordinator: once the first slice is in, make the new parent ready,
+        // then let the second slice proceed.
         let (parent_ready_tx, parent_ready_rx) = oneshot::channel();
-
         let np = new_parent.clone();
-        std::thread::spawn(move || {
-            let () = first_slice_finished_rx.recv().unwrap();
+        tokio::spawn(async move {
+            first_slice_finished_rx.await.unwrap();
             parent_ready_tx.send(np).unwrap();
             start_second_slice_tx.send(()).unwrap();
         });

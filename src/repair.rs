@@ -16,10 +16,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{debug, trace, warn};
+use tokio::sync::{mpsc, oneshot};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::consensus::core::Input;
-use crate::consensus::{DELTA, SharedBlockstore, ValidatorEpochInfo};
+use crate::consensus::{BlockstoreImpl, DELTA, ValidatorEpochInfo};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -65,6 +66,68 @@ pub struct RepairRequest {
     req_type: RepairRequestType,
 }
 
+impl RepairRequest {
+    /// The validator that sent this request.
+    #[must_use]
+    pub(crate) fn sender(&self) -> ValidatorIndex {
+        self.sender
+    }
+
+    /// Builds a response to this request from `blockstore`.
+    ///
+    /// Returns the requested data if the blockstore holds it, otherwise a
+    /// [`RepairResponse::Nack`] so the requester can immediately try another
+    /// peer. Called by [`crate::consensus`]'s core, which owns the blockstore.
+    #[must_use]
+    pub(crate) fn build_response(&self, blockstore: &BlockstoreImpl) -> RepairResponse {
+        self.try_build_response(blockstore)
+            .unwrap_or_else(|| RepairResponse::Nack(self.req_type.clone()))
+    }
+
+    /// Tries to build a positive response for this request.
+    ///
+    /// Returns `None` if the requested data is not available in the blockstore.
+    fn try_build_response(&self, blockstore: &BlockstoreImpl) -> Option<RepairResponse> {
+        match &self.req_type {
+            RepairRequestType::LastSliceRoot(block_id) => {
+                let last_slice = blockstore.get_last_slice_index(block_id)?;
+                let root = blockstore.get_slice_root(block_id, last_slice)?;
+                let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
+                Some(RepairResponse::LastSliceRoot(
+                    self.req_type.clone(),
+                    last_slice,
+                    root,
+                    proof,
+                ))
+            }
+            RepairRequestType::SliceRoot(block_id, slice) => {
+                let root = blockstore.get_slice_root(block_id, *slice)?;
+                let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
+                Some(RepairResponse::SliceRoot(
+                    self.req_type.clone(),
+                    root,
+                    proof,
+                ))
+            }
+            RepairRequestType::Shred(block_id, slice, shred_index) => {
+                let shred = blockstore
+                    .get_shred(block_id, *slice, *shred_index)
+                    .cloned()?;
+                Some(RepairResponse::Shred(
+                    self.req_type.clone(),
+                    shred.into_shred(),
+                ))
+            }
+        }
+    }
+
+    /// Constructs a request as if received from `sender`; for tests only.
+    #[cfg(test)]
+    pub(crate) fn new_for_test(sender: ValidatorIndex, req_type: RepairRequestType) -> Self {
+        Self { sender, req_type }
+    }
+}
+
 /// Response messages for the repair sub-protocol.
 ///
 /// Each response type corresponds to a specific request message type.
@@ -101,10 +164,19 @@ impl RepairResponse {
 /// Handle repair requests from other nodes.
 ///
 /// This is separated from [`Repair`] to handle repair requests and responses on separate sockets and tokio tasks.
-/// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
+/// The blockstore lives inside the consensus core, so this handler forwards each
+/// (validated) request to the core as an `Input::RepairRequest` and writes the
+/// core's reply back to the requesting peer.
+///
+/// NOTE: serving requests now shares the core's single-threaded inbox with
+/// consensus processing, rather than the dedicated read-lock the previous
+/// design used. Repair serving is network-bound and not latency-critical, so
+/// this is acceptable, but if it ever shows up in `performance_test` the core
+/// could grow a priority lane for serve requests.
 pub struct RepairRequestHandler<N: Network> {
     epoch_info: Arc<ValidatorEpochInfo>,
-    blockstore: SharedBlockstore,
+    /// Feeds validated repair requests to the consensus core.
+    inputs: mpsc::Sender<Input>,
     network: N,
 }
 
@@ -115,23 +187,23 @@ where
     /// Creates a new repair request handler instance.
     ///
     /// Given `network` instance will be used for receiving repair requests and sending repair responses.
-    /// The blockstore will be used to handle the repair requests.
-    pub fn new(
+    /// Requests are answered by the consensus core, reached via `inputs`.
+    pub(crate) fn new(
         epoch_info: Arc<ValidatorEpochInfo>,
-        blockstore: SharedBlockstore,
+        inputs: mpsc::Sender<Input>,
         network: N,
     ) -> Self {
         Self {
             epoch_info,
-            blockstore,
+            inputs,
             network,
         }
     }
 
     /// Main loop of the repair request handler.
     ///
-    /// Listens for repair requests on `self.network`.
-    /// Looks up the corresponding data in `self.blockstore` and sends replies.
+    /// Listens for repair requests on `self.network`, forwards each to the
+    /// consensus core, and sends the core's reply back to the requester.
     pub async fn run(&self) {
         loop {
             let request = match self.network.receive().await {
@@ -147,10 +219,11 @@ where
         }
     }
 
-    /// Tries to answer the given repair request.
+    /// Answers a repair request by asking the core to build a response.
     ///
-    /// If we have the information in blockstore, it is sent to the requester.
-    /// Otherwise, a [`RepairResponse::Nack`] is sent back to the requester.
+    /// The core reads its blockstore and replies (with the data or a
+    /// [`RepairResponse::Nack`]) on a oneshot channel; the reply is then written
+    /// to the requesting peer's socket.
     #[hotpath::measure]
     async fn answer_request(&self, request: RepairRequest) -> std::io::Result<()> {
         trace!("answering repair request: {request:?}");
@@ -158,62 +231,30 @@ where
         // drop requests from validators outside the current epoch's set,
         // otherwise `validator()` indexing in `send_response` would panic on byzantine input
         let epoch = self.epoch_info.epoch_info();
-        if request.sender.as_usize() >= epoch.validators().len() {
+        if request.sender().as_usize() >= epoch.validators().len() {
             warn!(
                 "dropping repair request from unknown validator {:?}",
-                request.sender
+                request.sender()
             );
             return Ok(());
         }
+        let sender = request.sender();
 
-        let response = self
-            .try_build_response(&request)
+        let (reply, reply_rx) = oneshot::channel();
+        if self
+            .inputs
+            .send(Input::RepairRequest { request, reply })
             .await
-            .unwrap_or_else(|| RepairResponse::Nack(request.req_type.clone()));
-        self.send_response(response, request.sender).await
-    }
-
-    /// Tries to build a positive response for the given repair request.
-    ///
-    /// Returns `None` if the requested data is not available in the blockstore.
-    async fn try_build_response(&self, request: &RepairRequest) -> Option<RepairResponse> {
-        match &request.req_type {
-            RepairRequestType::LastSliceRoot(block_id) => {
-                let blockstore = self.blockstore.read().await;
-                let last_slice = blockstore.get_last_slice_index(block_id)?;
-                let root = blockstore.get_slice_root(block_id, last_slice)?;
-                let proof = blockstore.create_double_merkle_proof(block_id, last_slice)?;
-                drop(blockstore);
-                Some(RepairResponse::LastSliceRoot(
-                    request.req_type.clone(),
-                    last_slice,
-                    root,
-                    proof,
-                ))
-            }
-            RepairRequestType::SliceRoot(block_id, slice) => {
-                let blockstore = self.blockstore.read().await;
-                let root = blockstore.get_slice_root(block_id, *slice)?;
-                let proof = blockstore.create_double_merkle_proof(block_id, *slice)?;
-                drop(blockstore);
-                Some(RepairResponse::SliceRoot(
-                    request.req_type.clone(),
-                    root,
-                    proof,
-                ))
-            }
-            RepairRequestType::Shred(block_id, slice, shred_index) => {
-                let blockstore = self.blockstore.read().await;
-                let shred = blockstore
-                    .get_shred(block_id, *slice, *shred_index)
-                    .cloned()?;
-                drop(blockstore);
-                Some(RepairResponse::Shred(
-                    request.req_type.clone(),
-                    shred.into_shred(),
-                ))
-            }
+            .is_err()
+        {
+            debug!("consensus core inbox closed, dropping repair request");
+            return Ok(());
         }
+        let Ok(response) = reply_rx.await else {
+            debug!("consensus core dropped repair reply, node shutting down");
+            return Ok(());
+        };
+        self.send_response(response, sender).await
     }
 
     #[hotpath::measure]
@@ -236,7 +277,6 @@ where
 /// This is used by the node to repair blocks that it is missing.
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
 pub struct Repair<N: Network> {
-    blockstore: SharedBlockstore,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
     outstanding_requests: BTreeMap<Hash, RepairRequestType>,
     /// Expiry times of outstanding requests, earliest first (min-heap via [`Reverse`]).
@@ -244,8 +284,8 @@ pub struct Repair<N: Network> {
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Feeds drained blockstore events to the consensus core.
-    inputs: tokio::sync::mpsc::Sender<Input>,
+    /// Feeds repaired shreds to the consensus core.
+    inputs: mpsc::Sender<Input>,
 }
 
 impl<N> Repair<N>
@@ -254,18 +294,17 @@ where
 {
     /// Creates a new repair instance.
     ///
-    /// Given `network` will be used for sending repair requests and receiving repair responses.
-    /// Any repaired shreds will be written into the provided `blockstore`.
+    /// Given `network` will be used for sending repair requests and receiving
+    /// repair responses. Repaired shreds are fed to the consensus core via
+    /// `inputs`, which owns the blockstore they are written into.
     pub(crate) fn new(
-        blockstore: SharedBlockstore,
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
-        inputs: tokio::sync::mpsc::Sender<Input>,
+        inputs: mpsc::Sender<Input>,
     ) -> Self {
         let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
         Self {
-            blockstore,
             slice_roots: BTreeMap::new(),
             outstanding_requests: BTreeMap::new(),
             request_timeouts: BinaryHeap::new(),
@@ -314,16 +353,11 @@ where
     }
 
     /// Starts repair process for the block specified by `slot` and `block_hash`.
+    ///
+    /// The core suppresses repair requests for blocks it already holds (it owns
+    /// the blockstore), so this is only reached for genuinely missing blocks.
     pub async fn repair_block(&mut self, block_id: BlockId) {
         let (slot, block_hash) = &block_id;
-        if self.blockstore.read().await.get_block(&block_id).is_some() {
-            trace!(
-                "ignoring repair for block {} in slot {slot}, already have the block",
-                block_hash.short_hex()
-            );
-            return;
-        }
-
         debug!("repairing block {} in slot {slot}", block_hash.short_hex());
         let req = RepairRequestType::LastSliceRoot(block_id);
         if let Err(err) = self.send_request(req).await {
@@ -438,31 +472,14 @@ where
                     return;
                 };
 
-                // Store the shred, then feed the buffered events to the
-                // consensus core off the write lock. The core registers the
-                // completed block with the pool itself.
-                let (res, events) = {
-                    let mut blockstore = self.blockstore.write().await;
-                    let res = blockstore.add_shred_from_repair(block_hash.clone(), validated);
-                    (res, blockstore.take_events())
+                // Feed the repaired shred to the consensus core, which owns the
+                // blockstore and registers any completed block with the pool.
+                let input = Input::RepairedShred {
+                    block_hash: block_hash.clone(),
+                    shred: validated,
                 };
-                for event in events {
-                    if self
-                        .inputs
-                        .send(Input::BlockstoreEvent(event))
-                        .await
-                        .is_err()
-                    {
-                        debug!("consensus core inbox closed, dropping input");
-                    }
-                }
-                if let Ok(Some(block_info)) = res {
-                    assert_eq!(block_info.hash, *block_hash);
-                    debug!(
-                        "successfully repaired block {} in slot {}",
-                        block_hash.short_hex(),
-                        slot
-                    );
+                if self.inputs.send(input).await.is_err() {
+                    debug!("consensus core inbox closed, dropping repaired shred");
                 }
             }
         }
@@ -507,13 +524,15 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::time::Instant;
 
-    use tokio::sync::RwLock;
+    use tokio::sync::Mutex;
     use tokio::sync::mpsc::Sender;
 
     use super::*;
     use crate::ValidatorIndex;
-    use crate::consensus::{BlockstoreImpl, EpochInfo};
+    use crate::consensus::EpochInfo;
+    use crate::consensus::core::ConsensusCore;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
     use crate::crypto::signature::SecretKey;
     use crate::network::simulated::SimulatedNetworkCore;
@@ -523,6 +542,13 @@ mod tests {
     use crate::types::Slot;
     use crate::types::slice_index::MAX_SLICES_PER_BLOCK;
 
+    /// Shared handle to the consensus core driven by the repair-test harness.
+    ///
+    /// Stands in for production's [`crate::consensus`] driver: a background task
+    /// feeds it inputs from the repair loop and request handler, and the test
+    /// injects disseminated shreds or queries the blockstore through it.
+    type SharedCore = Arc<Mutex<ConsensusCore>>;
+
     /// Test context for repair tests.
     ///
     /// Sets up a small network of 2 validators:
@@ -530,7 +556,10 @@ mod tests {
     /// - Validator 1: has repair set up, is not the leader.
     struct TestContext {
         repair_tx: Sender<BlockId>,
-        blockstore: SharedBlockstore,
+        /// Direct handle to the core's inbox, for injecting disseminated shreds.
+        input_tx: Sender<Input>,
+        /// The consensus core owning the blockstore, for assertions.
+        core: SharedCore,
         /// Validator 0's network endpoint for handling repair requests
         /// (receives [`RepairRequest`] messages, sends [`RepairResponse`] messages).
         v0_request_net: SimulatedNetwork<RepairResponse, RepairRequest>,
@@ -551,42 +580,55 @@ mod tests {
         validators[1].repair_requester_address = localhost_ip_sockaddr(2);
         validators[1].repair_responder_address = localhost_ip_sockaddr(3);
 
-        let core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
-        let v0_repair_requester_network = core.join_unlimited(ValidatorIndex::new(0)).await;
-        let v0_repair_responder_network = core.join_unlimited(ValidatorIndex::new(1)).await;
-        let v1_repair_requester_network = core.join_unlimited(ValidatorIndex::new(2)).await;
-        let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(3)).await;
+        let net_core = Arc::new(SimulatedNetworkCore::new(1, 0.0, 0.0));
+        let v0_repair_requester_network = net_core.join_unlimited(ValidatorIndex::new(0)).await;
+        let v0_repair_responder_network = net_core.join_unlimited(ValidatorIndex::new(1)).await;
+        let v1_repair_requester_network = net_core.join_unlimited(ValidatorIndex::new(2)).await;
+        let v1_repair_responder_network = net_core.join_unlimited(ValidatorIndex::new(3)).await;
 
         let epoch_info = EpochInfo::new(validators);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
 
-        // set up blockstore
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
-
-        // set up channels standing in for the driver
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel(100);
+        // set up the consensus core (owns the blockstore) and a task that feeds
+        // it inputs from the repair loop / request handler, mirroring the driver
+        let voting_key = crate::crypto::aggsig::SecretKey::new(&mut rand::rng());
+        let core: SharedCore = Arc::new(Mutex::new(ConsensusCore::new(
+            epoch_info.clone(),
+            voting_key,
+            Instant::now(),
+        )));
+        let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Input>(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
+        {
+            let core = Arc::clone(&core);
+            tokio::spawn(async move {
+                while let Some(input) = input_rx.recv().await {
+                    // outputs (repair requests, broadcasts, ...) are not needed
+                    // by these tests, which drive the repair protocol directly
+                    let mut out = Vec::new();
+                    core.lock().await.handle(input, Instant::now(), &mut out);
+                }
+            });
+        }
 
         // create and start Repair instance
         let mut repair = Repair::new(
-            Arc::clone(&blockstore),
             v1_repair_requester_network,
             epoch_info.clone(),
-            input_tx,
+            input_tx.clone(),
         );
         tokio::spawn(async move {
             repair.repair_loop(repair_rx).await;
-            // keep the input receiver alive so sends from the repair loop don't fail
-            drop(input_rx);
         });
         let repair_request_handler =
-            RepairRequestHandler::new(epoch_info, blockstore.clone(), v1_repair_responder_network);
+            RepairRequestHandler::new(epoch_info, input_tx.clone(), v1_repair_responder_network);
         tokio::spawn(async move {
             repair_request_handler.run().await;
         });
         TestContext {
             repair_tx,
-            blockstore,
+            input_tx,
+            core,
             v0_request_net: v0_repair_responder_network,
             v0_reply_net: v0_repair_requester_network,
             leader_sk: leader_key,
@@ -690,9 +732,10 @@ mod tests {
         // relying on a fixed sleep, which is racy under CI load
         let repaired = tokio::time::timeout(Duration::from_secs(10), async {
             while ctx
-                .blockstore
-                .read()
+                .core
+                .lock()
                 .await
+                .blockstore()
                 .get_block(&block_to_repair)
                 .is_none()
             {
@@ -764,24 +807,37 @@ mod tests {
         let (block_hash, _, shreds) = create_random_shredded_block(slot, SLICES, &ctx.leader_sk);
         let block_to_repair = (slot, block_hash.clone());
 
-        // ingest the block into blockstore
-        let mut b = ctx.blockstore.write().await;
+        // ingest the block into the core's blockstore via the dissemination path
         for slice_shreds in shreds.clone() {
             for shred in slice_shreds {
-                let _ = b.add_shred_from_dissemination(shred);
+                ctx.input_tx
+                    .send(Input::DisseminatedShred(shred))
+                    .await
+                    .unwrap();
             }
         }
-        drop(b);
-        assert_eq!(
-            ctx.blockstore.read().await.disseminated_block_hash(slot),
-            Some(&block_hash)
-        );
-        assert!(
-            ctx.blockstore
-                .read()
+        // wait until the core has reconstructed the block (inputs are async)
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while ctx
+                .core
+                .lock()
                 .await
+                .blockstore()
                 .get_block(&block_to_repair)
-                .is_some()
+                .is_none()
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("block should reconstruct from disseminated shreds");
+        assert_eq!(
+            ctx.core
+                .lock()
+                .await
+                .blockstore()
+                .disseminated_block_hash(slot),
+            Some(&block_hash)
         );
 
         // request last slice root to learn how many slices there are
@@ -802,9 +858,10 @@ mod tests {
         assert_eq!(last_slice.inner(), SLICES - 1);
         assert_eq!(&root, shreds[last_slice.inner()][0].slice_root());
         let correct_proof = ctx
-            .blockstore
-            .read()
+            .core
+            .lock()
             .await
+            .blockstore()
             .create_double_merkle_proof(&block_to_repair, last_slice)
             .unwrap();
         assert_eq!(proof, correct_proof);
@@ -825,9 +882,10 @@ mod tests {
             assert_eq!(req_type, request.req_type);
             assert_eq!(&root, shreds[slice.inner()][0].slice_root());
             let correct_proof = ctx
-                .blockstore
-                .read()
+                .core
+                .lock()
                 .await
+                .blockstore()
                 .create_double_merkle_proof(&block_to_repair, slice)
                 .unwrap();
             assert_eq!(proof, correct_proof);

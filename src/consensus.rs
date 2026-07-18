@@ -8,11 +8,11 @@
 //! to the different necessary network protocols.
 //!
 //! Most important component data structures defined in this module are:
-//! - [`Blockstore`] holds individual shreds and reconstructed blocks for each slot.
+//! - [`BlockstoreImpl`] holds individual shreds and reconstructed blocks for each slot.
 //! - [`PoolImpl`] holds votes and certificates for each slot.
 //! - `VotorState` handles the main voting logic.
-//! - `ConsensusCore` combines the latter two into one synchronous state
-//!   machine, driven by a single `Driver` task that performs all I/O.
+//! - `ConsensusCore` combines the three into one synchronous state machine,
+//!   driven by a single `Driver` task that performs all I/O.
 //!
 //! Some other data types for consensus are also defined here:
 //! - [`Cert`] represents a certificate of votes of a specific type.
@@ -41,16 +41,14 @@ use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{debug, trace};
 use static_assertions::const_assert;
-use tokio::sync::{RwLock, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub use self::blockstore::{
-    AddShredError, BlockInfo, Blockstore, BlockstoreEvent, BlockstoreImpl, SharedBlockstore,
-};
+pub use self::blockstore::{AddShredError, BlockInfo, BlockstoreEvent, BlockstoreImpl};
 pub use self::cert::{Cert, CertError, NotarCert};
 use self::core::{ConsensusCore, Input};
-use self::driver::{Driver, ParentReadyMap};
+use self::driver::{CommitmentCache, DisseminatedMap, Driver, ParentReadyMap};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 #[cfg(feature = "test-utils")]
 pub use self::pool::bench_replay_votes;
@@ -117,13 +115,14 @@ where
     /// Other validators' info.
     epoch_info: Arc<ValidatorEpochInfo>,
 
-    /// Blockstore for storing raw block data.
-    blockstore: SharedBlockstore,
     /// Inputs destined for the consensus core (driver task).
     ///
     /// A full channel back-pressures the ingest tasks; a closed one means the
     /// driver shut down, at which point remaining messages are dropped.
     inputs: mpsc::Sender<Input>,
+    /// Per-slice commitment cache read by the shred-ingest path; written by the
+    /// driver from the core's [`core::Output::SliceCommitment`] outputs.
+    commitments: CommitmentCache,
     /// Observes the highest finalized slot, published by the driver.
     finalized: watch::Receiver<Slot>,
 
@@ -190,10 +189,10 @@ where
         let (input_tx, input_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let (parent_ready_tx, parent_ready_rx) = watch::channel(ParentReadyMap::new());
+        let (disseminated_tx, disseminated_rx) = watch::channel(DisseminatedMap::new());
         let (finalized_tx, finalized_rx) = watch::channel(Slot::genesis());
+        let commitments = CommitmentCache::default();
         let all2all = Arc::new(all2all);
-
-        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
         let core = ConsensusCore::new(epoch_info.clone(), voting_secret_key, Instant::now());
         let driver = Driver::new(
@@ -202,7 +201,9 @@ where
             all2all.clone(),
             repair_tx,
             parent_ready_tx,
+            disseminated_tx,
             finalized_tx,
+            commitments.clone(),
             cancel_token.clone(),
         );
         let driver_handle = tokio::spawn(
@@ -213,14 +214,13 @@ where
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
-            blockstore.clone(),
+            input_tx.clone(),
             repair_responder_network,
         );
         let _repair_request_handler =
             tokio::spawn(async move { repair_request_handler.run().await });
 
         let mut repair = Repair::new(
-            Arc::clone(&blockstore),
             repair_requester_network,
             epoch_info.clone(),
             input_tx.clone(),
@@ -238,9 +238,9 @@ where
             epoch_info.clone(),
             disseminator.clone(),
             txs_receiver,
-            blockstore.clone(),
             input_tx.clone(),
             parent_ready_rx,
+            disseminated_rx,
             finalized_rx.clone(),
             cancel_token.clone(),
             DELTA_BLOCK,
@@ -249,8 +249,8 @@ where
 
         Self {
             epoch_info,
-            blockstore,
             inputs: input_tx,
+            commitments,
             finalized: finalized_rx,
             block_producer,
             all2all,
@@ -363,12 +363,10 @@ where
         let slot = shred.payload().header.slot;
         let slice_index = shred.payload().header.slice_index;
         let leader_pk = self.epoch_info.epoch_info().leader(slot).pubkey;
-        // use cached commitment, if we have it, to skip signature verification
-        let cached = self
-            .blockstore
-            .read()
-            .await
-            .cached_commitment(slot, slice_index);
+        // use cached commitment, if we have it, to skip signature verification;
+        // the cache is fed by the core's `SliceCommitment` outputs (the core
+        // owns the blockstore, so this edge can no longer read it directly)
+        let cached = self.commitments.get(slot, slice_index);
         let validated = match ValidatedShred::try_new(shred, cached.as_ref(), &leader_pk) {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -382,18 +380,9 @@ where
             return Ok(());
         }
 
-        // Ingest into the blockstore, then feed the buffered events to the
-        // consensus core *after* releasing the write lock. The core registers
-        // completed blocks with the pool itself, so no separate `add_block`
-        // call is needed here.
-        let events = {
-            let mut blockstore = self.blockstore.write().await;
-            let _ = blockstore.add_shred_from_dissemination(validated);
-            blockstore.take_events()
-        };
-        for event in events {
-            self.send_input(Input::BlockstoreEvent(event)).await;
-        }
+        // Hand the validated shred to the consensus core, which owns the
+        // blockstore, ingests it and registers any completed block with the pool.
+        self.send_input(Input::DisseminatedShred(validated)).await;
         Ok(())
     }
 }
