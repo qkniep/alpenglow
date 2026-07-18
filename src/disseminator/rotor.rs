@@ -16,7 +16,6 @@ pub mod sampling_strategy;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use quick_cache::sync::Cache;
 use rand::prelude::*;
 
@@ -116,26 +115,24 @@ where
     /// Does nothing if we are not the dedicated relay for this shred.
     #[hotpath::measure]
     async fn broadcast_if_relay(&self, shred: &Shred) -> std::io::Result<()> {
-        let leader = self
-            .epoch_info
-            .epoch_info()
-            .leader(shred.payload().header.slot)
-            .id;
-
         // do nothing if we are not the relay
         let relay = self.sample_relay(shred);
         if self.epoch_info.own_id() != relay {
             return Ok(());
         }
 
-        // otherwise, broadcast
-        let to = self
+        // exclude the leader
+        let leader = self
             .epoch_info
             .epoch_info()
-            .validators()
-            .iter()
-            .filter(|v| v.id != leader && v.id != relay)
-            .map(|v| v.disseminator_address);
+            .leader(shred.payload().header.slot)
+            .id;
+
+        // otherwise, broadcast
+        let validators = self.epoch_info.epoch_info().validators();
+        let to = (0..validators.len())
+            .filter(move |i| i != &relay.as_usize() && i != &leader.as_usize())
+            .map(move |i| validators[i].disseminator_address);
         self.network.send_to_many(shred, to).await?;
         Ok(())
     }
@@ -178,7 +175,6 @@ where
     }
 }
 
-#[async_trait]
 impl<N, S: QuorumSamplingStrategy + Send + Sync + 'static> Disseminator for Rotor<N, S>
 where
     N: ShredNetwork,

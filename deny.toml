@@ -18,6 +18,7 @@ all-features = true
 # (or `crate@version`) here, ideally with a reason.
 ignore = [
     # { id = "RUSTSEC-0000-0000", reason = "why this is acceptable" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; only reachable via plotters' font backend (simulations plots), and both plotters font backends need it — revisit once ab_glyph/plotters migrate to skrifa" },
 ]
 
 [licenses]

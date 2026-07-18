@@ -14,23 +14,20 @@ pub mod rotor;
 pub mod trivial;
 pub mod turbine;
 
-use async_trait::async_trait;
-
 pub use self::rotor::Rotor;
 pub use self::trivial::TrivialDisseminator;
 pub use self::turbine::Turbine;
 use crate::shredder::Shred;
 
 /// Abstraction of a block dissemination protocol.
-#[async_trait]
 #[cfg_attr(test, mockall::automock)]
 pub trait Disseminator {
     /// Sends the given shred to the network as the original source.
-    async fn send(&self, shred: &Shred) -> std::io::Result<()>;
+    fn send(&self, shred: &Shred) -> impl Future<Output = std::io::Result<()>> + Send;
 
     /// Performs any necessary forwarding of the given shred.
-    async fn forward(&self, shred: &Shred) -> std::io::Result<()>;
+    fn forward(&self, shred: &Shred) -> impl Future<Output = std::io::Result<()>> + Send;
 
     /// Receives the next shred from the network.
-    async fn receive(&self) -> std::io::Result<Shred>;
+    fn receive(&self) -> impl Future<Output = std::io::Result<Shred>> + Send;
 }

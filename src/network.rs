@@ -10,7 +10,6 @@
 //!
 //! Specific implementations for different underlying network stacks are provided:
 //! - [`UdpNetwork`] abstracts a simple UDP socket
-//! - [`TcpNetwork`] handles TCP connections under the hood
 //! - [`SimulatedNetwork`] provides a simulated network for local testing
 //!
 //! # Examples
@@ -27,17 +26,15 @@
 //! ```
 
 pub mod simulated;
-mod tcp;
 mod udp;
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use async_trait::async_trait;
 use wincode::config::Configuration;
 use wincode::{ReadResult, SchemaRead};
 
 pub use self::simulated::SimulatedNetwork;
-pub use self::tcp::TcpNetwork;
 pub use self::udp::UdpNetwork;
 use crate::Transaction;
 use crate::consensus::ConsensusMessage;
@@ -68,30 +65,46 @@ where
 }
 
 /// Abstraction of a network interface for sending and receiving messages.
-#[async_trait]
 pub trait Network: Send + Sync {
     type Send;
     type Recv;
 
-    /// Sends the `message` to all the addresses in `addrs`.
+    /// Sends the `message` to `addr`.
     ///
-    /// Note that a possible strategy for the implementers is to send to one address after another.
-    /// In this strategy, it is possible that if sending to one address fails, the implementer gives up sending to the remaining addresses.
-    /// This means that the function is not atomic, if it fails, some messages may still have been sent.
-    //
-    // NOTE: Consider return a `Vec<Result<()>>` to indicate per address failures.
-    async fn send_to_many(
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the underlying network operation fails.
+    fn send(
+        &self,
+        message: &Self::Send,
+        addr: SocketAddr,
+    ) -> impl Future<Output = io::Result<()>> + Send;
+
+    /// Sends the `message` to all the addresses in `addrs`, best-effort.
+    ///
+    /// Every address is attempted even if some sends fail.
+    /// Therefore the function is not atomic:
+    /// On error, some messages may still have been sent (and others not).
+    /// A failure of the underlying network itself may abort the remaining sends early.
+    ///
+    /// # Errors
+    ///
+    /// Returns only the *first* [`io::Error`] encountered if any.
+    fn send_to_many(
         &self,
         message: &Self::Send,
         addrs: impl IntoIterator<Item = SocketAddr> + Send,
-    ) -> std::io::Result<()>;
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
-    /// Sends the `message` to `addr`.
-    async fn send(&self, message: &Self::Send, addr: SocketAddr) -> std::io::Result<()>;
-
-    // TODO: implement broadcast at `Network` level?
-
-    async fn receive(&self) -> std::io::Result<Self::Recv>;
+    /// Receives a message from the network.
+    ///
+    /// Waits until the next message is received.
+    /// Messages that fail to deserialize are dropped and waiting continues.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the underlying network operation fails.
+    fn receive(&self) -> impl Future<Output = io::Result<Self::Recv>> + Send;
 }
 
 /// A marker trait that constrains [`Network`] to send and receive [`Shred`]
