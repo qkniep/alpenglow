@@ -484,7 +484,6 @@ struct SlotState {
 mod tests {
     use std::time::Duration;
 
-    use async_trait::async_trait;
     use tokio::sync::mpsc;
 
     use super::*;
@@ -504,7 +503,6 @@ mod tests {
     /// best-effort error handling. `receive` never resolves.
     struct FailingAll2All;
 
-    #[async_trait]
     impl All2All for FailingAll2All {
         async fn broadcast(&self, _msg: &ConsensusMessage) -> std::io::Result<()> {
             Err(std::io::Error::other("simulated broadcast failure"))
