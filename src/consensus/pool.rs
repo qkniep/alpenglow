@@ -74,6 +74,7 @@ impl PoolEvent {
 /// once the lock is released (a blocking send under the lock would jam every task
 /// contending for it).
 #[derive(Debug, Default)]
+#[must_use = "buffered effects are lost unless forwarded, see `Alpenglow::forward_pool_outbox`"]
 pub struct PoolOutbox {
     /// Events destined for Votor.
     pub votor_events: Vec<PoolEvent>,
