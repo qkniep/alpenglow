@@ -450,7 +450,7 @@ where
                 };
                 self.event_forwarder.forward_blockstore_events(events).await;
                 if let Ok(Some(block_info)) = res {
-                    assert_eq!(block_info.hash, *block_hash);
+                    assert_eq!(&block_info.hash, block_hash);
                     let outbox = {
                         let mut pool = self.pool.write().await;
                         pool.add_block((*slot, block_info.hash), block_info.parent)
