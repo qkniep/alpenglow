@@ -69,17 +69,31 @@ impl PoolEvent {
     }
 }
 
+/// A single side-effect the Pool buffered while processing under its write lock.
+// PERF: Short-lived outbox entry, moved out on drain; boxing isn't worth the allocation.
+#[expect(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+pub enum PoolEffect {
+    /// An event destined for Votor.
+    VotorEvent(PoolEvent),
+    /// A request to repair the given block, destined for the repair loop.
+    Repair(BlockId),
+}
+
 /// Side-effects the Pool produces while processing under its write lock, to be
 /// drained via [`Pool::take_outbox`] and forwarded to Votor and the repair loop
 /// once the lock is released (a blocking send under the lock would jam every task
 /// contending for it).
+///
+/// Effects are kept in the single order the Pool produced them. Splitting them
+/// into a per-destination queue would reorder the two against each other, e.g.
+/// delaying the repair request for a newly certified block behind every Votor
+/// event that certification produced.
 #[derive(Debug, Default)]
-#[must_use = "buffered effects are lost unless forwarded, see `Alpenglow::forward_pool_outbox`"]
+#[must_use = "buffered effects are lost unless forwarded, see `EventForwarder::forward_pool_outbox`"]
 pub struct PoolOutbox {
-    /// Events destined for Votor.
-    pub votor_events: Vec<PoolEvent>,
-    /// Repair requests destined for the repair loop.
-    pub repairs: Vec<BlockId>,
+    /// Buffered effects, in the order the Pool produced them.
+    pub effects: Vec<PoolEffect>,
 }
 
 /// Errors the Pool may return when adding a vote.
@@ -422,7 +436,7 @@ impl PoolImpl {
     /// (see [`super::EventForwarder`]); a blocking send under the lock would jam
     /// every task contending for it.
     fn enqueue_votor_event(&mut self, event: PoolEvent) {
-        self.outbox.votor_events.push(event);
+        self.outbox.effects.push(PoolEffect::VotorEvent(event));
     }
 
     /// Records a repair request for the given block in the outbox.
@@ -430,7 +444,7 @@ impl PoolImpl {
     /// Buffered rather than sent, for the same reason as
     /// [`Self::enqueue_votor_event`].
     fn enqueue_repair(&mut self, block_id: BlockId) {
-        self.outbox.repairs.push(block_id);
+        self.outbox.effects.push(PoolEffect::Repair(block_id));
     }
 }
 
@@ -560,10 +574,15 @@ impl Pool for PoolImpl {
     /// them as a [`PoolOutbox`] holding a single [`PoolEvent::Standstill`] for the
     /// caller to forward to Votor. Should be called after not seeing any progress
     /// for the standstill duration.
+    ///
+    /// NOTE: The bundle may legitimately come out empty. A node that has not
+    /// finalized anything yet has no final cert for the genesis slot, which is
+    /// exactly the case for a node that booted into a partition or started ahead
+    /// of the rest of the cluster. That is a standstill worth reporting, not an
+    /// invariant violation, so the recovery path must not assume a final cert.
     fn recover_from_standstill(&self) -> PoolOutbox {
         let slot = self.finalized_slot();
         let mut certs = self.get_final_certs(slot);
-        assert!(!certs.is_empty(), "no final cert");
         certs.extend(self.get_certs(slot.next()..));
         let votes = self.get_own_votes(slot.next()..);
 
@@ -583,8 +602,7 @@ impl Pool for PoolImpl {
 
         // return to the caller for (off-lock) forwarding to Votor
         PoolOutbox {
-            votor_events: vec![event],
-            ..Default::default()
+            effects: vec![PoolEffect::VotorEvent(event)],
         }
     }
 
@@ -695,15 +713,17 @@ mod tests {
         ///
         /// [`EventForwarder`]: crate::consensus::EventForwarder
         fn forward(&mut self, outbox: PoolOutbox) {
-            for event in outbox.votor_events {
-                self.votor_tx
-                    .try_send(event)
-                    .expect("test votor channel should have capacity");
-            }
-            for block in outbox.repairs {
-                self.repair_tx
-                    .try_send(block)
-                    .expect("test repair channel should have capacity");
+            for effect in outbox.effects {
+                match effect {
+                    PoolEffect::VotorEvent(event) => self
+                        .votor_tx
+                        .try_send(event)
+                        .expect("test votor channel should have capacity"),
+                    PoolEffect::Repair(block) => self
+                        .repair_tx
+                        .try_send(block)
+                        .expect("test repair channel should have capacity"),
+                }
             }
         }
 
@@ -839,16 +859,16 @@ mod tests {
 
         let outbox = ctx.pool.take_outbox();
         assert!(
-            outbox
-                .votor_events
-                .iter()
-                .any(|e| matches!(e, PoolEvent::CertCreated(Cert::Notar(_)))),
+            outbox.effects.iter().any(|e| matches!(
+                e,
+                PoolEffect::VotorEvent(PoolEvent::CertCreated(Cert::Notar(_)))
+            )),
             "expected a CertCreated event, got {:?}",
-            outbox.votor_events
+            outbox.effects
         );
         // Draining leaves the outbox empty.
         let drained = ctx.pool.take_outbox();
-        assert!(drained.votor_events.is_empty() && drained.repairs.is_empty());
+        assert!(drained.effects.is_empty());
     }
 
     #[tokio::test]
@@ -1378,6 +1398,27 @@ mod tests {
 
         // `gap_slot` is propagated as a ready parent exactly once
         assert_eq!(ctx.pool.parents_ready(next_start).iter().count(), 1);
+    }
+
+    /// A node that has not finalized anything yet has no final cert for the
+    /// genesis slot. Standstill recovery must still produce a bundle (an empty one)
+    /// rather than panic — booting into a partition, or ahead of the rest of the
+    /// cluster, is exactly when recovery needs to run.
+    #[tokio::test]
+    async fn standstill_recovery_without_any_final_cert() {
+        let mut ctx = setup();
+
+        assert_eq!(ctx.pool.finalized_slot(), Slot::genesis());
+        let outbox = ctx.pool.recover_from_standstill();
+        ctx.forward(outbox);
+
+        let event = ctx.votor_rx.recv().await.unwrap();
+        let PoolEvent::Standstill(slot, certs, votes) = event else {
+            unreachable!("unexpected event {event:?}");
+        };
+        assert_eq!(slot, Slot::genesis().next());
+        assert!(certs.is_empty());
+        assert!(votes.is_empty());
     }
 
     #[tokio::test]
