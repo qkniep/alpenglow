@@ -1,0 +1,43 @@
+name: Sanitizers
+
+# Runs the test suite under AddressSanitizer / LeakSanitizer / ThreadSanitizer.
+# Scheduled (and manually triggerable) rather than per-PR — the build is slow
+# (instrumented std rebuild) and the bulk of the value is catching regressions
+# in unsafe and concurrency code, which doesn't change daily.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC. Note: scheduled runs only fire on the default branch.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, leak, thread]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Sanitizers need to recompile std with instrumentation (-Zbuild-std),
+      # which requires the rust-src component on a nightly toolchain.
+      - uses: ./.github/actions/rust-setup
+        with:
+          toolchain: nightly
+          components: rust-src
+      - uses: ./.github/actions/download-data
+
+      - name: Test under ${{ matrix.sanitizer }} sanitizer
+        env:
+          RUSTFLAGS: "-Zsanitizer=${{ matrix.sanitizer }}"
+          RUSTDOCFLAGS: "-Zsanitizer=${{ matrix.sanitizer }}"
+        run: cargo +nightly test -Zbuild-std --all-features --target x86_64-unknown-linux-gnu

@@ -11,7 +11,7 @@ use clap::Parser;
 use log::info;
 use rand::prelude::*;
 
-/// Worklaod generator for benchmarks.
+/// Workload generator for benchmarks.
 #[derive(Debug, Clone, Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         rng.fill_bytes(&mut buf);
         let tx = Transaction(buf.clone());
         let msg_bytes = wincode::serialize(&tx)?;
-        socket.send_to(&msg_bytes, validator_addr).unwrap();
+        socket.send_to(&msg_bytes, validator_addr)?;
         txs_sent += 1;
 
         let elapsed = start_time.elapsed().as_secs_f64();

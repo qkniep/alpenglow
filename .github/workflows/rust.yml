@@ -1,116 +1,175 @@
 name: Rust
 
+# Least privilege: every job here only reads the repo. Scope up per-job if one
+# ever needs to write (e.g. commit, comment, or push).
+permissions:
+  contents: read
+
 on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
 
 concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
+# Always-on core suite. Optional checks live in their own workflow files
+# (coverage.yml, fuzz.yml, sanitizers.yml, security-audit.yml, scorecard.yml,
+# pr-title.yml) so a check can be disabled by deleting a single file.
 jobs:
-  fmt:
+  # Cheap checks grouped onto one runner so they share a single boot + checkout.
+  # Reports failure only after each step ran (`if: ${{ !cancelled() }}`).
+  lint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/rust-setup
         with:
+          toolchain: nightly
           components: rustfmt
+          tools: editorconfig-checker
 
       - name: Check formatting
         run: cargo +nightly fmt --all -- --check
 
-  editorconfig:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: editorconfig-checker
       - name: Check editorconfig compliance
+        if: ${{ !cancelled() }}
         run: editorconfig-checker
+
+      - name: Check spelling
+        if: ${{ !cancelled() }}
+        uses: crate-ci/typos@bee27e3a4fd1ea2111cf90ab89cd076c870fce14 # v1
+
+      # Mirrors `just license`:
+      # every .rs/.py source file must start with the copyright/license header.
+      - name: Check license headers
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            case "$f" in
+              *.py) c='#' ;;
+              *)    c='//' ;;
+            esac
+            line1="" line2=""
+            { IFS= read -r line1; IFS= read -r line2; } < "$f" || true
+            if [ "$line1" != "$c Copyright (c) Anza Technology, Inc." ] \
+              || [ "$line2" != "$c SPDX-License-Identifier: Apache-2.0" ]; then
+              echo "missing/malformed license header: $f" >&2
+              fail=1
+            fi
+          done < <(git ls-files -- '*.rs' '*.py')
+          [ "$fail" -eq 0 ] || { echo "Headers must match src/lib.rs." >&2; exit 1; }
+
+      # Lints these workflow files for syntax errors, bad expressions, and (via
+      # the runner's preinstalled shellcheck) issues in `run:` scripts. Pinned
+      # to a release rather than a marketplace action to keep the dependency
+      # auditable; the tarball is checksum-verified before extraction.
+      - name: actionlint
+        if: ${{ !cancelled() }}
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+        run: |
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xz -f actionlint.tar.gz actionlint
+          ./actionlint -color
 
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
 
-      - name: Linting (clippy)
+      - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
+        with:
+          tools: nextest
       - uses: ./.github/actions/download-data
 
-      - name: Tests
-        run: ./test.sh ci
+      - name: Tests (fast + doc + smoke + sequential)
+        run: |
+          cargo nextest run --all-targets --all-features --locked
+          cargo test --doc --all-features --locked
+          cargo nextest run --all-features --release --locked \
+            --test smoke_tests --run-ignored=all
+          cargo nextest run --release --jobs=1 --run-ignored=only --locked \
+            network::simulated::core::tests::asymmetric \
+            network::simulated::core::tests::symmetric \
+            network::simulated::token_bucket::tests::extreme_rate \
+            max_crashes \
+            repair::tests::repair_large_block \
+            three_nodes_crash
+        env:
+          RUST_BACKTRACE: "1"
 
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: nightly
+          # The fuzz harness is its own crate under fuzz/, not the repo-root workspace.
+          components: ""
+          tools: cargo-fuzz
+          workspaces: "fuzz"
 
-      - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-
-      - name: Fuzz
-        run: ./test.sh fuzz
+      - name: Fuzz (30s per target, smoke run)
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          for target in $(cargo +nightly fuzz list); do
+            echo "Fuzzing $target..."
+            cargo +nightly fuzz run --target "$host" "$target" -- -max_total_time=30
+          done
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: fuzz-artifacts
           path: fuzz/artifacts/
           if-no-files-found: ignore
 
   build:
+    # Release-only: debug compilation of all targets is already covered by
+    # `test`, and release-only breakage is rare, so this only runs on `main`
+    # pushes. `push` only fires on main (see triggers above).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        mode: [debug, release]
     timeout-minutes: 15
-
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
 
-      - name: Build (${{ matrix.mode }})
-        run: cargo build --all-targets --all-features ${{ matrix.mode == 'release' && '--release' || '' }} --locked
+      - name: Build (release)
+        run: cargo build --all-targets --all-features --release --locked
 
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
+        with:
+          tools: cargo-deny,cargo-machete
 
-      - name: Cargo audit
-        run: cargo audit
-
-      - name: License check
-        run: cargo license
+      - name: Cargo deny (advisories, licenses, bans, sources)
+        run: cargo deny check
 
       - name: Unused deps
         run: cargo machete
@@ -119,32 +178,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/rust-setup
 
       - name: Build docs
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --locked
-
-  coverage:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/rust-setup
-      - uses: ./.github/actions/download-data
-
-      - name: Install llvm-cov
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Coverage
-        run: cargo llvm-cov --lcov --workspace --all-features --ignore-filename-regex='(benches|src/bin|src/main.rs)' --output-path lcov.info nextest
-
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v6
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
-          verbose: true
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --all-features --locked

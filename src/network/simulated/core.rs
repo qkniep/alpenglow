@@ -8,15 +8,15 @@ use std::time::{Duration, Instant};
 
 use log::warn;
 use rand::prelude::*;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, Notify, RwLock, mpsc};
 
 use super::SimulatedNetwork;
 use super::token_bucket::TokenBucket;
-use crate::ValidatorId;
+use crate::ValidatorIndex;
 
 struct SimulatedPacket {
-    _from: ValidatorId,
-    to: ValidatorId,
+    _from: ValidatorIndex,
+    to: ValidatorIndex,
     payload: Vec<u8>,
     deliver_at: Instant,
 }
@@ -45,9 +45,9 @@ impl Eq for SimulatedPacket {}
 /// Messages sent by nodes into the network core are then delayed accordingly.
 pub struct SimulatedNetworkCore {
     /// Map from node ID to channel for delivering packets.
-    nodes: Arc<RwLock<HashMap<ValidatorId, mpsc::Sender<SimulatedPacket>>>>,
+    nodes: Arc<RwLock<HashMap<ValidatorIndex, mpsc::Sender<SimulatedPacket>>>>,
     /// Latency between each pair of nodes.
-    latencies: RwLock<HashMap<(ValidatorId, ValidatorId), Duration>>,
+    latencies: RwLock<HashMap<(ValidatorIndex, ValidatorIndex), Duration>>,
     /// Fallback latency to use for any link that is not configured.
     default_latency: Duration,
     /// Maximum jitter to apply to each packet in milliseconds.
@@ -56,32 +56,64 @@ pub struct SimulatedNetworkCore {
     per_packet_loss_probability: f64,
     /// Priority queue of packets that are waiting to be delivered.
     pending: Arc<Mutex<BinaryHeap<SimulatedPacket>>>,
+    /// Wakes the delivery loop whenever a packet is enqueued.
+    notify: Arc<Notify>,
 }
 
 impl SimulatedNetworkCore {
     /// Creates a new network core with the given latency and packet loss parameters.
     pub fn new(latency_ms: u64, jitter_ms: f64, packet_loss: f64) -> Self {
         let pending = Arc::new(Mutex::new(BinaryHeap::<SimulatedPacket>::new()));
+        let notify = Arc::new(Notify::new());
         let nodes = Arc::new(RwLock::new(HashMap::<
-            ValidatorId,
+            ValidatorIndex,
             mpsc::Sender<SimulatedPacket>,
         >::new()));
 
         let p = pending.clone();
         let n = nodes.clone();
+        let notify_loop = notify.clone();
         tokio::spawn(async move {
             loop {
-                let mut guard = p.lock().await;
-                if let Some(msg) = guard.peek()
-                    && msg.deliver_at <= Instant::now()
-                {
-                    let msg = guard.pop().unwrap();
-                    let n_guard = n.read().await;
-                    let channel = n_guard.get(&msg.to).unwrap();
-                    if let Err(_e) = channel.send(msg).await {
-                        #[cfg(test)]
-                        println!("sending failed. Ignoring");
-                        warn!("sending failed. Ignoring");
+                // Pop the next due packet, or learn when to wake up next. We hold
+                // the queue lock only for this scan, never while sleeping.
+                let deliver_at = {
+                    let mut guard = p.lock().await;
+                    // copy out the head's deadline so no borrow of `guard` survives
+                    match guard.peek().map(|next| next.deliver_at) {
+                        // queue empty: wait until a packet is enqueued
+                        None => None,
+                        // head not yet due: wait until then (or until an earlier
+                        // packet arrives and wakes us via `notify`)
+                        Some(deliver_at) if deliver_at > Instant::now() => Some(deliver_at),
+                        // head is due: deliver it now
+                        Some(_) => {
+                            let msg = guard.pop().expect("peeked a packet, so heap is non-empty");
+                            // release the queue lock before sending, senders need it
+                            drop(guard);
+                            let channel = n
+                                .read()
+                                .await
+                                .get(&msg.to)
+                                .cloned()
+                                .expect("destination should have a registered channel");
+                            if let Err(_e) = channel.send(msg).await {
+                                #[cfg(test)]
+                                println!("sending failed. Ignoring");
+                                warn!("sending failed. Ignoring");
+                            }
+                            continue;
+                        }
+                    }
+                };
+                match deliver_at {
+                    None => notify_loop.notified().await,
+                    Some(deliver_at) => {
+                        let until = tokio::time::Instant::from_std(deliver_at);
+                        tokio::select! {
+                            () = tokio::time::sleep_until(until) => {}
+                            () = notify_loop.notified() => {}
+                        }
                     }
                 }
             }
@@ -94,6 +126,7 @@ impl SimulatedNetworkCore {
             per_packet_jitter_ms: jitter_ms,
             per_packet_loss_probability: packet_loss,
             pending,
+            notify,
         }
     }
 
@@ -126,7 +159,10 @@ impl SimulatedNetworkCore {
     /// targeting that node.
     ///
     /// For limited bandwidth, use [`Self::join`] instead.
-    pub async fn join_unlimited<S, R>(self: &Arc<Self>, id: ValidatorId) -> SimulatedNetwork<S, R> {
+    pub async fn join_unlimited<S, R>(
+        self: &Arc<Self>,
+        id: ValidatorIndex,
+    ) -> SimulatedNetwork<S, R> {
         // pending -> background
         let (pb_tx, mut pb_rx) = mpsc::channel(65536);
         // background -> receiver
@@ -164,7 +200,7 @@ impl SimulatedNetworkCore {
     /// For unlimited bandwidth, use [`Self::join_unlimited`] instead.
     pub async fn join<S, R>(
         self: &Arc<Self>,
-        id: ValidatorId,
+        id: ValidatorIndex,
         up_bandwidth: usize,
         down_bandwidth: usize,
     ) -> SimulatedNetwork<S, R> {
@@ -204,7 +240,12 @@ impl SimulatedNetworkCore {
     ///
     /// The latency is symmetric in both directions.
     /// For asymmetric links, use [`Self::set_asymmetric_latency`] instead.
-    pub async fn set_latency(&self, node1: ValidatorId, node2: ValidatorId, latency: Duration) {
+    pub async fn set_latency(
+        &self,
+        node1: ValidatorIndex,
+        node2: ValidatorIndex,
+        latency: Duration,
+    ) {
         self.latencies.write().await.insert((node1, node2), latency);
         self.latencies.write().await.insert((node2, node1), latency);
     }
@@ -215,8 +256,8 @@ impl SimulatedNetworkCore {
     /// For symmetric links, use [`Self::set_latency`] instead.
     pub async fn set_asymmetric_latency(
         &self,
-        from: ValidatorId,
-        to: ValidatorId,
+        from: ValidatorIndex,
+        to: ValidatorIndex,
         latency: Duration,
     ) {
         self.latencies.write().await.insert((from, to), latency);
@@ -225,7 +266,7 @@ impl SimulatedNetworkCore {
     /// Sends a simulated message from one node to another.
     ///
     /// This schedules delivery for the message after the correct propagation delay.
-    pub async fn send(&self, payload: Vec<u8>, from: ValidatorId, to: ValidatorId) {
+    pub async fn send(&self, payload: Vec<u8>, from: ValidatorIndex, to: ValidatorIndex) {
         if rand::rng().random_range(0.0..1.0) < self.per_packet_loss_probability {
             return;
         }
@@ -233,6 +274,7 @@ impl SimulatedNetworkCore {
         let now = Instant::now();
         let guard = self.latencies.read().await;
         let mut latency = *guard.get(&(from, to)).unwrap_or(&self.default_latency);
+        drop(guard);
         if self.per_packet_jitter_ms > 0.0 {
             let jitter = rand::rng().random_range(0.0..self.per_packet_jitter_ms);
             latency += Duration::from_secs_f64(jitter / 1000.0);
@@ -249,6 +291,9 @@ impl SimulatedNetworkCore {
         };
         let mut guard = self.pending.lock().await;
         guard.push(packet);
+        drop(guard);
+        // wake the delivery loop in case this packet is due before any it knows of
+        self.notify.notify_one();
     }
 }
 
@@ -266,13 +311,27 @@ mod tests {
     use crate::network::{Network, localhost_ip_sockaddr};
     use crate::test_utils::{Ping, PingOrPong};
 
-    // test simulated latency accuracy to within +/-5%
+    // Simulated latency should be accurate to within +/-5% of the configured
+    // delay. On top of that we allow a fixed absolute slack on the *upper*
+    // bound to absorb OS/timer scheduling overhead: on a loaded CI runner,
+    // waking the receiving task after the sleep adds a roughly *constant* ~1ms,
+    // which dwarfs 5% of a short (10ms) delay even when tests run sequentially.
+    // The lower bound needs no slack — a simulated delay only ever adds time.
     const ACCURACY: f64 = 0.05;
+    const SCHEDULING_SLACK_US: u128 = 2_000;
+
+    fn min_latency_us(target_us: f64) -> u128 {
+        (target_us * (1.0 - ACCURACY)) as u128
+    }
+
+    fn max_latency_us(target_us: f64) -> u128 {
+        (target_us * (1.0 + ACCURACY)) as u128 + SCHEDULING_SLACK_US
+    }
 
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn symmetric() {
         // set up network with two nodes
         let msg = Ping::default();
@@ -281,11 +340,11 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2 = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1 = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2 = core.join_unlimited(ValidatorIndex::new(1)).await;
         core.set_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(1),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(1),
             Duration::from_millis(10),
         )
         .await;
@@ -295,8 +354,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(10_000.0);
+        let max = max_latency_us(10_000.0);
         assert!(latency > min);
         assert!(latency < max);
 
@@ -305,8 +364,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(10_000.0);
+        let max = max_latency_us(10_000.0);
         assert!(latency > min);
         assert!(latency < max);
     }
@@ -314,7 +373,7 @@ mod tests {
     // When run concurrently with other tests on github, then the test fails.
     // Running sequentially seems to help.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "timing-sensitive; must run sequentially via `just test-sequential`"]
     async fn asymmetric() {
         // set up network with two nodes
         let msg = Ping::default();
@@ -323,17 +382,17 @@ mod tests {
                 .with_jitter(0.0)
                 .with_packet_loss(0.0),
         );
-        let net1 = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2 = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1 = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2 = core.join_unlimited(ValidatorIndex::new(1)).await;
         core.set_asymmetric_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(1),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(1),
             Duration::from_millis(10),
         )
         .await;
         core.set_asymmetric_latency(
-            ValidatorId::new(1),
-            ValidatorId::new(0),
+            ValidatorIndex::new(1),
+            ValidatorIndex::new(0),
             Duration::from_millis(100),
         )
         .await;
@@ -343,8 +402,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net2.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (10_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (10_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(10_000.0);
+        let max = max_latency_us(10_000.0);
         assert!(
             latency > min,
             "latency {latency} should be greater than {min}"
@@ -359,8 +418,8 @@ mod tests {
         let now = Instant::now();
         let _: Ping = net1.receive().await.unwrap();
         let latency = now.elapsed().as_micros();
-        let min = (100_000.0 * (1.0 - ACCURACY)) as u128;
-        let max = (100_000.0 * (1.0 + ACCURACY)) as u128;
+        let min = min_latency_us(100_000.0);
+        let max = max_latency_us(100_000.0);
         assert!(latency > min);
         assert!(latency < max);
     }
@@ -370,21 +429,21 @@ mod tests {
         // set up network with three nodes
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.0));
         let net1: SimulatedNetwork<PingOrPong, PingOrPong> =
-            core.join_unlimited(ValidatorId::new(0)).await;
+            core.join_unlimited(ValidatorIndex::new(0)).await;
         let net2: SimulatedNetwork<PingOrPong, PingOrPong> =
-            core.join_unlimited(ValidatorId::new(1)).await;
+            core.join_unlimited(ValidatorIndex::new(1)).await;
         let net3: SimulatedNetwork<PingOrPong, PingOrPong> =
-            core.join_unlimited(ValidatorId::new(2)).await;
+            core.join_unlimited(ValidatorIndex::new(2)).await;
         let sock0 = localhost_ip_sockaddr(0);
         core.set_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(1),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(1),
             Duration::from_millis(10),
         )
         .await;
         core.set_latency(
-            ValidatorId::new(0),
-            ValidatorId::new(2),
+            ValidatorIndex::new(0),
+            ValidatorIndex::new(2),
             Duration::from_millis(20),
         )
         .await;
@@ -419,8 +478,8 @@ mod tests {
     async fn packet_loss() {
         // set up network with two nodes and 50% packet loss
         let core = Arc::new(SimulatedNetworkCore::default().with_packet_loss(0.5));
-        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorId::new(0)).await;
-        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorId::new(1)).await;
+        let net1: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorIndex::new(0)).await;
+        let net2: SimulatedNetwork<Ping, Ping> = core.join_unlimited(ValidatorIndex::new(1)).await;
 
         // send 1000 pings
         let msg = Ping::default();
@@ -428,8 +487,11 @@ mod tests {
             net1.send(&msg, localhost_ip_sockaddr(1)).await.unwrap();
         }
 
+        // drain until no packet arrives for `max_time`. This must comfortably
+        // exceed the network latency (100ms default), otherwise the very first
+        // packet races the timeout and the loop can exit with nothing received.
         let mut pings_received = 0;
-        let max_time = Duration::from_millis(100);
+        let max_time = Duration::from_secs(1);
         while let Ok(Ok(_)) = timeout(max_time, net2.receive()).await {
             pings_received += 1;
         }

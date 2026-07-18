@@ -14,7 +14,7 @@
 //! The exact guarantees, however, also depend on the underlying [`Network`],
 //! since both implementations are generic over the [`Network`] trait.
 //! For example, [`TrivialAll2All`] over a TCP-based network might still give
-//! strong reliability guarantess.
+//! strong reliability guarantees.
 //!
 //! # Examples
 //!
@@ -35,14 +35,11 @@
 mod robust;
 mod trivial;
 
-use async_trait::async_trait;
-
 pub use self::robust::RobustAll2All;
 pub use self::trivial::TrivialAll2All;
 use crate::consensus::ConsensusMessage;
 
 /// Abstraction for a direct all-to-all network communication protocol.
-#[async_trait]
 pub trait All2All {
     /// Broadcasts the given message to all known nodes.
     ///
@@ -53,7 +50,8 @@ pub trait All2All {
     /// # Errors
     ///
     /// Implementors should return an [`std::io::Error`] iff the underlying network fails.
-    async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()>;
+    fn broadcast(&self, msg: &ConsensusMessage)
+    -> impl Future<Output = std::io::Result<()>> + Send;
 
     /// Receives a message from any of the other nodes.
     ///
@@ -63,5 +61,5 @@ pub trait All2All {
     /// # Errors
     ///
     /// Implementors should return an [`std::io::Error`] iff the underlying network fails.
-    async fn receive(&self) -> std::io::Result<ConsensusMessage>;
+    fn receive(&self) -> impl Future<Output = std::io::Result<ConsensusMessage>> + Send;
 }

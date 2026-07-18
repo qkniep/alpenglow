@@ -1,0 +1,52 @@
+name: Scorecard
+
+# OSSF Scorecard assesses supply-chain security posture (branch protection,
+# pinned actions, token permissions, ...) and publishes results to the
+# Scorecard API so you can show a badge. Scheduled runs only fire on the
+# default branch.
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: ["main"]
+
+# Read-only by default; the analysis job elevates only what it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout (overrides workflow-level permissions, so repeat here)
+      security-events: write # Needed to upload results to the code-scanning dashboard.
+      id-token: write # Needed for the publish_results provenance attestation.
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: results.sarif

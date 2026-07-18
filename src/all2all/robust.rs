@@ -7,8 +7,7 @@
 //! The message may be retransmitted multiple times.
 
 use std::iter::repeat_n;
-
-use async_trait::async_trait;
+use std::net::SocketAddr;
 
 use super::All2All;
 use crate::ValidatorInfo;
@@ -16,9 +15,9 @@ use crate::consensus::ConsensusMessage;
 use crate::network::{ConsensusNetwork, Network};
 
 /// Instance of the robust all-to-all broadcast protocol.
-// TODO: acutally make more robust (retransmits, ...)
+// TODO: actually make more robust (retransmits, ...)
 pub struct RobustAll2All<N: Network> {
-    validators: Vec<ValidatorInfo>,
+    addrs: Vec<SocketAddr>,
     network: N,
 }
 
@@ -28,16 +27,13 @@ impl<N: Network> RobustAll2All<N> {
     /// Messages will be broadcast to all `validators` over the provided `network`.
     /// Potential retransmits will be handled automatically, also over the `network`.
     pub fn new(validators: Vec<ValidatorInfo>, network: N) -> Self {
-        Self {
-            validators,
-            network,
-        }
+        let addrs = validators.iter().map(|v| v.all2all_address).collect();
+        Self { addrs, network }
     }
 
     pub fn handle_retransmits(&self) {}
 }
 
-#[async_trait]
 impl<N: Network> All2All for RobustAll2All<N>
 where
     N: ConsensusNetwork,
@@ -45,9 +41,10 @@ where
     async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
         // HACK: stupidly expensive retransmits
         let addrs = self
-            .validators
+            .addrs
             .iter()
-            .flat_map(|v| repeat_n(v.all2all_address, 1000));
+            .copied()
+            .flat_map(|addr| repeat_n(addr, 1000));
         self.network.send_to_many(msg, addrs).await
     }
 
@@ -80,7 +77,7 @@ mod tests {
     use crate::network::simulated::SimulatedNetworkCore;
     use crate::network::{dontcare_sockaddr, localhost_ip_sockaddr};
     use crate::types::Slot;
-    use crate::{Stake, ValidatorId};
+    use crate::{Stake, ValidatorIndex};
 
     async fn broadcast_test(packet_loss: f64) {
         // set up network and nodes
@@ -89,24 +86,24 @@ mod tests {
                 .with_default_latency(Duration::from_millis(10))
                 .with_packet_loss(packet_loss),
         );
-        let net_sender = core.join_unlimited(ValidatorId::new(0)).await;
+        let net_sender = core.join_unlimited(ValidatorIndex::new(0)).await;
         let mut net_others = Vec::new();
         let mut validators = Vec::new();
         for i in 0..20u64 {
             if i > 0 {
-                net_others.push(core.join_unlimited(ValidatorId::new(i)).await);
+                net_others.push(core.join_unlimited(ValidatorIndex::new(i)).await);
             }
             let sk = SecretKey::new(&mut rand::rng());
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
             validators.push(ValidatorInfo {
-                id: ValidatorId::new(i),
+                id: ValidatorIndex::new(i),
                 stake: Stake::new(1),
                 pubkey: sk.to_pk(),
                 voting_pubkey: voting_sk.to_pk(),
                 all2all_address: localhost_ip_sockaddr(i.try_into().unwrap()),
                 disseminator_address: dontcare_sockaddr(),
-                repair_request_address: dontcare_sockaddr(),
-                repair_response_address: dontcare_sockaddr(),
+                repair_requester_address: dontcare_sockaddr(),
+                repair_responder_address: dontcare_sockaddr(),
             });
         }
 
@@ -121,7 +118,7 @@ mod tests {
         let mut tasks = JoinSet::new();
         tasks.spawn(async move {
             let voting_sk = aggsig::SecretKey::new(&mut rand::rng());
-            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, ValidatorId::new(0));
+            let vote = Vote::new_skip(Slot::genesis(), &voting_sk, ValidatorIndex::new(0));
             let msg = ConsensusMessage::Vote(vote);
             all2all_sender.broadcast(&msg).await.unwrap();
             while let Ok(Ok(_)) =
