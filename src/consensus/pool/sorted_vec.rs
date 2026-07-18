@@ -24,6 +24,7 @@ impl<K, V> Default for SortedVecMap<K, V> {
 
 impl<K: Ord, V> SortedVecMap<K, V> {
     /// Creates a new, empty map.
+    #[must_use]
     pub(super) fn new() -> Self {
         Self::default()
     }
@@ -76,6 +77,7 @@ impl<T> Default for SortedVecSet<T> {
 
 impl<T: Ord> SortedVecSet<T> {
     /// Creates a new, empty set.
+    #[must_use]
     pub(super) fn new() -> Self {
         Self::default()
     }

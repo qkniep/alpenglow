@@ -27,7 +27,6 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use futures::future::join_all;
 use log::warn;
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -70,14 +69,18 @@ impl<S, R> SimulatedNetwork<S, R> {
     }
 }
 
-#[async_trait]
 impl<S, R> Network for SimulatedNetwork<S, R>
 where
     S: SchemaWrite<DefaultConfig, Src = S> + Send + Sync,
     R: for<'de> SchemaRead<'de, NetworkMessageConfig, Dst = R> + Send + Sync,
 {
-    type Recv = R;
     type Send = S;
+    type Recv = R;
+
+    async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
+        let bytes = crate::serialize(msg);
+        self.send_serialized(bytes, addr).await
+    }
 
     async fn send_to_many(
         &self,
@@ -93,11 +96,6 @@ where
             let () = res?;
         }
         Ok(())
-    }
-
-    async fn send(&self, msg: &S, addr: SocketAddr) -> std::io::Result<()> {
-        let bytes = crate::serialize(msg);
-        self.send_serialized(bytes, addr).await
     }
 
     async fn receive(&self) -> std::io::Result<R> {

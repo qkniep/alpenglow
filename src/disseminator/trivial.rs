@@ -1,8 +1,6 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use async_trait::async_trait;
-
 use super::Disseminator;
 use crate::ValidatorInfo;
 use crate::network::{Network, ShredNetwork};
@@ -24,7 +22,6 @@ impl<N: Network> TrivialDisseminator<N> {
     }
 }
 
-#[async_trait]
 impl<N> Disseminator for TrivialDisseminator<N>
 where
     N: ShredNetwork,
