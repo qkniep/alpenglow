@@ -12,7 +12,7 @@
 //!
 //! Votor has access to an instance of [`All2All`] for broadcasting votes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use log::{debug, trace, warn};
@@ -55,7 +55,13 @@ pub struct Votor<A: All2All> {
     timeout_sender: Sender<VotorTimeout>,
     /// [`All2All`] instance used to broadcast votes.
     all2all: Arc<A>,
+    /// Messages whose broadcast failed, awaiting retry (oldest first).
+    pending_broadcasts: VecDeque<ConsensusMessage>,
 }
+
+/// Upper bound on [`Votor::pending_broadcasts`], so a network that stays down
+/// cannot grow the buffer without limit.
+const MAX_PENDING_BROADCASTS: usize = 256;
 
 impl<A: All2All> Votor<A> {
     /// Creates a new Votor instance with empty state.
@@ -96,6 +102,7 @@ impl<A: All2All> Votor<A> {
             timeout_receiver,
             timeout_sender,
             all2all,
+            pending_broadcasts: VecDeque::new(),
         };
         votor.set_timeouts(Slot::new(0));
         votor
@@ -113,6 +120,9 @@ impl<A: All2All> Votor<A> {
                 Some(event) = self.timeout_receiver.recv() => self.handle_timeout_event(event).await,
                 else => break,
             }
+            // A node whose sends are failing keeps receiving from the rest of the
+            // network, so every event handled here doubles as a retry opportunity.
+            self.retry_pending_broadcasts().await;
         }
     }
 
@@ -244,21 +254,48 @@ impl<A: All2All> Votor<A> {
         self.broadcast(cert).await;
     }
 
-    /// Broadcasts a consensus message to all other nodes on a best-effort basis.
+    /// Broadcasts a consensus message to all other nodes.
     ///
-    /// A failure of the underlying [`All2All`] network is logged and otherwise
-    /// ignored. Broadcasts are best-effort by contract, and a transient network
-    /// error must not bring down the voting loop, which has to keep running to
-    /// preserve liveness. A dropped vote/cert is re-broadcast later via standstill
-    /// recovery, so a one-off failure self-heals.
+    /// A failure of the underlying [`All2All`] network must not bring down the
+    /// voting loop, which has to keep running to preserve liveness. The message is
+    /// therefore buffered for retry (see [`Self::retry_pending_broadcasts`]) rather
+    /// than propagated or dropped.
     ///
-    /// NOTE: a *persistent* failure here (e.g. a misconfigured firewall or a full
-    /// partition) means this node silently stops contributing to consensus while
-    /// only logging. Once there is a metrics system, this should also bump a
-    /// failure counter so persistent failures become alertable.
-    async fn broadcast(&self, msg: impl Into<ConsensusMessage>) {
-        if let Err(err) = self.all2all.broadcast(&msg.into()).await {
-            warn!("failed to broadcast consensus message: {err}");
+    /// Dropping it is not an option: the callers commit the state transition the
+    /// vote represents (`voted`, `retired`) as soon as this returns, so there is no
+    /// later attempt. Standstill recovery cannot stand in either — it re-broadcasts
+    /// what Pool has, and this node's own votes only reach its Pool by coming back
+    /// over [`All2All`], which is exactly what failed here.
+    ///
+    /// NOTE: a *persistent* failure (e.g. a misconfigured firewall or a full
+    /// partition) still means this node stops contributing to consensus while only
+    /// logging. Once there is a metrics system, this should also bump a failure
+    /// counter so persistent failures become alertable.
+    async fn broadcast(&mut self, msg: impl Into<ConsensusMessage>) {
+        let msg = msg.into();
+        if let Err(err) = self.all2all.broadcast(&msg).await {
+            warn!("failed to broadcast consensus message, buffering for retry: {err}");
+            if self.pending_broadcasts.len() == MAX_PENDING_BROADCASTS {
+                // SAFETY: dropping the oldest bounds the buffer; a node this far
+                // behind has lost its window for those votes anyway.
+                self.pending_broadcasts.pop_front();
+            }
+            self.pending_broadcasts.push_back(msg);
+        }
+    }
+
+    /// Retries buffered broadcasts that previously failed, oldest first.
+    ///
+    /// Stops at the first message that fails again, keeping it and everything after
+    /// it buffered, so an unreachable network costs at most one extra send attempt
+    /// per event handled.
+    async fn retry_pending_broadcasts(&mut self) {
+        while let Some(msg) = self.pending_broadcasts.pop_front() {
+            if let Err(err) = self.all2all.broadcast(&msg).await {
+                trace!("buffered broadcast still failing: {err}");
+                self.pending_broadcasts.push_front(msg);
+                return;
+            }
         }
     }
 
@@ -482,6 +519,8 @@ struct SlotState {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use tokio::sync::mpsc;
@@ -499,18 +538,41 @@ mod tests {
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
-    /// An [`All2All`] whose `broadcast` always fails, to exercise Votor's
-    /// best-effort error handling. `receive` never resolves.
-    struct FailingAll2All;
+    /// An [`All2All`] whose `broadcast` fails while `up` is `false`, to exercise
+    /// Votor's error handling. Successful broadcasts are recorded in `sent`.
+    /// `receive` never resolves.
+    #[derive(Default)]
+    struct FlakyAll2All {
+        up: AtomicBool,
+        sent: Mutex<Vec<ConsensusMessage>>,
+    }
 
-    impl All2All for FailingAll2All {
-        async fn broadcast(&self, _msg: &ConsensusMessage) -> std::io::Result<()> {
-            Err(std::io::Error::other("simulated broadcast failure"))
+    impl All2All for FlakyAll2All {
+        async fn broadcast(&self, msg: &ConsensusMessage) -> std::io::Result<()> {
+            if !self.up.load(Ordering::Relaxed) {
+                return Err(std::io::Error::other("simulated broadcast failure"));
+            }
+            self.sent.lock().unwrap().push(msg.clone());
+            Ok(())
         }
 
         async fn receive(&self) -> std::io::Result<ConsensusMessage> {
             std::future::pending().await
         }
+    }
+
+    /// Builds a Votor wired to the given [`FlakyAll2All`], with dangling channels.
+    fn votor_with(all2all: Arc<FlakyAll2All>) -> Votor<FlakyAll2All> {
+        let (sks, _epoch_info) = generate_validators(2);
+        let (_pool_tx, pool_rx) = mpsc::channel(100);
+        let (_blockstore_tx, blockstore_rx) = mpsc::channel(100);
+        Votor::new(
+            ValidatorIndex::new(0),
+            sks[0].clone(),
+            pool_rx,
+            blockstore_rx,
+            all2all,
+        )
     }
 
     struct TestContext {
@@ -587,20 +649,11 @@ mod tests {
         ctx
     }
 
-    /// A failing network broadcast must be logged and swallowed, never panic the
+    /// A failing network broadcast must be logged and buffered, never panic the
     /// voting loop (which has to keep running to preserve liveness).
     #[tokio::test]
     async fn broadcast_failure_does_not_panic() {
-        let (sks, _epoch_info) = generate_validators(2);
-        let (_pool_tx, pool_rx) = mpsc::channel(100);
-        let (_blockstore_tx, blockstore_rx) = mpsc::channel(100);
-        let mut votor = Votor::new(
-            ValidatorIndex::new(0),
-            sks[0].clone(),
-            pool_rx,
-            blockstore_rx,
-            Arc::new(FailingAll2All),
-        );
+        let mut votor = votor_with(Arc::new(FlakyAll2All::default()));
 
         // `SafeToSkip` makes Votor broadcast a skip-fallback vote (and, via
         // `try_skip_window`, skip votes for the window). All broadcasts fail here;
@@ -610,6 +663,42 @@ mod tests {
         votor
             .handle_pool_event(PoolEvent::SafeToSkip(Slot::new(1)))
             .await;
+    }
+
+    /// Votes lost to a failing broadcast must be retried once the network comes
+    /// back, not silently dropped: the callers mark the slot voted/retired either
+    /// way, and this node's own votes only reach its own Pool over [`All2All`], so
+    /// nothing else can replay them.
+    #[tokio::test]
+    async fn failed_broadcasts_are_retried_when_network_recovers() {
+        let all2all = Arc::new(FlakyAll2All::default());
+        let mut votor = votor_with(Arc::clone(&all2all));
+
+        votor
+            .handle_pool_event(PoolEvent::SafeToSkip(Slot::new(1)))
+            .await;
+        let buffered = votor.pending_broadcasts.len();
+        assert!(buffered > 0, "failed broadcasts should be buffered");
+        assert!(all2all.sent.lock().unwrap().is_empty());
+
+        all2all.up.store(true, Ordering::Relaxed);
+        votor.retry_pending_broadcasts().await;
+
+        assert!(votor.pending_broadcasts.is_empty());
+        assert_eq!(all2all.sent.lock().unwrap().len(), buffered);
+    }
+
+    /// A network that stays down must not grow the retry buffer without bound.
+    #[tokio::test]
+    async fn pending_broadcast_buffer_is_bounded() {
+        let mut votor = votor_with(Arc::new(FlakyAll2All::default()));
+
+        for slot in 1..=(MAX_PENDING_BROADCASTS as u64 + 10) {
+            let vote = Vote::new_skip(Slot::new(slot), &votor.voting_key, votor.validator_index);
+            votor.broadcast(vote).await;
+        }
+
+        assert_eq!(votor.pending_broadcasts.len(), MAX_PENDING_BROADCASTS);
     }
 
     #[tokio::test]

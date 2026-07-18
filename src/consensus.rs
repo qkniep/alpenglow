@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{debug, trace, warn};
+use log::{debug, error, trace, warn};
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
@@ -47,7 +47,7 @@ pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 #[cfg(feature = "test-utils")]
 pub use self::pool::bench_replay_votes;
-pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, PoolOutbox, SharedPool};
+pub use self::pool::{AddVoteError, Pool, PoolEffect, PoolEvent, PoolImpl, PoolOutbox, SharedPool};
 pub use self::validated_cert::{CertValidationError, ValidatedCert};
 pub use self::validated_vote::{ValidatedVote, VoteValidationError};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
@@ -116,6 +116,19 @@ impl From<Cert> for ConsensusMessage {
 /// blocking send then back-pressures that (ingest) task instead of dropping the
 /// event or stalling the lock.
 ///
+/// # Ordering
+///
+/// Forwarding one drained outbox preserves the order the producing component
+/// buffered its effects in. What the write lock no longer provides is a *global*
+/// order across tasks: two tasks that each mutate the Pool can now interleave
+/// their forwarding, so Votor may see a later task's event before an earlier
+/// one's. That is safe because Votor's handling of these events is order-
+/// insensitive except for its prune gate (`Votor::should_ignore_pool_event`),
+/// and an event losing that race is by definition one for a slot whose vote no
+/// longer matters. Restoring the global order would require holding a second
+/// lock across the send, which reintroduces exactly the lock jam this design
+/// exists to avoid.
+///
 /// Cloneable so the message loop, the repair loop and the block producer can each
 /// forward the events they produce.
 #[derive(Clone)]
@@ -126,43 +139,84 @@ pub(crate) struct EventForwarder {
     pool_events: mpsc::Sender<PoolEvent>,
     /// Repair requests destined for the repair loop.
     repairs: mpsc::Sender<BlockId>,
+    /// Shuts the node down when a consumer disappears unexpectedly.
+    cancel_token: CancellationToken,
 }
 
 impl EventForwarder {
     /// Creates a forwarder over Votor's event channels and the repair channel.
+    ///
+    /// `cancel_token` is the node's shutdown token, used both to tell an expected
+    /// shutdown from an unexpected consumer death and to bring the node down in
+    /// the latter case.
     pub(crate) fn new(
         blockstore_events: mpsc::Sender<BlockstoreEvent>,
         pool_events: mpsc::Sender<PoolEvent>,
         repairs: mpsc::Sender<BlockId>,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
             blockstore_events,
             pool_events,
             repairs,
+            cancel_token,
         }
     }
 
-    /// Forwards `items` to `sender` with blocking sends, stopping early if the
-    /// channel has closed (the consumer shut down). A closed channel is logged
-    /// (using `what` to name it) and the remaining items dropped, not panicked on.
-    async fn forward_all<T>(sender: &mpsc::Sender<T>, items: Vec<T>, what: &str) {
-        for item in items {
-            if sender.send(item).await.is_err() {
-                debug!("{what} channel closed, dropping remaining events");
+    /// Sends a single `item` to `sender`, returning `false` if the channel closed.
+    ///
+    /// A closed channel means the consuming task is gone. While the node is
+    /// shutting down that is expected and the item is simply dropped. Otherwise
+    /// it is unrecoverable: Votor or the repair loop died, and a node that keeps
+    /// ingesting but can no longer vote contributes nothing while still counting
+    /// against liveness. Rather than fail silently, log at error level (using
+    /// `what` to name the channel) and shut the node down.
+    async fn send<T>(&self, sender: &mpsc::Sender<T>, item: T, what: &str) -> bool {
+        if sender.send(item).await.is_ok() {
+            return true;
+        }
+        if self.cancel_token.is_cancelled() {
+            debug!("{what} channel closed during shutdown, dropping remaining events");
+        } else {
+            error!("{what} channel closed unexpectedly, shutting down node");
+            self.cancel_token.cancel();
+        }
+        false
+    }
+
+    /// Forwards buffered blockstore events to Votor.
+    pub(crate) async fn forward_blockstore_events(&self, events: Vec<BlockstoreEvent>) {
+        for event in events {
+            if !self
+                .send(&self.blockstore_events, event, "Votor blockstore-event")
+                .await
+            {
                 return;
             }
         }
     }
 
-    /// Forwards buffered blockstore events to Votor.
-    pub(crate) async fn forward_blockstore_events(&self, events: Vec<BlockstoreEvent>) {
-        Self::forward_all(&self.blockstore_events, events, "Votor blockstore-event").await;
+    /// Forwards a single Pool event to Votor.
+    pub(crate) async fn forward_pool_event(&self, event: PoolEvent) {
+        self.send(&self.pool_events, event, "Votor pool-event")
+            .await;
     }
 
-    /// Forwards a drained [`PoolOutbox`]: Votor events first, then repair requests.
+    /// Forwards a drained [`PoolOutbox`], replaying the effects in the order the
+    /// Pool produced them.
     pub(crate) async fn forward_pool_outbox(&self, outbox: PoolOutbox) {
-        Self::forward_all(&self.pool_events, outbox.votor_events, "Votor pool-event").await;
-        Self::forward_all(&self.repairs, outbox.repairs, "repair").await;
+        for effect in outbox.effects {
+            let sent = match effect {
+                PoolEffect::VotorEvent(event) => {
+                    self.send(&self.pool_events, event, "Votor pool-event")
+                        .await
+                }
+                PoolEffect::Repair(block_id) => self.send(&self.repairs, block_id, "repair").await,
+            };
+            if !sent {
+                return;
+            }
+        }
     }
 }
 
@@ -248,7 +302,8 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let event_forwarder = EventForwarder::new(blockstore_tx, pool_tx, repair_tx);
+        let event_forwarder =
+            EventForwarder::new(blockstore_tx, pool_tx, repair_tx, cancel_token.clone());
 
         let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
@@ -507,15 +562,17 @@ mod tests {
     use super::*;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
 
-    /// A closed Votor / repair channel (a shutting-down node) must not panic the
+    /// A closed Votor / repair channel on a shutting-down node must not panic the
     /// forwarder: the send fails, is logged, and the remaining items are dropped.
     #[tokio::test]
-    async fn forward_to_closed_channels_does_not_panic() {
+    async fn forward_to_closed_channels_during_shutdown_does_not_panic() {
         let (bs_tx, bs_rx) = mpsc::channel(1);
         let (pool_tx, pool_rx) = mpsc::channel(1);
         let (repair_tx, repair_rx) = mpsc::channel(1);
-        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx);
-        // Votor and the repair loop have shut down.
+        let cancel_token = CancellationToken::new();
+        // The node is already shutting down, which is why its consumers are gone.
+        cancel_token.cancel();
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token);
         drop(bs_rx);
         drop(pool_rx);
         drop(repair_rx);
@@ -525,10 +582,60 @@ mod tests {
             .await;
         forwarder
             .forward_pool_outbox(PoolOutbox {
-                votor_events: vec![PoolEvent::SafeToSkip(Slot::new(1))],
-                repairs: vec![(Slot::new(1), GENESIS_BLOCK_HASH)],
+                effects: vec![
+                    PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(1))),
+                    PoolEffect::Repair((Slot::new(1), GENESIS_BLOCK_HASH)),
+                ],
             })
             .await;
+    }
+
+    /// A consumer dying while the node is running is unrecoverable: this node can
+    /// no longer vote, so the forwarder shuts it down instead of dropping events
+    /// silently and leaving a zombie that still counts against liveness.
+    #[tokio::test]
+    async fn consumer_death_while_running_shuts_node_down() {
+        let (bs_tx, bs_rx) = mpsc::channel(1);
+        let (pool_tx, _pool_rx) = mpsc::channel(1);
+        let (repair_tx, _repair_rx) = mpsc::channel(1);
+        let cancel_token = CancellationToken::new();
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token.clone());
+        // Votor died mid-run, taking its receiver with it.
+        drop(bs_rx);
+
+        assert!(!cancel_token.is_cancelled());
+        forwarder
+            .forward_blockstore_events(vec![BlockstoreEvent::FirstShred(Slot::new(1))])
+            .await;
+        assert!(cancel_token.is_cancelled());
+    }
+
+    /// A drained outbox is replayed in the order the Pool produced it: a repair
+    /// request buffered before a Votor event is issued before it, not held back
+    /// until every Votor event has drained.
+    #[tokio::test]
+    async fn forward_pool_outbox_preserves_effect_order() {
+        let (bs_tx, _bs_rx) = mpsc::channel(1);
+        // Capacity 1, so forwarding blocks on the second Votor event.
+        let (pool_tx, _pool_rx) = mpsc::channel(1);
+        let (repair_tx, mut repair_rx) = mpsc::channel(1);
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, CancellationToken::new());
+
+        let block = (Slot::new(3), GENESIS_BLOCK_HASH);
+        let outbox = PoolOutbox {
+            effects: vec![
+                PoolEffect::Repair(block.clone()),
+                PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
+                PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(4))),
+            ],
+        };
+        let handle = tokio::spawn(async move { forwarder.forward_pool_outbox(outbox).await });
+
+        let repaired = tokio::time::timeout(Duration::from_secs(1), repair_rx.recv())
+            .await
+            .expect("repair request should be forwarded before the Votor events drain");
+        assert_eq!(repaired.unwrap(), block);
+        handle.abort();
     }
 
     /// Forwarding delivers all buffered items, in order, to open channels.
@@ -537,7 +644,7 @@ mod tests {
         let (bs_tx, mut bs_rx) = mpsc::channel(8);
         let (pool_tx, mut pool_rx) = mpsc::channel(8);
         let (repair_tx, mut repair_rx) = mpsc::channel(8);
-        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx);
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, CancellationToken::new());
 
         forwarder
             .forward_blockstore_events(vec![
@@ -556,8 +663,10 @@ mod tests {
         let block = (Slot::new(3), GENESIS_BLOCK_HASH);
         forwarder
             .forward_pool_outbox(PoolOutbox {
-                votor_events: vec![PoolEvent::SafeToSkip(Slot::new(3))],
-                repairs: vec![block.clone()],
+                effects: vec![
+                    PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
+                    PoolEffect::Repair(block.clone()),
+                ],
             })
             .await;
         assert!(matches!(pool_rx.try_recv(), Ok(PoolEvent::SafeToSkip(s)) if s == Slot::new(3)));

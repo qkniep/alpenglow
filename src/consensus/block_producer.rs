@@ -699,7 +699,8 @@ mod tests {
         let (bs_event_tx, _bs_event_rx) = tokio::sync::mpsc::channel(100);
         let (pool_event_tx, _pool_event_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, _repair_rx) = tokio::sync::mpsc::channel(100);
-        let event_forwarder = EventForwarder::new(bs_event_tx, pool_event_tx, repair_tx);
+        let event_forwarder =
+            EventForwarder::new(bs_event_tx, pool_event_tx, repair_tx, cancel_token.clone());
 
         BlockProducer::new(
             secret_key,
