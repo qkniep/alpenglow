@@ -7,6 +7,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Bundle non-breaking bumps into one PR; majors stay individual.
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "cargo"
     # The fuzz crate is outside the workspace and has its own `Cargo.lock`,
     # so it needs a separate entry to stay in sync with the root manifest.
@@ -21,3 +27,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Action majors are usually mechanical, so group everything.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
