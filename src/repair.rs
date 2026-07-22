@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 use log::{debug, trace, warn};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::consensus::{DELTA, SharedBlockstore, SharedPool, ValidatorEpochInfo};
+use crate::consensus::{
+    DELTA, EventForwarder, PoolEffect, PoolOutbox, SharedBlockstore, SharedPool, ValidatorEpochInfo,
+};
 use crate::crypto::merkle::{DoubleMerkleProof, DoubleMerkleTree, SliceRoot};
 use crate::crypto::{Hash, hash};
 use crate::disseminator::rotor::{SamplingStrategy, StakeWeightedSampler};
@@ -99,7 +101,7 @@ impl RepairResponse {
 
 /// Handle repair requests from other nodes.
 ///
-/// This is separated from [`Repair`] to handle repair requests and responses on separate sockets and tokio tasks.
+/// This is separated from `Repair` to handle repair requests and responses on separate sockets and tokio tasks.
 /// This allows us to prioritise repairing blocks for ourselves over serving repair requests for other nodes.
 pub struct RepairRequestHandler<N: Network> {
     epoch_info: Arc<ValidatorEpochInfo>,
@@ -234,7 +236,10 @@ where
 ///
 /// This is used by the node to repair blocks that it is missing.
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
-pub struct Repair<N: Network> {
+///
+/// Internal to the crate: it is wired up by `Alpenglow::new`, and constructing one
+/// requires an [`EventForwarder`] over that node's internal channels.
+pub(crate) struct Repair<N: Network> {
     blockstore: SharedBlockstore,
     pool: SharedPool,
     slice_roots: BTreeMap<(BlockId, SliceIndex), SliceRoot>,
@@ -244,6 +249,8 @@ pub struct Repair<N: Network> {
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
+    /// Forwards blockstore outbox events to Votor off the write lock.
+    event_forwarder: EventForwarder,
 }
 
 impl<N> Repair<N>
@@ -254,11 +261,12 @@ where
     ///
     /// Given `network` will be used for sending repair requests and receiving repair responses.
     /// Any repaired shreds will be written into the provided `blockstore`.
-    pub fn new(
+    pub(crate) fn new(
         blockstore: SharedBlockstore,
         pool: SharedPool,
         network: N,
         epoch_info: Arc<ValidatorEpochInfo>,
+        event_forwarder: EventForwarder,
     ) -> Self {
         let validators = epoch_info.epoch_info().validators().to_vec();
         let sampler = StakeWeightedSampler::new(validators);
@@ -271,6 +279,7 @@ where
             network,
             sampler,
             epoch_info,
+            event_forwarder,
         }
     }
 
@@ -278,7 +287,10 @@ where
     ///
     /// Listens to incoming requests for blocks to repair on `self.repair_channel`.
     /// Initiates the corresponding repair process and handles ongoing repairs.
-    pub async fn repair_loop(&mut self, mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>) {
+    pub(crate) async fn repair_loop(
+        &mut self,
+        mut repair_receiver: tokio::sync::mpsc::Receiver<BlockId>,
+    ) {
         loop {
             let next_timeout = self.request_timeouts.peek().map(|Reverse((t, _))| t);
             let sleep_duration = match next_timeout {
@@ -311,8 +323,27 @@ where
         }
     }
 
+    /// Applies a drained [`PoolOutbox`]: Votor events are forwarded to Votor,
+    /// repair requests are started directly.
+    ///
+    /// NOTE: The repair requests must *not* go back through the repair channel.
+    /// [`Self::repair_loop`] is that channel's only consumer, so a blocking send
+    /// from inside the loop wedges the task for good as soon as the channel fills:
+    /// nothing would be left to drain it. Starting the repair here is what the
+    /// loop would do with the message anyway, minus the channel hop.
+    async fn apply_pool_outbox(&mut self, outbox: PoolOutbox) {
+        for effect in outbox.effects {
+            match effect {
+                PoolEffect::VotorEvent(event) => {
+                    self.event_forwarder.forward_pool_event(event).await;
+                }
+                PoolEffect::Repair(block_id) => self.repair_block(block_id).await,
+            }
+        }
+    }
+
     /// Starts repair process for the block specified by `slot` and `block_hash`.
-    pub async fn repair_block(&mut self, block_id: BlockId) {
+    pub(crate) async fn repair_block(&mut self, block_id: BlockId) {
         let (slot, block_hash) = &block_id;
         if self.blockstore.read().await.get_block(&block_id).is_some() {
             trace!(
@@ -436,20 +467,24 @@ where
                     return;
                 };
 
-                // store shred
-                let res = self
-                    .blockstore
-                    .write()
-                    .await
-                    .add_shred_from_repair(block_hash.clone(), validated)
-                    .await;
-                if let Ok(Some(block_info)) = res {
-                    assert_eq!(block_info.hash, *block_hash);
-                    self.pool
-                        .write()
-                        .await
-                        .add_block((*slot, block_info.hash), block_info.parent)
+                // store shred, then forward buffered events off the write lock
+                let (res, events) = {
+                    let mut blockstore = self.blockstore.write().await;
+                    let res = blockstore
+                        .add_shred_from_repair(block_hash.clone(), validated)
                         .await;
+                    (res, blockstore.take_events())
+                };
+                self.event_forwarder.forward_blockstore_events(events).await;
+                if let Ok(Some(block_info)) = res {
+                    assert_eq!(&block_info.hash, block_hash);
+                    let outbox = {
+                        let mut pool = self.pool.write().await;
+                        pool.add_block((*slot, block_info.hash), block_info.parent)
+                            .await;
+                        pool.take_outbox()
+                    };
+                    self.apply_pool_outbox(outbox).await;
                     debug!(
                         "successfully repaired block {} in slot {}",
                         block_hash.short_hex(),
@@ -502,6 +537,7 @@ mod tests {
 
     use tokio::sync::RwLock;
     use tokio::sync::mpsc::Sender;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::ValidatorIndex;
@@ -554,17 +590,19 @@ mod tests {
 
         // set up blockstore
         let (blockstore_tx, blockstore_rx) = tokio::sync::mpsc::channel(100);
-        let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
 
         // set up pool
         let (pool_tx, pool_rx) = tokio::sync::mpsc::channel(100);
         let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
-        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
-            epoch_info.clone(),
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(epoch_info.clone())));
+
+        let event_forwarder = EventForwarder::new(
+            blockstore_tx,
             pool_tx,
             repair_tx.clone(),
-        )));
+            CancellationToken::new(),
+        );
 
         // create and start Repair instance
         let mut repair = Repair::new(
@@ -572,6 +610,7 @@ mod tests {
             pool,
             v1_repair_requester_network,
             epoch_info.clone(),
+            event_forwarder,
         );
         tokio::spawn(async move {
             repair.repair_loop(repair_rx).await;
