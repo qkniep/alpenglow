@@ -173,7 +173,7 @@ impl EventForwarder {
         }
     }
 
-    /// Sends a single `item` to `sender`, returning `false` if the channel closed.
+    /// Sends a single `item` to `sender`, returning `false` if it was not delivered.
     ///
     /// A closed channel means the consuming task is gone. While the node is
     /// shutting down that is expected and the item is simply dropped. Otherwise
@@ -181,17 +181,39 @@ impl EventForwarder {
     /// ingesting but can no longer vote contributes nothing while still counting
     /// against liveness. Rather than fail silently, log at error level (using
     /// `what` to name the channel) and shut the node down.
+    ///
+    /// A *full* channel is not an error — back-pressuring the calling ingest task
+    /// is the whole point of buffering into an outbox. But `send` would then park
+    /// until the consumer drains, and only the consumer can release it, so the
+    /// shutdown token is raced against the send to bound that wait. This is
+    /// currently belt-and-braces: Votor holds no Blockstore/Pool lock and blocks
+    /// only on a (UDP) [`All2All`] broadcast, so it always keeps draining and no
+    /// forwarder can be parked indefinitely. That is a property of Votor's shape,
+    /// though, not something the type system enforces — racing the token keeps
+    /// shutdown bounded even if that stops holding.
+    ///
+    /// The send is polled first (`biased`), so a shutting-down node still delivers
+    /// everything it can send without waiting, and drops only what would block.
     async fn send<T>(&self, sender: &mpsc::Sender<T>, item: T, what: &str) -> bool {
-        if sender.send(item).await.is_ok() {
-            return true;
+        tokio::select! {
+            biased;
+            res = sender.send(item) => {
+                if res.is_ok() {
+                    return true;
+                }
+                if self.cancel_token.is_cancelled() {
+                    debug!("{what} channel closed during shutdown, dropping remaining events");
+                } else {
+                    error!("{what} channel closed unexpectedly, shutting down node");
+                    self.cancel_token.cancel();
+                }
+                false
+            }
+            () = self.cancel_token.cancelled() => {
+                debug!("{what} channel full at shutdown, dropping remaining events");
+                false
+            }
         }
-        if self.cancel_token.is_cancelled() {
-            debug!("{what} channel closed during shutdown, dropping remaining events");
-        } else {
-            error!("{what} channel closed unexpectedly, shutting down node");
-            self.cancel_token.cancel();
-        }
-        false
     }
 
     /// Forwards buffered blockstore events to Votor.
@@ -206,16 +228,19 @@ impl EventForwarder {
         }
     }
 
-    /// Forwards a single Pool event to Votor.
-    pub(crate) async fn forward_pool_event(&self, event: PoolEvent) {
+    /// Forwards a single Pool event to Votor, returning `false` if it was dropped.
+    ///
+    /// A `false` return means the node is shutting down (see [`Self::send`]); a
+    /// caller with further effects to forward should stop rather than keep working.
+    pub(crate) async fn forward_pool_event(&self, event: PoolEvent) -> bool {
         self.send(&self.pool_events, event, "Votor pool-event")
-            .await;
+            .await
     }
 
     /// Forwards a drained [`PoolOutbox`], replaying the effects in the order the
     /// Pool produced them.
     pub(crate) async fn forward_pool_outbox(&self, outbox: PoolOutbox) {
-        for effect in outbox.effects {
+        for effect in outbox {
             let sent = match effect {
                 PoolEffect::VotorEvent(event) => {
                     self.send(&self.pool_events, event, "Votor pool-event")
@@ -591,12 +616,14 @@ mod tests {
             .forward_blockstore_events(vec![BlockstoreEvent::FirstShred(Slot::new(1))])
             .await;
         forwarder
-            .forward_pool_outbox(PoolOutbox {
-                effects: vec![
+            .forward_pool_outbox(
+                [
                     PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(1))),
                     PoolEffect::Repair((Slot::new(1), GENESIS_BLOCK_HASH)),
-                ],
-            })
+                ]
+                .into_iter()
+                .collect(),
+            )
             .await;
     }
 
@@ -620,6 +647,40 @@ mod tests {
         assert!(cancel_token.is_cancelled());
     }
 
+    /// A *full* channel at shutdown must not park the forwarder forever. Only the
+    /// consumer can make room, and by then there may be none left to do so, so the
+    /// send races the shutdown token. What still fits is delivered; the rest drops.
+    #[tokio::test]
+    async fn full_channel_at_shutdown_does_not_hang() {
+        // Receivers are alive but never drained, so the channel stays full.
+        let (bs_tx, mut bs_rx) = mpsc::channel(1);
+        let (pool_tx, _pool_rx) = mpsc::channel(1);
+        let (repair_tx, _repair_rx) = mpsc::channel(1);
+        let cancel_token = CancellationToken::new();
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token.clone());
+        cancel_token.cancel();
+
+        // The first event fits, so it is sent even though the token is already
+        // cancelled; the second would block and loses the race instead.
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            forwarder.forward_blockstore_events(vec![
+                BlockstoreEvent::FirstShred(Slot::new(1)),
+                BlockstoreEvent::FirstShred(Slot::new(2)),
+            ]),
+        )
+        .await
+        .expect("a cancelled token must release a forwarder blocked on a full channel");
+
+        assert!(
+            matches!(bs_rx.try_recv(), Ok(BlockstoreEvent::FirstShred(s)) if s == Slot::new(1))
+        );
+        assert!(
+            bs_rx.try_recv().is_err(),
+            "second event should have dropped"
+        );
+    }
+
     /// A drained outbox is replayed in the order the Pool produced it: a repair
     /// request buffered before a Votor event is issued before it, not held back
     /// until every Votor event has drained.
@@ -632,13 +693,13 @@ mod tests {
         let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, CancellationToken::new());
 
         let block = (Slot::new(3), GENESIS_BLOCK_HASH);
-        let outbox = PoolOutbox {
-            effects: vec![
-                PoolEffect::Repair(block.clone()),
-                PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
-                PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(4))),
-            ],
-        };
+        let outbox: PoolOutbox = [
+            PoolEffect::Repair(block.clone()),
+            PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
+            PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(4))),
+        ]
+        .into_iter()
+        .collect();
         let handle = tokio::spawn(async move { forwarder.forward_pool_outbox(outbox).await });
 
         let repaired = tokio::time::timeout(Duration::from_secs(1), repair_rx.recv())
@@ -672,12 +733,14 @@ mod tests {
 
         let block = (Slot::new(3), GENESIS_BLOCK_HASH);
         forwarder
-            .forward_pool_outbox(PoolOutbox {
-                effects: vec![
+            .forward_pool_outbox(
+                [
                     PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
                     PoolEffect::Repair(block.clone()),
-                ],
-            })
+                ]
+                .into_iter()
+                .collect(),
+            )
             .await;
         assert!(matches!(pool_rx.try_recv(), Ok(PoolEvent::SafeToSkip(s)) if s == Slot::new(3)));
         assert_eq!(repair_rx.try_recv().unwrap(), block);

@@ -86,6 +86,19 @@ pub trait Blockstore {
     /// The caller must forward these to Votor *after* releasing the blockstore
     /// lock, so that a slow Votor back-pressures the ingest task instead of
     /// jamming the lock. See `BlockstoreImpl::emit` for the rationale.
+    ///
+    /// `Vec` carries no `must_use` of its own, so this says it explicitly: silently
+    /// dropping a drained [`BlockstoreEvent::Block`] costs this node its vote for
+    /// that block, with no retry path.
+    ///
+    /// NOTE: scoped to non-test builds because `mockall::automock` copies the
+    /// attribute into the generated mock's `impl` block, where `#[must_use]` on a
+    /// trait method is deprecated. Every caller that matters is non-test code, so
+    /// the guard still covers what it needs to.
+    #[cfg_attr(
+        not(test),
+        must_use = "drained events are lost unless forwarded, see `EventForwarder::forward_blockstore_events`"
+    )]
     fn take_events(&mut self) -> Vec<BlockstoreEvent>;
     #[expect(
         clippy::needless_lifetimes,

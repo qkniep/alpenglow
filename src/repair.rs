@@ -331,11 +331,18 @@ where
     /// from inside the loop wedges the task for good as soon as the channel fills:
     /// nothing would be left to drain it. Starting the repair here is what the
     /// loop would do with the message anyway, minus the channel hop.
+    ///
+    /// Stops at the first undelivered Votor event, matching
+    /// [`EventForwarder::forward_pool_outbox`]: the forwarder only reports failure
+    /// once the node is shutting down, and starting fresh repairs for the remaining
+    /// effects would be work on a node that is on its way out.
     async fn apply_pool_outbox(&mut self, outbox: PoolOutbox) {
-        for effect in outbox.effects {
+        for effect in outbox {
             match effect {
                 PoolEffect::VotorEvent(event) => {
-                    self.event_forwarder.forward_pool_event(event).await;
+                    if !self.event_forwarder.forward_pool_event(event).await {
+                        return;
+                    }
                 }
                 PoolEffect::Repair(block_id) => self.repair_block(block_id).await,
             }

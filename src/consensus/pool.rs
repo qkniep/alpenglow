@@ -89,11 +89,47 @@ pub enum PoolEffect {
 /// into a per-destination queue would reorder the two against each other, e.g.
 /// delaying the repair request for a newly certified block behind every Votor
 /// event that certification produced.
+/// The effects are deliberately not reachable as a field: the [`must_use`] above
+/// only fires on an unused [`PoolOutbox`], so a public field would let a caller
+/// take the effects and drop them without the compiler noticing. Consuming the
+/// outbox via [`IntoIterator`] is the only way to get at them.
+///
+/// [`must_use`]: https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute
 #[derive(Debug, Default)]
 #[must_use = "buffered effects are lost unless forwarded, see `EventForwarder::forward_pool_outbox`"]
 pub struct PoolOutbox {
     /// Buffered effects, in the order the Pool produced them.
-    pub effects: Vec<PoolEffect>,
+    effects: Vec<PoolEffect>,
+}
+
+impl PoolOutbox {
+    /// Returns `true` iff no effects are buffered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
+    /// Buffers a single effect, preserving production order.
+    fn push(&mut self, effect: PoolEffect) {
+        self.effects.push(effect);
+    }
+}
+
+impl FromIterator<PoolEffect> for PoolOutbox {
+    fn from_iter<I: IntoIterator<Item = PoolEffect>>(iter: I) -> Self {
+        Self {
+            effects: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl IntoIterator for PoolOutbox {
+    type Item = PoolEffect;
+    type IntoIter = std::vec::IntoIter<PoolEffect>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.effects.into_iter()
+    }
 }
 
 /// Errors the Pool may return when adding a vote.
@@ -436,7 +472,7 @@ impl PoolImpl {
     /// (see [`super::EventForwarder`]); a blocking send under the lock would jam
     /// every task contending for it.
     fn enqueue_votor_event(&mut self, event: PoolEvent) {
-        self.outbox.effects.push(PoolEffect::VotorEvent(event));
+        self.outbox.push(PoolEffect::VotorEvent(event));
     }
 
     /// Records a repair request for the given block in the outbox.
@@ -444,7 +480,7 @@ impl PoolImpl {
     /// Buffered rather than sent, for the same reason as
     /// [`Self::enqueue_votor_event`].
     fn enqueue_repair(&mut self, block_id: BlockId) {
-        self.outbox.effects.push(PoolEffect::Repair(block_id));
+        self.outbox.push(PoolEffect::Repair(block_id));
     }
 }
 
@@ -601,9 +637,7 @@ impl Pool for PoolImpl {
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
         // return to the caller for (off-lock) forwarding to Votor
-        PoolOutbox {
-            effects: vec![PoolEffect::VotorEvent(event)],
-        }
+        [PoolEffect::VotorEvent(event)].into_iter().collect()
     }
 
     fn take_outbox(&mut self) -> PoolOutbox {
@@ -713,7 +747,7 @@ mod tests {
         ///
         /// [`EventForwarder`]: crate::consensus::EventForwarder
         fn forward(&mut self, outbox: PoolOutbox) {
-            for effect in outbox.effects {
+            for effect in outbox {
                 match effect {
                     PoolEffect::VotorEvent(event) => self
                         .votor_tx
@@ -857,18 +891,16 @@ mod tests {
         }
         assert!(ctx.pool.has_notar_cert(Slot::new(0)));
 
-        let outbox = ctx.pool.take_outbox();
+        let effects: Vec<_> = ctx.pool.take_outbox().into_iter().collect();
         assert!(
-            outbox.effects.iter().any(|e| matches!(
+            effects.iter().any(|e| matches!(
                 e,
                 PoolEffect::VotorEvent(PoolEvent::CertCreated(Cert::Notar(_)))
             )),
-            "expected a CertCreated event, got {:?}",
-            outbox.effects
+            "expected a CertCreated event, got {effects:?}"
         );
         // Draining leaves the outbox empty.
-        let drained = ctx.pool.take_outbox();
-        assert!(drained.effects.is_empty());
+        assert!(ctx.pool.take_outbox().is_empty());
     }
 
     #[tokio::test]
