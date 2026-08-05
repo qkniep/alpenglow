@@ -15,6 +15,7 @@ pub mod execution;
 pub mod logging;
 pub mod network;
 pub mod repair;
+pub(crate) mod shred_verifier;
 pub mod shredder;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
