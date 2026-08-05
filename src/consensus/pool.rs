@@ -18,6 +18,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use either::Either;
 use log::{debug, info, trace, warn};
+use static_assertions::const_assert;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{RwLock, oneshot};
@@ -31,6 +32,30 @@ use crate::consensus::pool::finality_tracker::FinalizationEvent;
 use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorIndex};
+
+/// Maximum number of slots ahead of the highest finalized slot for which
+/// *certificates* are accepted.
+///
+/// Certificates are quorum-backed (2/3 stake), hence unforgeable by any minority,
+/// and there are only a handful per slot — so a wide window is not an
+/// amplification vector, and it lets a lagging node catch up from cert broadcasts.
+const MAX_CERT_SLOTS_AHEAD: u64 = 2 * SLOTS_PER_EPOCH;
+
+/// Maximum number of slots ahead of the highest finalized slot for which
+/// individual *votes* are accepted (and per-slot `SlotState` is allocated).
+///
+/// Unlike a certificate, a vote carries only a single signature, so accepting
+/// votes far into the future would let one validator force per-slot `SlotState`
+/// allocation across a huge slot range — a memory-amplification DoS. Slots
+/// finalize in order, so a vote far ahead of finalization is useless until we
+/// catch up to it, and is recoverable via all2all rebroadcast / standstill repair
+/// if dropped. The bound therefore only needs to cover the worst-case
+/// finalization lag: a full `DELTA_STANDSTILL` (10 s) at `DELTA_BLOCK`
+/// (400 ms/slot) is ~25 slots, so this leaves roughly a 10x margin.
+const MAX_VOTE_SLOTS_AHEAD: u64 = 256;
+
+// Votes must be accepted over a strictly narrower horizon than certificates.
+const_assert!(MAX_VOTE_SLOTS_AHEAD < MAX_CERT_SLOTS_AHEAD);
 
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
@@ -426,8 +451,7 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + MAX_CERT_SLOTS_AHEAD);
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
@@ -458,9 +482,10 @@ impl Pool for PoolImpl {
     #[hotpath::measure]
     async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
+        // NOTE: the vote horizon is deliberately much narrower than the cert one,
+        // to bound the per-slot allocation a single validator can force.
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + MAX_VOTE_SLOTS_AHEAD);
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
@@ -1217,6 +1242,34 @@ mod tests {
             let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
             assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
         }
+    }
+
+    #[tokio::test]
+    async fn vote_window_narrower_than_cert_window() {
+        let mut ctx = setup();
+        let frontier = ctx.pool.finalized_slot();
+
+        // a vote exactly at the horizon is out of bounds; one slot below is fine
+        let horizon = Slot::new(frontier.inner() + MAX_VOTE_SLOTS_AHEAD);
+        let at_horizon = Vote::new_final(horizon, &ctx.sks[0], ValidatorIndex::new(0));
+        assert_eq!(
+            ctx.add_vote(at_horizon).await,
+            Err(AddVoteError::SlotOutOfBounds)
+        );
+        let below = Vote::new_final(horizon.prev(), &ctx.sks[0], ValidatorIndex::new(0));
+        assert_eq!(ctx.add_vote(below).await, Ok(()));
+
+        // a slot beyond the vote window but still within the (wider) cert window:
+        // the vote is rejected, but a quorum-backed certificate is still accepted.
+        let band = Slot::new(frontier.inner() + MAX_VOTE_SLOTS_AHEAD + SLOTS_PER_WINDOW);
+        let vote = Vote::new_final(band, &ctx.sks[0], ValidatorIndex::new(0));
+        assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
+
+        let skip_votes: Vec<SkipVote> = (0..11)
+            .map(|v| SkipVote::new(band, &ctx.sks[v as usize], ValidatorIndex::new(v)))
+            .collect();
+        let skip_cert = SkipCert::try_new(&skip_votes, &[], ctx.validators()).unwrap();
+        assert_eq!(ctx.add_cert(Cert::Skip(skip_cert)).await, Ok(()));
     }
 
     #[tokio::test]
