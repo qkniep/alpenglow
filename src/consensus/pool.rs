@@ -18,7 +18,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use either::Either;
 use log::{debug, info, trace, warn};
-use static_assertions::const_assert;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{RwLock, oneshot};
@@ -55,7 +54,7 @@ const MAX_CERT_SLOTS_AHEAD: u64 = 2 * SLOTS_PER_EPOCH;
 const MAX_VOTE_SLOTS_AHEAD: u64 = 256;
 
 // Votes must be accepted over a strictly narrower horizon than certificates.
-const_assert!(MAX_VOTE_SLOTS_AHEAD < MAX_CERT_SLOTS_AHEAD);
+const _: () = assert!(MAX_VOTE_SLOTS_AHEAD < MAX_CERT_SLOTS_AHEAD);
 
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
