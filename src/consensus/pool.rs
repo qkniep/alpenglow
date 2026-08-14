@@ -32,6 +32,22 @@ use crate::crypto::merkle::BlockHash;
 use crate::types::SLOTS_PER_EPOCH;
 use crate::{BlockId, Slot, ValidatorIndex};
 
+/// Maximum number of slots ahead certificates are accepted.
+///
+/// Certificates are quorum-backed, hence unforgeable by a malicious minority,
+/// and there are only a handful per slot.
+/// Also, certificates are used to catch up after falling behind the chain.
+const MAX_CERT_SLOTS_AHEAD: u64 = 2 * SLOTS_PER_EPOCH;
+
+/// Maximum number of slots ahead individual votes are accepted.
+///
+/// Unlike a certificate, a vote carries only a single signature.
+/// Accepting votes far into the future is a memory-exhaustion DoS vector.
+const MAX_VOTE_SLOTS_AHEAD: u64 = 1024;
+
+// Votes must be accepted over a strictly narrower horizon than certificates.
+const _: () = assert!(MAX_VOTE_SLOTS_AHEAD < MAX_CERT_SLOTS_AHEAD);
+
 /// Events emitted by [`PoolImpl`] to [`Votor`].
 ///
 /// [`Votor`]: crate::consensus::votor::Votor
@@ -426,8 +442,7 @@ impl Pool for PoolImpl {
     async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError> {
         // ignore old and far-in-the-future certificates
         let slot = cert.slot();
-        // TODO: set bounds exactly correctly
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + MAX_CERT_SLOTS_AHEAD);
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddCertError::SlotOutOfBounds);
         }
@@ -459,8 +474,7 @@ impl Pool for PoolImpl {
     async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError> {
         // ignore old and far-in-the-future votes
         let slot = vote.slot();
-        // TODO: set bounds exactly correctly
-        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + 2 * SLOTS_PER_EPOCH);
+        let slot_far_in_future = Slot::new(self.finalized_slot().inner() + MAX_VOTE_SLOTS_AHEAD);
         if slot < self.first_unpruned_slot() || slot >= slot_far_in_future {
             return Err(AddVoteError::SlotOutOfBounds);
         }
@@ -1217,6 +1231,34 @@ mod tests {
             let vote = Vote::new_final(slot, &ctx.sks[v as usize], ValidatorIndex::new(v));
             assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
         }
+    }
+
+    #[tokio::test]
+    async fn vote_window_narrower_than_cert_window() {
+        let mut ctx = setup();
+        let frontier = ctx.pool.finalized_slot();
+
+        // a vote exactly at the horizon is out of bounds; one slot below is fine
+        let horizon = Slot::new(frontier.inner() + MAX_VOTE_SLOTS_AHEAD);
+        let at_horizon = Vote::new_final(horizon, &ctx.sks[0], ValidatorIndex::new(0));
+        assert_eq!(
+            ctx.add_vote(at_horizon).await,
+            Err(AddVoteError::SlotOutOfBounds)
+        );
+        let below = Vote::new_final(horizon.prev(), &ctx.sks[0], ValidatorIndex::new(0));
+        assert_eq!(ctx.add_vote(below).await, Ok(()));
+
+        // a slot beyond the vote window but still within the (wider) cert window:
+        // the vote is rejected, but a quorum-backed certificate is still accepted
+        let band = Slot::new(frontier.inner() + MAX_VOTE_SLOTS_AHEAD + SLOTS_PER_WINDOW);
+        let vote = Vote::new_final(band, &ctx.sks[0], ValidatorIndex::new(0));
+        assert_eq!(ctx.add_vote(vote).await, Err(AddVoteError::SlotOutOfBounds));
+
+        let skip_votes: Vec<SkipVote> = (0..11)
+            .map(|v| SkipVote::new(band, &ctx.sks[v as usize], ValidatorIndex::new(v)))
+            .collect();
+        let skip_cert = SkipCert::try_new(&skip_votes, &[], ctx.validators()).unwrap();
+        assert_eq!(ctx.add_cert(Cert::Skip(skip_cert)).await, Ok(()));
     }
 
     #[tokio::test]
