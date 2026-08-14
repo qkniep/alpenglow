@@ -1,6 +1,8 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use thiserror::Error;
 
 use crate::consensus::{
@@ -12,12 +14,21 @@ use crate::{Slot, Stake, ValidatorIndex, ValidatorInfo};
 /// Errors that can occur when validating a validator set into an [`EpochInfo`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum EpochInfoError {
+    /// The validator set is empty.
+    #[error("validator set is empty")]
+    EmptyValidatorSet,
     /// A validator's `id` does not match its position in the validator set.
     #[error("validator at index {index} has id {id}, expected {index}")]
     IdIndexMismatch { index: usize, id: ValidatorIndex },
     /// A validator's proof of possession does not verify against its voting key.
     #[error("validator {0} has an invalid BLS proof of possession")]
     InvalidProofOfPossession(ValidatorIndex),
+    /// Two validators share a voting key, which would let one signer's stake count twice.
+    #[error("validators {first} and {second} share a voting key")]
+    DuplicateVotingKey {
+        first: ValidatorIndex,
+        second: ValidatorIndex,
+    },
 }
 
 /// Shared epoch information, identical across all validators.
@@ -51,13 +62,23 @@ impl EpochInfo {
     ///
     /// # Errors
     ///
+    /// - [`EpochInfoError::EmptyValidatorSet`] if `validators` is empty.
     /// - [`EpochInfoError::IdIndexMismatch`] if any validator's `id` does not
     ///   match its index in the vector.
     /// - [`EpochInfoError::InvalidProofOfPossession`] if any validator's
     ///   `voting_pop` fails to verify against its `voting_pubkey`.
+    /// - [`EpochInfoError::DuplicateVotingKey`] if two validators share a
+    ///   voting key.
     ///
     /// [`AggregateSignature::verify`]: crate::crypto::AggregateSignature::verify
     pub fn try_new(validators: Vec<ValidatorInfo>) -> Result<Self, EpochInfoError> {
+        // An empty set would divide by zero in `leader` and in every quorum
+        // predicate, so it can never be a usable epoch.
+        if validators.is_empty() {
+            return Err(EpochInfoError::EmptyValidatorSet);
+        }
+        // NOTE: keyed by the compressed encoding, the canonical form of a key.
+        let mut seen_voting_keys = HashMap::with_capacity(validators.len());
         for (index, v) in validators.iter().enumerate() {
             if v.id.as_usize() != index {
                 return Err(EpochInfoError::IdIndexMismatch { index, id: v.id });
@@ -65,6 +86,15 @@ impl EpochInfo {
             if !v.voting_pubkey.verify_pop(&v.voting_pop) {
                 return Err(EpochInfoError::InvalidProofOfPossession(v.id));
             }
+            // Sharing a voting key lets one signer's stake be counted once per
+            // index it occupies, which would break the quorum thresholds.
+            if let Some(&first) = seen_voting_keys.get(&v.voting_pubkey.compress()) {
+                return Err(EpochInfoError::DuplicateVotingKey {
+                    first,
+                    second: v.id,
+                });
+            }
+            seen_voting_keys.insert(v.voting_pubkey.compress(), v.id);
         }
         let total_stake = validators.iter().map(|v| v.stake).sum();
         Ok(Self {
@@ -174,6 +204,33 @@ mod tests {
         assert_eq!(
             EpochInfo::try_new(validators).unwrap_err(),
             EpochInfoError::InvalidProofOfPossession(ValidatorIndex::new(0)),
+        );
+    }
+
+    /// An empty set must be rejected rather than producing an `EpochInfo` that
+    /// divides by zero in [`EpochInfo::leader`] and in every quorum predicate.
+    #[test]
+    fn rejects_empty_validator_set() {
+        assert_eq!(
+            EpochInfo::try_new(vec![]).unwrap_err(),
+            EpochInfoError::EmptyValidatorSet,
+        );
+    }
+
+    /// Two validators sharing a voting key must be rejected: one signer could
+    /// otherwise have their stake counted once per index they occupy.
+    #[test]
+    fn rejects_duplicate_voting_key() {
+        let (_, epoch) = generate_validators(2);
+        let mut validators = epoch.validators().to_vec();
+        validators[1].voting_pubkey = validators[0].voting_pubkey;
+        validators[1].voting_pop = validators[0].voting_pop;
+        assert_eq!(
+            EpochInfo::try_new(validators).unwrap_err(),
+            EpochInfoError::DuplicateVotingKey {
+                first: ValidatorIndex::new(0),
+                second: ValidatorIndex::new(1),
+            },
         );
     }
 
