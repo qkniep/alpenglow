@@ -85,6 +85,8 @@ pub struct PublicKey(BlstPublicKey);
 impl PublicKey {
     /// Tries to convert a byte array into a public key.
     ///
+    /// # Errors
+    ///
     /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS public key.
     pub fn try_from_bytes(pk_in: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(BlstPublicKey::from_bytes(pk_in)?))
@@ -93,6 +95,11 @@ impl PublicKey {
     /// Tries to deserialize a `Vec<u8>` into a public key.
     ///
     /// This is for use with `serde(deserialize_with)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error if the input is not a byte sequence, or if
+    /// those bytes do not decode to a valid value.
     pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -169,6 +176,8 @@ pub struct ProofOfPossession(BlstSignature);
 impl ProofOfPossession {
     /// Tries to convert a byte array into a proof of possession.
     ///
+    /// # Errors
+    ///
     /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS signature.
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(BlstSignature::deserialize(bytes)?))
@@ -177,6 +186,11 @@ impl ProofOfPossession {
     /// Tries to deserialize a `Vec<u8>` into a proof of possession.
     ///
     /// This is for use with `serde(deserialize_with)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error if the input is not a byte sequence, or if
+    /// those bytes do not decode to a valid value.
     pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -298,6 +312,8 @@ impl SecretKey {
 
     /// Tries to convert a byte string into a secret key.
     ///
+    /// # Errors
+    ///
     /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS secret key.
     pub fn try_from_bytes(sk_in: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(blst::min_sig::SecretKey::from_bytes(sk_in)?))
@@ -306,6 +322,11 @@ impl SecretKey {
     /// Tries to deserialize a `Vec<u8>` into a secret key.
     ///
     /// This is for use with `serde(deserialize_with)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error if the input is not a byte sequence, or if
+    /// those bytes do not decode to a valid value.
     pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -346,7 +367,9 @@ impl SecretKey {
     /// validator set that is later passed to [`AggregateSignature::verify`].
     #[must_use]
     pub fn sign_pop(&self) -> ProofOfPossession {
-        let pk_bytes = self.0.sk_to_pk().serialize();
+        // NOTE: `PopProve` hashes the *compressed* public key, so `compress()`
+        // rather than `serialize()`. Must stay in step with `verify_pop`.
+        let pk_bytes = self.0.sk_to_pk().compress();
         let sig = self.0.sign(&pk_bytes, POP_DST, &[]);
         ProofOfPossession(sig)
     }
@@ -381,8 +404,19 @@ impl PublicKey {
     /// against the rogue-key attack.
     #[must_use]
     pub fn verify_pop(&self, pop: &ProofOfPossession) -> bool {
-        let pk_bytes = self.0.serialize();
-        pop.0.verify(true, &pk_bytes, POP_DST, &[], &self.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+        pop.0
+            .verify(true, &self.compress(), POP_DST, &[], &self.0, true)
+            == blst::BLST_ERROR::BLST_SUCCESS
+    }
+
+    /// Returns the compressed encoding of this public key.
+    ///
+    /// This is the canonical form the IRTF draft uses to represent a public key
+    /// (`point_to_pubkey`), so it doubles as the identity of the key: two
+    /// validators share a key exactly when these bytes are equal.
+    #[must_use]
+    pub fn compress(&self) -> [u8; 96] {
+        self.0.compress()
     }
 }
 
