@@ -107,6 +107,8 @@ todo = "warn"
 undocumented_unsafe_blocks = "warn"
 allow_attributes = "warn"
 ignore_without_reason = "warn"
+# exhaustiveness: a `_` arm covering one variant silently absorbs new ones
+match_wildcard_for_single_variants = "warn"
 # async / perf
 large_futures = "warn"
 redundant_clone = "warn"

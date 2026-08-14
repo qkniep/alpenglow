@@ -896,7 +896,9 @@ mod tests {
                     assert_eq!(block_info.hash, expected_hash);
                     blocks += 1;
                 }
-                other => panic!("unexpected event: {other:?}"),
+                other @ BlockstoreEvent::InvalidBlock(_) => {
+                    panic!("unexpected event: {other:?}")
+                }
             }
         }
         assert_eq!(first_shreds, 1, "expected exactly one FirstShred event");

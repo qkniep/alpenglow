@@ -520,7 +520,7 @@ mod tests {
                     assert_eq!(v.slot(), slot);
                     v
                 }
-                m => panic!("other msg: {m:?}"),
+                m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
             }
         }
     }
@@ -580,7 +580,7 @@ mod tests {
                         assert!(matches!(v, Vote::Skip(_)));
                         skipped_slots.push(v.slot());
                     }
-                    m => panic!("other msg: {m:?}"),
+                    m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
                 }
             }
         }
@@ -610,7 +610,7 @@ mod tests {
                 assert!(matches!(v, Vote::Final(_)));
                 assert_eq!(v.slot(), slot);
             }
-            m => panic!("other msg: {m:?}"),
+            m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
         }
     }
 
@@ -668,7 +668,7 @@ mod tests {
                     assert!(matches!(vote, Vote::Notar(_)));
                     assert!(vote.slot() == slot1 || vote.slot() == slot2);
                 }
-                m => panic!("other msg: {m:?}"),
+                m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
             };
         }
     }
@@ -735,7 +735,7 @@ mod tests {
             if let Ok(msg) = ctx.other_a2a.receive().await {
                 match msg {
                     ConsensusMessage::Vote(v) => assert!(matches!(v, Vote::Skip(_))),
-                    m => panic!("other msg: {m:?}"),
+                    m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
                 }
             }
         }
@@ -752,7 +752,7 @@ mod tests {
                 assert_eq!(v.slot(), block.0);
                 assert_eq!(v.block_hash(), Some(&block.1));
             }
-            m => panic!("other msg: {m:?}"),
+            m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
         }
     }
 
@@ -772,7 +772,7 @@ mod tests {
                 assert!(matches!(v, Vote::SkipFallback(_)));
                 assert_eq!(v.slot(), slot);
             }
-            m => panic!("other msg: {m:?}"),
+            m @ ConsensusMessage::Cert(_) => panic!("other msg: {m:?}"),
         }
     }
 
