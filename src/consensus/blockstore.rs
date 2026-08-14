@@ -896,8 +896,8 @@ mod tests {
                     assert_eq!(block_info.hash, expected_hash);
                     blocks += 1;
                 }
-                other @ BlockstoreEvent::InvalidBlock(_) => {
-                    panic!("unexpected event: {other:?}")
+                BlockstoreEvent::InvalidBlock(_) => {
+                    panic!("unexpected event: {event:?}")
                 }
             }
         }
