@@ -43,14 +43,20 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::ValidatorIndex;
 use crate::crypto::Signable;
 
-/// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
-const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+/// Domain separator for regular (vote) signatures.
+///
+/// `CoreSign` DST of the proof-of-possession ciphersuite in
+/// [draft-irtf-cfrg-bls-signature-05]. That scheme is required, not preferred:
+/// certs aggregate over one shared message, which needs `FastAggregateVerify`,
+/// and the draft defines that only for PoP.
+///
+/// [draft-irtf-cfrg-bls-signature-05]: https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-05.html
+const SIG_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
 
 /// Domain separator for proof-of-possession signatures.
 ///
-/// Distinct from [`DST`] so that PoP signatures and voting signatures live in
-/// disjoint signing oracles: a PoP can never be reinterpreted as a vote, and
-/// vice versa. This is the IRTF-recommended POP DST for the min-sig variant.
+/// `PopProve` DST of the same ciphersuite as [`SIG_DST`], distinct from it so a
+/// PoP can never be reinterpreted as a vote, or vice versa.
 const POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
 
 /// Size of an uncompressed BLS signature (in the `min_sig` scheme).
@@ -328,7 +334,7 @@ impl SecretKey {
     /// Prefer [`sign`](Self::sign) if possible.
     #[must_use]
     pub fn sign_bytes(&self, msg: &[u8]) -> IndividualSignature {
-        let sig = self.0.sign(msg, DST, &[]);
+        let sig = self.0.sign(msg, SIG_DST, &[]);
         IndividualSignature(sig)
     }
 
@@ -362,7 +368,7 @@ impl IndividualSignature {
         // invariant already guarantees prime-order subgroup membership, as it is
         // established when signing and re-checked on deserialization (see `read`).
         // Re-checking here would be redundant.
-        self.0.verify(false, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+        self.0.verify(false, msg, SIG_DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
     }
 }
 
@@ -376,8 +382,7 @@ impl PublicKey {
     #[must_use]
     pub fn verify_pop(&self, pop: &ProofOfPossession) -> bool {
         let pk_bytes = self.0.serialize();
-        pop.0.verify(true, &pk_bytes, POP_DST, &[], &self.0, true)
-            == blst::BLST_ERROR::BLST_SUCCESS
+        pop.0.verify(true, &pk_bytes, POP_DST, &[], &self.0, true) == blst::BLST_ERROR::BLST_SUCCESS
     }
 }
 
@@ -449,7 +454,7 @@ impl AggregateSignature {
 
     /// Verifies the aggregate signature against `msg` and `pks`.
     ///
-    /// # Safety
+    /// # Correctness
     ///
     /// This uses `fast_aggregate_verify`, which is only sound when every key
     /// in `pks` has been independently certified to belong to someone who
@@ -471,13 +476,13 @@ impl AggregateSignature {
             return false;
         }
         let pks: Vec<_> = self.signers().map(|v| &pks[v.as_usize()].0).collect();
-        let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
+        let err = self.sig.fast_aggregate_verify(true, msg, SIG_DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
 
     /// Verifies the aggregate signature against `msg` and `pks`.
     ///
-    /// # Safety
+    /// # Correctness
     ///
     /// Same PoP precondition as [`AggregateSignature::verify`].
     #[must_use]
@@ -486,7 +491,7 @@ impl AggregateSignature {
             return false;
         }
         let pks: Vec<_> = pks.iter().map(|p| &p.0).collect();
-        let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
+        let err = self.sig.fast_aggregate_verify(true, msg, SIG_DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
 
@@ -747,6 +752,15 @@ mod tests {
         assert!(!other_pk.verify_pop(&pop));
     }
 
+    /// Both domain separators match the PoP ciphersuite byte for byte, so a
+    /// revert to the basic (`_NUL_`) suite cannot slip through unnoticed.
+    #[test]
+    fn dsts_match_the_pop_ciphersuite() {
+        assert_eq!(SIG_DST, b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_");
+        assert_eq!(POP_DST, b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_");
+        assert_ne!(SIG_DST, POP_DST);
+    }
+
     /// Cross-DST separation: a regular vote signature is not a valid PoP and a
     /// PoP is not a valid regular signature.
     #[test]
@@ -796,11 +810,8 @@ mod tests {
         // sigma_x. The current `new()` does not bind sigs to the bitmask, so
         // this construction is buildable.
         let sigma_x = sk_x.sign(msg);
-        let forged = AggregateSignature::new(
-            &[sigma_x],
-            [ValidatorId::new(0), ValidatorId::new(1)],
-            2,
-        );
+        let forged =
+            AggregateSignature::new(&[sigma_x], [ValidatorId::new(0), ValidatorId::new(1)], 2);
 
         // 1) Without a PoP gate, `fast_aggregate_verify` ACCEPTS — the attack
         //    succeeds at the crypto layer.
