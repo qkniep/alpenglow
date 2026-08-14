@@ -46,7 +46,8 @@ fn turbine_tree(bencher: divan::Bencher) {
                     }
                 })
                 .collect();
-            let epoch_info = EpochInfo::new(validators);
+            let epoch_info =
+                EpochInfo::try_new(validators).expect("test validators should be valid");
             let turbine1 = Turbine::new(
                 net1,
                 Arc::new(ValidatorEpochInfo::new(

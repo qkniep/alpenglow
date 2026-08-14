@@ -94,7 +94,7 @@ pub struct ValidatorInfo {
     #[serde(deserialize_with = "aggsig::PublicKey::from_array_of_bytes")]
     pub voting_pubkey: aggsig::PublicKey,
     /// Proof of possession for `voting_pubkey`, verified once in
-    /// [`crate::consensus::EpochInfo::new`]. Without this, BLS aggregate
+    /// [`crate::consensus::EpochInfo::try_new`]. Without this, BLS aggregate
     /// verification is unsound under the rogue-key attack — see
     /// [`aggsig::ProofOfPossession`] for the threat model.
     #[serde(deserialize_with = "aggsig::ProofOfPossession::from_array_of_bytes")]
@@ -168,7 +168,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
     }
 
     // turn validator info into actual nodes
-    let shared_epoch = EpochInfo::new(validators.clone());
+    let shared_epoch = EpochInfo::try_new(validators.clone())
+        .expect("validator set was just built here, with matching ids and self-signed PoPs");
     networks
         .into_iter()
         .enumerate()

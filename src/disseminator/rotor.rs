@@ -232,7 +232,8 @@ mod tests {
             });
         }
 
-        let epoch_info = EpochInfo::new(validators.clone());
+        let epoch_info =
+            EpochInfo::try_new(validators.clone()).expect("test validators should be valid");
         let mut rotors = Vec::new();
         for i in 0..count {
             let v = ValidatorIndex::new(i);

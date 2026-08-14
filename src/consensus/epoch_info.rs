@@ -1,11 +1,24 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use thiserror::Error;
+
 use crate::consensus::{
     QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, WEAK_QUORUM_THRESHOLD, WEAKEST_QUORUM_THRESHOLD,
 };
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorIndex, ValidatorInfo};
+
+/// Errors that can occur when validating a validator set into an [`EpochInfo`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum EpochInfoError {
+    /// A validator's `id` does not match its position in the validator set.
+    #[error("validator at index {index} has id {id}, expected {index}")]
+    IdIndexMismatch { index: usize, id: ValidatorIndex },
+    /// A validator's proof of possession does not verify against its voting key.
+    #[error("validator {0} has an invalid BLS proof of possession")]
+    InvalidProofOfPossession(ValidatorIndex),
+}
 
 /// Shared epoch information, identical across all validators.
 ///
@@ -27,36 +40,37 @@ pub struct ValidatorEpochInfo {
 }
 
 impl EpochInfo {
-    /// Creates a new `EpochInfo` from the given validator set.
+    /// Tries to create a new `EpochInfo` from the given validator set.
     ///
-    /// Verifies each validator's BLS proof of possession (`voting_pop`). This
-    /// is the trust boundary that makes `fast_aggregate_verify` sound for the
-    /// rest of the protocol: once a key sits inside an `EpochInfo`, downstream
-    /// code can treat it as PoP-checked. Construction-time verification, not
-    /// per-vote, keeps the hot path cheap.
+    /// This is the only constructor, which makes it the trust boundary for the
+    /// rest of the protocol: it verifies every validator's BLS proof of
+    /// possession (`voting_pop`), so downstream code can treat any key reachable
+    /// from an `EpochInfo` as PoP-checked. That is what makes
+    /// [`AggregateSignature::verify`] sound against the rogue-key attack.
+    /// Checking once here, rather than per vote, keeps the hot path cheap.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// - If any validator's `id` does not match its index in the vector.
-    /// - If any validator's `voting_pop` fails to verify against its `voting_pubkey`.
-    pub fn new(validators: Vec<ValidatorInfo>) -> Self {
-        for (i, v) in validators.iter().enumerate() {
-            assert!(
-                v.id.as_usize() == i,
-                "validator at index {i} has id {}, expected {i}",
-                v.id
-            );
-            assert!(
-                v.voting_pubkey.verify_pop(&v.voting_pop),
-                "validator {} has invalid BLS proof of possession",
-                v.id,
-            );
+    /// - [`EpochInfoError::IdIndexMismatch`] if any validator's `id` does not
+    ///   match its index in the vector.
+    /// - [`EpochInfoError::InvalidProofOfPossession`] if any validator's
+    ///   `voting_pop` fails to verify against its `voting_pubkey`.
+    ///
+    /// [`AggregateSignature::verify`]: crate::crypto::AggregateSignature::verify
+    pub fn try_new(validators: Vec<ValidatorInfo>) -> Result<Self, EpochInfoError> {
+        for (index, v) in validators.iter().enumerate() {
+            if v.id.as_usize() != index {
+                return Err(EpochInfoError::IdIndexMismatch { index, id: v.id });
+            }
+            if !v.voting_pubkey.verify_pop(&v.voting_pop) {
+                return Err(EpochInfoError::InvalidProofOfPossession(v.id));
+            }
         }
         let total_stake = validators.iter().map(|v| v.stake).sum();
-        Self {
+        Ok(Self {
             validators,
             total_stake,
-        }
+        })
     }
 
     /// Returns all validators in this epoch.
@@ -149,17 +163,33 @@ mod tests {
     use crate::crypto::aggsig::SecretKey as AggSecretKey;
     use crate::test_utils::generate_validators;
 
-    /// Swapping in a PoP from a different key must panic in `EpochInfo::new`:
-    /// this is the trust boundary that gates everything downstream.
+    /// Swapping in a PoP from a different key must be rejected: this is the
+    /// trust boundary that gates everything downstream.
     #[test]
-    #[should_panic(expected = "invalid BLS proof of possession")]
     fn rejects_mismatched_pop() {
         let (_, epoch) = generate_validators(2);
         let mut validators = epoch.validators().to_vec();
         // Replace validator 0's PoP with one generated under an unrelated key.
-        let bogus = AggSecretKey::new(&mut rand::rng()).sign_pop();
-        validators[0].voting_pop = bogus;
-        let _ = EpochInfo::new(validators);
+        validators[0].voting_pop = AggSecretKey::new(&mut rand::rng()).sign_pop();
+        assert_eq!(
+            EpochInfo::try_new(validators).unwrap_err(),
+            EpochInfoError::InvalidProofOfPossession(ValidatorIndex::new(0)),
+        );
+    }
+
+    /// A validator whose `id` disagrees with its index must be rejected too.
+    #[test]
+    fn rejects_id_index_mismatch() {
+        let (_, epoch) = generate_validators(2);
+        let mut validators = epoch.validators().to_vec();
+        validators[1].id = ValidatorIndex::new(7);
+        assert_eq!(
+            EpochInfo::try_new(validators).unwrap_err(),
+            EpochInfoError::IdIndexMismatch {
+                index: 1,
+                id: ValidatorIndex::new(7),
+            },
+        );
     }
 
     #[test]

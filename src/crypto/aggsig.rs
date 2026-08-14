@@ -461,7 +461,7 @@ impl AggregateSignature {
     /// knows the corresponding secret. Callers must therefore guarantee that
     /// each `pk` in `pks` has had its [`ProofOfPossession`] verified via
     /// [`PublicKey::verify_pop`] before being admitted to the validator set.
-    /// In this codebase that check happens once, in [`crate::consensus::EpochInfo::new`].
+    /// In this codebase that check happens once, in [`crate::consensus::EpochInfo::try_new`].
     #[must_use]
     pub fn verify(&self, msg: &impl Signable, pks: &[PublicKey]) -> bool {
         self.verify_bytes(&msg.bytes_to_sign(), pks)
@@ -770,14 +770,14 @@ mod tests {
         let pk_bytes = pk.0.serialize();
 
         // A vote signature of the pubkey's bytes must NOT be accepted as a PoP.
-        let vote_sig_of_pk = sk.sign(&pk_bytes);
+        let vote_sig_of_pk = sk.sign_bytes(&pk_bytes);
         let masquerade = ProofOfPossession(vote_sig_of_pk.0);
         assert!(!pk.verify_pop(&masquerade));
 
         // A PoP must NOT verify as a regular vote signature over the pk bytes.
         let pop = sk.sign_pop();
         let masquerade = IndividualSignature(pop.0);
-        assert!(!masquerade.verify(&pk_bytes, &pk));
+        assert!(!masquerade.verify_bytes(&pk_bytes, &pk));
     }
 
     /// Rogue-key attack: an adversary can construct `pk_adv = pk_x - pk_h` so
@@ -809,14 +809,17 @@ mod tests {
         // aggregate that names both pk_h and pk_adv but actually only carries
         // sigma_x. The current `new()` does not bind sigs to the bitmask, so
         // this construction is buildable.
-        let sigma_x = sk_x.sign(msg);
-        let forged =
-            AggregateSignature::new(&[sigma_x], [ValidatorId::new(0), ValidatorId::new(1)], 2);
+        let sigma_x = sk_x.sign_bytes(msg);
+        let forged = AggregateSignature::new(
+            &[sigma_x],
+            [ValidatorIndex::new(0), ValidatorIndex::new(1)],
+            2,
+        );
 
         // 1) Without a PoP gate, `fast_aggregate_verify` ACCEPTS — the attack
         //    succeeds at the crypto layer.
         assert!(
-            forged.verify(msg, &[pk_h, pk_adv]),
+            forged.verify_bytes(msg, &[pk_h, pk_adv]),
             "rogue-key attack should pass fast_aggregate_verify on its own",
         );
 

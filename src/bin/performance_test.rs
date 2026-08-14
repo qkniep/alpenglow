@@ -139,7 +139,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     }
 
     // turn validator info into actual nodes
-    let shared_epoch = EpochInfo::new(validators.clone());
+    let shared_epoch = EpochInfo::try_new(validators.clone())
+        .expect("validator set was just built here, with matching ids and self-signed PoPs");
     validators
         .iter()
         .zip(networks)
