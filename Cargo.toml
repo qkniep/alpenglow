@@ -28,7 +28,7 @@ fastrace = "0.7"
 fastrace-opentelemetry = { version = "0.18", optional = true }
 futures = "0.3"
 hex-literal = "1"
-hotpath = "0.21"
+hotpath = "0.23"
 libc = "0.2"
 log = "0.4"
 logforth = { version = "0.30", features = ["append-fastrace", "bridge-log", "filter-rustlog"] }
@@ -52,7 +52,7 @@ time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = { version = "1", optional = true }
-wincode = { version = "0.5", features = ["derive"] }
+wincode = { version = "0.6", features = ["derive"] }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -107,6 +107,8 @@ todo = "warn"
 undocumented_unsafe_blocks = "warn"
 allow_attributes = "warn"
 ignore_without_reason = "warn"
+# exhaustiveness: a `_` arm covering one variant silently absorbs new ones
+match_wildcard_for_single_variants = "warn"
 # async / perf
 large_futures = "warn"
 redundant_clone = "warn"

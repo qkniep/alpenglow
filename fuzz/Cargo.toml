@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-wincode = "0.5"
+wincode = "0.6"
 
 [dependencies.alpenglow]
 path = ".."
