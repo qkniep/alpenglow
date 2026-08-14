@@ -194,3 +194,33 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::generate_validators;
+
+    /// A validator set must survive the TOML encoding the node config uses.
+    ///
+    /// `voting_pop` is serialized by its derive but read back through
+    /// [`aggsig::ProofOfPossession::from_array_of_bytes`], so the two halves
+    /// could drift apart and leave existing config files unloadable. Feeding the
+    /// result to [`consensus::EpochInfo::try_new`] checks the property that
+    /// actually matters: the PoPs still gate correctly on the far side.
+    #[test]
+    fn validator_info_survives_a_toml_roundtrip() {
+        #[derive(Serialize, Deserialize)]
+        struct Gossip {
+            gossip: Vec<ValidatorInfo>,
+        }
+
+        let (_, epoch) = generate_validators(3);
+        let gossip = epoch.validators().to_vec();
+
+        let encoded = toml::to_string(&Gossip { gossip }).expect("validator set should serialize");
+        let decoded: Gossip = toml::from_str(&encoded).expect("validator set should deserialize");
+
+        EpochInfo::try_new(decoded.gossip)
+            .expect("round-tripped validator set should still verify");
+    }
+}
