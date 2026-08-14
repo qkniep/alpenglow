@@ -157,7 +157,7 @@ unsafe impl<C: Config> SchemaWrite<C> for IndividualSignature {
 /// A proof of possession for a BLS public key.
 ///
 /// A PoP is a BLS signature over the public key's bytes, made under the
-/// dedicated [`POP_DST`] domain separator. Verifying it before admitting a
+/// dedicated `PopProve` domain separator. Verifying it before admitting a
 /// `pk` into the validator set is what makes [`AggregateSignature::verify`]
 /// safe under the rogue-key attack: without PoPs an adversary can publish
 /// `pk_adv = -Σ pk_others + g^x` and forge aggregate signatures that name
@@ -341,9 +341,9 @@ impl SecretKey {
     /// Produces a proof of possession for this key's public key.
     ///
     /// The PoP is a signature of the public key's bytes under the dedicated
-    /// [`POP_DST`]. It must be verified once (by [`PublicKey::verify_pop`])
-    /// before the public key is admitted to a validator set that is later
-    /// passed to [`AggregateSignature::verify`].
+    /// `PopProve` domain separator. It must be verified once (by
+    /// [`PublicKey::verify_pop`]) before the public key is admitted to a
+    /// validator set that is later passed to [`AggregateSignature::verify`].
     #[must_use]
     pub fn sign_pop(&self) -> ProofOfPossession {
         let pk_bytes = self.0.sk_to_pk().serialize();
