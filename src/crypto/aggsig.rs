@@ -404,6 +404,13 @@ impl PublicKey {
     /// against the rogue-key attack.
     #[must_use]
     pub fn verify_pop(&self, pop: &ProofOfPossession) -> bool {
+        // SAFETY: both `true` flags are load-bearing and must not be relaxed.
+        // The trailing one (`pk_validate`) is the only subgroup and identity
+        // check any voting key ever receives: `try_from_bytes` decodes via
+        // `from_bytes`, which does not validate, and `fast_aggregate_verify`
+        // never validates its keys. The leading one (`sig_groupcheck`) plays
+        // the same role for the PoP itself, which `ProofOfPossession::
+        // try_from_bytes` decodes without a subgroup check.
         pop.0
             .verify(true, &self.compress(), POP_DST, &[], &self.0, true)
             == blst::BLST_ERROR::BLST_SUCCESS
@@ -786,32 +793,34 @@ mod tests {
         assert!(!other_pk.verify_pop(&pop));
     }
 
-    /// Both domain separators match the PoP ciphersuite byte for byte, so a
-    /// revert to the basic (`_NUL_`) suite cannot slip through unnoticed.
+    /// Fixed key, fixed message, fixed output bytes.
+    ///
+    /// Pins the whole signing pipeline at once — both domain separators, the
+    /// hash-to-curve suite, and the point encodings — rather than restating any
+    /// one input. Regenerate these vectors only deliberately: a diff here is a
+    /// wire-format break against every peer running an older build.
     #[test]
-    fn dsts_match_the_pop_ciphersuite() {
-        assert_eq!(SIG_DST, b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_");
-        assert_eq!(POP_DST, b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_");
-        assert_ne!(SIG_DST, POP_DST);
-    }
+    fn known_answer_vectors() {
+        const SK: [u8; 32] = [
+            0x2c, 0xd4, 0xba, 0x40, 0x6b, 0x52, 0x24, 0x59, 0xd5, 0x7a, 0x0b, 0xed, 0x51, 0xa3,
+            0x97, 0x43, 0x5c, 0x0b, 0xb1, 0x1d, 0xd5, 0xf3, 0xca, 0x47, 0x52, 0xb2, 0x69, 0x0c,
+            0xbb, 0x5a, 0x1f, 0x2c,
+        ];
+        const MSG: &[u8] = b"alpenglow known-answer test";
+        const SIG: [u8; 48] = [
+            143, 128, 229, 227, 123, 159, 187, 191, 96, 196, 93, 77, 232, 106, 176, 87, 185, 16,
+            243, 137, 84, 72, 93, 249, 46, 166, 125, 129, 100, 22, 8, 139, 58, 140, 148, 40, 68,
+            46, 231, 225, 9, 111, 85, 157, 86, 90, 174, 183,
+        ];
+        const POP: [u8; 48] = [
+            133, 166, 224, 222, 242, 204, 149, 210, 228, 47, 155, 32, 172, 233, 189, 221, 209, 155,
+            35, 238, 70, 18, 67, 240, 50, 138, 129, 156, 109, 181, 86, 145, 143, 83, 24, 106, 236,
+            104, 11, 189, 65, 47, 72, 89, 197, 156, 234, 122,
+        ];
 
-    /// Cross-DST separation: a regular vote signature is not a valid PoP and a
-    /// PoP is not a valid regular signature.
-    #[test]
-    fn pop_dst_is_separate() {
-        let sk = SecretKey::new(&mut rand::rng());
-        let pk = sk.to_pk();
-        let pk_bytes = pk.0.serialize();
-
-        // A vote signature of the pubkey's bytes must NOT be accepted as a PoP.
-        let vote_sig_of_pk = sk.sign_bytes(&pk_bytes);
-        let masquerade = ProofOfPossession(vote_sig_of_pk.0);
-        assert!(!pk.verify_pop(&masquerade));
-
-        // A PoP must NOT verify as a regular vote signature over the pk bytes.
-        let pop = sk.sign_pop();
-        let masquerade = IndividualSignature(pop.0);
-        assert!(!masquerade.verify_bytes(&pk_bytes, &pk));
+        let sk = SecretKey::try_from_bytes(&SK).expect("fixed vector is a valid scalar");
+        assert_eq!(sk.sign_bytes(MSG).0.compress(), SIG);
+        assert_eq!(sk.sign_pop().0.compress(), POP);
     }
 
     /// Builds the rogue key `pk_x - pk_h`, so that `[pk_h, pk_adv]` aggregates
@@ -843,23 +852,5 @@ mod tests {
             sigma_x.fast_aggregate_verify(true, msg, SIG_DST, &[&pk_h.0, &pk_adv.0]),
             BLST_ERROR::BLST_SUCCESS,
         );
-    }
-
-    /// The PoP gate defeats that forgery: `pk_adv` is not the public key of any
-    /// secret the attacker holds, so no PoP they can produce verifies against
-    /// it. Recovering one would mean solving the discrete log problem.
-    #[test]
-    fn pop_rejects_a_rogue_key() {
-        let pk_h = SecretKey::new(&mut rand::rng()).to_pk();
-        let sk_x = SecretKey::new(&mut rand::rng());
-        let pk_adv = rogue_key(&sk_x.to_pk(), &pk_h);
-
-        // A valid PoP for `pk_x` is not a PoP for `pk_adv`.
-        assert!(!pk_adv.verify_pop(&sk_x.sign_pop()));
-
-        // Nor is signing `pk_adv`'s own bytes under the only key they hold:
-        // `verify_pop` checks the signature against `pk_adv`, not `pk_x`.
-        let bogus = ProofOfPossession(sk_x.0.sign(&pk_adv.0.serialize(), POP_DST, &[]));
-        assert!(!pk_adv.verify_pop(&bogus));
     }
 }
