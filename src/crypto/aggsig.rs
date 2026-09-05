@@ -43,8 +43,21 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::ValidatorIndex;
 use crate::crypto::Signable;
 
-/// Domain separator corresponding to the G1 (min sig), RO (random oracle) variant.
-const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+/// Domain separator for regular (vote) signatures.
+///
+/// `CoreSign` DST of the proof-of-possession ciphersuite in
+/// [draft-irtf-cfrg-bls-signature-05]. That scheme is required, not preferred:
+/// certs aggregate over one shared message, which needs `FastAggregateVerify`,
+/// and the draft defines that only for PoP.
+///
+/// [draft-irtf-cfrg-bls-signature-05]: https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-05.html
+const SIG_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
+
+/// Domain separator for proof-of-possession signatures.
+///
+/// `PopProve` DST of the same ciphersuite as [`SIG_DST`], distinct from it so a
+/// PoP can never be reinterpreted as a vote, or vice versa.
+const POP_DST: &[u8] = b"BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
 
 /// Size of an uncompressed BLS signature (in the `min_sig` scheme).
 ///
@@ -72,6 +85,8 @@ pub struct PublicKey(BlstPublicKey);
 impl PublicKey {
     /// Tries to convert a byte array into a public key.
     ///
+    /// # Errors
+    ///
     /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS public key.
     pub fn try_from_bytes(pk_in: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(BlstPublicKey::from_bytes(pk_in)?))
@@ -80,6 +95,11 @@ impl PublicKey {
     /// Tries to deserialize a `Vec<u8>` into a public key.
     ///
     /// This is for use with `serde(deserialize_with)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error if the input is not a byte sequence, or if
+    /// those bytes do not decode to a valid value.
     pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -138,6 +158,46 @@ unsafe impl<C: Config> SchemaWrite<C> for IndividualSignature {
 
     fn write(mut writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
         Ok(writer.write(&src.0.serialize())?)
+    }
+}
+
+/// A proof of possession for a BLS public key.
+///
+/// A PoP is a BLS signature over the public key's bytes, made under the
+/// dedicated `PopProve` domain separator. Verifying it before admitting a
+/// `pk` into the validator set is what makes [`AggregateSignature::verify`]
+/// safe under the rogue-key attack: without PoPs an adversary can publish
+/// `pk_adv = -Σ pk_others + g^x` and forge aggregate signatures that name
+/// honest signers; with PoPs, `pk_adv` cannot produce a valid signature of
+/// its own bytes, so it never makes it into the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofOfPossession(BlstSignature);
+
+impl ProofOfPossession {
+    /// Tries to convert a byte array into a proof of possession.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS signature.
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, BLST_ERROR> {
+        Ok(Self(BlstSignature::deserialize(bytes)?))
+    }
+
+    /// Tries to deserialize a `Vec<u8>` into a proof of possession.
+    ///
+    /// This is for use with `serde(deserialize_with)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error if the input is not a byte sequence, or if
+    /// those bytes do not decode to a valid value.
+    pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        Self::try_from_bytes(&buf)
+            .map_err(|e| serde::de::Error::custom(format!("BLST error {e:?}")))
     }
 }
 
@@ -252,6 +312,8 @@ impl SecretKey {
 
     /// Tries to convert a byte string into a secret key.
     ///
+    /// # Errors
+    ///
     /// Returns a `BLST_ERROR` if the provided bytes are not a valid BLS secret key.
     pub fn try_from_bytes(sk_in: &[u8]) -> Result<Self, BLST_ERROR> {
         Ok(Self(blst::min_sig::SecretKey::from_bytes(sk_in)?))
@@ -260,6 +322,11 @@ impl SecretKey {
     /// Tries to deserialize a `Vec<u8>` into a secret key.
     ///
     /// This is for use with `serde(deserialize_with)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error if the input is not a byte sequence, or if
+    /// those bytes do not decode to a valid value.
     pub fn from_array_of_bytes<'de, D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -288,8 +355,23 @@ impl SecretKey {
     /// Prefer [`sign`](Self::sign) if possible.
     #[must_use]
     pub fn sign_bytes(&self, msg: &[u8]) -> IndividualSignature {
-        let sig = self.0.sign(msg, DST, &[]);
+        let sig = self.0.sign(msg, SIG_DST, &[]);
         IndividualSignature(sig)
+    }
+
+    /// Produces a proof of possession for this key's public key.
+    ///
+    /// The PoP is a signature of the public key's bytes under the dedicated
+    /// `PopProve` domain separator. It must be verified once (by
+    /// [`PublicKey::verify_pop`]) before the public key is admitted to a
+    /// validator set that is later passed to [`AggregateSignature::verify`].
+    #[must_use]
+    pub fn sign_pop(&self) -> ProofOfPossession {
+        // NOTE: `PopProve` hashes the *compressed* public key, so `compress()`
+        // rather than `serialize()`. Must stay in step with `verify_pop`.
+        let pk_bytes = self.0.sk_to_pk().compress();
+        let sig = self.0.sign(&pk_bytes, POP_DST, &[]);
+        ProofOfPossession(sig)
     }
 }
 
@@ -309,7 +391,39 @@ impl IndividualSignature {
         // invariant already guarantees prime-order subgroup membership, as it is
         // established when signing and re-checked on deserialization (see `read`).
         // Re-checking here would be redundant.
-        self.0.verify(false, msg, DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+        self.0.verify(false, msg, SIG_DST, &[], &pk.0, true) == blst::BLST_ERROR::BLST_SUCCESS
+    }
+}
+
+impl PublicKey {
+    /// Verifies that `pop` is a valid proof of possession for this public key.
+    ///
+    /// A passing check certifies that the holder of `self` knows the
+    /// corresponding secret key, which is the precondition that makes
+    /// [`AggregateSignature::verify`] (built on `fast_aggregate_verify`) sound
+    /// against the rogue-key attack.
+    #[must_use]
+    pub fn verify_pop(&self, pop: &ProofOfPossession) -> bool {
+        // SAFETY: both `true` flags are load-bearing and must not be relaxed.
+        // The trailing one (`pk_validate`) is the only subgroup and identity
+        // check any voting key ever receives: `try_from_bytes` decodes via
+        // `from_bytes`, which does not validate, and `fast_aggregate_verify`
+        // never validates its keys. The leading one (`sig_groupcheck`) plays
+        // the same role for the PoP itself, which `ProofOfPossession::
+        // try_from_bytes` decodes without a subgroup check.
+        pop.0
+            .verify(true, &self.compress(), POP_DST, &[], &self.0, true)
+            == blst::BLST_ERROR::BLST_SUCCESS
+    }
+
+    /// Returns the compressed encoding of this public key.
+    ///
+    /// This is the canonical form the IRTF draft uses to represent a public key
+    /// (`point_to_pubkey`), so it doubles as the identity of the key: two
+    /// validators share a key exactly when these bytes are equal.
+    #[must_use]
+    pub fn compress(&self) -> [u8; 96] {
+        self.0.compress()
     }
 }
 
@@ -380,6 +494,15 @@ impl AggregateSignature {
     }
 
     /// Verifies the aggregate signature against `msg` and `pks`.
+    ///
+    /// # Correctness
+    ///
+    /// This uses `fast_aggregate_verify`, which is only sound when every key
+    /// in `pks` has been independently certified to belong to someone who
+    /// knows the corresponding secret. Callers must therefore guarantee that
+    /// each `pk` in `pks` has had its [`ProofOfPossession`] verified via
+    /// [`PublicKey::verify_pop`] before being admitted to the validator set.
+    /// In this codebase that check happens once, in [`crate::consensus::EpochInfo::try_new`].
     #[must_use]
     pub fn verify(&self, msg: &impl Signable, pks: &[PublicKey]) -> bool {
         self.verify_bytes(&msg.bytes_to_sign(), pks)
@@ -394,18 +517,22 @@ impl AggregateSignature {
             return false;
         }
         let pks: Vec<_> = self.signers().map(|v| &pks[v.as_usize()].0).collect();
-        let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
+        let err = self.sig.fast_aggregate_verify(true, msg, SIG_DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
 
     /// Verifies the aggregate signature against `msg` and `pks`.
+    ///
+    /// # Correctness
+    ///
+    /// Same PoP precondition as [`AggregateSignature::verify`].
     #[must_use]
     pub fn verify_without_bitmask(&self, msg: &[u8], pks: &[PublicKey]) -> bool {
         if self.bitmask.count_ones() != pks.len() {
             return false;
         }
         let pks: Vec<_> = pks.iter().map(|p| &p.0).collect();
-        let err = self.sig.fast_aggregate_verify(true, msg, DST, &pks);
+        let err = self.sig.fast_aggregate_verify(true, msg, SIG_DST, &pks);
         err == blst::BLST_ERROR::BLST_SUCCESS
     }
 
@@ -651,5 +778,79 @@ mod tests {
         let wrong_pk_str = format!("sk = {:?}\npk = [0, 0, 0, 0]", kp.sk.0.to_bytes());
         let deserialized: Result<KeyPair, toml::de::Error> = toml::from_str(&wrong_pk_str);
         assert!(deserialized.is_err());
+    }
+
+    /// A PoP for a freshly generated key verifies, and the same PoP rejected
+    /// against any other key.
+    #[test]
+    fn pop_roundtrip() {
+        let sk = SecretKey::new(&mut rand::rng());
+        let pk = sk.to_pk();
+        let pop = sk.sign_pop();
+        assert!(pk.verify_pop(&pop));
+
+        let other_pk = SecretKey::new(&mut rand::rng()).to_pk();
+        assert!(!other_pk.verify_pop(&pop));
+    }
+
+    /// Fixed key, fixed message, fixed output bytes.
+    ///
+    /// Pins the whole signing pipeline at once — both domain separators, the
+    /// hash-to-curve suite, and the point encodings — rather than restating any
+    /// one input. Regenerate these vectors only deliberately: a diff here is a
+    /// wire-format break against every peer running an older build.
+    #[test]
+    fn known_answer_vectors() {
+        const SK: [u8; 32] = [
+            0x2c, 0xd4, 0xba, 0x40, 0x6b, 0x52, 0x24, 0x59, 0xd5, 0x7a, 0x0b, 0xed, 0x51, 0xa3,
+            0x97, 0x43, 0x5c, 0x0b, 0xb1, 0x1d, 0xd5, 0xf3, 0xca, 0x47, 0x52, 0xb2, 0x69, 0x0c,
+            0xbb, 0x5a, 0x1f, 0x2c,
+        ];
+        const MSG: &[u8] = b"alpenglow known-answer test";
+        const SIG: [u8; 48] = [
+            143, 128, 229, 227, 123, 159, 187, 191, 96, 196, 93, 77, 232, 106, 176, 87, 185, 16,
+            243, 137, 84, 72, 93, 249, 46, 166, 125, 129, 100, 22, 8, 139, 58, 140, 148, 40, 68,
+            46, 231, 225, 9, 111, 85, 157, 86, 90, 174, 183,
+        ];
+        const POP: [u8; 48] = [
+            133, 166, 224, 222, 242, 204, 149, 210, 228, 47, 155, 32, 172, 233, 189, 221, 209, 155,
+            35, 238, 70, 18, 67, 240, 50, 138, 129, 156, 109, 181, 86, 145, 143, 83, 24, 106, 236,
+            104, 11, 189, 65, 47, 72, 89, 197, 156, 234, 122,
+        ];
+
+        let sk = SecretKey::try_from_bytes(&SK).expect("fixed vector is a valid scalar");
+        assert_eq!(sk.sign_bytes(MSG).0.compress(), SIG);
+        assert_eq!(sk.sign_pop().0.compress(), POP);
+    }
+
+    /// Builds the rogue key `pk_x - pk_h`, so that `[pk_h, pk_adv]` aggregates
+    /// to `pk_x` and a signature under `sk_x` alone appears to be a joint one.
+    fn rogue_key(pk_x: &PublicKey, pk_h: &PublicKey) -> PublicKey {
+        use blst::min_sig::AggregatePublicKey as BlstAggregatePublicKey;
+
+        let mut agg = BlstAggregatePublicKey::from_public_key(&pk_x.0);
+        agg.sub_aggregate(&BlstAggregatePublicKey::from_public_key(&pk_h.0));
+        PublicKey(agg.to_public_key())
+    }
+
+    /// `FastAggregateVerify` accepts a rogue-key forgery on its own: the
+    /// attacker registers `pk_adv = pk_x - pk_h` and signs with `sk_x`, and the
+    /// aggregate verifies although `pk_h` never signed.
+    ///
+    /// This is the precondition that forces the PoP gate, and it is a property
+    /// of BLS rather than of [`AggregateSignature`], so it is asserted straight
+    /// against `blst`. Hardening our own aggregate type must not silence it.
+    #[test]
+    fn fast_aggregate_verify_alone_accepts_a_rogue_key_forgery() {
+        let msg = b"victim's vote";
+        let pk_h = SecretKey::new(&mut rand::rng()).to_pk();
+        let sk_x = SecretKey::new(&mut rand::rng());
+        let pk_adv = rogue_key(&sk_x.to_pk(), &pk_h);
+
+        let sigma_x = sk_x.0.sign(msg, SIG_DST, &[]);
+        assert_eq!(
+            sigma_x.fast_aggregate_verify(true, msg, SIG_DST, &[&pk_h.0, &pk_adv.0]),
+            BLST_ERROR::BLST_SUCCESS,
+        );
     }
 }

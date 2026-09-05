@@ -256,6 +256,7 @@ mod tests {
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
+                voting_pop: voting_sks[i as usize].sign_pop(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
                 repair_requester_address: dontcare_sockaddr(),
@@ -280,7 +281,8 @@ mod tests {
         for i in 0..validators.len() {
             let v = ValidatorIndex::new(i as u64);
             let network = core.join_unlimited(v).await;
-            let epoch_info = EpochInfo::new(validators.to_vec());
+            let epoch_info =
+                EpochInfo::try_new(validators.to_vec()).expect("test validators should be valid");
             let epoch_info = Arc::new(ValidatorEpochInfo::new(v, epoch_info));
             let turbine = Turbine::new(network, epoch_info);
             disseminators.push(turbine);

@@ -93,6 +93,12 @@ pub struct ValidatorInfo {
     pub pubkey: signature::PublicKey,
     #[serde(deserialize_with = "aggsig::PublicKey::from_array_of_bytes")]
     pub voting_pubkey: aggsig::PublicKey,
+    /// Proof of possession for `voting_pubkey`, verified once in
+    /// [`crate::consensus::EpochInfo::try_new`]. Without this, BLS aggregate
+    /// verification is unsound under the rogue-key attack — see
+    /// [`aggsig::ProofOfPossession`] for the threat model.
+    #[serde(deserialize_with = "aggsig::ProofOfPossession::from_array_of_bytes")]
+    pub voting_pop: aggsig::ProofOfPossession,
     pub all2all_address: SocketAddr,
     pub disseminator_address: SocketAddr,
     /// Address of the node's repair requester; send [`RepairResponse`] messages here when replying to its [`RepairRequest`].
@@ -153,6 +159,7 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             stake: Stake::new(1),
             pubkey: sks[id].to_pk(),
             voting_pubkey: voting_sks[id].to_pk(),
+            voting_pop: voting_sks[id].sign_pop(),
             all2all_address,
             disseminator_address,
             repair_requester_address,
@@ -161,7 +168,8 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
     }
 
     // turn validator info into actual nodes
-    let shared_epoch = EpochInfo::new(validators.clone());
+    let shared_epoch = EpochInfo::try_new(validators.clone())
+        .expect("validator set was just built here, with matching ids and self-signed PoPs");
     networks
         .into_iter()
         .enumerate()
@@ -185,4 +193,34 @@ pub fn create_test_nodes(count: u64) -> Vec<TestNode> {
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::generate_validators;
+
+    /// A validator set must survive the TOML encoding the node config uses.
+    ///
+    /// `voting_pop` is serialized by its derive but read back through
+    /// [`aggsig::ProofOfPossession::from_array_of_bytes`], so the two halves
+    /// could drift apart and leave existing config files unloadable. Feeding the
+    /// result to [`consensus::EpochInfo::try_new`] checks the property that
+    /// actually matters: the PoPs still gate correctly on the far side.
+    #[test]
+    fn validator_info_survives_a_toml_roundtrip() {
+        #[derive(Serialize, Deserialize)]
+        struct Gossip {
+            gossip: Vec<ValidatorInfo>,
+        }
+
+        let (_, epoch) = generate_validators(3);
+        let gossip = epoch.validators().to_vec();
+
+        let encoded = toml::to_string(&Gossip { gossip }).expect("validator set should serialize");
+        let decoded: Gossip = toml::from_str(&encoded).expect("validator set should deserialize");
+
+        EpochInfo::try_new(decoded.gossip)
+            .expect("round-tripped validator set should still verify");
+    }
 }

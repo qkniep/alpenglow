@@ -52,13 +52,14 @@ pub fn generate_validators(num_validators: u64) -> (Vec<SecretKey>, EpochInfo) {
             stake: Stake::new(1),
             pubkey: sks[i as usize].to_pk(),
             voting_pubkey: voting_sks[i as usize].to_pk(),
+            voting_pop: voting_sks[i as usize].sign_pop(),
             all2all_address: localhost_ip_sockaddr(0),
             disseminator_address: localhost_ip_sockaddr(0),
             repair_requester_address: localhost_ip_sockaddr(0),
             repair_responder_address: localhost_ip_sockaddr(0),
         });
     }
-    let epoch_info = EpochInfo::new(validators);
+    let epoch_info = EpochInfo::try_new(validators).expect("test validators should be valid");
     (voting_sks, epoch_info)
 }
 

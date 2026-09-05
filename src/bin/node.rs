@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     let root_span = Span::root(format!("Alpenglow node {}", config.id), span_context);
 
     // start the node with the provided config
-    let node = create_node(config);
+    let node = create_node(config)?;
     let cancel_token = node.get_cancel_token();
     let node_task = tokio::spawn(node.run().in_span(root_span));
 
@@ -90,11 +90,13 @@ type Node = Alpenglow<
     UdpNetwork<Transaction, Transaction>,
 >;
 
-fn create_node(config: ConfigFile) -> Node {
+fn create_node(config: ConfigFile) -> Result<Node> {
     // turn ConfigFile into an actual node
+    let epoch = EpochInfo::try_new(config.gossip.clone())
+        .context("validator set in the config file is not usable")?;
     let epoch_info = Arc::new(ValidatorEpochInfo::new(
         ValidatorIndex::new(config.id),
-        EpochInfo::new(config.gossip.clone()),
+        epoch,
     ));
     let start_port = config.port;
     let network = UdpNetwork::new(start_port);
@@ -104,7 +106,7 @@ fn create_node(config: ConfigFile) -> Node {
     let repair_requester_network = UdpNetwork::new(start_port + 2);
     let repair_responder_network = UdpNetwork::new(start_port + 3);
     let txs_receiver = UdpNetwork::new(start_port + 4);
-    Alpenglow::new(
+    Ok(Alpenglow::new(
         config.identity_key,
         config.voting_key,
         all2all,
@@ -113,7 +115,7 @@ fn create_node(config: ConfigFile) -> Node {
         repair_responder_network,
         epoch_info,
         txs_receiver,
-    )
+    ))
 }
 
 async fn create_node_configs(
@@ -143,6 +145,7 @@ async fn create_node_configs(
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
+            voting_pop: voting_sks[id as usize].sign_pop(),
             all2all_address: sockaddr,
             disseminator_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 1),
             repair_requester_address: SocketAddr::new(sockaddr.ip(), sockaddr.port() + 2),
