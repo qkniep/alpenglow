@@ -424,14 +424,8 @@ where
                 let Some(root) = self.slice_roots.get(&(block_id.clone(), slice)) else {
                     unreachable!("issued repair request (Shred) before knowing slice root");
                 };
-                let leader_pk = &self.epoch_info.epoch_info().leader(*slot).pubkey;
-                // shred for the wrong slice root, don't even try to verify signature
-                if &shred.slice_root() != root {
-                    warn!("repair response (Shred) with slice root not matching proved slice root");
-                    return;
-                }
-                // have no commitment cache for repair, always verify signature (i.e. `None` here)
-                let Ok(validated) = ValidatedShred::try_new(shred, None, leader_pk) else {
+                let leader_pk = self.epoch_info.leader_pubkey(*slot);
+                let Ok(validated) = ValidatedShred::try_new(shred, Some(root), leader_pk) else {
                     warn!("repair response (Shred) with invalid Merkle proof or signature");
                     return;
                 };

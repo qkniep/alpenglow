@@ -4,6 +4,7 @@
 use crate::consensus::{
     QUORUM_THRESHOLD, STRONG_QUORUM_THRESHOLD, WEAK_QUORUM_THRESHOLD, WEAKEST_QUORUM_THRESHOLD,
 };
+use crate::crypto::signature;
 use crate::types::SLOTS_PER_WINDOW;
 use crate::{Slot, Stake, ValidatorIndex, ValidatorInfo};
 
@@ -127,6 +128,12 @@ impl ValidatorEpochInfo {
     #[must_use]
     pub fn epoch_info(&self) -> &EpochInfo {
         &self.epoch
+    }
+
+    /// Returns the signature verification key of the leader for the given `slot`.
+    #[must_use]
+    pub fn leader_pubkey(&self, slot: Slot) -> &signature::PublicKey {
+        &self.epoch.leader(slot).pubkey
     }
 }
 
