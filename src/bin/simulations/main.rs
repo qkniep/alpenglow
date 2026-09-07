@@ -41,6 +41,7 @@ mod pyjama;
 mod quorum_robustness;
 mod rotor;
 mod ryse;
+mod turbine;
 
 use std::cmp::Reverse;
 use std::fs::File;
