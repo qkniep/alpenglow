@@ -224,6 +224,7 @@ mod tests {
                 stake: Stake::new(1),
                 pubkey: sks[i as usize].to_pk(),
                 voting_pubkey: voting_sks[i as usize].to_pk(),
+                voting_pop: voting_sks[i as usize].sign_pop(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: localhost_ip_sockaddr(base_port + i as u16),
                 repair_requester_address: dontcare_sockaddr(),
@@ -231,7 +232,8 @@ mod tests {
             });
         }
 
-        let epoch_info = EpochInfo::new(validators.clone());
+        let epoch_info =
+            EpochInfo::try_new(validators.clone()).expect("test validators should be valid");
         let mut rotors = Vec::new();
         for i in 0..count {
             let v = ValidatorIndex::new(i);

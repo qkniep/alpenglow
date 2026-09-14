@@ -76,7 +76,7 @@ impl Layout for MinimalLogforthLayout {
 /// Sets up `fastrace` to export spans to an OpenTelemetry collector over OTLP/gRPC.
 ///
 /// The collector endpoint is read from the standard `OTEL_EXPORTER_OTLP_ENDPOINT`
-/// environment variable, falling back to [`DEFAULT_OTLP_ENDPOINT`] for local runs.
+/// environment variable, falling back to `http://127.0.0.1:4317` for local runs.
 ///
 /// Returns an error if the OTLP exporter cannot be built (e.g., the endpoint URL
 /// is malformed). Callers must invoke [`fastrace::flush`] on shutdown to avoid

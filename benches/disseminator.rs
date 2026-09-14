@@ -31,18 +31,23 @@ fn turbine_tree(bencher: divan::Bencher) {
             let mut rng = rand::rng();
             let addr = alpenglow::network::dontcare_sockaddr();
             let validators: Vec<_> = (0..2)
-                .map(|i| ValidatorInfo {
-                    id: ValidatorIndex::new(i),
-                    stake: Stake::new(1),
-                    pubkey: SecretKey::new(&mut rng).to_pk(),
-                    voting_pubkey: alpenglow::crypto::aggsig::SecretKey::new(&mut rng).to_pk(),
-                    all2all_address: addr,
-                    disseminator_address: addr,
-                    repair_requester_address: addr,
-                    repair_responder_address: addr,
+                .map(|i| {
+                    let voting_sk = alpenglow::crypto::aggsig::SecretKey::new(&mut rng);
+                    ValidatorInfo {
+                        id: ValidatorIndex::new(i),
+                        stake: Stake::new(1),
+                        pubkey: SecretKey::new(&mut rng).to_pk(),
+                        voting_pubkey: voting_sk.to_pk(),
+                        voting_pop: voting_sk.sign_pop(),
+                        all2all_address: addr,
+                        disseminator_address: addr,
+                        repair_requester_address: addr,
+                        repair_responder_address: addr,
+                    }
                 })
                 .collect();
-            let epoch_info = EpochInfo::new(validators);
+            let epoch_info =
+                EpochInfo::try_new(validators).expect("test validators should be valid");
             let turbine1 = Turbine::new(
                 net1,
                 Arc::new(ValidatorEpochInfo::new(

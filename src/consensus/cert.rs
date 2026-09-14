@@ -718,6 +718,7 @@ mod tests {
                 stake: Stake::new(1),
                 pubkey: sks.last().unwrap().to_pk(),
                 voting_pubkey: voting_sks.last().unwrap().to_pk(),
+                voting_pop: voting_sks.last().unwrap().sign_pop(),
                 all2all_address: dontcare_sockaddr(),
                 disseminator_address: dontcare_sockaddr(),
                 repair_requester_address: dontcare_sockaddr(),
@@ -966,7 +967,7 @@ mod tests {
     #[test]
     fn notar_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(info.clone());
+        let epoch = EpochInfo::try_new(info.clone()).expect("test validators should be valid");
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 7/11 enough for 60% threshold
@@ -983,7 +984,7 @@ mod tests {
     #[test]
     fn notar_fallback_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(info.clone());
+        let epoch = EpochInfo::try_new(info.clone()).expect("test validators should be valid");
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 7/11 enough for 60% threshold (mixed notar + notar-fallback)
@@ -1002,7 +1003,7 @@ mod tests {
     #[test]
     fn skip_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(info.clone());
+        let epoch = EpochInfo::try_new(info.clone()).expect("test validators should be valid");
 
         // 7/11 enough for 60% threshold
         let votes = create_skip_votes(Slot::new(1), &sks[..7], 0);
@@ -1018,7 +1019,7 @@ mod tests {
     #[test]
     fn final_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(info.clone());
+        let epoch = EpochInfo::try_new(info.clone()).expect("test validators should be valid");
 
         // 7/11 enough for 60% threshold
         let votes = create_final_votes(Slot::new(1), &sks[..7], 0);
@@ -1034,7 +1035,7 @@ mod tests {
     #[test]
     fn fast_final_stake_threshold() {
         let (sks, info) = create_signers(11);
-        let epoch = EpochInfo::new(info.clone());
+        let epoch = EpochInfo::try_new(info.clone()).expect("test validators should be valid");
         let hash: BlockHash = Hash::random_for_test().into();
 
         // 9/11 enough for 80% threshold

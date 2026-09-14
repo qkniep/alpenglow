@@ -75,6 +75,11 @@ Obviously, you can use any IP addresses here, as long as they are reachable. Onl
 
 will produce a config file starting with ```ag_node``` for each socket address found in ```ip_list``` file.
 
+Config files must be regenerated whenever the validator info format changes.
+Each entry now carries a `voting_pop` field, a BLS proof of possession for the
+validator's voting key, and there is no default for it: a config written before
+that field existed fails to load with a missing-field error.
+
 ### Run the nodes
 You may want to use multiple terminals or a script to start the nodes:
 ``` bash

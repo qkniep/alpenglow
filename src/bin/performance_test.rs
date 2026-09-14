@@ -130,6 +130,7 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
             stake: Stake::new(1),
             pubkey: sks[id as usize].to_pk(),
             voting_pubkey: voting_sks[id as usize].to_pk(),
+            voting_pop: voting_sks[id as usize].sign_pop(),
             all2all_address,
             disseminator_address,
             repair_requester_address,
@@ -138,7 +139,8 @@ async fn create_test_nodes(count: u64) -> Vec<TestNode> {
     }
 
     // turn validator info into actual nodes
-    let shared_epoch = EpochInfo::new(validators.clone());
+    let shared_epoch = EpochInfo::try_new(validators.clone())
+        .expect("validator set was just built here, with matching ids and self-signed PoPs");
     validators
         .iter()
         .zip(networks)
