@@ -53,9 +53,9 @@ async fn three_nodes_crash() {
 
 /// Crashing a node via its cancel token must also stop its repair tasks.
 ///
-/// Otherwise a "crashed" node keeps requesting and answering repairs, and the
-/// crash tests above exercise a weaker fault than they claim. The repair tasks
-/// own the repair sockets, so the ports only free up once those tasks are gone.
+/// Otherwise a "crashed" node keeps requesting and answering repairs,
+/// and the crash tests above exercise a weaker fault than they claim.
+/// The repair tasks own the repair sockets, so the ports only free up once those tasks are gone.
 #[tokio::test]
 async fn crash_stops_repair() {
     let node = create_test_nodes(1).pop().expect("should create one node");
