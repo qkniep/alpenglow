@@ -184,14 +184,22 @@ impl FinalityTracker {
             return FinalizationEvent::default();
         };
 
-        match status {
-            FinalizationStatus::Notarized(hash)
-            | FinalizationStatus::Finalized(hash)
-            | FinalizationStatus::ImplicitlyFinalized(hash) => {
-                assert_eq!(&hash, block_hash, "consensus safety violation");
+        match &status {
+            FinalizationStatus::Notarized(hash) => {
+                assert_eq!(hash, block_hash, "consensus safety violation");
                 FinalizationEvent::default()
             }
-            FinalizationStatus::ImplicitlySkipped => FinalizationEvent::default(),
+            FinalizationStatus::Finalized(hash) | FinalizationStatus::ImplicitlyFinalized(hash) => {
+                assert_eq!(hash, block_hash, "consensus safety violation");
+                // NOTE: slot is already decided, restore its status instead of downgrading it
+                self.status.insert(*slot, status);
+                FinalizationEvent::default()
+            }
+            FinalizationStatus::ImplicitlySkipped => {
+                // NOTE: slot is already decided, restore its status instead of downgrading it
+                self.status.insert(*slot, status);
+                FinalizationEvent::default()
+            }
             FinalizationStatus::FinalPendingNotar => {
                 let mut event = FinalizationEvent::default();
                 self.status
@@ -221,9 +229,12 @@ impl FinalityTracker {
         };
 
         match status {
-            FinalizationStatus::FinalPendingNotar
-            | FinalizationStatus::Finalized(_)
-            | FinalizationStatus::ImplicitlyFinalized(_) => FinalizationEvent::default(),
+            FinalizationStatus::FinalPendingNotar => FinalizationEvent::default(),
+            FinalizationStatus::Finalized(_) | FinalizationStatus::ImplicitlyFinalized(_) => {
+                // NOTE: slot is already decided, restore its status instead of downgrading it
+                self.status.insert(slot, status);
+                FinalizationEvent::default()
+            }
             FinalizationStatus::Notarized(block_hash) => {
                 let mut event = FinalizationEvent::default();
                 self.status
@@ -416,6 +427,29 @@ mod tests {
         assert_eq!(event.finalized, Some((slot7, hash7)));
         assert_eq!(event.implicitly_finalized, vec![(slot5, hash5)]);
         assert_eq!(event.implicitly_skipped, vec![slot7.prev()]);
+    }
+
+    /// Redundant certificates for an already finalized slot must not downgrade
+    /// its status, otherwise it is reported as newly finalized again later.
+    #[test]
+    fn redundant_certs_keep_slot_finalized() {
+        let mut tracker = FinalityTracker::default();
+        let b1 = random_block_id(Slot::new(1));
+        let b2 = random_block_id(Slot::new(2));
+        tracker.add_parent(b2.clone(), b1.clone());
+        let event = tracker.mark_fast_finalized(b1.clone());
+        assert_eq!(event.finalized, Some(b1.clone()));
+
+        // redundant notarization and finalization of the same slot
+        let event = tracker.mark_notarized(b1.clone());
+        assert_eq!(event, FinalizationEvent::default());
+        let event = tracker.mark_finalized(b1.0);
+        assert_eq!(event, FinalizationEvent::default());
+
+        // finalizing the child must not report the parent again
+        let event = tracker.mark_fast_finalized(b2.clone());
+        assert_eq!(event.finalized, Some(b2));
+        assert_eq!(event.implicitly_finalized, vec![]);
     }
 
     #[test]
