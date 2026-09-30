@@ -1127,15 +1127,16 @@ checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
 name = "hotpath"
-version = "0.26.0"
+version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f37234f85a8d1bda6b84d486245dd0847c5b33cca10d5f3691375e66704de0f8"
+checksum = "036ff36fa1c4ae8dfb686606537eaa15b5d5da0c51bf94abeaf9dfc6ee54cac7"
 dependencies = [
  "arc-swap",
  "cfg-if",
  "crossbeam-channel",
  "futures-core",
  "hdrhistogram",
+ "hotpath-drain",
  "hotpath-macros",
  "libc",
  "pin-project-lite",
@@ -1147,10 +1148,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "hotpath-macros"
-version = "0.26.0"
+name = "hotpath-drain"
+version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ac39b5517f540cab511bdbd5a4dc8cfc62858d6cd26a095463c1d2acfb3f290"
+checksum = "e149b660b611650bdf3307941ef3e9b81be3c30ed1dfdbe7f670319674f023a6"
+
+[[package]]
+name = "hotpath-macros"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ff68b15fdbcddfbad685f445597580d6fcbf28b49f01ff975e934351079e13b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2398,9 +2405,9 @@ checksum = "88414a5ca1f85d82cc34471e975f0f74f6aa54c40f062efa42c0080e7f763f81"
 
 [[package]]
 name = "smallvec"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
+checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
 name = "socket2"
@@ -2519,18 +2526,18 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
