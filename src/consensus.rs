@@ -131,8 +131,9 @@ where
     votor_handle: tokio::task::JoinHandle<()>,
     /// Repair loop and repair request handler tasks.
     ///
-    /// Shut down together with the other loops, so a stopped node neither sends
-    /// nor answers repair requests. Dropping the set aborts them as well.
+    /// Shut down together with the other loops,
+    /// so a stopped node neither sends nor answers repair requests.
+    /// Dropping the set aborts them as well.
     repair_tasks: JoinSet<()>,
 }
 
