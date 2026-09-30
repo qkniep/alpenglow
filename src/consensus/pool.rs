@@ -212,8 +212,14 @@ impl PoolImpl {
                     block_hash.short_hex(),
                     slot
                 );
-                if matches!(cert, Cert::Notar(_)) {
-                    let finalization_event = self.finality_tracker.mark_notarized(block_id.clone());
+                // completes slow finalization if the final cert came first
+                if matches!(cert, Cert::Notar(_))
+                    && self
+                        .slot_states
+                        .get(&slot)
+                        .is_some_and(|state| state.certificates.finalize.is_some())
+                {
+                    let finalization_event = self.finality_tracker.mark_finalized(block_id.clone());
                     self.handle_finalization(finalization_event).await;
                 }
 
@@ -245,13 +251,20 @@ impl PoolImpl {
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
                 let hash = ff_cert.block_hash().clone();
-                let finalization_event = self.finality_tracker.mark_fast_finalized((slot, hash));
+                let finalization_event = self.finality_tracker.mark_finalized((slot, hash));
                 self.handle_finalization(finalization_event).await;
             }
             Cert::Final(_) => {
                 info!("slow finalized slot {slot}");
-                let finalization_event = self.finality_tracker.mark_finalized(slot);
-                self.handle_finalization(finalization_event).await;
+                assert!(
+                    !self.finality_tracker.is_skipped(slot),
+                    "consensus safety violation"
+                );
+                // slow finalization also needs the notar cert, which may come later
+                if let Some(hash) = self.get_notarized_block(slot).cloned() {
+                    let finalization_event = self.finality_tracker.mark_finalized((slot, hash));
+                    self.handle_finalization(finalization_event).await;
+                }
             }
         }
 
@@ -405,9 +418,27 @@ impl PoolImpl {
     }
 
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
+        self.assert_consistent_with_certs(&event);
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
         self.send_parent_ready_events(new_parents_ready).await;
         self.prune();
+    }
+
+    /// Asserts that the slots newly decided by `event` agree with our certificates.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a consensus safety violation: a finalized block that is not the
+    /// slot's notarized block, or a skipped slot that has a finalization certificate.
+    fn assert_consistent_with_certs(&self, event: &FinalizationEvent) {
+        for (slot, hash) in event.finalized.iter().chain(&event.implicitly_finalized) {
+            if let Some(notarized) = self.get_notarized_block(*slot) {
+                assert_eq!(notarized, hash, "consensus safety violation");
+            }
+        }
+        for slot in &event.implicitly_skipped {
+            assert!(!self.has_final_cert(*slot), "consensus safety violation");
+        }
     }
 
     async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
@@ -532,6 +563,7 @@ impl Pool for PoolImpl {
         let finalization_event = self
             .finality_tracker
             .add_parent(block_id.clone(), parent_id.clone());
+        self.assert_consistent_with_certs(&finalization_event);
         let new_parents_ready = self
             .parent_ready_tracker
             .handle_finalization(finalization_event);
@@ -858,6 +890,68 @@ mod tests {
         ctx.add_final_votes(slot3, 0..6).await;
         assert!(!ctx.pool.has_final_cert(slot3));
         assert_eq!(ctx.pool.finalized_slot(), slot2);
+    }
+
+    /// A redundant final cert for a fast-finalized slot must not undo its
+    /// finalization: a parent edge learned afterwards still implicitly
+    /// finalizes the ancestor, letting pruning advance past both.
+    #[tokio::test]
+    async fn redundant_final_cert_keeps_implicit_finalization() {
+        let mut ctx = setup();
+        let b1 = random_block_id(Slot::new(1));
+        let b2 = random_block_id(Slot::new(2));
+
+        // fast-finalize slot 2 (notar + fast-final certs) before its parent is known
+        ctx.add_notar_votes(b2.0, &b2.1, 0..11).await;
+        assert_eq!(ctx.pool.finalized_slot(), b2.0);
+        assert_eq!(ctx.pool.first_unpruned_slot(), Slot::genesis());
+        // the final votes that follow produce a redundant final cert
+        ctx.add_final_votes(b2.0, 0..11).await;
+
+        // learning the parent edge implicitly finalizes slot 1
+        ctx.pool.add_block(b2.clone(), b1).await;
+        assert_eq!(ctx.pool.first_unpruned_slot(), b2.0);
+    }
+
+    /// A final cert for a slot that a later finalization implicitly skipped
+    /// is a consensus safety violation.
+    #[tokio::test]
+    #[should_panic(expected = "consensus safety violation")]
+    async fn final_cert_for_skipped_slot_panics() {
+        let mut ctx = setup();
+        let b2 = random_block_id(Slot::new(2));
+        let b4 = random_block_id(Slot::new(4));
+        // finalizing slot 4 with parent in slot 2 implicitly skips slot 3
+        ctx.pool.add_block(b4.clone(), b2).await;
+        ctx.fast_finalize(b4.0, &b4.1).await;
+        ctx.add_final_votes(Slot::new(3), 0..7).await;
+    }
+
+    /// Implicitly skipping a slot that has a final cert is a consensus safety violation.
+    #[tokio::test]
+    #[should_panic(expected = "consensus safety violation")]
+    async fn skipping_slot_with_final_cert_panics() {
+        let mut ctx = setup();
+        let b2 = random_block_id(Slot::new(2));
+        let b4 = random_block_id(Slot::new(4));
+        ctx.add_final_votes(Slot::new(3), 0..7).await;
+        // finalizing slot 4 with parent in slot 2 implicitly skips slot 3
+        ctx.pool.add_block(b4.clone(), b2).await;
+        ctx.fast_finalize(b4.0, &b4.1).await;
+    }
+
+    /// Implicitly finalizing a block other than the slot's notarized one is a
+    /// consensus safety violation.
+    #[tokio::test]
+    #[should_panic(expected = "consensus safety violation")]
+    async fn implicitly_finalizing_non_notarized_block_panics() {
+        let mut ctx = setup();
+        let notarized = random_block_id(Slot::new(2));
+        let other = random_block_id(Slot::new(2));
+        let b3 = random_block_id(Slot::new(3));
+        ctx.add_notar_votes(notarized.0, &notarized.1, 0..7).await;
+        ctx.pool.add_block(b3.clone(), other).await;
+        ctx.fast_finalize(b3.0, &b3.1).await;
     }
 
     #[tokio::test]
