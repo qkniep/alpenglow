@@ -194,6 +194,7 @@ impl EventForwarder {
 
     /// Forwards a single Pool event to Votor, returning `false` if it was not
     /// delivered, in which case the node is shutting down and the caller should stop.
+    #[must_use = "a `false` return means the node is shutting down; stop forwarding"]
     pub(crate) async fn forward_pool_event(&self, event: PoolEvent) -> bool {
         self.send(&self.pool_events, event, "Votor pool-event")
             .await

@@ -568,11 +568,12 @@ mod tests {
 
     use mockall::{Sequence, predicate};
     use tokio::sync::RwLock;
+    use tokio::sync::mpsc::Receiver;
 
     use super::*;
     use crate::consensus::blockstore::MockBlockstore;
     use crate::consensus::pool::MockPool;
-    use crate::consensus::{BlockInfo, PoolOutbox, ValidatorEpochInfo};
+    use crate::consensus::{BlockInfo, BlockstoreEvent, PoolEvent, PoolOutbox, ValidatorEpochInfo};
     use crate::crypto::Hash;
     use crate::disseminator::MockDisseminator;
     use crate::network::{UdpNetwork, localhost_ip_sockaddr};
@@ -680,6 +681,14 @@ mod tests {
         }
     }
 
+    /// Receiving ends of the [`BlockProducer`]'s event channels. Must outlive the
+    /// test: a closed channel reads as a dead consumer and shuts the producer down.
+    struct EventReceivers {
+        _blockstore_events: Receiver<BlockstoreEvent>,
+        _pool_events: Receiver<PoolEvent>,
+        _repairs: Receiver<BlockId>,
+    }
+
     /// A bunch of boilerplate to initialize and return a [`BlockProducer`].
     fn setup(
         blockstore: MockBlockstore,
@@ -687,7 +696,10 @@ mod tests {
         disseminator: MockDisseminator,
         delta_block: Duration,
         delta_first_slice: Duration,
-    ) -> BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>> {
+    ) -> (
+        BlockProducer<MockDisseminator, UdpNetwork<Transaction, Transaction>>,
+        EventReceivers,
+    ) {
         let secret_key = signature::SecretKey::new(&mut rand::rng());
         let (_, epoch_info) = generate_validators(11);
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(0), epoch_info));
@@ -696,13 +708,13 @@ mod tests {
         let disseminator = Arc::new(disseminator);
         let txs_receiver = UdpNetwork::new_with_any_port();
         let cancel_token = CancellationToken::new();
-        let (bs_event_tx, _bs_event_rx) = tokio::sync::mpsc::channel(100);
-        let (pool_event_tx, _pool_event_rx) = tokio::sync::mpsc::channel(100);
-        let (repair_tx, _repair_rx) = tokio::sync::mpsc::channel(100);
+        let (bs_event_tx, bs_event_rx) = tokio::sync::mpsc::channel(100);
+        let (pool_event_tx, pool_event_rx) = tokio::sync::mpsc::channel(100);
+        let (repair_tx, repair_rx) = tokio::sync::mpsc::channel(100);
         let event_forwarder =
             EventForwarder::new(bs_event_tx, pool_event_tx, repair_tx, cancel_token.clone());
 
-        BlockProducer::new(
+        let block_producer = BlockProducer::new(
             secret_key,
             epoch_info,
             disseminator,
@@ -713,7 +725,13 @@ mod tests {
             cancel_token,
             delta_block,
             delta_first_slice,
-        )
+        );
+        let receivers = EventReceivers {
+            _blockstore_events: bs_event_rx,
+            _pool_events: pool_event_rx,
+            _repairs: repair_rx,
+        };
+        (block_producer, receivers)
     }
 
     #[tokio::test]
@@ -753,7 +771,7 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(
+        let (block_producer, _event_rxs) = setup(
             blockstore,
             pool,
             disseminator,
@@ -830,7 +848,7 @@ mod tests {
         disseminator
             .expect_send()
             .returning(|_| Box::pin(async { Ok(()) }));
-        let block_producer = setup(
+        let (block_producer, _event_rxs) = setup(
             blockstore,
             pool,
             disseminator,
