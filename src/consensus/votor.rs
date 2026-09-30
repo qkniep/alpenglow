@@ -195,24 +195,22 @@ impl<A: All2All> Votor<A> {
                 debug!("voted notar-fallback in slot {slot}");
                 let vote =
                     Vote::new_notar_fallback(slot, hash, &self.voting_key, self.validator_index);
-                self.broadcast(vote.into()).await;
+                self.broadcast(vote).await;
                 self.try_skip_window(slot).await;
-                self.state_mut(slot).bad_window = true;
             }
             PoolEvent::SafeToSkip(slot) => {
                 debug!("voted skip-fallback in slot {slot}");
                 let vote = Vote::new_skip_fallback(slot, &self.voting_key, self.validator_index);
-                self.broadcast(vote.into()).await;
+                self.broadcast(vote).await;
                 self.try_skip_window(slot).await;
-                self.state_mut(slot).bad_window = true;
             }
             PoolEvent::CertCreated(cert) => self.handle_cert_created(cert).await,
             PoolEvent::Standstill(_, certs, votes) => {
                 for cert in certs {
-                    self.broadcast(cert.into()).await;
+                    self.broadcast(cert).await;
                 }
                 for vote in votes {
-                    self.broadcast(vote.into()).await;
+                    self.broadcast(vote).await;
                 }
             }
         }
@@ -241,17 +239,22 @@ impl<A: All2All> Votor<A> {
             Cert::Skip(_) | Cert::NotarFallback(_) => {}
         }
 
-        self.broadcast(ConsensusMessage::from(cert)).await;
+        self.broadcast(cert).await;
     }
 
-    /// Broadcasts a consensus message to all validators.
+    /// Broadcasts a consensus message to all other nodes, best-effort.
     ///
-    /// Panics on I/O failure: broadcasting votes and certs is liveness-critical.
-    async fn broadcast(&self, msg: ConsensusMessage) {
-        self.all2all
-            .broadcast(&msg)
-            .await
-            .expect("vote/cert broadcast is liveness-critical; a network failure here is fatal");
+    /// Failures are logged, not propagated, so the voting loop keeps running. The
+    /// message is then lost, like any vote dropped in flight by the (UDP) network,
+    /// which the protocol tolerates.
+    ///
+    /// NOTE: Own votes reach own [`super::Pool`] only via [`All2All`], so a lost
+    /// vote is also missing from standstill recovery's re-broadcast.
+    async fn broadcast(&self, msg: impl Into<ConsensusMessage>) {
+        if let Err(err) = self.all2all.broadcast(&msg.into()).await {
+            // TODO: count failures once there are metrics, to make persistent ones alertable
+            warn!("failed to broadcast consensus message: {err}");
+        }
     }
 
     async fn handle_blockstore_event(&mut self, event: BlockstoreEvent) {
@@ -369,7 +372,7 @@ impl<A: All2All> Votor<A> {
         }
         debug!("voted notar for slot {slot}");
         let vote = Vote::new_notar(slot, hash.clone(), &self.voting_key, self.validator_index);
-        self.broadcast(vote.into()).await;
+        self.broadcast(vote).await;
         let state = self.state_mut(slot);
         state.voted = true;
         state.voted_notar = Some(hash.clone());
@@ -387,24 +390,28 @@ impl<A: All2All> Votor<A> {
         let not_bad = !state.is_some_and(|s| s.bad_window);
         if notarized && voted_notar && not_bad {
             let vote = Vote::new_final(slot, &self.voting_key, self.validator_index);
-            self.broadcast(vote.into()).await;
+            self.broadcast(vote).await;
             self.state_mut(slot).retired = true;
         }
     }
 
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
+    ///
+    /// Marks the whole window bad, including already-voted slots, so that
+    /// [`Self::try_final`] withholds their final votes regardless of the order in
+    /// which blockstore events arrive.
     async fn try_skip_window(&mut self, slot: Slot) {
         assert!(slot >= self.first_unpruned_slot());
         trace!("try skip window of slot {slot}");
         for s in slot.slots_in_window() {
-            if self.has_voted(s) {
+            let state = self.state_mut(s);
+            state.bad_window = true;
+            if state.voted {
                 continue;
             }
-            let state = self.state_mut(s);
             state.voted = true;
-            state.bad_window = true;
             let vote = Vote::new_skip(s, &self.voting_key, self.validator_index);
-            self.broadcast(vote.into()).await;
+            self.broadcast(vote).await;
             debug!("voted skip for slot {s}");
         }
     }
@@ -491,6 +498,19 @@ mod tests {
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
+    /// An [`All2All`] whose `broadcast` always fails and `receive` never resolves.
+    struct FailingAll2All;
+
+    impl All2All for FailingAll2All {
+        async fn broadcast(&self, _msg: &ConsensusMessage) -> std::io::Result<()> {
+            Err(std::io::Error::other("simulated broadcast failure"))
+        }
+
+        async fn receive(&self) -> std::io::Result<ConsensusMessage> {
+            std::future::pending().await
+        }
+    }
+
     struct TestContext {
         other_a2a: A2A,
         pool_tx: mpsc::Sender<PoolEvent>,
@@ -565,6 +585,26 @@ mod tests {
         ctx
     }
 
+    /// A failing broadcast must not panic the voting loop.
+    #[tokio::test]
+    async fn broadcast_failure_does_not_panic() {
+        let (sks, _epoch_info) = generate_validators(2);
+        let (_pool_tx, pool_rx) = mpsc::channel(100);
+        let (_blockstore_tx, blockstore_rx) = mpsc::channel(100);
+        let mut votor = Votor::new(
+            ValidatorIndex::new(0),
+            sks[0].clone(),
+            pool_rx,
+            blockstore_rx,
+            Arc::new(FailingAll2All),
+        );
+
+        // non-genesis slot, as genesis starts out retired and would be ignored
+        votor
+            .handle_pool_event(PoolEvent::SafeToSkip(Slot::new(1)))
+            .await;
+    }
+
     #[tokio::test]
     async fn timeouts() {
         let ctx = start_votor().await;
@@ -612,6 +652,45 @@ mod tests {
             }
             msg @ ConsensusMessage::Cert(_) => panic!("other msg: {msg:?}"),
         }
+    }
+
+    /// An `InvalidBlock` handled *after* we already voted notar for the slot must
+    /// still taint the window, so the notar cert that follows produces no final vote.
+    #[tokio::test]
+    async fn late_invalid_block_suppresses_final_vote() {
+        let (mut votor, ctx) = build_votor().await;
+        let slot = Slot::genesis().next();
+        let hash: BlockHash = Hash::random_for_test().into();
+
+        let block_info = BlockInfo {
+            hash: hash.clone(),
+            parent: genesis_block_id(),
+        };
+        votor
+            .handle_blockstore_event(BlockstoreEvent::Block { slot, block_info })
+            .await;
+        assert_eq!(votor.slots[&slot].voted_notar.as_ref(), Some(&hash));
+
+        votor
+            .handle_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
+            .await;
+        assert!(
+            votor.slots[&slot].bad_window,
+            "an invalid block must taint the window even for an already-voted slot"
+        );
+
+        // `retired` is set only by a final vote, so it proxies for one
+        let vote = Vote::new_notar(slot, hash, &ctx.sks[0], ValidatorIndex::new(0));
+        let Vote::Notar(notar_vote) = vote else {
+            unreachable!()
+        };
+        let cert = Cert::Notar(NotarCert::new(&[notar_vote], ctx.epoch_info.validators()));
+        votor.handle_pool_event(PoolEvent::CertCreated(cert)).await;
+
+        assert!(
+            !votor.slots[&slot].retired,
+            "cast a final vote for a slot whose leader we proved misbehaving"
+        );
     }
 
     #[tokio::test]

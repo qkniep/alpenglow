@@ -11,7 +11,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use log::debug;
 use tokio::sync::RwLock;
-use tokio::sync::mpsc::Sender;
 
 pub use self::slot_block_data::AddShredError;
 use self::slot_block_data::SlotBlockData;
@@ -82,6 +81,16 @@ pub trait Blockstore {
         shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
     ) -> Option<BlockInfo>;
     async fn flag_leader_misbehavior(&mut self, slot: Slot);
+    /// Drains the [`BlockstoreEvent`]s buffered since the last call, to be
+    /// forwarded to Votor after releasing the blockstore lock.
+    ///
+    /// NOTE: `must_use` is skipped in test builds, where `mockall::automock` would
+    /// copy it onto the generated mock.
+    #[cfg_attr(
+        not(test),
+        must_use = "drained events are lost unless forwarded, see `EventForwarder::forward_blockstore_events`"
+    )]
+    fn take_outbox(&mut self) -> Vec<BlockstoreEvent>;
     #[expect(
         clippy::needless_lifetimes,
         reason = "explicit lifetime is required by mockall::automock"
@@ -113,23 +122,30 @@ pub struct BlockstoreImpl {
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-    /// Event channel for sending notifications to Votor.
-    votor_channel: Sender<BlockstoreEvent>,
+    /// Events buffered for Votor, see [`Blockstore::take_outbox`].
+    events: Vec<BlockstoreEvent>,
+}
+
+impl Default for BlockstoreImpl {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
-    /// Blockstore will send the following [`BlockstoreEvent`]s to the provided `votor_channel`:
+    /// The blockstore records the following [`BlockstoreEvent`]s into its outbox, to
+    /// be drained by the caller via [`Blockstore::take_outbox`] and forwarded to Votor:
     /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
     /// - [`BlockstoreEvent::InvalidBlock`] if leader misbehavior is detected for a block
-    pub fn new(votor_channel: Sender<BlockstoreEvent>) -> Self {
+    pub fn new() -> Self {
         Self {
             block_data: BTreeMap::new(),
             shredders: ShredderPool::with_size(1),
-            votor_channel,
+            events: Vec::new(),
         }
     }
 
@@ -138,24 +154,22 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    async fn send_blockstore_event(&self, event: BlockstoreEvent) -> Option<BlockInfo> {
-        let block_info = match &event {
-            BlockstoreEvent::FirstShred(_) | BlockstoreEvent::InvalidBlock(_) => None,
-            BlockstoreEvent::Block { slot, block_info } => {
-                debug!(
-                    "reconstructed block {} in slot {} with parent {} in slot {}",
-                    block_info.hash.short_hex(),
-                    slot,
-                    block_info.parent.1.short_hex(),
-                    block_info.parent.0,
-                );
-                Some(block_info.clone())
-            }
+    /// Buffers `event` for Votor, returning the [`BlockInfo`] of a newly
+    /// reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
+    fn emit(&mut self, event: BlockstoreEvent) -> Option<BlockInfo> {
+        let block_info = if let BlockstoreEvent::Block { slot, block_info } = &event {
+            debug!(
+                "reconstructed block {} in slot {} with parent {} in slot {}",
+                block_info.hash.short_hex(),
+                slot,
+                block_info.parent.1.short_hex(),
+                block_info.parent.0,
+            );
+            Some(block_info.clone())
+        } else {
+            None
         };
-        self.votor_channel
-            .send(event)
-            .await
-            .expect("votor should not drop the event receiver");
+        self.events.push(event);
         block_info
     }
 
@@ -259,7 +273,7 @@ impl Blockstore for BlockstoreImpl {
             .slot_data_mut(slot)
             .add_shred_from_dissemination(shred, &mut shredder)
         {
-            Ok(Some(event)) => Ok(self.send_blockstore_event(event).await),
+            Ok(Some(event)) => Ok(self.emit(event)),
             Ok(None) => Ok(None),
             Err(err @ (AddShredError::Equivocation | AddShredError::InvalidShred)) => {
                 self.flag_leader_misbehavior(slot).await;
@@ -303,7 +317,7 @@ impl Blockstore for BlockstoreImpl {
             self.flag_leader_misbehavior(slot).await;
         }
         match result? {
-            Some(event) => Ok(self.send_blockstore_event(event).await),
+            Some(event) => Ok(self.emit(event)),
             None => Ok(None),
         }
     }
@@ -325,14 +339,10 @@ impl Blockstore for BlockstoreImpl {
         let slot = shreds[0].payload().header.slot;
         let (first_shred, completed) = self.slot_data_mut(slot).add_own_slice(payload, *shreds);
         if first_shred {
-            self.send_blockstore_event(BlockstoreEvent::FirstShred(slot))
-                .await;
+            self.emit(BlockstoreEvent::FirstShred(slot));
         }
         match completed {
-            Some(block_info) => {
-                self.send_blockstore_event(BlockstoreEvent::Block { slot, block_info })
-                    .await
-            }
+            Some(block_info) => self.emit(BlockstoreEvent::Block { slot, block_info }),
             None => None,
         }
     }
@@ -342,9 +352,12 @@ impl Blockstore for BlockstoreImpl {
     /// Emits [`BlockstoreEvent::InvalidBlock`] the first time the slot is flagged.
     async fn flag_leader_misbehavior(&mut self, slot: Slot) {
         if self.slot_data_mut(slot).mark_leader_misbehaved() {
-            self.send_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
-                .await;
+            self.emit(BlockstoreEvent::InvalidBlock(slot));
         }
+    }
+
+    fn take_outbox(&mut self) -> Vec<BlockstoreEvent> {
+        std::mem::take(&mut self.events)
     }
 
     /// Gives the disseminated block hash for a given `slot`, if any.
@@ -440,7 +453,6 @@ impl Blockstore for BlockstoreImpl {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use tokio::sync::mpsc;
 
     use super::*;
     use crate::crypto::merkle::DoubleMerkleTree;
@@ -452,18 +464,12 @@ mod tests {
     struct TestContext {
         sk: SecretKey,
         blockstore: BlockstoreImpl,
-        _rx: mpsc::Receiver<BlockstoreEvent>,
     }
 
     fn setup() -> TestContext {
         let sk = SecretKey::new(&mut rand::rng());
-        let (tx, _rx) = mpsc::channel(1000);
-        let blockstore = BlockstoreImpl::new(tx);
-        TestContext {
-            sk,
-            blockstore,
-            _rx,
-        }
+        let blockstore = BlockstoreImpl::new();
+        TestContext { sk, blockstore }
     }
 
     async fn add_shred_ignore_duplicate(
@@ -511,6 +517,14 @@ mod tests {
             };
             assert_eq!(stored_shred.payload().data, shred.payload().data);
         }
+
+        // reconstruction buffered exactly one `FirstShred` and one `Block` event
+        let events = ctx.blockstore.take_outbox();
+        assert!(matches!(
+            events.as_slice(),
+            [BlockstoreEvent::FirstShred(s), BlockstoreEvent::Block { block_info, .. }]
+                if s == &slot && block_info.hash == block_id.1
+        ));
 
         // create and check double-Merkle proof
         let proof = ctx
@@ -712,21 +726,19 @@ mod tests {
         Ok(())
     }
 
-    fn count_invalid_block_events(rx: &mut mpsc::Receiver<BlockstoreEvent>, slot: Slot) -> usize {
-        let mut count = 0;
-        while let Ok(event) = rx.try_recv() {
-            if matches!(event, BlockstoreEvent::InvalidBlock(s) if s == slot) {
-                count += 1;
-            }
-        }
-        count
+    /// Drains the blockstore outbox and counts `InvalidBlock` events for `slot`.
+    fn count_invalid_block_events(blockstore: &mut BlockstoreImpl, slot: Slot) -> usize {
+        blockstore
+            .take_outbox()
+            .iter()
+            .filter(|e| matches!(e, BlockstoreEvent::InvalidBlock(s) if *s == slot))
+            .count()
     }
 
     #[tokio::test]
     async fn dissemination_equivocation() -> Result<()> {
         let sk = SecretKey::new(&mut rand::rng());
-        let (tx, mut rx) = mpsc::channel(1000);
-        let mut blockstore = BlockstoreImpl::new(tx);
+        let mut blockstore = BlockstoreImpl::new();
         let slot = Slot::genesis().next();
 
         // disseminate two distinct blocks for the same slot
@@ -741,11 +753,11 @@ mod tests {
 
         // equivocation detected, Votor should be notified
         assert_eq!(res, Err(AddShredError::Equivocation));
-        assert_eq!(count_invalid_block_events(&mut rx, slot), 1);
+        assert_eq!(count_invalid_block_events(&mut blockstore, slot), 1);
 
         // idempotent: later misbehavior does not re-notify
         blockstore.flag_leader_misbehavior(slot).await;
-        assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
+        assert_eq!(count_invalid_block_events(&mut blockstore, slot), 0);
 
         Ok(())
     }
@@ -753,8 +765,7 @@ mod tests {
     #[tokio::test]
     async fn repair_conflicting_block_not_flagged_as_equivocation() -> Result<()> {
         let sk = SecretKey::new(&mut rand::rng());
-        let (tx, mut rx) = mpsc::channel(1000);
-        let mut blockstore = BlockstoreImpl::new(tx);
+        let mut blockstore = BlockstoreImpl::new();
         let slot = Slot::genesis().next();
 
         // see different blocks from dissemination and repair
@@ -769,7 +780,7 @@ mod tests {
 
         // TODO: Detect equivocation across the dissemination and repair spots.
         assert_eq!(res, Ok(None));
-        assert_eq!(count_invalid_block_events(&mut rx, slot), 0);
+        assert_eq!(count_invalid_block_events(&mut blockstore, slot), 0);
 
         Ok(())
     }
@@ -847,8 +858,7 @@ mod tests {
         let slices = create_random_block(slot, num_slices);
 
         // reference: reconstruct the block via the dissemination path
-        let (dissem_tx, _dissem_rx) = mpsc::channel(1000);
-        let mut dissem = BlockstoreImpl::new(dissem_tx);
+        let mut dissem = BlockstoreImpl::new();
         for slice in &slices {
             let shreds = RegularShredder::default().shred(slice, &sk).unwrap();
             for shred in shreds {
@@ -858,8 +868,7 @@ mod tests {
         let expected_hash = dissem.disseminated_block_hash(slot).unwrap().clone();
 
         // fast path: feed the same slices through `add_own_slice`
-        let (own_tx, mut own_rx) = mpsc::channel(1000);
-        let mut own = BlockstoreImpl::new(own_tx);
+        let mut own = BlockstoreImpl::new();
         let mut completed = None;
         for slice in slices {
             let is_last = slice.is_last;
@@ -879,10 +888,10 @@ mod tests {
         assert_eq!(own.disseminated_block_hash(slot), Some(&expected_hash));
         assert!(own.get_block(&(slot, expected_hash.clone())).is_some());
 
-        // emits exactly one FirstShred and one Block event
+        // records exactly one FirstShred and one Block event in the outbox
         let mut first_shreds = 0;
         let mut blocks = 0;
-        while let Ok(event) = own_rx.try_recv() {
+        for event in own.take_outbox() {
             match event {
                 BlockstoreEvent::FirstShred(s) => {
                     assert_eq!(s, slot);

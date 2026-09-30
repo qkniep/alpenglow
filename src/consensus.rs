@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use fastrace::Span;
 use fastrace::future::FutureExt;
-use log::{trace, warn};
+use log::{debug, error, trace, warn};
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
@@ -47,7 +47,7 @@ pub use self::cert::{Cert, CertError, NotarCert};
 pub use self::epoch_info::{EpochInfo, ValidatorEpochInfo};
 #[cfg(feature = "test-utils")]
 pub use self::pool::bench_replay_votes;
-pub use self::pool::{AddVoteError, Pool, PoolEvent, PoolImpl, SharedPool};
+pub use self::pool::{AddVoteError, Pool, PoolEffect, PoolEvent, PoolImpl, PoolOutbox, SharedPool};
 pub use self::validated_cert::{CertValidationError, ValidatedCert};
 pub use self::validated_vote::{ValidatedVote, VoteValidationError};
 pub use self::vote::{FinalVote, NotarFallbackVote, NotarVote, SkipFallbackVote, SkipVote, Vote};
@@ -58,7 +58,7 @@ use crate::network::{RepairRequesterNetwork, RepairResponderNetwork, Transaction
 use crate::repair::{Repair, RepairRequestHandler};
 use crate::shredder::{Shred, ValidatedShred};
 use crate::types::Fraction;
-use crate::{All2All, Disseminator, Slot, ValidatorInfo};
+use crate::{All2All, BlockId, Disseminator, Slot, ValidatorInfo};
 
 /// Time bound assumed on network transmission delays during periods of synchrony.
 pub const DELTA: Duration = Duration::from_millis(250);
@@ -103,6 +103,121 @@ impl From<Cert> for ConsensusMessage {
     }
 }
 
+/// Forwards side-effects drained from the Blockstore and Pool outboxes to Votor
+/// and the repair loop *after* the producing task has released the write lock.
+///
+/// Sending under the lock would let a slow Votor jam every task contending for
+/// it. Instead, each task that mutates the Blockstore/Pool drains the outbox
+/// under the lock (with [`Blockstore::take_outbox`] / [`Pool::take_outbox`]) and
+/// hands it here, so a full channel back-pressures only that task.
+///
+/// # Ordering
+///
+/// One outbox is forwarded in the order its effects were produced, but tasks
+/// forwarding concurrently can interleave. So Votor must not depend on the order
+/// of events from different tasks: pool events are order-insensitive apart from
+/// the prune gate (`Votor::should_ignore_pool_event`), and for blockstore events
+/// `Votor::try_skip_window` taints the window even if a slot was already voted on.
+#[derive(Clone)]
+pub(crate) struct EventForwarder {
+    /// Blockstore events destined for Votor.
+    blockstore_events: mpsc::Sender<BlockstoreEvent>,
+    /// Pool events destined for Votor.
+    pool_events: mpsc::Sender<PoolEvent>,
+    /// Repair requests destined for the repair loop.
+    repairs: mpsc::Sender<BlockId>,
+    /// Shuts the node down when a consumer disappears unexpectedly.
+    cancel_token: CancellationToken,
+}
+
+impl EventForwarder {
+    /// Creates a forwarder over Votor's event channels and the repair channel.
+    ///
+    /// `cancel_token` is the node's shutdown token, see [`Self::send`].
+    pub(crate) fn new(
+        blockstore_events: mpsc::Sender<BlockstoreEvent>,
+        pool_events: mpsc::Sender<PoolEvent>,
+        repairs: mpsc::Sender<BlockId>,
+        cancel_token: CancellationToken,
+    ) -> Self {
+        Self {
+            blockstore_events,
+            pool_events,
+            repairs,
+            cancel_token,
+        }
+    }
+
+    /// Sends `item` to `sender`, returning `false` if it was not delivered.
+    ///
+    /// A closed channel means the consumer is gone. During shutdown that is
+    /// expected and the item is dropped. Otherwise Votor or the repair loop died,
+    /// and a node that ingests but cannot vote is useless, so this logs an error
+    /// and shuts the node down.
+    ///
+    /// A full channel back-pressures the caller. The send is raced against
+    /// shutdown so this cannot block forever, and is polled first (`biased`) so a
+    /// shutting-down node still delivers what fits and drops only what would block.
+    async fn send<T>(&self, sender: &mpsc::Sender<T>, item: T, what: &str) -> bool {
+        tokio::select! {
+            biased;
+            res = sender.send(item) => {
+                if res.is_ok() {
+                    return true;
+                }
+                if self.cancel_token.is_cancelled() {
+                    debug!("{what} channel closed during shutdown, dropping remaining events");
+                } else {
+                    error!("{what} channel closed unexpectedly, shutting down node");
+                    self.cancel_token.cancel();
+                }
+                false
+            }
+            () = self.cancel_token.cancelled() => {
+                debug!("{what} channel full at shutdown, dropping remaining events");
+                false
+            }
+        }
+    }
+
+    /// Forwards buffered blockstore events to Votor.
+    pub(crate) async fn forward_blockstore_events(&self, events: Vec<BlockstoreEvent>) {
+        for event in events {
+            if !self
+                .send(&self.blockstore_events, event, "Votor blockstore-event")
+                .await
+            {
+                return;
+            }
+        }
+    }
+
+    /// Forwards a single Pool event to Votor, returning `false` if it was not
+    /// delivered, in which case the node is shutting down and the caller should stop.
+    #[must_use = "a `false` return means the node is shutting down; stop forwarding"]
+    pub(crate) async fn forward_pool_event(&self, event: PoolEvent) -> bool {
+        self.send(&self.pool_events, event, "Votor pool-event")
+            .await
+    }
+
+    /// Forwards a drained [`PoolOutbox`], replaying the effects in the order the
+    /// Pool produced them.
+    pub(crate) async fn forward_pool_outbox(&self, outbox: PoolOutbox) {
+        for effect in outbox {
+            let sent = match effect {
+                PoolEffect::VotorEvent(event) => {
+                    self.send(&self.pool_events, event, "Votor pool-event")
+                        .await
+                }
+                PoolEffect::Repair(block_id) => self.send(&self.repairs, block_id, "repair").await,
+            };
+            if !sent {
+                return;
+            }
+        }
+    }
+}
+
 /// Alpenglow consensus protocol implementation.
 pub struct Alpenglow<A: All2All, D: Disseminator, T>
 where
@@ -123,6 +238,9 @@ where
     all2all: Arc<A>,
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
+
+    /// Forwards drained Blockstore/Pool outboxes off the write lock.
+    event_forwarder: EventForwarder,
 
     /// Indicates whether the node is shutting down.
     cancel_token: CancellationToken,
@@ -177,14 +295,12 @@ where
         let (repair_tx, repair_rx) = mpsc::channel(1024);
         let all2all = Arc::new(all2all);
 
-        let blockstore: SharedBlockstore =
-            Arc::new(RwLock::new(BlockstoreImpl::new(blockstore_tx)));
+        let event_forwarder =
+            EventForwarder::new(blockstore_tx, pool_tx, repair_tx, cancel_token.clone());
 
-        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(
-            epoch_info.clone(),
-            pool_tx,
-            repair_tx,
-        )));
+        let blockstore: SharedBlockstore = Arc::new(RwLock::new(BlockstoreImpl::new()));
+
+        let pool: SharedPool = Arc::new(RwLock::new(PoolImpl::new(epoch_info.clone())));
 
         let repair_request_handler = RepairRequestHandler::new(
             epoch_info.clone(),
@@ -199,6 +315,7 @@ where
             Arc::clone(&pool),
             repair_requester_network,
             epoch_info.clone(),
+            event_forwarder.clone(),
         );
 
         let _repair_handle = tokio::spawn(
@@ -227,6 +344,7 @@ where
             txs_receiver,
             blockstore.clone(),
             pool.clone(),
+            event_forwarder.clone(),
             cancel_token.clone(),
             DELTA_BLOCK,
             DELTA_FIRST_SLICE,
@@ -239,6 +357,7 @@ where
             block_producer,
             all2all,
             disseminator,
+            event_forwarder,
             cancel_token,
             votor_handle,
         }
@@ -324,7 +443,8 @@ where
                 finalized_slot = slot;
                 last_progress = Instant::now();
             } else if last_progress.elapsed() > DELTA_STANDSTILL {
-                self.pool.read().await.recover_from_standstill().await;
+                let outbox = self.pool.read().await.recover_from_standstill();
+                self.event_forwarder.forward_pool_outbox(outbox).await;
                 last_progress = Instant::now();
             }
             tokio::time::sleep(DELTA_BLOCK).await;
@@ -347,13 +467,19 @@ where
                         return;
                     }
                 };
-                match self.pool.write().await.add_vote(vote).await {
-                    Ok(()) => {}
-                    Err(AddVoteError::Slashable(offence)) => {
-                        warn!("slashable offence detected: {offence}");
+                // Add under the lock, then forward the buffered events off the lock.
+                let outbox = {
+                    let mut pool = self.pool.write().await;
+                    match pool.add_vote(vote).await {
+                        Ok(()) => {}
+                        Err(AddVoteError::Slashable(offence)) => {
+                            warn!("slashable offence detected: {offence}");
+                        }
+                        Err(err) => trace!("ignoring invalid vote: {err}"),
                     }
-                    Err(err) => trace!("ignoring invalid vote: {err}"),
-                }
+                    pool.take_outbox()
+                };
+                self.event_forwarder.forward_pool_outbox(outbox).await;
             }
             ConsensusMessage::Cert(c) => {
                 let cert = match ValidatedCert::try_new(c, epoch_info) {
@@ -363,10 +489,15 @@ where
                         return;
                     }
                 };
-                match self.pool.write().await.add_cert(cert).await {
-                    Ok(()) => {}
-                    Err(err) => trace!("ignoring invalid cert: {err}"),
-                }
+                let outbox = {
+                    let mut pool = self.pool.write().await;
+                    match pool.add_cert(cert).await {
+                        Ok(()) => {}
+                        Err(err) => trace!("ignoring invalid cert: {err}"),
+                    }
+                    pool.take_outbox()
+                };
+                self.event_forwarder.forward_pool_outbox(outbox).await;
             }
         }
     }
@@ -397,21 +528,139 @@ where
             return Ok(());
         }
 
-        // otherwise, ingest into blockstore
-        let res = self
-            .blockstore
-            .write()
-            .await
-            .add_shred_from_dissemination(validated)
-            .await;
+        // ingest under the lock, then forward the buffered events off the lock
+        let (res, events) = {
+            let mut blockstore = self.blockstore.write().await;
+            let res = blockstore.add_shred_from_dissemination(validated).await;
+            (res, blockstore.take_outbox())
+        };
+        self.event_forwarder.forward_blockstore_events(events).await;
+
         if let Ok(Some(block_info)) = res {
             let block_id = (slot, block_info.hash);
-            self.pool
-                .write()
-                .await
-                .add_block(block_id, block_info.parent)
-                .await;
+            let outbox = {
+                let mut pool = self.pool.write().await;
+                pool.add_block(block_id, block_info.parent).await;
+                pool.take_outbox()
+            };
+            self.event_forwarder.forward_pool_outbox(outbox).await;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::merkle::GENESIS_BLOCK_HASH;
+
+    /// A consumer dying while the node is running shuts the node down.
+    #[tokio::test]
+    async fn consumer_death_while_running_shuts_node_down() {
+        let (bs_tx, bs_rx) = mpsc::channel(1);
+        let (pool_tx, _pool_rx) = mpsc::channel(1);
+        let (repair_tx, _repair_rx) = mpsc::channel(1);
+        let cancel_token = CancellationToken::new();
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token.clone());
+        drop(bs_rx);
+
+        forwarder
+            .forward_blockstore_events(vec![BlockstoreEvent::FirstShred(Slot::new(1))])
+            .await;
+        assert!(cancel_token.is_cancelled());
+    }
+
+    /// A full channel at shutdown must not block the forwarder forever: what fits is
+    /// still delivered, the rest is dropped.
+    #[tokio::test]
+    async fn full_channel_at_shutdown_does_not_hang() {
+        let (bs_tx, mut bs_rx) = mpsc::channel(1);
+        let (pool_tx, _pool_rx) = mpsc::channel(1);
+        let (repair_tx, _repair_rx) = mpsc::channel(1);
+        let cancel_token = CancellationToken::new();
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token.clone());
+        cancel_token.cancel();
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            forwarder.forward_blockstore_events(vec![
+                BlockstoreEvent::FirstShred(Slot::new(1)),
+                BlockstoreEvent::FirstShred(Slot::new(2)),
+            ]),
+        )
+        .await
+        .expect("a cancelled token must release a forwarder blocked on a full channel");
+
+        assert!(
+            matches!(bs_rx.try_recv(), Ok(BlockstoreEvent::FirstShred(s)) if s == Slot::new(1))
+        );
+        assert!(
+            bs_rx.try_recv().is_err(),
+            "second event should have dropped"
+        );
+    }
+
+    /// A repair buffered before Votor events is forwarded first, not held back
+    /// behind them.
+    #[tokio::test]
+    async fn forward_pool_outbox_preserves_effect_order() {
+        let (bs_tx, _bs_rx) = mpsc::channel(1);
+        // capacity 1, so forwarding blocks on the second Votor event
+        let (pool_tx, _pool_rx) = mpsc::channel(1);
+        let (repair_tx, mut repair_rx) = mpsc::channel(1);
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, CancellationToken::new());
+
+        let block = (Slot::new(3), GENESIS_BLOCK_HASH);
+        let outbox: PoolOutbox = [
+            PoolEffect::Repair(block.clone()),
+            PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
+            PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(4))),
+        ]
+        .into_iter()
+        .collect();
+        let handle = tokio::spawn(async move { forwarder.forward_pool_outbox(outbox).await });
+
+        let repaired = tokio::time::timeout(Duration::from_secs(1), repair_rx.recv())
+            .await
+            .expect("repair request should be forwarded before the Votor events drain");
+        assert_eq!(repaired.unwrap(), block);
+        handle.abort();
+    }
+
+    /// Forwarding delivers all buffered items, in order, to open channels.
+    #[tokio::test]
+    async fn forward_delivers_all_events_in_order() {
+        let (bs_tx, mut bs_rx) = mpsc::channel(8);
+        let (pool_tx, mut pool_rx) = mpsc::channel(8);
+        let (repair_tx, mut repair_rx) = mpsc::channel(8);
+        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, CancellationToken::new());
+
+        forwarder
+            .forward_blockstore_events(vec![
+                BlockstoreEvent::FirstShred(Slot::new(1)),
+                BlockstoreEvent::InvalidBlock(Slot::new(2)),
+            ])
+            .await;
+        assert!(
+            matches!(bs_rx.try_recv(), Ok(BlockstoreEvent::FirstShred(s)) if s == Slot::new(1))
+        );
+        assert!(
+            matches!(bs_rx.try_recv(), Ok(BlockstoreEvent::InvalidBlock(s)) if s == Slot::new(2))
+        );
+        assert!(bs_rx.try_recv().is_err());
+
+        let block = (Slot::new(3), GENESIS_BLOCK_HASH);
+        forwarder
+            .forward_pool_outbox(
+                [
+                    PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(3))),
+                    PoolEffect::Repair(block.clone()),
+                ]
+                .into_iter()
+                .collect(),
+            )
+            .await;
+        assert!(matches!(pool_rx.try_recv(), Ok(PoolEvent::SafeToSkip(s)) if s == Slot::new(3)));
+        assert_eq!(repair_rx.try_recv().unwrap(), block);
     }
 }

@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use either::Either;
 use log::{debug, info, trace, warn};
 use thiserror::Error;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::{RwLock, oneshot};
 
 use self::finality_tracker::FinalityTracker;
@@ -86,6 +85,61 @@ impl PoolEvent {
     }
 }
 
+/// A single side-effect the Pool buffered while processing under its write lock.
+// PERF: Short-lived outbox entry, moved out on drain; boxing isn't worth the allocation.
+#[expect(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+pub enum PoolEffect {
+    /// An event destined for Votor.
+    VotorEvent(PoolEvent),
+    /// A request to repair the given block, destined for the repair loop.
+    Repair(BlockId),
+}
+
+/// Side-effects the Pool buffers under its write lock, drained via
+/// [`Pool::take_outbox`] and forwarded once the lock is released.
+///
+/// Effects stay in production order, so e.g. the repair request for a newly
+/// certified block is not delayed behind that certification's Votor events.
+/// They are only reachable by consuming the outbox via [`IntoIterator`], so the
+/// `#[must_use]` cannot be sidestepped by taking a field.
+#[derive(Debug, Default)]
+#[must_use = "buffered effects are lost unless forwarded, see `EventForwarder::forward_pool_outbox`"]
+pub struct PoolOutbox {
+    /// Buffered effects, in the order the Pool produced them.
+    effects: Vec<PoolEffect>,
+}
+
+impl PoolOutbox {
+    /// Returns `true` iff no effects are buffered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
+    /// Buffers a single effect, preserving production order.
+    fn push(&mut self, effect: PoolEffect) {
+        self.effects.push(effect);
+    }
+}
+
+impl FromIterator<PoolEffect> for PoolOutbox {
+    fn from_iter<I: IntoIterator<Item = PoolEffect>>(iter: I) -> Self {
+        Self {
+            effects: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl IntoIterator for PoolOutbox {
+    type Item = PoolEffect;
+    type IntoIter = std::vec::IntoIter<PoolEffect>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.effects.into_iter()
+    }
+}
+
 /// Errors the Pool may return when adding a vote.
 ///
 /// Signature and signer validity are checked up front by [`ValidatedVote`],
@@ -134,7 +188,11 @@ pub trait Pool {
     async fn add_cert(&mut self, cert: ValidatedCert) -> Result<(), AddCertError>;
     async fn add_vote(&mut self, vote: ValidatedVote) -> Result<(), AddVoteError>;
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
-    async fn recover_from_standstill(&self);
+    /// Builds the standstill-recovery bundle to re-broadcast; see [`PoolImpl::recover_from_standstill`].
+    fn recover_from_standstill(&self) -> PoolOutbox;
+    /// Drains the side-effects buffered since the last call, to be forwarded
+    /// after releasing the Pool lock.
+    fn take_outbox(&mut self) -> PoolOutbox;
     fn finalized_slot(&self) -> Slot;
     fn parents_ready(&self, slot: Slot) -> &[BlockId];
     fn wait_for_parent_ready(&mut self, slot: Slot) -> Either<BlockId, oneshot::Receiver<BlockId>>;
@@ -160,29 +218,22 @@ pub struct PoolImpl {
 
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Channel for sending events related to voting logic to Votor.
-    votor_event_channel: Sender<PoolEvent>,
-    /// Channel for sending repair requests to the repair loop.
-    repair_channel: Sender<BlockId>,
+    /// Side-effects buffered under the write lock, see [`Pool::take_outbox`].
+    outbox: PoolOutbox,
 }
 
 impl PoolImpl {
     /// Creates a new empty pool containing no votes or certificates.
     ///
-    /// Any later emitted events will be sent on provided `votor_event_channel`.
-    pub fn new(
-        epoch_info: Arc<ValidatorEpochInfo>,
-        votor_event_channel: Sender<PoolEvent>,
-        repair_channel: Sender<BlockId>,
-    ) -> Self {
+    /// Emitted events are buffered until drained via [`Pool::take_outbox`].
+    pub fn new(epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
             parent_ready_tracker: ParentReadyTracker::default(),
             finality_tracker: FinalityTracker::default(),
             s2n_waiting_parent_cert: BTreeMap::new(),
             epoch_info,
-            votor_event_channel,
-            repair_channel,
+            outbox: PoolOutbox::default(),
         }
     }
 
@@ -225,22 +276,22 @@ impl PoolImpl {
                         .notify_parent_certified(child_hash)
                 {
                     match output {
-                        Either::Left(event) => self.send_votor_event(event).await,
-                        Either::Right((slot, hash)) => self.send_repair((slot, hash)).await,
+                        Either::Left(event) => self.enqueue_votor_event(event),
+                        Either::Right((slot, hash)) => self.enqueue_repair((slot, hash)),
                     }
                 }
 
                 // add block to parent-ready tracker, send any new parents to Votor.
                 let new_parents_ready = self.parent_ready_tracker.mark_notar_fallback(&block_id);
-                self.send_parent_ready_events(new_parents_ready).await;
+                self.send_parent_ready_events(new_parents_ready);
 
                 // repair this block, if necessary
-                self.send_repair((slot, block_hash)).await;
+                self.enqueue_repair((slot, block_hash));
             }
             Cert::Skip(_) => {
                 warn!("skipped slot {slot}");
                 let new_parents_ready = self.parent_ready_tracker.mark_skipped(slot);
-                self.send_parent_ready_events(new_parents_ready).await;
+                self.send_parent_ready_events(new_parents_ready);
             }
             Cert::FastFinal(ff_cert) => {
                 info!("fast finalized slot {slot}");
@@ -257,7 +308,7 @@ impl PoolImpl {
 
         // send to votor for broadcasting
         let event = PoolEvent::CertCreated(cert);
-        self.send_votor_event(event).await;
+        self.enqueue_votor_event(event);
     }
 
     /// Mutably accesses the [`SlotState`] for the given `slot`.
@@ -406,32 +457,25 @@ impl PoolImpl {
 
     async fn handle_finalization(&mut self, event: FinalizationEvent) {
         let new_parents_ready = self.parent_ready_tracker.handle_finalization(event);
-        self.send_parent_ready_events(new_parents_ready).await;
+        self.send_parent_ready_events(new_parents_ready);
         self.prune();
     }
 
-    async fn send_parent_ready_events(&self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
+    fn send_parent_ready_events(&mut self, parents: impl IntoIterator<Item = (Slot, BlockId)>) {
         for (slot, parent) in parents {
             debug_assert!(slot.is_start_of_window());
-            self.send_votor_event(PoolEvent::ParentReady { slot, parent })
-                .await;
+            self.enqueue_votor_event(PoolEvent::ParentReady { slot, parent });
         }
     }
 
-    /// Sends an event to Votor, panicking if Votor dropped the receiver.
-    async fn send_votor_event(&self, event: PoolEvent) {
-        self.votor_event_channel
-            .send(event)
-            .await
-            .expect("votor should not drop the event receiver");
+    /// Buffers an event for Votor, to be forwarded off the write lock.
+    fn enqueue_votor_event(&mut self, event: PoolEvent) {
+        self.outbox.push(PoolEffect::VotorEvent(event));
     }
 
-    /// Requests repair of the given block, panicking if the repair loop dropped the receiver.
-    async fn send_repair(&self, block: BlockId) {
-        self.repair_channel
-            .send(block)
-            .await
-            .expect("repair loop should not drop the receiver");
+    /// Buffers a repair request for the given block, to be forwarded off the write lock.
+    fn enqueue_repair(&mut self, block_id: BlockId) {
+        self.outbox.push(PoolEffect::Repair(block_id));
     }
 }
 
@@ -512,10 +556,10 @@ impl Pool for PoolImpl {
             self.add_valid_cert(cert).await;
         }
         for event in votor_events {
-            self.send_votor_event(event).await;
+            self.enqueue_votor_event(event);
         }
         for (slot, block_hash) in blocks_to_repair {
-            self.send_repair((slot, block_hash)).await;
+            self.enqueue_repair((slot, block_hash));
         }
         Ok(())
     }
@@ -535,7 +579,7 @@ impl Pool for PoolImpl {
         let new_parents_ready = self
             .parent_ready_tracker
             .handle_finalization(finalization_event);
-        self.send_parent_ready_events(new_parents_ready).await;
+        self.send_parent_ready_events(new_parents_ready);
 
         self.slot_state(*slot).notify_parent_known(block_hash);
         if let Some(parent_state) = self.slot_states.get(parent_slot)
@@ -545,8 +589,8 @@ impl Pool for PoolImpl {
                 .notify_parent_certified(block_hash.clone())
         {
             match output {
-                Either::Left(event) => self.send_votor_event(event).await,
-                Either::Right((slot, hash)) => self.send_repair((slot, hash)).await,
+                Either::Left(event) => self.enqueue_votor_event(event),
+                Either::Right((slot, hash)) => self.enqueue_repair((slot, hash)),
             }
             return;
         }
@@ -555,13 +599,15 @@ impl Pool for PoolImpl {
 
     /// Triggers a recovery from a standstill.
     ///
-    /// Determines which certificates and votes need to be re-broadcast.
-    /// Emits the corresponding [`PoolEvent::Standstill`] event for Votor.
+    /// Determines which certificates and votes need to be re-broadcast and returns
+    /// them as a single [`PoolEvent::Standstill`] for the caller to forward to Votor.
     /// Should be called after not seeing any progress for the standstill duration.
-    async fn recover_from_standstill(&self) {
+    ///
+    /// NOTE: The bundle may be empty: a node that has not finalized anything yet
+    /// (e.g. one that booted into a partition) has no final cert to include.
+    fn recover_from_standstill(&self) -> PoolOutbox {
         let slot = self.finalized_slot();
         let mut certs = self.get_final_certs(slot);
-        assert!(!certs.is_empty(), "no final cert");
         certs.extend(self.get_certs(slot.next()..));
         let votes = self.get_own_votes(slot.next()..);
 
@@ -579,8 +625,11 @@ impl Pool for PoolImpl {
         // otherwise drop a bundle that Pool emitted precisely because it is stuck.
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
-        // send to votor for broadcasting
-        self.send_votor_event(event).await;
+        [PoolEffect::VotorEvent(event)].into_iter().collect()
+    }
+
+    fn take_outbox(&mut self) -> PoolOutbox {
+        std::mem::take(&mut self.outbox)
     }
 
     /// Gives the currently highest finalized (fast or slow) slot.
@@ -652,7 +701,9 @@ mod tests {
         sks: Vec<SecretKey>,
         epoch_info: Arc<ValidatorEpochInfo>,
         pool: PoolImpl,
+        votor_tx: mpsc::Sender<PoolEvent>,
         votor_rx: mpsc::Receiver<PoolEvent>,
+        repair_tx: mpsc::Sender<BlockId>,
         _repair_rx: mpsc::Receiver<BlockId>,
     }
 
@@ -661,12 +712,14 @@ mod tests {
         let epoch_info = wrap_epoch_info(epoch_info);
         let (votor_tx, votor_rx) = mpsc::channel(1024);
         let (repair_tx, _repair_rx) = mpsc::channel(1024);
-        let pool = PoolImpl::new(epoch_info.clone(), votor_tx, repair_tx);
+        let pool = PoolImpl::new(epoch_info.clone());
         TestContext {
             sks,
             epoch_info,
             pool,
+            votor_tx,
             votor_rx,
+            repair_tx,
             _repair_rx,
         }
     }
@@ -677,12 +730,36 @@ mod tests {
             self.epoch_info.epoch_info().validators()
         }
 
+        /// Forwards `outbox` into the test channels, like `EventForwarder` does.
+        fn forward(&mut self, outbox: PoolOutbox) {
+            for effect in outbox {
+                match effect {
+                    PoolEffect::VotorEvent(event) => self
+                        .votor_tx
+                        .try_send(event)
+                        .expect("test votor channel should have capacity"),
+                    PoolEffect::Repair(block) => self
+                        .repair_tx
+                        .try_send(block)
+                        .expect("test repair channel should have capacity"),
+                }
+            }
+        }
+
+        /// Drains the pool's outbox into the test channels.
+        fn forward_outbox(&mut self) {
+            let outbox = self.pool.take_outbox();
+            self.forward(outbox);
+        }
+
         /// Verifies `vote` into a [`ValidatedVote`] and adds it to the pool.
         async fn add_vote(&mut self, vote: Vote) -> Result<(), AddVoteError> {
             // NOTE: signature-rejection is covered by the [`ValidatedVote`] tests
             let vote = ValidatedVote::try_new(vote, self.epoch_info.epoch_info())
                 .expect("test vote should pass verification");
-            self.pool.add_vote(vote).await
+            let res = self.pool.add_vote(vote).await;
+            self.forward_outbox();
+            res
         }
 
         /// Verifies `cert` into a [`ValidatedCert`] and adds it to the pool.
@@ -690,7 +767,9 @@ mod tests {
             // NOTE: certificate rejection is covered by the [`ValidatedCert`] tests
             let cert = ValidatedCert::try_new(cert, self.epoch_info.epoch_info())
                 .expect("test cert should pass verification");
-            self.pool.add_cert(cert).await
+            let res = self.pool.add_cert(cert).await;
+            self.forward_outbox();
+            res
         }
 
         /// Adds a notarization [`Vote`] for `hash` in `slot` from each of `validators` to the pool.
@@ -1337,6 +1416,24 @@ mod tests {
         assert_eq!(ctx.pool.parents_ready(next_start).iter().count(), 1);
     }
 
+    /// Standstill recovery works (with an empty bundle) before anything is finalized.
+    #[tokio::test]
+    async fn standstill_recovery_without_any_final_cert() {
+        let mut ctx = setup();
+
+        assert_eq!(ctx.pool.finalized_slot(), Slot::genesis());
+        let outbox = ctx.pool.recover_from_standstill();
+        ctx.forward(outbox);
+
+        let event = ctx.votor_rx.recv().await.unwrap();
+        let PoolEvent::Standstill(slot, certs, votes) = event else {
+            unreachable!("unexpected event {event:?}");
+        };
+        assert_eq!(slot, Slot::genesis().next());
+        assert!(certs.is_empty());
+        assert!(votes.is_empty());
+    }
+
     #[tokio::test]
     async fn standstill_recovery() {
         let mut ctx = setup();
@@ -1356,7 +1453,8 @@ mod tests {
         ctx.add_notar_votes(slot3, &hash3, 0..1).await;
 
         // initiate standstill
-        ctx.pool.recover_from_standstill().await;
+        let outbox = ctx.pool.recover_from_standstill();
+        ctx.forward(outbox);
 
         // wait for standstill event
         let (slot, certs, votes) = loop {
@@ -1423,6 +1521,7 @@ mod tests {
         // add its ancestors
         ctx.pool.add_block(block2.clone(), block1.clone()).await;
         ctx.pool.add_block(block1.clone(), block0.clone()).await;
+        ctx.forward_outbox();
 
         // should emit ParentReady as a result
         let Ok(event) = ctx.votor_rx.try_recv() else {
