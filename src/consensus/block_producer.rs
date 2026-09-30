@@ -372,7 +372,7 @@ where
         let (block_info, events) = {
             let mut blockstore = self.blockstore.write().await;
             let block_info = blockstore.add_own_slice(payload, shreds).await;
-            (block_info, blockstore.take_events())
+            (block_info, blockstore.take_outbox())
         };
         self.event_forwarder.forward_blockstore_events(events).await;
 
@@ -755,7 +755,7 @@ mod tests {
                 let bi = bi.clone();
                 Box::pin(async move { Some(bi) })
             });
-        blockstore.expect_take_events().returning(Vec::new);
+        blockstore.expect_take_outbox().returning(Vec::new);
 
         let mut pool = MockPool::new();
         let bi = block_info.clone();
@@ -832,7 +832,7 @@ mod tests {
                 let nbi = nbi.clone();
                 Box::pin(async move { Some(nbi) })
             });
-        blockstore.expect_take_events().returning(Vec::new);
+        blockstore.expect_take_outbox().returning(Vec::new);
 
         let mut pool = MockPool::new();
         let nbi = new_block_info.clone();

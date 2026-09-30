@@ -471,7 +471,7 @@ where
                     let res = blockstore
                         .add_shred_from_repair(block_hash.clone(), validated)
                         .await;
-                    (res, blockstore.take_events())
+                    (res, blockstore.take_outbox())
                 };
                 self.event_forwarder.forward_blockstore_events(events).await;
                 if let Ok(Some(block_info)) = res {

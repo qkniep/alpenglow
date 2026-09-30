@@ -108,7 +108,7 @@ impl From<Cert> for ConsensusMessage {
 ///
 /// Sending under the lock would let a slow Votor jam every task contending for
 /// it. Instead, each task that mutates the Blockstore/Pool drains the outbox
-/// under the lock (with [`Blockstore::take_events`] / [`Pool::take_outbox`]) and
+/// under the lock (with [`Blockstore::take_outbox`] / [`Pool::take_outbox`]) and
 /// hands it here, so a full channel back-pressures only that task.
 ///
 /// # Ordering
@@ -532,7 +532,7 @@ where
         let (res, events) = {
             let mut blockstore = self.blockstore.write().await;
             let res = blockstore.add_shred_from_dissemination(validated).await;
-            (res, blockstore.take_events())
+            (res, blockstore.take_outbox())
         };
         self.event_forwarder.forward_blockstore_events(events).await;
 

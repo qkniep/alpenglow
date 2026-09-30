@@ -90,7 +90,7 @@ pub trait Blockstore {
         not(test),
         must_use = "drained events are lost unless forwarded, see `EventForwarder::forward_blockstore_events`"
     )]
-    fn take_events(&mut self) -> Vec<BlockstoreEvent>;
+    fn take_outbox(&mut self) -> Vec<BlockstoreEvent>;
     #[expect(
         clippy::needless_lifetimes,
         reason = "explicit lifetime is required by mockall::automock"
@@ -122,7 +122,7 @@ pub struct BlockstoreImpl {
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-    /// Events buffered for Votor, see [`Blockstore::take_events`].
+    /// Events buffered for Votor, see [`Blockstore::take_outbox`].
     events: Vec<BlockstoreEvent>,
 }
 
@@ -136,7 +136,7 @@ impl BlockstoreImpl {
     /// Initializes a new empty blockstore.
     ///
     /// The blockstore records the following [`BlockstoreEvent`]s into its outbox, to
-    /// be drained by the caller via [`Blockstore::take_events`] and forwarded to Votor:
+    /// be drained by the caller via [`Blockstore::take_outbox`] and forwarded to Votor:
     /// - [`BlockstoreEvent::FirstShred`] when receiving the first shred for a slot
     ///   from the block dissemination protocol
     /// - [`BlockstoreEvent::Block`] for any reconstructed block
@@ -356,7 +356,7 @@ impl Blockstore for BlockstoreImpl {
         }
     }
 
-    fn take_events(&mut self) -> Vec<BlockstoreEvent> {
+    fn take_outbox(&mut self) -> Vec<BlockstoreEvent> {
         std::mem::take(&mut self.events)
     }
 
@@ -519,7 +519,7 @@ mod tests {
         }
 
         // reconstruction buffered exactly one `FirstShred` and one `Block` event
-        let events = ctx.blockstore.take_events();
+        let events = ctx.blockstore.take_outbox();
         assert!(matches!(
             events.as_slice(),
             [BlockstoreEvent::FirstShred(s), BlockstoreEvent::Block { block_info, .. }]
@@ -729,7 +729,7 @@ mod tests {
     /// Drains the blockstore outbox and counts `InvalidBlock` events for `slot`.
     fn count_invalid_block_events(blockstore: &mut BlockstoreImpl, slot: Slot) -> usize {
         blockstore
-            .take_events()
+            .take_outbox()
             .iter()
             .filter(|e| matches!(e, BlockstoreEvent::InvalidBlock(s) if *s == slot))
             .count()
@@ -891,7 +891,7 @@ mod tests {
         // records exactly one FirstShred and one Block event in the outbox
         let mut first_shreds = 0;
         let mut blocks = 0;
-        for event in own.take_events() {
+        for event in own.take_outbox() {
             match event {
                 BlockstoreEvent::FirstShred(s) => {
                     assert_eq!(s, slot);
