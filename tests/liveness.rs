@@ -1,6 +1,7 @@
 // Copyright (c) Anza Technology, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::net::{Ipv4Addr, UdpSocket};
 use std::time::Duration;
 
 use alpenglow::create_test_nodes;
@@ -48,6 +49,33 @@ async fn three_nodes() {
 #[ignore = "slow multi-node test; runs in release via `just test-sequential`"]
 async fn three_nodes_crash() {
     liveness_test(3, 1).await;
+}
+
+/// Crashing a node via its cancel token must also stop its repair tasks.
+///
+/// Otherwise a "crashed" node keeps requesting and answering repairs, and the
+/// crash tests above exercise a weaker fault than they claim. The repair tasks
+/// own the repair sockets, so the ports only free up once those tasks are gone.
+#[tokio::test]
+async fn crash_stops_repair() {
+    let node = create_test_nodes(1).pop().expect("should create one node");
+    let info = node.get_info().clone();
+    let cancel_token = node.get_cancel_token();
+    let node_task = tokio::spawn(node.run());
+
+    cancel_token.cancel();
+    node_task
+        .await
+        .expect("node task should not panic")
+        .expect("node should shut down cleanly");
+
+    for addr in [info.repair_requester_address, info.repair_responder_address] {
+        let port = addr.port();
+        assert!(
+            UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok(),
+            "repair port {port} still bound after shutdown, its task is still running"
+        );
+    }
 }
 
 // TODO: implement transient failure test

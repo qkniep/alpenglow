@@ -37,6 +37,7 @@ use fastrace::Span;
 use fastrace::future::FutureExt;
 use log::{trace, warn};
 use tokio::sync::{RwLock, mpsc};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -128,6 +129,11 @@ where
     cancel_token: CancellationToken,
     /// Votor task handle.
     votor_handle: tokio::task::JoinHandle<()>,
+    /// Repair loop and repair request handler tasks.
+    ///
+    /// Shut down together with the other loops, so a stopped node neither sends
+    /// nor answers repair requests. Dropping the set aborts them as well.
+    repair_tasks: JoinSet<()>,
 }
 
 /// Interprets a joined task result during shutdown.
@@ -191,8 +197,8 @@ where
             blockstore.clone(),
             repair_responder_network,
         );
-        let _repair_request_handler =
-            tokio::spawn(async move { repair_request_handler.run().await });
+        let mut repair_tasks = JoinSet::new();
+        repair_tasks.spawn(async move { repair_request_handler.run().await });
 
         let mut repair = Repair::new(
             Arc::clone(&blockstore),
@@ -201,7 +207,7 @@ where
             epoch_info.clone(),
         );
 
-        let _repair_handle = tokio::spawn(
+        repair_tasks.spawn(
             async move { repair.repair_loop(repair_rx).await }
                 .in_span(Span::enter_with_local_parent("repair loop")),
         );
@@ -241,6 +247,7 @@ where
             disseminator,
             cancel_token,
             votor_handle,
+            repair_tasks,
         }
     }
 
@@ -250,7 +257,9 @@ where
     ///
     /// Returns an error only if any of the tasks panics.
     #[fastrace::trace(short_name = true)]
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
+        // take the repair tasks out before sharing `self`, joining them needs `&mut`
+        let mut repair_tasks = std::mem::take(&mut self.repair_tasks);
         let msg_loop_span = Span::enter_with_local_parent("message loop");
         let node = Arc::new(self);
         let nn = node.clone();
@@ -270,6 +279,7 @@ where
 
         node.cancel_token.cancelled().await;
         node.votor_handle.abort();
+        repair_tasks.abort_all();
         msg_loop.abort();
         standstill_loop.abort();
         prod_loop.abort();
@@ -277,6 +287,9 @@ where
         let (msg_res, prod_res) = tokio::join!(msg_loop, prod_loop);
         join_for_shutdown(msg_res)?;
         join_for_shutdown(prod_res)?;
+        while let Some(res) = repair_tasks.join_next().await {
+            join_for_shutdown(res.map(Ok))?;
+        }
         Ok(())
     }
 
