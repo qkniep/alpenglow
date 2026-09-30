@@ -236,9 +236,6 @@ where
 ///
 /// This is used by the node to repair blocks that it is missing.
 /// This does not answer repair requests from other nodes, that is handled by [`RepairRequestHandler`].
-///
-/// Internal to the crate: it is wired up by `Alpenglow::new`, and constructing one
-/// requires an [`EventForwarder`] over that node's internal channels.
 pub(crate) struct Repair<N: Network> {
     blockstore: SharedBlockstore,
     pool: SharedPool,
@@ -249,7 +246,7 @@ pub(crate) struct Repair<N: Network> {
     network: N,
     sampler: StakeWeightedSampler,
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Forwards blockstore outbox events to Votor off the write lock.
+    /// Forwards drained outboxes to Votor off the write lock.
     event_forwarder: EventForwarder,
 }
 
@@ -326,16 +323,10 @@ where
     /// Applies a drained [`PoolOutbox`]: Votor events are forwarded to Votor,
     /// repair requests are started directly.
     ///
-    /// NOTE: The repair requests must *not* go back through the repair channel.
-    /// [`Self::repair_loop`] is that channel's only consumer, so a blocking send
-    /// from inside the loop wedges the task for good as soon as the channel fills:
-    /// nothing would be left to drain it. Starting the repair here is what the
-    /// loop would do with the message anyway, minus the channel hop.
+    /// NOTE: Repair requests must *not* go back through the repair channel, as
+    /// [`Self::repair_loop`] is its only consumer: once full, it would deadlock.
     ///
-    /// Stops at the first undelivered Votor event, matching
-    /// [`EventForwarder::forward_pool_outbox`]: the forwarder only reports failure
-    /// once the node is shutting down, and starting fresh repairs for the remaining
-    /// effects would be work on a node that is on its way out.
+    /// Stops at the first undelivered Votor event, as the node is then shutting down.
     async fn apply_pool_outbox(&mut self, outbox: PoolOutbox) {
         for effect in outbox {
             match effect {

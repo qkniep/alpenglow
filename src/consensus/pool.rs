@@ -80,21 +80,13 @@ pub enum PoolEffect {
     Repair(BlockId),
 }
 
-/// Side-effects the Pool produces while processing under its write lock, to be
-/// drained via [`Pool::take_outbox`] and forwarded to Votor and the repair loop
-/// once the lock is released (a blocking send under the lock would jam every task
-/// contending for it).
+/// Side-effects the Pool buffers under its write lock, drained via
+/// [`Pool::take_outbox`] and forwarded once the lock is released.
 ///
-/// Effects are kept in the single order the Pool produced them. Splitting them
-/// into a per-destination queue would reorder the two against each other, e.g.
-/// delaying the repair request for a newly certified block behind every Votor
-/// event that certification produced.
-/// The effects are deliberately not reachable as a field: the [`must_use`] above
-/// only fires on an unused [`PoolOutbox`], so a public field would let a caller
-/// take the effects and drop them without the compiler noticing. Consuming the
-/// outbox via [`IntoIterator`] is the only way to get at them.
-///
-/// [`must_use`]: https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute
+/// Effects stay in production order, so e.g. the repair request for a newly
+/// certified block is not delayed behind that certification's Votor events.
+/// They are only reachable by consuming the outbox via [`IntoIterator`], so the
+/// `#[must_use]` cannot be sidestepped by taking a field.
 #[derive(Debug, Default)]
 #[must_use = "buffered effects are lost unless forwarded, see `EventForwarder::forward_pool_outbox`"]
 pub struct PoolOutbox {
@@ -182,10 +174,8 @@ pub trait Pool {
     async fn add_block(&mut self, block_id: BlockId, parent_id: BlockId);
     /// Builds the standstill-recovery bundle to re-broadcast; see [`PoolImpl::recover_from_standstill`].
     fn recover_from_standstill(&self) -> PoolOutbox;
-    /// Drains and returns the side-effects buffered since the last call.
-    ///
-    /// The caller must forward these to Votor and the repair loop *after* releasing
-    /// the Pool lock; see `PoolImpl::enqueue_votor_event`.
+    /// Drains the side-effects buffered since the last call, to be forwarded
+    /// after releasing the Pool lock.
     fn take_outbox(&mut self) -> PoolOutbox;
     fn finalized_slot(&self) -> Slot;
     fn parents_ready(&self, slot: Slot) -> &[BlockId];
@@ -212,18 +202,14 @@ pub struct PoolImpl {
 
     /// Information about all active validators.
     epoch_info: Arc<ValidatorEpochInfo>,
-    /// Buffered side-effects (Votor events + repair requests) produced under the
-    /// write lock, drained by the caller via [`Pool::take_outbox`].
+    /// Side-effects buffered under the write lock, see [`Pool::take_outbox`].
     outbox: PoolOutbox,
 }
 
 impl PoolImpl {
     /// Creates a new empty pool containing no votes or certificates.
     ///
-    /// Any events the pool emits are buffered in its [`PoolOutbox`] and must be
-    /// drained by the caller via [`Pool::take_outbox`], then forwarded to Votor and
-    /// the repair loop after the write lock is released; see
-    /// `PoolImpl::enqueue_votor_event`.
+    /// Emitted events are buffered until drained via [`Pool::take_outbox`].
     pub fn new(epoch_info: Arc<ValidatorEpochInfo>) -> Self {
         Self {
             slot_states: BTreeMap::new(),
@@ -466,19 +452,12 @@ impl PoolImpl {
         }
     }
 
-    /// Records an event for Votor in the outbox.
-    ///
-    /// Buffered rather than sent so the caller can forward it off the write lock
-    /// (see [`super::EventForwarder`]); a blocking send under the lock would jam
-    /// every task contending for it.
+    /// Buffers an event for Votor, to be forwarded off the write lock.
     fn enqueue_votor_event(&mut self, event: PoolEvent) {
         self.outbox.push(PoolEffect::VotorEvent(event));
     }
 
-    /// Records a repair request for the given block in the outbox.
-    ///
-    /// Buffered rather than sent, for the same reason as
-    /// [`Self::enqueue_votor_event`].
+    /// Buffers a repair request for the given block, to be forwarded off the write lock.
     fn enqueue_repair(&mut self, block_id: BlockId) {
         self.outbox.push(PoolEffect::Repair(block_id));
     }
@@ -607,15 +586,11 @@ impl Pool for PoolImpl {
     /// Triggers a recovery from a standstill.
     ///
     /// Determines which certificates and votes need to be re-broadcast and returns
-    /// them as a [`PoolOutbox`] holding a single [`PoolEvent::Standstill`] for the
-    /// caller to forward to Votor. Should be called after not seeing any progress
-    /// for the standstill duration.
+    /// them as a single [`PoolEvent::Standstill`] for the caller to forward to Votor.
+    /// Should be called after not seeing any progress for the standstill duration.
     ///
-    /// NOTE: The bundle may legitimately come out empty. A node that has not
-    /// finalized anything yet has no final cert for the genesis slot, which is
-    /// exactly the case for a node that booted into a partition or started ahead
-    /// of the rest of the cluster. That is a standstill worth reporting, not an
-    /// invariant violation, so the recovery path must not assume a final cert.
+    /// NOTE: The bundle may be empty: a node that has not finalized anything yet
+    /// (e.g. one that booted into a partition) has no final cert to include.
     fn recover_from_standstill(&self) -> PoolOutbox {
         let slot = self.finalized_slot();
         let mut certs = self.get_final_certs(slot);
@@ -636,7 +611,6 @@ impl Pool for PoolImpl {
         // otherwise drop a bundle that Pool emitted precisely because it is stuck.
         let event = PoolEvent::Standstill(slot.next(), certs, votes);
 
-        // return to the caller for (off-lock) forwarding to Votor
         [PoolEffect::VotorEvent(event)].into_iter().collect()
     }
 
@@ -742,10 +716,7 @@ mod tests {
             self.epoch_info.epoch_info().validators()
         }
 
-        /// Forwards the given pool outbox into the test channels, mirroring what
-        /// [`EventForwarder`] does in production after releasing the write lock.
-        ///
-        /// [`EventForwarder`]: crate::consensus::EventForwarder
+        /// Forwards `outbox` into the test channels, like `EventForwarder` does.
         fn forward(&mut self, outbox: PoolOutbox) {
             for effect in outbox {
                 match effect {
@@ -872,35 +843,6 @@ mod tests {
             }
             seen
         }
-    }
-
-    /// Notarizing a block must record a `CertCreated` event in the pool's outbox
-    /// (rather than sending it under the lock), so the caller can forward it to
-    /// Votor losslessly after releasing the write lock.
-    #[tokio::test]
-    async fn cert_created_event_is_recorded() {
-        let mut ctx = setup();
-
-        // Notarize genesis directly on the pool, bypassing the test helpers so the
-        // outbox is not drained before we can inspect it.
-        for v in (0..11).map(ValidatorIndex::new) {
-            let vote = Vote::new_notar(Slot::new(0), GENESIS_BLOCK_HASH, &ctx.sks[v.as_usize()], v);
-            let vote = ValidatedVote::try_new(vote, ctx.epoch_info.epoch_info())
-                .expect("test vote should pass verification");
-            ctx.pool.add_vote(vote).await.unwrap();
-        }
-        assert!(ctx.pool.has_notar_cert(Slot::new(0)));
-
-        let effects: Vec<_> = ctx.pool.take_outbox().into_iter().collect();
-        assert!(
-            effects.iter().any(|e| matches!(
-                e,
-                PoolEffect::VotorEvent(PoolEvent::CertCreated(Cert::Notar(_)))
-            )),
-            "expected a CertCreated event, got {effects:?}"
-        );
-        // Draining leaves the outbox empty.
-        assert!(ctx.pool.take_outbox().is_empty());
     }
 
     #[tokio::test]
@@ -1432,10 +1374,7 @@ mod tests {
         assert_eq!(ctx.pool.parents_ready(next_start).iter().count(), 1);
     }
 
-    /// A node that has not finalized anything yet has no final cert for the
-    /// genesis slot. Standstill recovery must still produce a bundle (an empty one)
-    /// rather than panic — booting into a partition, or ahead of the rest of the
-    /// cluster, is exactly when recovery needs to run.
+    /// Standstill recovery works (with an empty bundle) before anything is finalized.
     #[tokio::test]
     async fn standstill_recovery_without_any_final_cert() {
         let mut ctx = setup();

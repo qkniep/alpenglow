@@ -244,33 +244,15 @@ impl<A: All2All> Votor<A> {
 
     /// Broadcasts a consensus message to all other nodes, best-effort.
     ///
-    /// A failure of the underlying [`All2All`] network is logged and otherwise
-    /// ignored: it must not bring down the voting loop, which has to keep running
-    /// to preserve liveness.
+    /// Failures are logged, not propagated, so the voting loop keeps running. The
+    /// message is then lost, like any vote dropped in flight by the (UDP) network,
+    /// which the protocol tolerates.
     ///
-    /// The message is genuinely lost — the callers commit the state transition the
-    /// vote represents (`voted`, `retired`) as soon as this returns, and nothing
-    /// re-sends it. That is deliberate rather than an oversight. [`All2All`] rides
-    /// on UDP, where a successful send only means the datagram reached the kernel,
-    /// so votes are dropped in flight as a matter of course; a vote lost to a local
-    /// send error is no different, protocol-wise, from one lost on the wire, and
-    /// the protocol already covers that case with timeouts, skip votes and
-    /// standstill recovery. Retrying here would buy back only the sliver of losses
-    /// that surface as an errno, at the cost of reordering this node's own votes
-    /// against each other.
-    ///
-    /// NOTE: a *persistent* failure (e.g. a misconfigured firewall or a full
-    /// partition) means this node stops contributing to consensus while only
-    /// logging. Once there is a metrics system, this should also bump a failure
-    /// counter so persistent failures become alertable.
-    ///
-    /// NOTE: this node's own votes reach its own [`super::Pool`] only by coming
-    /// back over [`All2All`] — Votor has no direct path to Pool — so a failure here
-    /// also means [`super::Pool::recover_from_standstill`] cannot replay the vote:
-    /// it re-broadcasts what Pool holds, and Pool never saw it. Removing that
-    /// dependency means delivering own votes to Pool directly, not retrying sends.
+    /// NOTE: Own votes reach own [`super::Pool`] only via [`All2All`], so a lost
+    /// vote is also missing from standstill recovery's re-broadcast.
     async fn broadcast(&self, msg: impl Into<ConsensusMessage>) {
         if let Err(err) = self.all2all.broadcast(&msg.into()).await {
+            // TODO: count failures once there are metrics, to make persistent ones alertable
             warn!("failed to broadcast consensus message: {err}");
         }
     }
@@ -415,15 +397,9 @@ impl<A: All2All> Votor<A> {
 
     /// Sends skip votes for all unvoted slots in the window that `slot` belongs to.
     ///
-    /// Marks the whole window bad, including slots we already voted on. We only get
-    /// here because the window's leader misbehaved or timed out, and that verdict
-    /// does not depend on how far we happened to get first: a slot notarized before
-    /// we learned of it stays notarized (that vote is already out), but `bad_window`
-    /// stops [`Self::try_final`] from following it with a final vote. Leaving voted
-    /// slots unmarked would instead make this depend on the order blockstore events
-    /// happen to arrive in, which is not guaranteed — they are forwarded off the
-    /// write lock and can be reordered across tasks. Withholding a final vote is
-    /// always safe: it can cost this slot the fast path, never liveness.
+    /// Marks the whole window bad, including already-voted slots, so that
+    /// [`Self::try_final`] withholds their final votes regardless of the order in
+    /// which blockstore events arrive.
     async fn try_skip_window(&mut self, slot: Slot) {
         assert!(slot >= self.first_unpruned_slot());
         trace!("try skip window of slot {slot}");
@@ -522,8 +498,7 @@ mod tests {
 
     type A2A = TrivialAll2All<SimulatedNetwork<ConsensusMessage, ConsensusMessage>>;
 
-    /// An [`All2All`] whose `broadcast` always fails, to exercise Votor's
-    /// best-effort error handling. `receive` never resolves.
+    /// An [`All2All`] whose `broadcast` always fails and `receive` never resolves.
     struct FailingAll2All;
 
     impl All2All for FailingAll2All {
@@ -610,8 +585,7 @@ mod tests {
         ctx
     }
 
-    /// A failing network broadcast must be logged and swallowed, never panic the
-    /// voting loop (which has to keep running to preserve liveness).
+    /// A failing broadcast must not panic the voting loop.
     #[tokio::test]
     async fn broadcast_failure_does_not_panic() {
         let (sks, _epoch_info) = generate_validators(2);
@@ -625,11 +599,7 @@ mod tests {
             Arc::new(FailingAll2All),
         );
 
-        // `SafeToSkip` makes Votor broadcast a skip-fallback vote (and, via
-        // `try_skip_window`, skip votes for the window). All broadcasts fail here;
-        // the handler must still return normally rather than unwrap a network error.
-        // Use a non-genesis slot: the genesis slot starts out retired and would be
-        // ignored before any broadcast.
+        // non-genesis slot, as genesis starts out retired and would be ignored
         votor
             .handle_pool_event(PoolEvent::SafeToSkip(Slot::new(1)))
             .await;
@@ -686,20 +656,12 @@ mod tests {
 
     /// An `InvalidBlock` handled *after* we already voted notar for the slot must
     /// still taint the window, so the notar cert that follows produces no final vote.
-    ///
-    /// Blockstore events are forwarded off the write lock and can be reordered
-    /// across tasks, so `Block` beating `InvalidBlock` is expected rather than
-    /// exceptional. The notar vote is already out and cannot be recalled; the final
-    /// vote is what must be withheld. The handlers are driven directly, because the
-    /// ordering under test is precisely what `voting_loop`'s `select!` leaves
-    /// unspecified.
     #[tokio::test]
     async fn late_invalid_block_suppresses_final_vote() {
         let (mut votor, ctx) = build_votor().await;
         let slot = Slot::genesis().next();
         let hash: BlockHash = Hash::random_for_test().into();
 
-        // vote notar on the block, before learning the leader misbehaved
         let block_info = BlockInfo {
             hash: hash.clone(),
             parent: genesis_block_id(),
@@ -709,7 +671,6 @@ mod tests {
             .await;
         assert_eq!(votor.slots[&slot].voted_notar.as_ref(), Some(&hash));
 
-        // only now does the leader's misbehavior surface
         votor
             .handle_blockstore_event(BlockstoreEvent::InvalidBlock(slot))
             .await;
@@ -718,8 +679,7 @@ mod tests {
             "an invalid block must taint the window even for an already-voted slot"
         );
 
-        // with the window untainted this cert would make `try_final` cast a final
-        // vote; `retired` is set only by that broadcast, so it proxies for it
+        // `retired` is set only by a final vote, so it proxies for one
         let vote = Vote::new_notar(slot, hash, &ctx.sks[0], ValidatorIndex::new(0));
         let Vote::Notar(notar_vote) = vote else {
             unreachable!()

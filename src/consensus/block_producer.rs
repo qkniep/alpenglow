@@ -40,7 +40,7 @@ pub(super) struct BlockProducer<D: Disseminator, T: Network> {
     blockstore: SharedBlockstore,
     /// Pool of votes and certificates.
     pool: SharedPool,
-    /// Forwards blockstore outbox events to Votor off the write lock.
+    /// Forwards drained Blockstore/Pool outboxes off the write lock.
     event_forwarder: EventForwarder,
 
     /// Block dissemination network protocol for shreds.

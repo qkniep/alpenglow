@@ -81,20 +81,11 @@ pub trait Blockstore {
         shreds: Box<[ValidatedShred; TOTAL_SHREDS]>,
     ) -> Option<BlockInfo>;
     async fn flag_leader_misbehavior(&mut self, slot: Slot);
-    /// Drains and returns the [`BlockstoreEvent`]s buffered since the last call.
+    /// Drains the [`BlockstoreEvent`]s buffered since the last call, to be
+    /// forwarded to Votor after releasing the blockstore lock.
     ///
-    /// The caller must forward these to Votor *after* releasing the blockstore
-    /// lock, so that a slow Votor back-pressures the ingest task instead of
-    /// jamming the lock. See `BlockstoreImpl::emit` for the rationale.
-    ///
-    /// `Vec` carries no `must_use` of its own, so this says it explicitly: silently
-    /// dropping a drained [`BlockstoreEvent::Block`] costs this node its vote for
-    /// that block, with no retry path.
-    ///
-    /// NOTE: scoped to non-test builds because `mockall::automock` copies the
-    /// attribute into the generated mock's `impl` block, where `#[must_use]` on a
-    /// trait method is deprecated. Every caller that matters is non-test code, so
-    /// the guard still covers what it needs to.
+    /// NOTE: `must_use` is skipped in test builds, where `mockall::automock` would
+    /// copy it onto the generated mock.
     #[cfg_attr(
         not(test),
         must_use = "drained events are lost unless forwarded, see `EventForwarder::forward_blockstore_events`"
@@ -131,8 +122,7 @@ pub struct BlockstoreImpl {
     block_data: BTreeMap<Slot, SlotBlockData>,
     /// Shredders used for reconstructing blocks.
     shredders: ShredderPool<RegularShredder>,
-    /// Events buffered for Votor, drained via [`Blockstore::take_events`].
-    /// See [`Self::emit`] for why they are buffered rather than sent.
+    /// Events buffered for Votor, see [`Blockstore::take_events`].
     events: Vec<BlockstoreEvent>,
 }
 
@@ -164,13 +154,8 @@ impl BlockstoreImpl {
         self.block_data = self.block_data.split_off(&slot);
     }
 
-    /// Records a [`BlockstoreEvent`] in the outbox, returning the [`BlockInfo`] of a
-    /// newly reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
-    ///
-    /// Events are buffered rather than sent so the caller can forward them off the
-    /// write lock (see [`super::EventForwarder`]). This matters most for the `Block`
-    /// event: dropping it would silently cost this node its vote for that block,
-    /// with no retry path.
+    /// Buffers `event` for Votor, returning the [`BlockInfo`] of a newly
+    /// reconstructed block iff `event` is a [`BlockstoreEvent::Block`].
     fn emit(&mut self, event: BlockstoreEvent) -> Option<BlockInfo> {
         let block_info = if let BlockstoreEvent::Block { slot, block_info } = &event {
             debug!(
@@ -507,51 +492,6 @@ mod tests {
         (payload, shreds)
     }
 
-    /// Feeds every shred of a fresh single-slice block into `blockstore` and
-    /// returns the [`BlockInfo`] of the reconstructed block.
-    ///
-    /// Reconstruction records `FirstShred` + `Block` events in the blockstore's
-    /// outbox, to be drained via [`Blockstore::take_events`].
-    async fn store_full_block(blockstore: &mut BlockstoreImpl, sk: &SecretKey) -> BlockInfo {
-        let slot = Slot::genesis().next();
-        let (block_hash, _, shreds) = create_random_shredded_block(slot, 1, sk);
-        let mut reconstructed = None;
-        for shred in shreds.into_iter().flatten() {
-            if let Some(info) = add_shred_ignore_duplicate(blockstore, shred).await.unwrap() {
-                reconstructed = Some(info);
-            }
-        }
-        let info = reconstructed.expect("block should reconstruct from all its shreds");
-        assert_eq!(info.hash, block_hash);
-        info
-    }
-
-    /// Reconstructing a block must record its `FirstShred` and `Block` events in the
-    /// outbox (rather than sending them under the lock), so the caller can forward
-    /// them to Votor losslessly after releasing the write lock.
-    #[tokio::test]
-    async fn reconstruction_events_are_recorded() {
-        let mut ctx = setup();
-        let info = store_full_block(&mut ctx.blockstore, &ctx.sk).await;
-
-        let events = ctx.blockstore.take_events();
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, BlockstoreEvent::FirstShred(_))),
-            "expected a FirstShred event, got {events:?}"
-        );
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                BlockstoreEvent::Block { block_info, .. } if block_info.hash == info.hash
-            )),
-            "expected a Block event for the reconstructed block, got {events:?}"
-        );
-        // Draining leaves the outbox empty.
-        assert!(ctx.blockstore.take_events().is_empty());
-    }
-
     #[tokio::test]
     async fn store_one_slice_block() -> Result<()> {
         let mut ctx = setup();
@@ -577,6 +517,14 @@ mod tests {
             };
             assert_eq!(stored_shred.payload().data, shred.payload().data);
         }
+
+        // reconstruction buffered exactly one `FirstShred` and one `Block` event
+        let events = ctx.blockstore.take_events();
+        assert!(matches!(
+            events.as_slice(),
+            [BlockstoreEvent::FirstShred(s), BlockstoreEvent::Block { block_info, .. }]
+                if s == &slot && block_info.hash == block_id.1
+        ));
 
         // create and check double-Merkle proof
         let proof = ctx

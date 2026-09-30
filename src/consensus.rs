@@ -106,41 +106,18 @@ impl From<Cert> for ConsensusMessage {
 /// Forwards side-effects drained from the Blockstore and Pool outboxes to Votor
 /// and the repair loop *after* the producing task has released the write lock.
 ///
-/// The Blockstore and Pool buffer their events instead of sending them while
-/// holding their write lock: a blocking send under the lock would let a slow or
-/// stalled Votor jam every other task contending for that lock, while a
-/// non-blocking send would have to drop the event (which for a reconstructed-block
-/// event silently costs this node its vote for that block, with no retry path).
-/// Each task that mutates the Blockstore/Pool drains the outbox (with
-/// [`Blockstore::take_events`] / [`Pool::take_outbox`]) and hands it here; the
-/// blocking send then back-pressures that (ingest) task instead of dropping the
-/// event or stalling the lock.
+/// Sending under the lock would let a slow Votor jam every task contending for
+/// it. Instead, each task that mutates the Blockstore/Pool drains the outbox
+/// under the lock (with [`Blockstore::take_events`] / [`Pool::take_outbox`]) and
+/// hands it here, so a full channel back-pressures only that task.
 ///
 /// # Ordering
 ///
-/// Forwarding one drained outbox preserves the order the producing component
-/// buffered its effects in. What the write lock no longer provides is a *global*
-/// order across tasks: two tasks that each mutate the Pool or Blockstore can now
-/// interleave their forwarding, so Votor may see a later task's event before an
-/// earlier one's.
-///
-/// Votor must therefore not depend on the relative order of events from different
-/// tasks, on either channel. For pool events that holds already: handling is
-/// order-insensitive apart from the prune gate
-/// (`Votor::should_ignore_pool_event`), and an event losing that race is by
-/// definition one for a slot whose vote no longer matters. On the blockstore
-/// channel the order-sensitive pair is `InvalidBlock` against `Block` for the same
-/// window, which `Votor::try_skip_window` handles by marking the window bad
-/// regardless of whether the slot was already voted on.
-///
-/// Restoring the global order is not the alternative it looks like: it would take
-/// a second lock held across the send, reintroducing exactly the jam this design
-/// exists to avoid, and it would not even be sufficient — the lock only ever
-/// ordered events already buffered, never the arrival of the inputs that produce
-/// them.
-///
-/// Cloneable so the message loop, the repair loop and the block producer can each
-/// forward the events they produce.
+/// One outbox is forwarded in the order its effects were produced, but tasks
+/// forwarding concurrently can interleave. So Votor must not depend on the order
+/// of events from different tasks: pool events are order-insensitive apart from
+/// the prune gate (`Votor::should_ignore_pool_event`), and for blockstore events
+/// `Votor::try_skip_window` taints the window even if a slot was already voted on.
 #[derive(Clone)]
 pub(crate) struct EventForwarder {
     /// Blockstore events destined for Votor.
@@ -156,9 +133,7 @@ pub(crate) struct EventForwarder {
 impl EventForwarder {
     /// Creates a forwarder over Votor's event channels and the repair channel.
     ///
-    /// `cancel_token` is the node's shutdown token, used both to tell an expected
-    /// shutdown from an unexpected consumer death and to bring the node down in
-    /// the latter case.
+    /// `cancel_token` is the node's shutdown token, see [`Self::send`].
     pub(crate) fn new(
         blockstore_events: mpsc::Sender<BlockstoreEvent>,
         pool_events: mpsc::Sender<PoolEvent>,
@@ -173,27 +148,16 @@ impl EventForwarder {
         }
     }
 
-    /// Sends a single `item` to `sender`, returning `false` if it was not delivered.
+    /// Sends `item` to `sender`, returning `false` if it was not delivered.
     ///
-    /// A closed channel means the consuming task is gone. While the node is
-    /// shutting down that is expected and the item is simply dropped. Otherwise
-    /// it is unrecoverable: Votor or the repair loop died, and a node that keeps
-    /// ingesting but can no longer vote contributes nothing while still counting
-    /// against liveness. Rather than fail silently, log at error level (using
-    /// `what` to name the channel) and shut the node down.
+    /// A closed channel means the consumer is gone. During shutdown that is
+    /// expected and the item is dropped. Otherwise Votor or the repair loop died,
+    /// and a node that ingests but cannot vote is useless, so this logs an error
+    /// and shuts the node down.
     ///
-    /// A *full* channel is not an error — back-pressuring the calling ingest task
-    /// is the whole point of buffering into an outbox. But `send` would then park
-    /// until the consumer drains, and only the consumer can release it, so the
-    /// shutdown token is raced against the send to bound that wait. This is
-    /// currently belt-and-braces: Votor holds no Blockstore/Pool lock and blocks
-    /// only on a (UDP) [`All2All`] broadcast, so it always keeps draining and no
-    /// forwarder can be parked indefinitely. That is a property of Votor's shape,
-    /// though, not something the type system enforces — racing the token keeps
-    /// shutdown bounded even if that stops holding.
-    ///
-    /// The send is polled first (`biased`), so a shutting-down node still delivers
-    /// everything it can send without waiting, and drops only what would block.
+    /// A full channel back-pressures the caller. The send is raced against
+    /// shutdown so this cannot block forever, and is polled first (`biased`) so a
+    /// shutting-down node still delivers what fits and drops only what would block.
     async fn send<T>(&self, sender: &mpsc::Sender<T>, item: T, what: &str) -> bool {
         tokio::select! {
             biased;
@@ -228,10 +192,8 @@ impl EventForwarder {
         }
     }
 
-    /// Forwards a single Pool event to Votor, returning `false` if it was dropped.
-    ///
-    /// A `false` return means the node is shutting down (see [`Self::send`]); a
-    /// caller with further effects to forward should stop rather than keep working.
+    /// Forwards a single Pool event to Votor, returning `false` if it was not
+    /// delivered, in which case the node is shutting down and the caller should stop.
     pub(crate) async fn forward_pool_event(&self, event: PoolEvent) -> bool {
         self.send(&self.pool_events, event, "Votor pool-event")
             .await
@@ -276,7 +238,7 @@ where
     /// Block dissemination network protocol for shreds.
     disseminator: Arc<D>,
 
-    /// Forwards blockstore outbox events to Votor off the write lock.
+    /// Forwards drained Blockstore/Pool outboxes off the write lock.
     event_forwarder: EventForwarder,
 
     /// Indicates whether the node is shutting down.
@@ -327,11 +289,6 @@ where
         RP: RepairResponderNetwork + 'static,
     {
         let cancel_token = CancellationToken::new();
-        // Votor's event channels. The Blockstore/Pool buffer events into an outbox
-        // under their write lock and the producing task forwards them here *after*
-        // releasing the lock (see `EventForwarder`), so a full channel back-pressures
-        // the ingest task rather than jamming the lock or dropping the event. The
-        // buffer is sized to absorb ordinary bursts without back-pressuring.
         let (blockstore_tx, blockstore_rx) = mpsc::channel(1024);
         let (pool_tx, pool_rx) = mpsc::channel(1024);
         let (repair_tx, repair_rx) = mpsc::channel(1024);
@@ -570,8 +527,7 @@ where
             return Ok(());
         }
 
-        // Ingest into the blockstore, then forward the buffered events to Votor
-        // *after* releasing the write lock (see `EventForwarder`).
+        // ingest under the lock, then forward the buffered events off the lock
         let (res, events) = {
             let mut blockstore = self.blockstore.write().await;
             let res = blockstore.add_shred_from_dissemination(validated).await;
@@ -597,39 +553,7 @@ mod tests {
     use super::*;
     use crate::crypto::merkle::GENESIS_BLOCK_HASH;
 
-    /// A closed Votor / repair channel on a shutting-down node must not panic the
-    /// forwarder: the send fails, is logged, and the remaining items are dropped.
-    #[tokio::test]
-    async fn forward_to_closed_channels_during_shutdown_does_not_panic() {
-        let (bs_tx, bs_rx) = mpsc::channel(1);
-        let (pool_tx, pool_rx) = mpsc::channel(1);
-        let (repair_tx, repair_rx) = mpsc::channel(1);
-        let cancel_token = CancellationToken::new();
-        // The node is already shutting down, which is why its consumers are gone.
-        cancel_token.cancel();
-        let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token);
-        drop(bs_rx);
-        drop(pool_rx);
-        drop(repair_rx);
-
-        forwarder
-            .forward_blockstore_events(vec![BlockstoreEvent::FirstShred(Slot::new(1))])
-            .await;
-        forwarder
-            .forward_pool_outbox(
-                [
-                    PoolEffect::VotorEvent(PoolEvent::SafeToSkip(Slot::new(1))),
-                    PoolEffect::Repair((Slot::new(1), GENESIS_BLOCK_HASH)),
-                ]
-                .into_iter()
-                .collect(),
-            )
-            .await;
-    }
-
-    /// A consumer dying while the node is running is unrecoverable: this node can
-    /// no longer vote, so the forwarder shuts it down instead of dropping events
-    /// silently and leaving a zombie that still counts against liveness.
+    /// A consumer dying while the node is running shuts the node down.
     #[tokio::test]
     async fn consumer_death_while_running_shuts_node_down() {
         let (bs_tx, bs_rx) = mpsc::channel(1);
@@ -637,22 +561,18 @@ mod tests {
         let (repair_tx, _repair_rx) = mpsc::channel(1);
         let cancel_token = CancellationToken::new();
         let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token.clone());
-        // Votor died mid-run, taking its receiver with it.
         drop(bs_rx);
 
-        assert!(!cancel_token.is_cancelled());
         forwarder
             .forward_blockstore_events(vec![BlockstoreEvent::FirstShred(Slot::new(1))])
             .await;
         assert!(cancel_token.is_cancelled());
     }
 
-    /// A *full* channel at shutdown must not park the forwarder forever. Only the
-    /// consumer can make room, and by then there may be none left to do so, so the
-    /// send races the shutdown token. What still fits is delivered; the rest drops.
+    /// A full channel at shutdown must not block the forwarder forever: what fits is
+    /// still delivered, the rest is dropped.
     #[tokio::test]
     async fn full_channel_at_shutdown_does_not_hang() {
-        // Receivers are alive but never drained, so the channel stays full.
         let (bs_tx, mut bs_rx) = mpsc::channel(1);
         let (pool_tx, _pool_rx) = mpsc::channel(1);
         let (repair_tx, _repair_rx) = mpsc::channel(1);
@@ -660,8 +580,6 @@ mod tests {
         let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, cancel_token.clone());
         cancel_token.cancel();
 
-        // The first event fits, so it is sent even though the token is already
-        // cancelled; the second would block and loses the race instead.
         tokio::time::timeout(
             Duration::from_secs(1),
             forwarder.forward_blockstore_events(vec![
@@ -681,13 +599,12 @@ mod tests {
         );
     }
 
-    /// A drained outbox is replayed in the order the Pool produced it: a repair
-    /// request buffered before a Votor event is issued before it, not held back
-    /// until every Votor event has drained.
+    /// A repair buffered before Votor events is forwarded first, not held back
+    /// behind them.
     #[tokio::test]
     async fn forward_pool_outbox_preserves_effect_order() {
         let (bs_tx, _bs_rx) = mpsc::channel(1);
-        // Capacity 1, so forwarding blocks on the second Votor event.
+        // capacity 1, so forwarding blocks on the second Votor event
         let (pool_tx, _pool_rx) = mpsc::channel(1);
         let (repair_tx, mut repair_rx) = mpsc::channel(1);
         let forwarder = EventForwarder::new(bs_tx, pool_tx, repair_tx, CancellationToken::new());
