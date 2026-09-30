@@ -9,6 +9,12 @@ updates:
     open-pull-requests-limit: 10
     # Bundle non-breaking bumps into one PR; majors stay individual.
     groups:
+      # The OpenTelemetry crates (and `fastrace-opentelemetry`, which bridges
+      # to them) share trait types, so they only compile when bumped together.
+      opentelemetry:
+        patterns:
+          - "opentelemetry*"
+          - "fastrace-opentelemetry"
       cargo-minor-patch:
         update-types:
           - "minor"

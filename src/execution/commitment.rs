@@ -127,8 +127,8 @@ impl LtHash {
     #[must_use]
     pub fn digest(&self) -> StateCommitment {
         let mut bytes = [0; NUM_LANES * 2];
-        for (chunk, lane) in bytes.chunks_exact_mut(2).zip(&self.lanes) {
-            chunk.copy_from_slice(&lane.to_le_bytes());
+        for (chunk, lane) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(&self.lanes) {
+            *chunk = lane.to_le_bytes();
         }
         StateCommitment(hash(&bytes))
     }
@@ -141,11 +141,12 @@ impl LtHash {
     fn hash_entry(key: &Address, value: &[u8]) -> Self {
         let seed = hash_all(&[key.as_slice(), value]);
         let mut lanes = [0; NUM_LANES];
-        for (counter, block_lanes) in lanes.chunks_exact_mut(LANES_PER_BLOCK).enumerate() {
+        let (blocks, _) = lanes.as_chunks_mut::<LANES_PER_BLOCK>();
+        for (counter, block_lanes) in blocks.iter_mut().enumerate() {
             let block = hash_all(&[seed.as_ref(), &counter.to_le_bytes()]);
-            let block_bytes = block.as_ref().chunks_exact(2);
+            let (block_bytes, _) = block.as_ref().as_chunks::<2>();
             for (lane, bytes) in block_lanes.iter_mut().zip(block_bytes) {
-                *lane = u16::from_le_bytes([bytes[0], bytes[1]]);
+                *lane = u16::from_le_bytes(*bytes);
             }
         }
         Self { lanes }
