@@ -140,7 +140,7 @@ where
     /// spuriously readable or every datagram was malformed, in which case the
     /// caller should simply wait again.
     ///
-    /// On Linux this drains up to [`RECV_BATCH`] queued datagrams with a single
+    /// On Linux this drains up to `RECV_BATCH` queued datagrams with a single
     /// `recvmmsg(2)`; on other platforms it reads one datagram per `recv`.
     async fn recv_batch(&self) -> io::Result<VecDeque<R>> {
         #[cfg(target_os = "linux")]
