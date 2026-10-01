@@ -549,7 +549,7 @@ mod tests {
         let v1_repair_requester_network = core.join_unlimited(ValidatorIndex::new(2)).await;
         let v1_repair_responder_network = core.join_unlimited(ValidatorIndex::new(3)).await;
 
-        let epoch_info = EpochInfo::new(validators);
+        let epoch_info = EpochInfo::try_new(validators).expect("test validators should be valid");
         let epoch_info = Arc::new(ValidatorEpochInfo::new(ValidatorIndex::new(1), epoch_info));
 
         // set up blockstore
