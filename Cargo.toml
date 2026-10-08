@@ -22,7 +22,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 csv = { version = "1", optional = true }
 ctr = "0.10"
 derive_more = { version = "2", features = ["add", "add_assign", "as_ref", "from", "into", "sum"] }
-ed25519-zebra = "4"
+ed25519-zebra = "5"
 either = "1"
 fastrace = "0.7"
 fastrace-opentelemetry = { version = "0.18", optional = true }
